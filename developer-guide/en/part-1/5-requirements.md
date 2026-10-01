@@ -122,7 +122,10 @@ pip install 'agentao[full]'        # cli + web + i18n + playwright + tokenizer
 > CJK memory recall degrades gracefully (one-time warning + empty CJK tokens);
 > Latin queries skip jieba entirely so they pay no cost. The `[cli]` extra is
 > required to run the `agentao` console script — bare installs print a friendly
-> `pip install agentao[cli]` hint and exit 2.
+> `pip install agentao[cli]` hint and exit 2. Two modes are exempt since 0.5.9:
+> `agentao --acp` and `agentao --login` run from a bare install (the login uses
+> plain terminal prompts without `rich`), which is what an ACP Registry
+> client's `uvx agentao@<version>` gets.
 
 See [`docs/migration/0.3.x-to-0.4.0.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.3.x-to-0.4.0.md) for the full 0.3.x → 0.4.0 migration matrix.
 

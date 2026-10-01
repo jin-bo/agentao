@@ -7,9 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Targeting 0.5.9. Add entries under the relevant heading as work lands._
+---
 
-### Added
+## [0.5.9] — 2026-10-01
 
 ### Changed
 
@@ -19,7 +19,9 @@ _Targeting 0.5.9. Add entries under the relevant heading as work lands._
   a Registry entry has to launch `uvx agentao@<version>`, which used to stop
   at "agentao CLI requires extra packages (missing: rich)". Both modes are now
   dispatched before that check; the login uses `rich` when it is installed
-  and plain terminal prompts when it is not. Every other command still needs
+  and plain terminal prompts when it is not (a hidden answer is read from
+  stdin when stdin is not a terminal, since `getpass` would read the
+  terminal instead). Every other command still needs
   `[cli]`. The login command an `auth_required` error names is now
   `uvx agentao@<version> --login`.
 

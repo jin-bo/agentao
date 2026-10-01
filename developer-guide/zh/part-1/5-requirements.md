@@ -117,7 +117,9 @@ pip install 'agentao[full]'        # cli + web + i18n + playwright + tokenizer
 > 列表里看不到它们，避免 model 调一个会失败的工具。不装 `[i18n]` 时 CJK 记忆
 > 召回会一次性 warning 并降级（Latin 查询完全跳过 jieba，零成本）。`[cli]` 是
 > 跑 `agentao` 命令行的必需 extras——裸装运行 `agentao` 会输出友好提示
-> `pip install agentao[cli]` 并 exit 2。
+> `pip install agentao[cli]` 并 exit 2。0.5.9 起有两个例外：`agentao --acp` 和
+> `agentao --login` 裸装即可运行（没有 `rich` 时登录用纯终端提示），ACP Registry
+> 客户端通过 `uvx agentao@<version>` 拿到的就是这种安装。
 
 完整 0.3.x → 0.4.0 迁移矩阵见
 [`docs/migration/0.3.x-to-0.4.0.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.3.x-to-0.4.0.md)。
