@@ -94,7 +94,10 @@ def try_acp_explicit_route(cli: "AgentaoCLI", user_input: str) -> bool:
     if needs_load:
         try:
             from ..acp_client import ACPManager
-            cli._acp_manager = ACPManager.from_project()
+            from .commands_ext.acp_login import terminal_login_available
+            cli._acp_manager = ACPManager.from_project(
+                terminal_auth=terminal_login_available(),
+            )
             cli._acp_config_mtime = disk_mtime
             cli._acp_load_error_shown = False
         except Exception as exc:

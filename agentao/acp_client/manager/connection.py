@@ -83,6 +83,7 @@ class ConnectionMixin:
         # would then make concurrent ``send_prompt`` /  ``prompt_once``
         # on other threads spuriously raise ``SERVER_BUSY`` even though
         # no turn is active.
+        self._refuse_if_reserved_for_login(name)
         handshake_lock = self._get_handshake_lock(name)
         with handshake_lock:
             return self._connect_server_locked(
@@ -101,6 +102,7 @@ class ConnectionMixin:
         handle = self._handles.get(name)
         if handle is None:
             raise AcpServerNotFound(name)
+        self._refuse_if_reserved_for_login(name)
 
         # Fatal-state check must come before the cached-client short-circuit:
         # the server can be marked fatal *after* a client was cached (e.g. two
@@ -249,7 +251,7 @@ class ConnectionMixin:
         # success) as every other entry point.
         with self._handshake_guarded(name, on_failure=_teardown_partial_handshake):
             client.start_reader()
-            client.initialize(timeout=timeout)
+            self._initialize_client(name, client, timeout=timeout)
             client.create_session(
                 cwd=cwd, mcp_servers=mcp_servers, timeout=timeout,
             )
@@ -307,6 +309,7 @@ class ConnectionMixin:
         # ``handle.stop()``. Re-entrant: when this path falls through to
         # ``_connect_server_locked`` below, the same thread can acquire
         # the handshake lock again without self-deadlock.
+        self._refuse_if_reserved_for_login(name)
         handshake_lock = self._get_handshake_lock(name)
         with handshake_lock:
             return self._ensure_connected_locked(
@@ -324,6 +327,9 @@ class ConnectionMixin:
         _inside_turn: bool = False,
     ) -> ACPClient:
         """``ensure_connected`` body — caller must hold the handshake lock."""
+        # Authoritative reservation check: the fast path below can return a
+        # cached client without reaching ``_connect_server_locked``.
+        self._refuse_if_reserved_for_login(name)
         # Refuse service while sticky-fatal AND classify+evict a dead
         # cached subprocess. Shared with ``prompt_once`` so the same
         # recovery contract applies whether the caller is the

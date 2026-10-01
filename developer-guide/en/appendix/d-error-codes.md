@@ -69,6 +69,8 @@ Every `AcpClientError` carries a `details: dict` with context relevant to the co
 
 Special key — **`phase`**: `details["phase"] == "handshake"` is stamped on *every* `AcpClientError` (including `AcpRpcError`) raised during the `initialize` / `session/new` setup path. It is the canonical "was this a handshake-phase failure?" signal — see §D.7.
 
+Special keys — **`auth_required`** / **`auth_methods`**: an `AcpRpcError` with `rpc_code == -32000` (ACP `auth_required`) during setup gets `details["auth_required"] = True` and `details["auth_methods"]` — the methods the agent advertised at `initialize`. It still carries `phase == "handshake"`, but it is **not** counted toward the consecutive-handshake-failure streak, so it never makes the server fatal. Use `agentao.acp_client.auth.is_auth_required(err)` to test for it.
+
 Special key — **`underlying_code`**: for non-RPC `AcpClientError` whose `code` the manager reclassified to `handshake_fail`, the original `AcpErrorCode` (one of `PROTOCOL_ERROR` / `TRANSPORT_DISCONNECT` / `REQUEST_TIMEOUT`) is stashed here. `AcpRpcError` does not set this key — its underlying RPC detail lives on `rpc_code` / `rpc_message`.
 
 Always log `details` alongside the message so you can diagnose without re-running.
@@ -150,7 +152,7 @@ except AcpClientError as e:
         ...   # steady-state timeout on an established session
 ```
 
-If you want a *single* uniform predicate, use `details.get("phase") == "handshake"` — it covers both subclasses. The two-branch form above is provided so hosts that already branch on `case HANDSHAKE_FAIL` (as shown in Part 3 §3.4.8 and related examples) can extend to the RPC case without restructuring.
+If you want a *single* uniform predicate, use `details.get("phase") == "handshake"` — it covers both subclasses. Check `details.get("auth_required")` first: that handshake-phase `AcpRpcError` means "log in", not "fix the server". The two-branch form above is provided so hosts that already branch on `case HANDSHAKE_FAIL` (as shown in Part 3 §3.4.8 and related examples) can extend to the RPC case without restructuring.
 
 ---
 

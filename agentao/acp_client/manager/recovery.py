@@ -19,6 +19,7 @@ from ..client import (
     AcpRpcError,
     AcpServerNotFound,
 )
+from ..auth import is_auth_required
 from ..models import ServerState, classify_process_death
 from .helpers import logger
 
@@ -265,6 +266,9 @@ class RecoveryMixin:
         permission cancel during setup is a user decision, not a
         handshake regression, and must not count toward the
         sticky-fatal streak.
+        ``auth_required`` (JSON-RPC ``-32000``) is excluded for the same
+        reason — missing credentials are fixed by a login, not a restart —
+        and gets ``details["auth_required"]`` / ``details["auth_methods"]``.
 
         Mutation policy (delivers Appendix D §D.7 in full):
 
@@ -294,6 +298,19 @@ class RecoveryMixin:
         canonical cross-subclass signal.
         """
         if isinstance(exc, AcpInteractionRequiredError):
+            return False
+        if is_auth_required(exc):
+            # ``auth_required`` is the agent working as designed: it wants
+            # credentials, which a login supplies. Counting it toward the
+            # streak made a second ``/acp send`` before logging in flip the
+            # server sticky-fatal, hiding the one error that says what to do.
+            # Stamp the advertised methods so a host can offer the login.
+            exc.details.setdefault("server", name)
+            exc.details["phase"] = "handshake"
+            exc.details["auth_required"] = True
+            with self._auth_lock:
+                methods = [dict(m) for m in self._auth_methods.get(name, [])]
+            exc.details["auth_methods"] = methods
             return False
         if isinstance(exc, AcpRpcError):
             # RPC contract: leave ``code`` (int) and ``error_code``

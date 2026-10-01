@@ -107,7 +107,8 @@ def _tool_args_summary(tool_name: str, args: dict) -> str:
 
 
 _SLASH_COMMANDS = [
-    '/acp', '/acp cancel', '/acp list', '/acp logs',
+    '/acp', '/acp cancel', '/acp list', '/acp login', '/acp logs',
+    '/acp registry', '/acp registry add', '/acp registry search',
     '/acp restart', '/acp send',
     '/acp start', '/acp status', '/acp stop',
     '/agent', '/agent bg', '/agent cancel', '/agent dashboard', '/agent delete', '/agent list', '/agent status',
@@ -141,7 +142,10 @@ _SLASH_COMMANDS = [
 
 _SLASH_COMMAND_HINTS = {
     '/acp cancel': '<name>',
+    '/acp login': '<name> [method-id]',
     '/acp logs': '<name> [lines]',
+    '/acp registry add': '<id> [name]',
+    '/acp registry search': '<keyword>',
     '/acp restart': '<name>',
     '/acp send': '<name> <message>',
     '/acp start': '<name>',

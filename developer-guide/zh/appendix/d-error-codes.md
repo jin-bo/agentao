@@ -69,6 +69,8 @@ except AcpRpcError as e:
 
 特殊键——**`phase`**：只要异常是在 `initialize` / `session/new` 阶段抛出的 `AcpClientError`（含 `AcpRpcError`），`details["phase"] == "handshake"` 都会被打上。它是跨子类统一的"是否握手阶段失败"规范信号——见 §D.7。
 
+特殊键——**`auth_required`** / **`auth_methods`**：setup 阶段 `rpc_code == -32000`（ACP `auth_required`）的 `AcpRpcError` 会带上 `details["auth_required"] = True` 和 `details["auth_methods"]`——即 agent 在 `initialize` 时声明的方法。它仍带 `phase == "handshake"`，但**不**计入连续握手失败的连击，所以永远不会把 server 变成 fatal。可用 `agentao.acp_client.auth.is_auth_required(err)` 判断。
+
 特殊键——**`underlying_code`**：manager 把非 RPC `AcpClientError` 的 `code` 重分类成 `handshake_fail` 时，会把原始 `AcpErrorCode`（`PROTOCOL_ERROR` / `TRANSPORT_DISCONNECT` / `REQUEST_TIMEOUT` 之一）保存到这里。`AcpRpcError` 不写这个键——它的底层细节在 `rpc_code` / `rpc_message` 上。
 
 日志里 **永远** 连 `details` 一起打，这样事后无需复现就能诊断。
@@ -149,7 +151,7 @@ except AcpClientError as e:
         ...   # 已建连会话上的稳态超时
 ```
 
-如果想要*一条*统一判定，用 `details.get("phase") == "handshake"`——两种子类都覆盖。上面的两分支写法是为了让已经按 `case HANDSHAKE_FAIL` 分发的宿主（Part 3 §3.4.8 等示例）能直接扩展到 RPC 情况。
+如果想要*一条*统一判定，用 `details.get("phase") == "handshake"`——两种子类都覆盖。先查 `details.get("auth_required")`：这种握手阶段的 `AcpRpcError` 意思是"去登录"，而不是"去修 server"。上面的两分支写法是为了让已经按 `case HANDSHAKE_FAIL` 分发的宿主（Part 3 §3.4.8 等示例）能直接扩展到 RPC 情况。
 
 ---
 

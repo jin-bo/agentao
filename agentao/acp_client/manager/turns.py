@@ -132,6 +132,7 @@ class TurnsMixin:
         handle = self._handles.get(name)
         if handle is None:
             raise AcpServerNotFound(name)
+        self._refuse_if_reserved_for_login(name)
 
         # ``interaction_policy`` is documented as only applying to
         # non-interactive turns, so skip resolution (including the
@@ -332,6 +333,7 @@ class TurnsMixin:
         handle = self._handles.get(name)
         if handle is None:
             raise AcpServerNotFound(name)
+        self._refuse_if_reserved_for_login(name)
 
         # Fresh connect OUTSIDE turn lock — see ``send_prompt`` for the
         # rationale. Re-session on an existing cached client is deferred
@@ -505,6 +507,7 @@ class TurnsMixin:
         handle = self._handles.get(name)
         if handle is None:
             raise AcpServerNotFound(name)
+        self._refuse_if_reserved_for_login(name)
 
         # ``interaction_policy`` is documented as only applying to
         # non-interactive turns, so skip resolution when
@@ -830,6 +833,7 @@ class TurnsMixin:
         timeout: Optional[float],
     ) -> ACPClient:
         """``_open_ephemeral_client`` body — caller holds handshake lock."""
+        self._refuse_if_reserved_for_login(name)
         handle = self._handles[name]
         _existing_proc = handle._proc
         _we_started = _existing_proc is None or _existing_proc.poll() is not None
@@ -896,7 +900,7 @@ class TurnsMixin:
             cleanup_before_accounting=False,
         ):
             client.start_reader()
-            client.initialize(timeout=timeout)
+            self._initialize_client(name, client, timeout=timeout)
             client.create_session(
                 cwd=cwd, mcp_servers=mcp_servers, timeout=timeout,
             )

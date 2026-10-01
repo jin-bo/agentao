@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
+from .auth import normalize_auth_methods
 from .errors import (
     AcpClientError,
     AcpErrorCode,
@@ -40,6 +41,15 @@ ACP_PROTOCOL_VERSION = 1
 
 # Default timeout for RPC calls (seconds).
 _DEFAULT_TIMEOUT = 30.0
+
+
+def _startup_timeout(handle: ACPProcessHandle) -> float:
+    """``initialize`` timeout: the configured startup budget, at least the default."""
+    config = getattr(handle, "config", None)
+    startup_ms = getattr(config, "startup_timeout_ms", None)
+    if isinstance(startup_ms, (int, float)) and not isinstance(startup_ms, bool) and startup_ms > 0:
+        return max(_DEFAULT_TIMEOUT, startup_ms / 1000.0)
+    return _DEFAULT_TIMEOUT
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +86,9 @@ class AcpConnectionInfo:
     session_id: Optional[str] = None
     session_cwd: Optional[str] = None
     session_mcp_servers_fingerprint: Optional[str] = None
+    #: ``authMethods`` from the ``initialize`` response, kept verbatim but
+    #: for entries that are not objects with a string ``id``.
+    auth_methods: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def _fingerprint_mcp_servers(mcp_servers: Optional[List[Dict[str, Any]]]) -> str:
@@ -434,20 +447,34 @@ class ACPClient:
     # ACP handshake helpers
     # ------------------------------------------------------------------
 
-    def initialize(self, *, timeout: Optional[float] = None) -> Dict[str, Any]:
+    def initialize(
+        self,
+        *,
+        timeout: Optional[float] = None,
+        client_capabilities: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Perform the ACP ``initialize`` handshake.
 
-        Sends ``initialize`` with protocol version and minimal client
-        capabilities, waits for the response, and stores connection info.
+        Sends ``initialize`` with protocol version and the given client
+        capabilities (empty by default), waits for the response, and stores
+        connection info — including ``authMethods``.
+
+        With no explicit *timeout*, waits ``max(30 s, startupTimeoutMs)``:
+        ``initialize`` is the first answer from a freshly launched process, so
+        it is what a slow start — a runner downloading its package on first
+        use — delays. The floor keeps the default 10 s ``startupTimeoutMs``
+        from shortening the wait hand-written entries have always had.
 
         Returns:
             The full ``initialize`` result dict.
         """
+        if timeout is None:
+            timeout = _startup_timeout(self._handle)
         self._handle._set_state(ServerState.INITIALIZING)
 
         params = {
             "protocolVersion": ACP_PROTOCOL_VERSION,
-            "clientCapabilities": {},
+            "clientCapabilities": dict(client_capabilities or {}),
         }
 
         try:
@@ -461,6 +488,9 @@ class ACPClient:
             "agentCapabilities", {}
         )
         self.connection_info.agent_info = result.get("agentInfo")
+        self.connection_info.auth_methods = normalize_auth_methods(
+            result.get("authMethods")
+        )
 
         self._handle.info.touch()
         return result

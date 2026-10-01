@@ -233,6 +233,23 @@ mgr.prompt_once(
 
 Precedence: **per-call override > server default**. `None` (the default) falls back to the server default. `send_prompt_nonblocking` is internal / unstable and **does not** accept this kwarg.
 
+### Adding a server at runtime
+
+A running manager takes new servers without being rebuilt. `add_server` registers the per-server state and leaves the server stopped; running servers are untouched:
+
+```python
+from pathlib import Path
+
+from agentao.acp_client.config import add_server_entry
+from agentao.acp_client.registry import entry_to_server_config, fetch_registry, find_agent
+
+entry = entry_to_server_config(find_agent(fetch_registry(), "gemini"))  # npx / uvx only
+config = add_server_entry("gemini", entry.config, project_root=Path("/app"))  # optional: persist
+mgr.add_server("gemini", config)
+```
+
+Each step is separate — query, convert, write `acp.json`, register — so a host can stop after any of them. `entry_to_server_config` writes `autoStart: false` and `startupTimeoutMs: 120000` (the first launch downloads the package); `add_server_entry` refuses a name collision or an invalid existing file, and writes atomically. Scope and rules: [`docs/guides/acp-client.md`](../../../docs/guides/acp-client.md#adding-agents-from-the-acp-registry).
+
 ## 3.4.6 Long-lived vs. ephemeral clients
 
 `prompt_once()` is fail-fast and can run in either mode:
@@ -266,7 +283,7 @@ Three common failure scenarios have pinned behaviour so embedders don't have to 
 
 **Recoverable process death → auto-rebuild.** If the subprocess has died between calls (clean exit, idle non-zero within cap, stdio EOF, or death during an active turn), the next `ensure_connected` / `send_prompt` call closes the dead client, bumps `mgr.restart_count(name)`, and rebuilds transparently. `maxRecoverableRestarts` (default 3) caps consecutive auto-rebuilds on idle non-zero exits.
 
-**Fatal process death → sticky, operator action required.** OOM / SIGKILL / `exit 137`, signal-terminated processes, consecutive handshake failures, or idle non-zero exits beyond the cap mark the server as sticky-fatal. `mgr.is_fatal(name)` returns `True`; all calls raise `AcpClientError(code=TRANSPORT_DISCONNECT, details={"recovery": "fatal"})` until `mgr.restart_server(name)` or `mgr.start_server(name)` clears the mark.
+**Fatal process death → sticky, operator action required.** OOM / SIGKILL / `exit 137`, signal-terminated processes, consecutive handshake failures, or idle non-zero exits beyond the cap mark the server as sticky-fatal. An `auth_required` answer is not a handshake failure and never counts (see 3.4.8). `mgr.is_fatal(name)` returns `True`; all calls raise `AcpClientError(code=TRANSPORT_DISCONNECT, details={"recovery": "fatal"})` until `mgr.restart_server(name)` or `mgr.start_server(name)` clears the mark.
 
 ```python
 from agentao.acp_client import ACPManager, AcpClientError, AcpErrorCode
@@ -311,6 +328,36 @@ except AcpClientError as e:
 ```
 
 Full error taxonomy (including the `AcpRpcError` contract and the `details["underlying_code"]` / `details["phase"]` signals) in [Appendix D · Error codes](/en/appendix/d-error-codes).
+
+### Authentication (`auth_required`)
+
+An agent without credentials answers `session/new` with `auth_required` — an `AcpRpcError` with `rpc_code == -32000`. The manager stamps `details["auth_required"] = True` and `details["auth_methods"]` (what the agent advertised), and does **not** count it toward the handshake-failure streak, so retrying never turns the server fatal. `mgr.auth_methods(name)` returns the same list at any time after the first `initialize`.
+
+```python
+from agentao.acp_client import ACPManager, AcpRpcError
+from agentao.acp_client.auth import (
+    build_terminal_login_command, is_auth_required, terminal_auth_methods,
+)
+
+mgr = ACPManager.from_project(terminal_auth=True)  # only if you can run a terminal login
+try:
+    mgr.connect_server("gemini")
+except AcpRpcError as e:
+    if not is_auth_required(e):
+        raise
+    method = terminal_auth_methods(e.details["auth_methods"])[0]
+    command = build_terminal_login_command(mgr.get_handle("gemini").config, method)
+    with mgr.reserve_for_login("gemini"):     # SERVER_BUSY if a turn is active
+        run_interactively(command.argv, command.env, command.cwd)  # your terminal; exit 0 = ok
+        mgr.restart_server("gemini")          # the spec: reconnect and reinitialize
+        mgr.connect_server("gemini")
+```
+
+- `terminal_auth=True` declares Terminal Auth in `initialize` (`clientCapabilities.auth.terminal` and the legacy `_meta["terminal-auth"]`). Agents may offer a `terminal` method only to a client that declared it, so a headless host leaves it `False` (the default).
+- `build_terminal_login_command` follows the ACP spec: the server's own command, base args and `cwd`, the method's `args` appended, its `env` over the server's scrubbed launch environment. It refuses any method that is not `terminal`.
+- Running the login is the host's job. It needs the user's terminal: inherit stdin/stdout and stay in the host's session (never `start_new_session`). Agentao's CLI runs it as a shell runs a foreground job — its own process group, given the terminal with `tcsetpgrp` and handing it back — so Ctrl+C reaches the login and a cancelled login's whole group can be ended.
+- `reserve_for_login` makes turns and connects from other threads raise `SERVER_BUSY` until it exits; other servers are unaffected.
+- Only `terminal` methods are supported; for `agent` methods (the default when `type` is omitted), authenticate outside Agentao and restart the server.
 
 ## 3.4.9 Health & debugging
 

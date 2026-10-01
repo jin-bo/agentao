@@ -97,6 +97,9 @@ All commands start with `/`:
   - `/acp cancel <name>` - Cancel active turn
   - `/acp status <name>` - Detailed server status
   - `/acp logs <name> [lines]` - View server stderr
+  - `/acp login <name> [method-id]` - Run the server's terminal login, then restart and reconnect
+  - `/acp registry search <keyword>` - Search the official ACP Registry
+  - `/acp registry add <id> [name]` - Add a Registry agent (npx/uvx) to .agentao/acp.json
 - `/replay [subcommand]` - Persistent replay recording: toggle, list, inspect, prune, delete
   - `/replay` or `/replay list` - List replay instances (with recording status)
   - `/replay on` / `/replay off` - Toggle recording (writes `.agentao/settings.json`)

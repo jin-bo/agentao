@@ -44,7 +44,122 @@ Create `.agentao/acp.json` in your project root:
 /acp cancel <name>            # Cancel active turn
 /acp status <name>            # Detailed status
 /acp logs <name> [lines]      # View stderr output
+/acp login <name> [method-id] # Run the server's terminal login, then restart and reconnect
+/acp registry search <keyword>  # Search the official ACP Registry
+/acp registry add <id> [name]   # Add a Registry agent (npx / uvx) to .agentao/acp.json
 ```
+
+## Adding Agents from the ACP Registry
+
+The [ACP Registry](https://github.com/agentclientprotocol/registry) lists
+ACP agents and how to launch them. Agentao reads its stable index
+(`https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`):
+
+```
+/acp registry search claude
+/acp registry add claude-acp            # server name defaults to the id
+/acp registry add gemini my-gemini      # or choose one
+```
+
+`add` shows the agent, version and launch command, and writes nothing until
+you confirm. Neither command launches the agent; the first `/acp send` (or
+`/acp start`) does, and that first launch downloads the package. The entry is
+usable at once, without restarting the CLI, and servers already running are
+left alone.
+
+What `add` writes is an ordinary `acp.json` entry:
+
+```json
+"claude-acp": {
+  "command": "npx",
+  "args": ["--yes", "@agentclientprotocol/claude-agent-acp@0.84.0"],
+  "env": {},
+  "cwd": ".",
+  "autoStart": false,
+  "startupTimeoutMs": 120000,
+  "description": "Claude Agent 0.84.0 (ACP Registry: claude-acp)"
+}
+```
+
+Scope of the first version:
+
+- **`npx` and `uvx` only.** Node.js (for `npx`) or [uv](https://docs.astral.sh/uv/)
+  (for `uvx`) must already be installed; Agentao installs no runner. When an
+  entry offers both, `npx` is used. Binary-only entries are refused.
+- **Pinned versions only.** The package spec must pin the entry's own
+  version — `name@1.2.3`, `@scope/name@1.2.3`, `name==1.2.3`, with optional
+  uv `[extras]`. Other spellings are refused, not guessed at.
+- **No silent overwrite.** A name that is already configured is refused;
+  pass another name. An invalid existing `acp.json` is refused rather than
+  rewritten; other entries and fields are kept, and the file is replaced
+  atomically.
+- **`env` values containing `$` are refused**, because `acp.json` expands
+  `$VAR` in `env` and has no escape for a literal `$`. Add such an agent by
+  hand.
+- **No credentials are written.** If the agent needs a provider key, see
+  *Authentication* below.
+
+Embedding hosts can use the same pieces without the CLI:
+`agentao.acp_client.registry` (`fetch_registry`, `search_registry`,
+`find_agent`, `entry_to_server_config`),
+`agentao.acp_client.config.add_server_entry`, and
+`ACPManager.add_server(name, config)`. Each step is separate, so the host
+decides whether to write the file, register the server, or start it.
+
+## Authentication
+
+An agent that needs credentials answers `session/new` with `auth_required`
+(JSON-RPC `-32000`). Agentao reports it as such, with the methods the agent
+advertised, and never counts it as a handshake failure. So sending again
+before logging in does not mark the server fatal.
+
+### Terminal login
+
+If the agent offers a `terminal` auth method, run:
+
+```
+/acp login <name>              # one terminal method: runs it
+/acp login <name> <method-id>  # several: pick one
+```
+
+Following the ACP authentication spec, Agentao runs the server's own
+command, arguments and `cwd` with the method's `args` appended and its `env`
+applied over the server's environment. The login has the terminal to itself:
+it runs as a foreground job, in its own process group, and Ctrl+C cancels it
+without interrupting Agentao. A cancelled or failed login is ended together
+with anything it started (an `npx` / `uvx` runner's children, for instance);
+on Windows the login shares the console and runs in a job object, which
+Agentao terminates.
+Exit status `0` is success; anything else (including a
+cancel or a launch failure) is reported as a failure and nothing is
+restarted. After a success Agentao restarts the server, initializes again and
+opens a session. If the agent still requires authentication, that is
+reported once; the login is not run again.
+
+While a login runs, the server is reserved. A turn on it, or a second login,
+gets `SERVER_BUSY`; a login is refused while a turn is active. Other servers
+are not affected.
+
+Agentao declares Terminal Auth (`clientCapabilities.auth.terminal` and the
+legacy `_meta["terminal-auth"]`) only in an interactive terminal. Agents may
+offer a `terminal` method only to a client that declared it, so `/acp login`
+needs a terminal session.
+
+### Other methods
+
+Only `terminal` methods are supported. For an `agent` method (the default
+when a method has no `type`) or any other type, authenticate outside
+Agentao, then `/acp restart <name>`.
+
+### Provider keys are not inherited
+
+ACP servers are launched with Agentao's own provider keys removed from the
+environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …),
+like MCP servers and hooks. An agent that expects its key from the
+environment therefore answers `auth_required` even if the key is set in your
+shell. Log in, or give the key to that server explicitly in its `env` block
+(`"GEMINI_API_KEY": "${GEMINI_API_KEY}"`). A terminal login gets the same
+environment, so the same rule applies.
 
 ## Configuration Reference
 
@@ -56,8 +171,8 @@ Create `.agentao/acp.json` in your project root:
 | `args` | string[] | yes | — | Command arguments |
 | `env` | object | yes | — | Extra environment variables |
 | `cwd` | string | yes | — | Working directory (relative to project root) |
-| `autoStart` | boolean | no | `true` | Reserved for bulk-start flows; current CLI does not auto-start servers just because `/acp` was opened |
-| `startupTimeoutMs` | integer | no | `10000` | Parsed config field; currently not enforced by the CLI runtime |
+| `autoStart` | boolean | no | `true` | Used by `ACPManager.start_all()`; the CLI does not auto-start servers just because `/acp` was opened. Registry entries are written with `false` |
+| `startupTimeoutMs` | integer | no | `10000` | How long to wait for the `initialize` answer from a freshly launched server, never less than 30 s (the default request wait). Registry entries are written with `120000` to allow for a first-run package download |
 | `requestTimeoutMs` | integer | no | `60000` | Per-request timeout in ms |
 | `capabilities` | object | no | `{}` | Server capability hints |
 | `description` | string | no | `""` | Human-readable description |
@@ -153,6 +268,21 @@ ACP interactions: 1 pending
 2. Check `/acp logs <name>` for stderr output.
 3. Verify the `command` exists and is executable.
 4. Verify `cwd` is a valid directory.
+
+### `requires authentication`
+
+- The agent answered `auth_required`. Run `/acp login <name>` if it offers a
+  terminal login; otherwise authenticate outside Agentao and
+  `/acp restart <name>`.
+- An agent that reads a provider key from the environment does not see your
+  shell's key (see *Provider keys are not inherited*).
+
+### First launch of a Registry agent times out
+
+- The first `npx` / `uvx` run downloads the package. Registry entries wait up
+  to 120 s for `initialize`; raise `startupTimeoutMs` for a slow network, or
+  run the launch command once in a shell to fill the runner's cache.
+- `npx` / `uvx` must be on `PATH`.
 
 ### Server starts but handshake fails
 

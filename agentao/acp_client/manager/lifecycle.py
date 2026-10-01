@@ -13,7 +13,8 @@ from typing import Optional
 
 from ..client import AcpServerNotFound
 from ..config import load_acp_client_config
-from ..models import ServerState
+from ..models import AcpServerConfig, ServerState
+from ..process import ACPProcessHandle
 from .helpers import logger
 
 
@@ -25,14 +26,47 @@ class LifecycleMixin:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_project(cls, project_root: Optional[Path] = None) -> "LifecycleMixin":
+    def from_project(
+        cls,
+        project_root: Optional[Path] = None,
+        *,
+        terminal_auth: bool = False,
+    ) -> "LifecycleMixin":
         """Load ``acp.json`` and build a manager with handles for every server.
 
         Args:
             project_root: Forwarded to :func:`load_acp_client_config`.
+            terminal_auth: Forwarded to the constructor — declare Terminal
+                Auth only when the host can run a terminal login.
         """
         config = load_acp_client_config(project_root=project_root)
-        return cls(config)
+        return cls(config, terminal_auth=terminal_auth)
+
+    def add_server(self, name: str, config: AcpServerConfig) -> None:
+        """Register a server with this running manager.
+
+        Initializes the per-server state the constructor would have built
+        and leaves the server stopped — nothing is launched, and servers that
+        are already running are not touched. Use it after writing a new
+        entry to ``acp.json`` (``agentao.acp_client.config.add_server_entry``)
+        so the entry is usable without rebuilding the manager.
+
+        Raises:
+            ValueError: If *name* is already registered.
+        """
+        if not isinstance(name, str) or not name:
+            raise ValueError("server name must be a non-empty string")
+        with self._add_server_lock:
+            if name in self._handles:
+                raise ValueError(f"ACP server '{name}' is already configured")
+            self._config_warnings[name] = []
+            with self._recovery_lock:
+                self._restart_counts[name] = 0
+                self._handshake_fail_streak[name] = 0
+            self._config.servers[name] = config
+            # Last: a name present in ``_handles`` is what every entry point
+            # reads as "configured", so the state above must exist first.
+            self._handles[name] = ACPProcessHandle(name, config)
 
     # ------------------------------------------------------------------
     # Bulk lifecycle
@@ -45,7 +79,8 @@ class LifecycleMixin:
             only_auto: If ``True`` (default), only start servers whose
                 ``auto_start`` config flag is set.
         """
-        for name, handle in self._handles.items():
+        # Snapshot: ``add_server`` may grow ``_handles`` from another thread.
+        for name, handle in list(self._handles.items()):
             if only_auto and not handle.config.auto_start:
                 logger.debug("acp: skipping '%s' (autoStart=false)", name)
                 continue
@@ -93,7 +128,7 @@ class LifecycleMixin:
                 )
         self._ephemeral_clients.clear()
 
-        for handle in self._handles.values():
+        for handle in list(self._handles.values()):
             try:
                 handle.stop()
             except Exception as exc:

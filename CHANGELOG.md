@@ -32,6 +32,35 @@ _Targeting 0.5.8. Add entries under the relevant heading as work lands._
   malformed `LLM_*` value is `-32603` naming the source, never its value.
   The ACP server reads the file on every `session/new`, so a login done
   while it runs takes effect without a restart.
+- **Add agents from the official ACP Registry, and log in to them** (#381).
+  `/acp registry search <keyword>` and `/acp registry add <id> [name]` read
+  the Registry's stable index and write an `npx` / `uvx` entry to
+  `.agentao/acp.json` after showing the agent, version and launch command
+  and asking for confirmation. Nothing is launched by either command; the
+  entry is usable at once without restarting the CLI, with `autoStart: false`
+  and `startupTimeoutMs: 120000` for the first-run package download. The
+  package spec must pin the entry's version (`name@X`, `@scope/name@X`,
+  `name==X`, uv `[extras]`); binary-only entries, other spellings, and `env`
+  values containing `$` are refused. A name collision or an invalid existing
+  `acp.json` is refused, other entries are kept, and the file is replaced
+  atomically. `/acp login <name> [method-id]` runs an agent's ACP `terminal`
+  auth method the way the spec describes — the server's own command, args
+  and `cwd`, the method's `args` appended, its `env` over the server's
+  launch environment — attached to the terminal as a foreground job: its own
+  process group in the CLI's session, given the terminal and handing it
+  back, so hidden input and Ctrl+C reach the login and not the CLI, and a
+  cancelled or failed login is ended as a whole group (what a runner such as
+  `npx` started included). Exit status `0`
+  restarts the server and connects again; a cancel, a non-zero exit or a
+  launch failure restarts nothing, and an agent that still wants credentials
+  is reported once. The interactive CLI declares Terminal Auth in both
+  spellings (`clientCapabilities.auth.terminal`, `_meta["terminal-auth"]`);
+  other methods, including `agent`, are reported as unsupported. For hosts:
+  `agentao.acp_client.registry` (`fetch_registry`, `search_registry`,
+  `find_agent`, `entry_to_server_config`), `agentao.acp_client.auth`,
+  `agentao.acp_client.config.add_server_entry`, and on `ACPManager` the
+  `terminal_auth=` constructor / `from_project` keyword (default `False`),
+  `add_server()`, `auth_methods()` and `reserve_for_login()`.
 
 ### Changed
 
@@ -55,6 +84,10 @@ _Targeting 0.5.8. Add entries under the relevant heading as work lands._
   `AGENTAO_WEB_FETCH_*`. The interactive CLI, `agentao run`,
   `build_from_environment()` and a host-injected `agent_factory` /
   `provider_resolver` are unchanged.
+- **ACP client: `startupTimeoutMs` now bounds the wait for `initialize`**
+  when the caller passes no timeout, at least the previous 30 s. It was
+  parsed and documented but never applied, so a first-run package download
+  slower than 30 s failed the handshake.
 - `agentao --acp` and `agentao --login` refuse unrecognized arguments
   (exit `2`). They used to be ignored, so a mistyped flag started a server
   that read stdin to end of input and exited `0`.
@@ -65,6 +98,15 @@ _Targeting 0.5.8. Add entries under the relevant heading as work lands._
   of `os.environ`.
 
 ### Fixed
+
+- **ACP client: an `auth_required` answer no longer makes a server
+  sticky-fatal.** It counted as a handshake failure, so sending twice before
+  logging in marked the server fatal and replaced "requires authentication"
+  with "call restart_server". It is now stamped `details["auth_required"]` /
+  `details["auth_methods"]`, keeps its `-32000` code, and is left out of the
+  streak. On Windows, an ACP server or login whose `command` is a bare
+  `npx` / `uvx` is resolved against the child's `PATH` first: without a
+  shell, `CreateProcess` does not find the `.cmd` shim.
 
 - **An ACP server no longer carries one project's credentials into another
   project's session.** Loading `<cwd>/.env` into the shared `os.environ`
