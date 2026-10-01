@@ -385,6 +385,7 @@ runtime decides whether to auto-rebuild or give up:
 | stdio pipe EOF with process still alive | **recoverable** | Rebuild client; process is not respawned |
 | OOM / SIGKILL / exit 137 / signal-terminated | **fatal** | No auto-respawn; `state == FAILED`; explicit restart required |
 | consecutive handshake failure after restart | **fatal** | Environment / config problem; not a transient fault |
+| `auth_required` (`-32000`) from `initialize` / `session/new` | **not counted** | Not a handshake failure: the agent needs credentials. Raised as `AcpRpcError` with `details["auth_required"]` / `details["auth_methods"]`; repeated answers never make the server fatal |
 | user-initiated `cancel_turn` | (n/a here) | Handled by §7.1 cleanup |
 
 Implementation notes:

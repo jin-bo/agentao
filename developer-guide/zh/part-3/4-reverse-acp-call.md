@@ -233,6 +233,23 @@ mgr.prompt_once(
 
 优先级：**per-call override > server default**。`None`（默认值）回退到 server 默认。`send_prompt_nonblocking` 是 internal / unstable，**不**接这个 kwarg。
 
+### 运行时添加 server
+
+运行中的 manager 可以直接添加 server，无需重建。`add_server` 登记该 server 的全部状态，并保持其停止；已在运行的 server 不受影响：
+
+```python
+from pathlib import Path
+
+from agentao.acp_client.config import add_server_entry
+from agentao.acp_client.registry import entry_to_server_config, fetch_registry, find_agent
+
+entry = entry_to_server_config(find_agent(fetch_registry(), "gemini"))  # 仅 npx / uvx
+config = add_server_entry("gemini", entry.config, project_root=Path("/app"))  # 可选：写入文件
+mgr.add_server("gemini", config)
+```
+
+查询、转换、写 `acp.json`、登记是彼此独立的几步，宿主可以在任一步停下。`entry_to_server_config` 写入 `autoStart: false` 和 `startupTimeoutMs: 120000`（首次启动要下载包）；`add_server_entry` 拒绝重名或已损坏的现有文件，并原子写入。范围与规则见 [`docs/guides/acp-client.md`](../../../docs/guides/acp-client.md#adding-agents-from-the-acp-registry)。
+
 ## 3.4.6 长驻 vs 临时
 
 `prompt_once()` 是 fail-fast，两种模式都能跑：
@@ -266,7 +283,7 @@ mgr.prompt_once(
 
 **可恢复进程死亡 → 自动重建**。如果子进程在两次调用之间死了（干净退出、idle 非零退出且在上限内、stdio EOF、active turn 期间死亡），下次 `ensure_connected` / `send_prompt` 调用会关掉 dead client、把 `mgr.restart_count(name)` +1、然后透明地重建。`maxRecoverableRestarts`（默认 3）限制 idle 非零退出时连续自动重建的上限。
 
-**致命进程死亡 → sticky，必须运维介入**。OOM / SIGKILL / `exit 137`、信号结束、连续 handshake 失败、或 idle 非零退出超过上限，都会把 server 标记为 sticky-fatal。`mgr.is_fatal(name)` 返回 `True`，所有调用都抛 `AcpClientError(code=TRANSPORT_DISCONNECT, details={"recovery": "fatal"})`，直到调 `mgr.restart_server(name)` 或 `mgr.start_server(name)` 清除标记。
+**致命进程死亡 → sticky，必须运维介入**。OOM / SIGKILL / `exit 137`、信号结束、连续 handshake 失败、或 idle 非零退出超过上限，都会把 server 标记为 sticky-fatal。`auth_required` 不算握手失败，永不计入（见 3.4.8）。`mgr.is_fatal(name)` 返回 `True`，所有调用都抛 `AcpClientError(code=TRANSPORT_DISCONNECT, details={"recovery": "fatal"})`，直到调 `mgr.restart_server(name)` 或 `mgr.start_server(name)` 清除标记。
 
 ```python
 from agentao.acp_client import ACPManager, AcpClientError, AcpErrorCode
@@ -310,6 +327,36 @@ except AcpClientError as e:
 ```
 
 完整错误分类（包含 `AcpRpcError` 合约、`details["underlying_code"]` / `details["phase"]` 信号）见[附录 D · 错误码](/zh/appendix/d-error-codes)。
+
+### 认证（`auth_required`）
+
+没有凭据的 agent 会对 `session/new` 回 `auth_required`——即 `rpc_code == -32000` 的 `AcpRpcError`。manager 会打上 `details["auth_required"] = True` 和 `details["auth_methods"]`（agent 声明的方法），并且**不**计入握手失败连击，所以重试永远不会把 server 变成 fatal。首次 `initialize` 之后，随时可用 `mgr.auth_methods(name)` 取到同一份列表。
+
+```python
+from agentao.acp_client import ACPManager, AcpRpcError
+from agentao.acp_client.auth import (
+    build_terminal_login_command, is_auth_required, terminal_auth_methods,
+)
+
+mgr = ACPManager.from_project(terminal_auth=True)  # 仅当你能运行终端登录
+try:
+    mgr.connect_server("gemini")
+except AcpRpcError as e:
+    if not is_auth_required(e):
+        raise
+    method = terminal_auth_methods(e.details["auth_methods"])[0]
+    command = build_terminal_login_command(mgr.get_handle("gemini").config, method)
+    with mgr.reserve_for_login("gemini"):     # 有 turn 在跑时抛 SERVER_BUSY
+        run_interactively(command.argv, command.env, command.cwd)  # 你的终端；退出码 0 = 成功
+        mgr.restart_server("gemini")          # 规范要求：重连并重新 initialize
+        mgr.connect_server("gemini")
+```
+
+- `terminal_auth=True` 会在 `initialize` 中声明 Terminal Auth（`clientCapabilities.auth.terminal` 和旧写法 `_meta["terminal-auth"]`）。agent 只对声明了它的客户端提供 `terminal` 方法，所以 headless 宿主保持 `False`（默认）。
+- `build_terminal_login_command` 遵循 ACP 规范：沿用 server 自己的命令、基础参数和 `cwd`，追加方法的 `args`，并把方法的 `env` 覆盖在 server 清洗过的启动环境之上。非 `terminal` 方法一律拒绝。
+- 运行登录由宿主负责。它需要用户的终端：继承 stdin/stdout，并留在宿主的会话里（不能用 `start_new_session`）。Agentao CLI 像 shell 运行前台作业那样运行它：单独的进程组，用 `tcsetpgrp` 交出终端、结束后收回，这样 Ctrl+C 只送达登录进程，取消时也能结束它的整个进程组。
+- `reserve_for_login` 生效期间，其他线程的 turn 和连接都会抛 `SERVER_BUSY`；其他 server 不受影响。
+- 只支持 `terminal` 方法；对 `agent` 方法（省略 `type` 时的默认类型），请在 Agentao 之外完成认证，再重启 server。
 
 ## 3.4.9 健康检查与排错
 

@@ -22,8 +22,21 @@ def _ensure_acp_manager(cli: AgentaoCLI):
         return cli._acp_manager
 
     try:
+        from pathlib import Path
+
         from ...acp_client import ACPManager
-        cli._acp_manager = ACPManager.from_project()
+        from .acp_login import terminal_login_available
+        try:
+            loaded_mtime = (Path(".agentao") / "acp.json").stat().st_mtime
+        except OSError:
+            loaded_mtime = None
+        cli._acp_manager = ACPManager.from_project(
+            terminal_auth=terminal_login_available(),
+        )
+        # Same bookkeeping as the ``@server`` route, which otherwise sees an
+        # unrecorded mtime as a config change and replaces this manager —
+        # orphaning the servers ``/acp start`` / ``/acp send`` launched.
+        cli._acp_config_mtime = loaded_mtime
     except Exception as exc:
         console.print(f"\n[error]Failed to load ACP config: {exc}[/error]\n")
         return None
@@ -66,11 +79,20 @@ def handle_acp_command(cli: AgentaoCLI, args: str) -> None:
         _acp_logs(cli, rest)
         return
 
+    if sub == "login":
+        from .acp_login import acp_login
+        acp_login(cli, rest)
+        return
+
+    if sub == "registry":
+        from .acp_registry import acp_registry
+        acp_registry(cli, rest)
+        return
 
     console.print(unknown_subcommand(sub))
     console.print(
         "[info]Available: list, start, stop, restart, send, cancel, "
-        "status, logs[/info]\n"
+        "status, logs, login, registry[/info]\n"
     )
 
 
@@ -305,6 +327,19 @@ def _acp_send(cli: AgentaoCLI, rest: str) -> None:
     run_acp_prompt_inline(cli, name, message)
 
 
+def _print_auth_required(mgr, name: str, exc: BaseException) -> bool:
+    """Explain an ``auth_required`` failure; ``False`` for any other error."""
+    from ...acp_client.auth import is_auth_required
+
+    if not is_auth_required(exc):
+        return False
+    from .acp_login import _shown, auth_required_hint
+
+    # The hint names the agent's advertised method types: third-party text.
+    console.print(f"\n[warning]{_shown(auth_required_hint(mgr, name, exc))}[/warning]\n")
+    return True
+
+
 def run_acp_prompt_inline(cli: AgentaoCLI, name: str, message: str) -> None:
     """Send a prompt to an ACP server with inline interaction handling.
 
@@ -350,6 +385,8 @@ def run_acp_prompt_inline(cli: AgentaoCLI, name: str, message: str) -> None:
             except Exception as exc2:
                 console.print(f"\n[error]Send failed after cancel: {exc2}[/error]\n")
                 return
+        elif _print_auth_required(mgr, name, exc):
+            return
         else:
             console.print(f"\n[error]Send failed: {exc}[/error]\n")
             return
@@ -385,7 +422,8 @@ def run_acp_prompt_inline(cli: AgentaoCLI, name: str, message: str) -> None:
                 try:
                     result = mgr.finish_prompt_nonblocking(name, client, rid, slot)
                 except Exception as exc:
-                    console.print(f"\n[error]Prompt failed: {exc}[/error]\n")
+                    if not _print_auth_required(mgr, name, exc):
+                        console.print(f"\n[error]Prompt failed: {exc}[/error]\n")
                     return
                 stop_reason = (
                     result.get("stopReason", "unknown")

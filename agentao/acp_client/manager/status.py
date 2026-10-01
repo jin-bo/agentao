@@ -86,7 +86,8 @@ class StatusMixin:
         inbox_by_server: Dict[str, int] = {}
         for msg in self.inbox.peek():
             inbox_by_server[msg.server] = inbox_by_server.get(msg.server, 0) + 1
-        for name, handle in self._handles.items():
+        # Snapshot: ``add_server`` may grow ``_handles`` from another thread.
+        for name, handle in list(self._handles.items()):
             # Eagerly revalidate cached process liveness so a crashed
             # server is never reported as "ready" or "busy" when it is
             # actually dead. The probe runs for READY, BUSY, and

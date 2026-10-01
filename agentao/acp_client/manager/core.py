@@ -20,6 +20,7 @@ from ..inbox import Inbox
 from ..interaction import InteractionRegistry
 from ..models import AcpClientConfig
 from ..process import ACPProcessHandle
+from .auth import AuthMixin
 from .connection import ConnectionMixin
 from .interactions import InteractionsMixin
 from .lifecycle import LifecycleMixin
@@ -35,6 +36,7 @@ class ACPManager(
     InteractionsMixin,
     StatusMixin,
     RecoveryMixin,
+    AuthMixin,
 ):
     """Registry that owns one :class:`ACPProcessHandle` per configured server.
 
@@ -51,8 +53,28 @@ class ACPManager(
         config: AcpClientConfig,
         *,
         notification_callback: Optional[Callable[[str, str, Any], None]] = None,
+        terminal_auth: bool = False,
     ) -> None:
+        """
+        Args:
+            config: Validated ACP client configuration.
+            notification_callback: Called with ``(server, method, params)``
+                for every server notification.
+            terminal_auth: Declare ACP Terminal Auth in ``initialize``. Pass
+                ``True`` only when the host can actually run a ``terminal``
+                login (an interactive terminal for the user); headless hosts
+                leave it ``False`` so agents do not offer a method nobody
+                can run.
+        """
         self._config = config
+        self._terminal_auth = bool(terminal_auth)
+        # ``authMethods`` per server from its last ``initialize`` and the
+        # login reservations (server → owning thread id); see ``auth.py``.
+        self._auth_methods: Dict[str, List[Dict[str, Any]]] = {}
+        self._login_reservations: Dict[str, int] = {}
+        self._auth_lock = threading.Lock()
+        # Serializes ``add_server`` registrations against each other.
+        self._add_server_lock = threading.Lock()
         self._handles: Dict[str, ACPProcessHandle] = {}
         self._clients: Dict[str, ACPClient] = {}
         self._notification_callback = notification_callback

@@ -15,6 +15,7 @@ import io
 import logging
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -22,6 +23,28 @@ from typing import Callable, Iterator, List, Optional
 
 from ..capabilities.process import build_child_env, kill_process_tree
 from .models import AcpProcessInfo, AcpServerConfig, ServerState
+
+
+def resolve_executable(command: str, env: Optional[dict] = None) -> str:
+    """The program ``Popen`` should launch for a configured ``command``.
+
+    On Windows a bare name such as ``npx`` or ``uvx`` names a ``.cmd`` /
+    ``.exe`` shim that ``CreateProcess`` does not find without a shell: it
+    appends no extension but ``.exe``. Resolve it against the child's
+    ``PATH`` (and ``PATHEXT``) the way a shell would. A command that
+    contains a path separator, or that cannot be found, is returned as
+    given so ``Popen`` reports the original name. Elsewhere ``execvp``
+    already searches ``PATH``, so the command is returned unchanged.
+    """
+    if sys.platform != "win32":
+        return command
+    if not command or "/" in command or "\\" in command:
+        return command
+    path = (env or {}).get("PATH")
+    if path is None:
+        path = (env or {}).get("Path")
+    found = shutil.which(command, path=path)
+    return found or command
 
 # Default capacity for the stderr ring buffer (number of lines).
 _STDERR_RING_CAPACITY = 200
@@ -250,7 +273,7 @@ class ACPProcessHandle:
 
             try:
                 self._proc = subprocess.Popen(
-                    [self.config.command, *self.config.args],
+                    [resolve_executable(self.config.command, env), *self.config.args],
                     **popen_kwargs,
                 )
             except Exception as exc:
