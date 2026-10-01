@@ -7,7 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Targeting 0.5.8. Add entries under the relevant heading as work lands._
+---
+
+## [0.5.8] — 2026-10-01
 
 ### Added
 
@@ -60,7 +62,7 @@ _Targeting 0.5.8. Add entries under the relevant heading as work lands._
   `find_agent`, `entry_to_server_config`), `agentao.acp_client.auth`,
   `agentao.acp_client.config.add_server_entry`, and on `ACPManager` the
   `terminal_auth=` constructor / `from_project` keyword (default `False`),
-  `add_server()`, `auth_methods()` and `reserve_for_login()`.
+  `add_server()`, `auth_methods()`, `needs_login()` and `reserve_for_login()`.
 
 ### Changed
 
@@ -114,13 +116,16 @@ _Targeting 0.5.8. Add entries under the relevant heading as work lands._
   start took 120 s (its `startupTimeoutMs`) to report "timeout waiting for
   response to 'initialize'". They now fail as soon as the output closes, with
   "server closed its output while waiting for '<method>'"
-  (`TRANSPORT_DISCONNECT`); `/acp logs <name>` shows why it exited.
+  (`TRANSPORT_DISCONNECT`; during session setup the headline code is
+  `HANDSHAKE_FAIL` with that in `details["underlying_code"]`, as for any
+  setup disconnect). `/acp logs <name>` shows why it exited.
 
 - **`/acp` after `auth_required` and after a crash.** A server waiting for a
   login is listed as `needs login` instead of `failed`; the new
   `ACPManager.needs_login(name)` reports it and stays true until a session
-  opens or setup fails for another reason. A successful `/acp login` clears the recorded `auth_required` error,
-  which `/acp status` used to keep showing. `/acp status` also reads the
+  opens or setup fails for another reason. A successful `/acp login` clears
+  the recorded `auth_required` error, which `/acp status` used to keep
+  showing. `/acp status` also reads the
   status snapshot, which re-checks the process, so a server that died
   mid-turn is no longer shown `ready`.
 

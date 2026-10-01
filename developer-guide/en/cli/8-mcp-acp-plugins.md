@@ -111,8 +111,17 @@ Live config: `.agentao/acp.json`. Format is similar to `mcp.json` but each entry
 > /acp send <name> <prompt>     # send a turn; permission/input handled inline
 > /acp cancel <name>            # cancel an in-flight turn
 > /acp status <name>            # detailed status
-> /acp logs <name> [lines]      # tail stderr (default last 20)
+> /acp logs <name> [lines]      # tail stderr (default last 50)
+> /acp login <name> [method-id] # run the server's terminal login, then restart + reconnect
+> /acp registry search <keyword>  # search the official ACP Registry
+> /acp registry add <id> [name]   # add a Registry agent (npx / uvx) to acp.json
 ```
+
+### Adding agents from the ACP Registry (0.5.8+)
+
+`/acp registry add <id>` shows the agent, its pinned version and launch command, and writes an `npx` / `uvx` entry to `.agentao/acp.json` only after you confirm. Nothing is launched until the first `/acp send` or `/acp start`, which downloads the package (Node.js or uv must already be installed). Binary-only entries are refused.
+
+An agent without credentials answers `auth_required`; `/acp` then lists it as `needs login`. If it offers a `terminal` auth method, `/acp login <name>` runs that login in your terminal, and on exit status `0` restarts the server and connects again. Other auth methods are done outside Agentao, followed by `/acp restart <name>`.
 
 State machine:
 
@@ -139,6 +148,7 @@ The state colors map to:
 - `starting`/`initializing`/`stopping` (yellow)
 - `configured`/`stopped` (dim)
 - `failed` (red)
+- `needs login` (yellow) — the server answered `auth_required`; shown instead of `failed` / `stopped` until a session opens
 
 ### When to use ACP vs MCP
 
