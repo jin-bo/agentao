@@ -281,3 +281,93 @@ class TestClose:
 
         with pytest.raises(AcpClientError, match="stdin"):
             client.call("anything", timeout=1)
+
+
+# ---------------------------------------------------------------------------
+# Server closes its output
+# ---------------------------------------------------------------------------
+
+
+def _script_handle(tmp_path: Path, source: str):
+    import sys
+
+    from agentao.acp_client.models import AcpServerConfig
+    from agentao.acp_client.process import ACPProcessHandle
+
+    script = tmp_path / "server.py"
+    script.write_text(source, encoding="utf-8")
+    config = AcpServerConfig(
+        command=sys.executable, args=[str(script)], env={}, cwd=str(tmp_path),
+    )
+    return ACPProcessHandle("eof", config)
+
+
+class TestServerEof:
+    """A server whose output ends can answer nothing more, so nothing waits."""
+
+    def test_a_server_that_dies_mid_request_fails_it_at_once(self, tmp_path: Path) -> None:
+        # Reads the request, then exits without answering (a crash on import
+        # after the runner started, as with a broken uvx agent).
+        handle = _script_handle(
+            tmp_path, "import sys\nsys.stdin.readline()\nsys.exit(1)\n",
+        )
+        handle.start()
+        client = ACPClient(handle)
+        client.start_reader()
+        try:
+            started = time.monotonic()
+            with pytest.raises(AcpClientError, match="server closed its output") as info:
+                client.call("initialize", timeout=30)
+            assert time.monotonic() - started < 10
+            from agentao.acp_client import AcpErrorCode
+
+            assert info.value.code is AcpErrorCode.TRANSPORT_DISCONNECT
+        finally:
+            client.close()
+            handle.stop()
+
+    def test_a_request_after_the_output_ended_fails_at_once(self, tmp_path: Path) -> None:
+        # stdout closed, process alive and still reading stdin: the write
+        # succeeds, so only the EOF record can stop the wait.
+        handle = _script_handle(
+            tmp_path,
+            "import os, sys\nos.close(1)\nfor _ in sys.stdin:\n    pass\n",
+        )
+        handle.start()
+        client = ACPClient(handle)
+        client.start_reader()
+        try:
+            deadline = time.monotonic() + 10
+            while not client._eof and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert client._eof
+            started = time.monotonic()
+            with pytest.raises(AcpClientError, match="server closed its output"):
+                client.call("session/new", timeout=30)
+            assert time.monotonic() - started < 5
+        finally:
+            client.close()
+            handle.stop()
+
+    def test_connect_does_not_wait_out_the_startup_timeout(self, tmp_path: Path) -> None:
+        import sys
+
+        from agentao.acp_client.manager import ACPManager
+        from agentao.acp_client.models import AcpClientConfig, AcpServerConfig
+
+        script = tmp_path / "server.py"
+        script.write_text("import sys\nsys.stdin.readline()\nsys.exit(1)\n", encoding="utf-8")
+        config = AcpClientConfig(servers={
+            "eof": AcpServerConfig(
+                command=sys.executable, args=[str(script)], env={},
+                cwd=str(tmp_path), startup_timeout_ms=120_000,
+            ),
+        })
+        mgr = ACPManager(config)
+        try:
+            started = time.monotonic()
+            with pytest.raises(AcpClientError, match="server closed its output"):
+                mgr.connect_server("eof")
+            assert time.monotonic() - started < 15
+        finally:
+            mgr.stop_all()

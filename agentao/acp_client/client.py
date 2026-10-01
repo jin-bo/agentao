@@ -109,6 +109,18 @@ def _fingerprint_mcp_servers(mcp_servers: Optional[List[Dict[str, Any]]]) -> str
 # ---------------------------------------------------------------------------
 
 
+def _fail_slot_on_eof(slot: _PendingRequest) -> None:
+    if slot.event.is_set():
+        return
+    slot.error = {
+        "code": -1,
+        "message": "server closed its output",
+        "_transport_closed": True,
+        "_server_eof": True,
+    }
+    slot.event.set()
+
+
 class ACPClient:
     """JSON-RPC 2.0 client bound to one :class:`ACPProcessHandle`.
 
@@ -143,6 +155,10 @@ class ACPClient:
 
         self._reader_thread: Optional[threading.Thread] = None
         self._closed = False
+        # Set once the server's stdout reaches EOF: no response can arrive
+        # after that, so a request still waiting, or one sent later, fails
+        # at once instead of waiting out its timeout.
+        self._eof = False
         # Queue shared between the feeder thread (blocked on stdout) and
         # _read_loop. None is the EOF sentinel.
         self._line_queue: queue.Queue = queue.Queue()
@@ -214,6 +230,7 @@ class ACPClient:
             except queue.Empty:
                 continue
             if raw_line is None:  # EOF sentinel from _feeder_loop
+                self._fail_pending_on_eof()
                 break
             if self._closed:
                 break
@@ -241,6 +258,21 @@ class ACPClient:
                     logger.debug(
                         "acp[%s]: reader thread exiting", self._handle.name
                     )
+
+    def _fail_pending_on_eof(self) -> None:
+        """Wake every waiting request: the server closed its output."""
+        with self._pending_lock:
+            self._eof = True
+            for slot in self._pending.values():
+                _fail_slot_on_eof(slot)
+
+    def _register_pending(self, rid: int, slot: "_PendingRequest") -> None:
+        # After EOF the slot is failed straight away; the caller's send and
+        # wait then run unchanged and raise TRANSPORT_DISCONNECT.
+        with self._pending_lock:
+            self._pending[rid] = slot
+            if self._eof:
+                _fail_slot_on_eof(slot)
 
     def _route_message(self, msg: dict) -> None:
         """Dispatch a parsed JSON-RPC message."""
@@ -352,6 +384,11 @@ class ACPClient:
         broken connection from a real server-returned JSON-RPC error.
         """
         if err.get("_transport_closed"):
+            if err.get("_server_eof"):
+                raise AcpClientError(
+                    f"server closed its output while waiting for '{method}'",
+                    code=AcpErrorCode.TRANSPORT_DISCONNECT,
+                )
             raise AcpClientError(
                 f"transport closed while waiting for '{method}'",
                 code=AcpErrorCode.TRANSPORT_DISCONNECT,
@@ -393,8 +430,7 @@ class ACPClient:
         rid = self._alloc_id()
         slot = _PendingRequest()
 
-        with self._pending_lock:
-            self._pending[rid] = slot
+        self._register_pending(rid, slot)
 
         request: dict = {
             "jsonrpc": "2.0",
@@ -608,8 +644,7 @@ class ACPClient:
         }
 
         slot = _PendingRequest()
-        with self._pending_lock:
-            self._pending[rid] = slot
+        self._register_pending(rid, slot)
 
         try:
             self._send(request)
@@ -691,8 +726,7 @@ class ACPClient:
         }
 
         slot = _PendingRequest()
-        with self._pending_lock:
-            self._pending[rid] = slot
+        self._register_pending(rid, slot)
 
         try:
             self._send(request)

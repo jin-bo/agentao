@@ -108,6 +108,14 @@ _Targeting 0.5.8. Add entries under the relevant heading as work lands._
   `npx` / `uvx` is resolved against the child's `PATH` first: without a
   shell, `CreateProcess` does not find the `.cmd` shim.
 
+- **ACP client: a server that exits before answering fails the request at
+  once.** When its output ended, the requests still waiting (and any sent
+  later) sat out their whole timeout, so a Registry agent that crashed on
+  start took 120 s (its `startupTimeoutMs`) to report "timeout waiting for
+  response to 'initialize'". They now fail as soon as the output closes, with
+  "server closed its output while waiting for '<method>'"
+  (`TRANSPORT_DISCONNECT`); `/acp logs <name>` shows why it exited.
+
 - **An ACP server no longer carries one project's credentials into another
   project's session.** Loading `<cwd>/.env` into the shared `os.environ`
   without overriding meant the first session's keys, model and endpoint
