@@ -18,8 +18,8 @@ host-side, and agentao should have neither". This design keeps that boundary —
 callback stay with the host, and agentao's own CLI is one such host — and shows it no longer
 implies "don't build it" (§1). How the design got here, round by round, is in Appendix A.
 
-**Readers:** agentao maintainers; anyone touching `agentao/mcp/`. **Chinese twin:** written before
-PR 1 starts (§13.1).
+**Readers:** agentao maintainers; anyone touching `agentao/mcp/`. **Chinese twin:**
+`mcp-oauth.zh.md`, kept in step with this file.
 
 **Sources** (all fetched 2026-10-02): the MCP specification raw `.mdx` files for revisions
 2025-11-25 and 2026-07-28 (`basic/authorization/…`) and the `ext-auth` repository; the installed
@@ -692,9 +692,9 @@ on 2.0.0 and `http://127.0.0.1:<port>/` on 1.26.0.
 
 1. **The go-ahead.** The maintainer approves building it (option C of the reverse review) and the
    §11 recommendations. The status line then reads *Approved*.
-2. **This document lands first**: revs 2–6 are committed to PR #396 and merged, so every
+2. **This document lands first**: revs 2–8 are committed to PR #396 and merged, so every
    implementation PR can cite a design on `main`.
-3. **Chinese twin** `mcp-oauth.zh.md`, and the D1 follow-up: `openworker-borrow-review.zh.md` §9
+3. **Chinese twin** `mcp-oauth.zh.md` (written at rev 8), and the D1 follow-up: `openworker-borrow-review.zh.md` §9
    points here.
 4. **Optional, outward-facing, needs its own approval:** a comment on python-sdk #2858 and #2875
    with the S1/S2 numbers (§10). Nothing here depends on it.
