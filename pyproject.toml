@@ -48,7 +48,7 @@ dependencies = [
     # Required at runtime by agentao/skills/registry.py for cross-process
     # locking. Lazy-imported, but kept in core because any host that
     # activates skills will trip ImportError otherwise.
-    "filelock>=1.4.0",
+    "filelock>=3.0",
     # ``agentao run`` spec templating — render_spec uses Jinja2 with
     # StrictUndefined for ``prompt`` / ``instructions`` substitution.
     "jinja2>=3.0.0",

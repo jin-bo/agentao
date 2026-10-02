@@ -42,10 +42,15 @@ from ._compat import (
 )
 from .config import (
     McpServerConfig,
+    McpOAuthConfigError,
     McpTransportConfigError,
+    resolve_oauth,
     resolve_timeouts,
     resolve_transport,
 )
+from .oauth import NEEDS_AUTH as _VERDICT_NEEDS_AUTH
+from .oauth import AuthVerdict, StoredTokenAuth
+from .oauth_store import OAuthRuntime
 
 logger = logging.getLogger("agentao.mcp")
 
@@ -164,6 +169,16 @@ def _first_failure(exc: BaseException) -> Optional[Exception]:
     return None
 
 
+#: What mcp 2.0's Streamable HTTP transport says for any non-404 HTTP error on a
+#: request (``streamable_http.py``), status and headers gone.
+_OPAQUE_HTTP_FAILURE = "Server returned an error response"
+
+
+def _is_opaque_http_failure(exc: BaseException) -> bool:
+    """An HTTP-level failure with nothing more specific to say about itself."""
+    return _OPAQUE_HTTP_FAILURE in str(exc)
+
+
 class NonMcpEndpointError(ConnectionError):
     """A configured ``url`` resolves to something that is not an MCP endpoint.
 
@@ -263,14 +278,27 @@ class ServerStatus(str, Enum):
     CONNECTING = "connecting"
     CONNECTED = "connected"
     ERROR = "error"
+    # The server wants an OAuth login (docs/design/mcp-oauth.md §5.3): a 401
+    # with a Bearer challenge and no usable token, or a rejected refresh.
+    NEEDS_AUTH = "needs_auth"
 
 
 class McpClient:
     """Manages a single MCP server connection."""
 
-    def __init__(self, name: str, config: McpServerConfig):
+    def __init__(
+        self, name: str, config: McpServerConfig, *, oauth: Optional[OAuthRuntime] = None
+    ):
         self.name = name
         self.config = config
+        # Shared with the other clients of one manager (its per-record locks
+        # and shielded refreshes); a client built on its own gets its own.
+        self._oauth_runtime = oauth
+        # Rebuilt on every connect, so its verdict starts clear per session.
+        self._auth: Optional[StoredTokenAuth] = None
+        # The verdict that put this client in NEEDS_AUTH, kept so a call can
+        # tell whether a login has happened since (its record ``stamp``).
+        self._needs_auth: Optional[AuthVerdict] = None
         self.status = ServerStatus.DISCONNECTED
         self.error_message: Optional[str] = None
         self._session: Optional[ClientSession] = None
@@ -322,6 +350,26 @@ class McpClient:
     @property
     def is_trusted(self) -> bool:
         return bool(self.config.get("trust", False))
+
+    @property
+    def oauth_runtime(self) -> OAuthRuntime:
+        if self._oauth_runtime is None:
+            self._oauth_runtime = OAuthRuntime()
+        return self._oauth_runtime
+
+    def _auth_verdict(self) -> Optional[AuthVerdict]:
+        """What this connection's auth object concluded, if anything.
+
+        Read **before** any error classification: on mcp 2.0 an auth failure
+        reaches the caller as "Server returned an error response", with the
+        status and headers gone, so nothing else can recognise it.
+        """
+        return self._auth.verdict if self._auth is not None else None
+
+    def _enter_needs_auth(self, verdict: AuthVerdict) -> None:
+        self.status = ServerStatus.NEEDS_AUTH
+        self.error_message = verdict.message
+        self._needs_auth = verdict
 
     async def connect(self) -> None:
         """Connect to the MCP server and discover tools.
@@ -438,8 +486,17 @@ class McpClient:
         transport = "unknown"
         source = "inferred"
 
+        self._auth = None
+        self._needs_auth = None
         try:
             transport, source = resolve_transport(self.config, return_source=True)
+            # Every OAuth-eligible URL server gets the auth object, record or
+            # not: without one it only observes, and it is the only place a
+            # Bearer challenge is still visible (docs/design/mcp-oauth.md §5.4).
+            if resolve_oauth(self.config) is not None:
+                self._auth = StoredTokenAuth(
+                    self.name, self.config["url"], self.oauth_runtime
+                )
 
             self._exit_stack = AsyncExitStack()
             await self._exit_stack.__aenter__()
@@ -548,8 +605,19 @@ class McpClient:
         TaskGroup (1 sub-exception)").
         """
         e = _first_failure(e) or e
+        verdict = self._auth_verdict()
+        if verdict is not None and verdict.kind == _VERDICT_NEEDS_AUTH:
+            self._enter_needs_auth(verdict)
+            logger.warning(f"MCP server '{self.name}': {verdict.message}")
+            await self._cleanup_failed_connect()
+            return
         self.status = ServerStatus.ERROR
         message = str(e)
+        if verdict is not None:
+            # A refresh that failed for a reason a login would not fix: the
+            # transport's own text (often just "Server returned an error
+            # response") says less than the refresh did.
+            message = f"{verdict.message}; {message}"
         # A bare ``url`` now defaults to Streamable HTTP. If such an
         # *inferred* http connect fails the handshake, the server may
         # actually be a legacy SSE endpoint — surface the one-token fix.
@@ -565,11 +633,20 @@ class McpClient:
         # Nor for a redirect the SDK would not follow: its message already
         # names the URL to configure, and the SDK's SSE client applies the
         # same origin rule (2.2 and 1.30 release notes), so "try SSE" cannot fix it.
+        # Nor for a malformed ``oauth`` block (a config error, not a handshake
+        # failure) or a failed OAuth refresh (the transport is not at fault).
         if (
             transport == "http"
             and source == "inferred"
+            and verdict is None
             and not isinstance(
-                e, (NonMcpEndpointError, McpProtocolEraError, McpCatalogError)
+                e,
+                (
+                    NonMcpEndpointError,
+                    McpProtocolEraError,
+                    McpCatalogError,
+                    McpOAuthConfigError,
+                ),
             )
             and classify_mcp_error(e) is not McpErrorKind.AUTH
             and not _is_unfollowed_redirect(e)
@@ -581,6 +658,9 @@ class McpClient:
             )
         self.error_message = message
         logger.error(f"Failed to connect to MCP server '{self.name}': {message}")
+        await self._cleanup_failed_connect()
+
+    async def _cleanup_failed_connect(self) -> None:
         # Cleanup on failure. The session and the negotiated version belong
         # to the transport being torn down here: a connect that got as far
         # as ``initialize`` and then failed would otherwise leave a version
@@ -934,6 +1014,7 @@ class McpClient:
                 headers=headers,
                 timeout=startup_timeout,
                 sse_read_timeout=sse_read_timeout,
+                **({"auth": self._auth} if self._auth is not None else {}),
             )
         )
         # ``sse_client`` yields a 2-tuple.
@@ -986,6 +1067,8 @@ class McpClient:
             # httpx on mcp 1.x, httpx2 on 2.x. Passing the wrong one raises
             # ``TypeError: unhashable type: 'Timeout'`` inside httpx2.
             timeout=httpx_for_mcp.Timeout(startup_timeout, read=sse_read_timeout),
+            # The preflight above ran without it, on purpose (§5.4).
+            **({"auth": self._auth} if self._auth is not None else {}),
         )
         # Caller-managed lifecycle: enter the client first so the LIFO unwind
         # tears down the transport before closing the client.
@@ -1027,6 +1110,9 @@ class McpClient:
         # when the call picks up a session, not when it later finds that session
         # gone: another call may have started reconnecting in between.
         seen = self._connect_attempts
+        hint = self._needs_auth_unchanged()
+        if hint is not None:
+            return f"MCP auth error: {hint}"
         for attempt in range(2):
             if not self._session or self.status != ServerStatus.CONNECTED:
                 try:
@@ -1039,6 +1125,8 @@ class McpClient:
                     # check below, not this handler, is what catches a failed
                     # reconnect.
                     return f"MCP connection error for '{self.name}': {e}"
+                if self.status == ServerStatus.NEEDS_AUTH:
+                    return f"MCP auth error: {self.error_message}"
                 if self.status != ServerStatus.CONNECTED or not self._session:
                     return (
                         f"MCP connection error for '{self.name}': "
@@ -1054,6 +1142,20 @@ class McpClient:
                     session, gone, tool_name, arguments, read_timeout
                 )
             except Exception as e:
+                # The auth object's verdict first, before any classification:
+                # on mcp 2.0 this failure arrives as "Server returned an error
+                # response", which the string classifier files under OTHER.
+                verdict = self._auth_verdict()
+                if verdict is not None and verdict.kind == _VERDICT_NEEDS_AUTH:
+                    self._enter_needs_auth(verdict)
+                    return f"MCP auth error: {verdict.message}"
+                # A transient refresh failure (REFRESH_FAILED) is the
+                # connection's, not necessarily this request's: another call
+                # may have hit it while this one failed for its own reason.
+                # So it changes nothing about how this error is handled, and
+                # only explains it when the error is the opaque HTTP failure a
+                # refresh failure would produce.
+                refresh_note = verdict.message if verdict is not None else None
                 if UnexpectedClaimedResult is not None and isinstance(
                     e, UnexpectedClaimedResult
                 ):
@@ -1067,8 +1169,12 @@ class McpClient:
                         "cannot be read."
                     )
                 kind = classify_mcp_error(e)
+                explains = refresh_note is not None and (
+                    kind is McpErrorKind.AUTH or _is_opaque_http_failure(e)
+                )
+                suffix = f" ({refresh_note})" if explains else ""
                 if kind is McpErrorKind.AUTH:
-                    return f"MCP auth error: {e}"
+                    return f"MCP auth error: {e}{suffix}"
                 if attempt == 0 and kind in (
                     McpErrorKind.SESSION_EXPIRED,
                     McpErrorKind.TRANSPORT_DROPPED,
@@ -1082,7 +1188,7 @@ class McpClient:
                     # lifetime of this manager.
                     await self._drop_session(session)
                     continue
-                return f"MCP tool error: {e}"
+                return f"MCP tool error: {e}{suffix}"
 
             if InputRequiredResult is not None and isinstance(
                 result, InputRequiredResult
@@ -1129,6 +1235,21 @@ class McpClient:
             return text
 
         return "MCP tool error: failed after reconnect attempt"
+
+    def _needs_auth_unchanged(self) -> Optional[str]:
+        """The login hint, while nothing could have changed the verdict.
+
+        A server in NEEDS_AUTH is reconnected only once its credential record
+        has changed (a login, here or in another process): reconnecting on
+        every call would re-ask the server the question it just answered.
+        """
+        verdict = self._needs_auth
+        if self.status != ServerStatus.NEEDS_AUTH or verdict is None:
+            return None
+        url = self.config.get("url")
+        if url and self.oauth_runtime.store.stamp(url) != verdict.stamp:
+            return None
+        return verdict.message
 
     async def _call_on(
         self,
@@ -1311,9 +1432,18 @@ class McpClientManager:
     on parallel threads.
     """
 
-    def __init__(self, server_configs: Dict[str, McpServerConfig]):
+    def __init__(
+        self,
+        server_configs: Dict[str, McpServerConfig],
+        *,
+        oauth_runtime: Optional[OAuthRuntime] = None,
+    ):
         self._configs = server_configs
         self._clients: Dict[str, McpClient] = {}
+        # One per manager: its per-record locks are bound to this manager's
+        # loop, and its shielded refreshes are what ``_shutdown`` waits for.
+        # Between managers (and processes) the record's file lock excludes.
+        self._oauth = oauth_runtime or OAuthRuntime()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
         # Guards ``_closed`` and starting the loop, so a call either gets onto
@@ -1416,7 +1546,7 @@ class McpClientManager:
     async def _connect_all_async(self) -> None:
         """Connect to all servers concurrently."""
         async def _connect_one(name: str, config: McpServerConfig) -> None:
-            client = McpClient(name, config)
+            client = McpClient(name, config, oauth=self._oauth)
             self._clients[name] = client
             try:
                 await client.connect()
@@ -1457,6 +1587,64 @@ class McpClientManager:
             raise RuntimeError(f"MCP server '{server_name}' not found")
         return await client.call_tool(tool_name, arguments)
 
+    def login(self, server_name: str, ui: Any) -> ServerStatus:
+        """Run an OAuth login for one server, then reconnect it.
+
+        ``ui`` implements :class:`agentao.mcp.oauth.OAuthLoginUI`. The flow runs
+        on the manager's loop like every other call, so its commit takes the
+        same per-record lock as a refresh. Returns the server's status after
+        the reconnect. A server that was never connected has no tools
+        registered with the agent; a restart is what loads them (D8).
+        """
+        return self._run(self._login_async(server_name, ui))
+
+    async def _login_async(self, server_name: str, ui: Any) -> ServerStatus:
+        from .oauth import login as _login
+
+        client = self._oauth_client(server_name)
+        settings = resolve_oauth(client.config)
+        assert settings is not None  # checked by _oauth_client
+        await _login(server_name, client.config, settings, ui, self._oauth)
+        # Under the reconnect lock, like every other reconnect: a call that
+        # saw the record change would otherwise reconnect concurrently.
+        async with client._reconnect_lock:
+            await client.disconnect()
+            await client.connect()
+            client._connect_attempts += 1
+        return client.status
+
+    def logout(self, server_name: str) -> bool:
+        """Delete a server's stored credential and disconnect it.
+
+        Waits for a refresh in flight on that record, so the refresh cannot
+        write the credential back. Returns whether there was one to delete.
+        """
+        return self._run(self._logout_async(server_name))
+
+    async def _logout_async(self, server_name: str) -> bool:
+        from .oauth import logout as _logout
+
+        client = self._oauth_client(server_name)
+        deleted = await _logout(client.config["url"], self._oauth)
+        async with client._reconnect_lock:
+            await client.disconnect()
+        return deleted
+
+    def _oauth_client(self, server_name: str) -> McpClient:
+        client = self._clients.get(server_name)
+        if client is None:
+            config = self._configs.get(server_name)
+            if config is None:
+                raise RuntimeError(f"MCP server '{server_name}' not found")
+            client = McpClient(server_name, config, oauth=self._oauth)
+            self._clients[server_name] = client
+        if resolve_oauth(client.config) is None:
+            raise RuntimeError(
+                f"MCP server '{server_name}' does not use OAuth (a stdio server, "
+                "an 'Authorization' header, or \"oauth\": false)"
+            )
+        return client
+
     def disconnect_all(self, timeout: float = _CLOSE_WAIT_S) -> None:
         """Close the manager. Idempotent; every later call raises
         :class:`McpManagerClosedError`.
@@ -1486,7 +1674,13 @@ class McpClientManager:
             if not self._closed:
                 self._closed = True
                 self._close_deadline = (
-                    time.monotonic() + timeout + _CANCEL_WAIT_S + _OWNER_STOP_S + 1.0
+                    time.monotonic()
+                    + timeout
+                    + _CANCEL_WAIT_S
+                    # Shielded OAuth refreshes the cancelled calls left behind.
+                    + self._oauth.token_timeout
+                    + _OWNER_STOP_S
+                    + 1.0
                 )
                 if loop is not None:
                     # Held so the task is referenced while nobody waits on it.
@@ -1525,6 +1719,15 @@ class McpClientManager:
                             f"{len(stuck)} MCP call(s) did not stop when cancelled; "
                             "closing without them"
                         )
+            # A cancelled call does not cancel the OAuth refresh it started:
+            # that runs shielded, so the server's rotation reaches disk. The
+            # loop must not stop under it (docs/design/mcp-oauth.md §5.3).
+            left = await self._oauth.wait_critical(self._oauth.token_timeout)
+            if left:
+                logger.warning(
+                    f"{left} MCP OAuth credential write(s) did not finish in time; "
+                    "the next refresh of that server may need a login"
+                )
             clients = list(self._clients.values())
             if clients:
                 stops = [asyncio.ensure_future(client.disconnect()) for client in clients]

@@ -1,10 +1,12 @@
 # MCP OAuth — Design
 
-**Status:** **Proposal, rev 8 (2026-10-02).** Four design-review rounds passed it; a reverse review
+**Status:** **Approved (2026-10-02)** — the go-ahead and every §11 recommendation. **PR 1
+implemented** (auth module and record store; see *Implementation record* in Appendix A); PR 2 and
+PR 3 not started. Design history: proposal rev 8 (2026-10-02). Four design-review rounds passed it; a reverse review
 of rev 5 (→ rev 6) and an external review of rev 6 (→ rev 7, two P1s: auth failures are invisible
 once the transport has handled them, so the verdict must come from the auth object on every
 connection) were folded in, and its second round (→ rev 8: a shielded refresh must also survive
-the manager's shutdown). Its verdict: implement once that is fixed, no wider scope (Appendix A). **Awaiting the maintainer's go-ahead; nothing implemented.** §13 is the
+the manager's shutdown). Its verdict: implement once that is fixed, no wider scope (Appendix A). §13 is the
 implementation plan.
 
 **What this adds.** Native OAuth for remote MCP servers: the user adds a server URL, runs
@@ -594,8 +596,8 @@ on 2.0.0 and `http://127.0.0.1:<port>/` on 1.26.0.
 
 | # | Question | Plan |
 |---|---|---|
-| S3 | SSE transport with `StoredTokenAuth` | Same fake, `type: "sse"`; part of PR 1's tests |
-| S4 | Two processes refreshing one rotating token, and a refresh racing a logout | Two processes, a token that expires immediately, a token endpoint that invalidates the old refresh token on use; then a logout during a slow refresh; part of PR 1's tests |
+| S3 | SSE transport with `StoredTokenAuth` | Same fake, `type: "sse"`; part of PR 1's tests. **Ran in PR 1: passes on 2.0.0, 1.26.0, 1.30.0** |
+| S4 | Two processes refreshing one rotating token, and a refresh racing a logout | Two processes, a token that expires immediately, a token endpoint that invalidates the old refresh token on use; then a logout during a slow refresh; part of PR 1's tests. **Ran in PR 1: one token request, both processes end on the new token; logout waits for the refresh** |
 
 ## 10. Out of scope
 
@@ -690,12 +692,12 @@ on 2.0.0 and `http://127.0.0.1:<port>/` on 1.26.0.
 
 ### 13.1 Before PR 1
 
-1. **The go-ahead.** The maintainer approves building it (option C of the reverse review) and the
-   §11 recommendations. The status line then reads *Approved*.
+1. **The go-ahead.** *Done 2026-10-02:* the maintainer approved building it and every §11
+   recommendation.
 2. **This document lands first**: revs 2–8 are committed to PR #396 and merged, so every
    implementation PR can cite a design on `main`.
 3. **Chinese twin** `mcp-oauth.zh.md` (written at rev 8), and the D1 follow-up: `openworker-borrow-review.zh.md` §9
-   points here.
+   points here (*done* — its summary row and §9 now say this design supersedes it).
 4. **Optional, outward-facing, needs its own approval:** a comment on python-sdk #2858 and #2875
    with the S1/S2 numbers (§10). Nothing here depends on it.
 
@@ -894,3 +896,82 @@ them, inside an extended outer deadline (§5.3, "Shutdown"), with the test that 
 stated with its bounded outcome. Clarified at the reviewer's note: the `asyncio.Lock`s are per
 manager (each has its own loop); between managers in one process the file lock excludes, measured
 with two instances on two threads.
+
+### Implementation record — PR 1 (2026-10-02)
+
+Auth module and record store, as §13.3 lists them: `agentao/mcp/oauth.py` and `oauth_store.py`
+(new), and changes to `_compat.py`, `config.py`, `client.py`, `acp/mcp_translate.py`,
+`security/secret_scan.py` and `pyproject.toml` (`filelock>=3.0`). Tests: `tests/test_mcp_oauth.py`
+over `tests/support/oauth_server.py`, a fake origin that plays the MCP server, PRM, AS metadata,
+DCR, `/authorize` and `/token` behind the SDK's real transports with only the socket replaced.
+90 tests, passing on mcp 2.0.0, 1.26.0 and 1.30.0. **S3** (SSE) and **S4** (two processes, one
+rotating refresh token: exactly one token request, both processes end on the new token) were
+run here for the first time and pass on all three.
+
+Eight mutation checks were run by hand, each against the test that exists for it, and each turned
+it red: constructing the SDK provider on connect; reading the verdict only in the AUTH arm; a
+`_shutdown` that ignores the shielded tasks; a lock that is not per record (the reentrant-lock
+case); a blocking file-lock acquire; offering a registration with an empty issuer; attaching the
+auth object only when a record exists; SSE without the auth object. The blocking-acquire check
+first came back **green** — the test started its clock after the loop had already stalled — and
+the test was fixed before this record was written.
+
+Where the code says more than the design did, or differs:
+
+1. **The lock file.** filelock ≥ 3.x on POSIX unlinks the lock file itself on release, and handles
+   the race that creates on its own side. So "the lock file survives the record's deletion" (§6.2)
+   holds in the sense that matters — agentao never deletes it, logout included — but the file is
+   not always present between holders. The test asserts behaviour (logout waits), not the file.
+2. **At most one token request per request.** A 401 that follows a refresh which already failed in
+   the same request only re-reads the record; it does not ask an unreachable token endpoint twice.
+   Found when a non-`Bearer` refresh response was followed by a forced second refresh that spent
+   the rotated token and turned an ordinary error into `needs_auth`.
+3. **A server in `NEEDS_AUTH` is not reconnected on every call.** `call_tool` returns the login
+   hint until the record file changes (its mtime, recorded with the verdict) — a login here or in
+   another process — and only then reconnects.
+4. **Where the verdict lives.** On the `StoredTokenAuth` object, which `connect()` rebuilds; that
+   is the "flag cleared when a connect starts" of §5.3 step 2.
+5. **What a login sends.** One request through the provider — an `initialize` POST (Streamable
+   HTTP) or the SSE `GET` — on the SDK's own client factory, body never read, any session it opened
+   deleted best-effort; then the ordinary connection reconnects. Not a full MCP connect.
+6. **A configured `client_id` with a `client_secret`** is offered as `client_secret_basic`, RFC
+   7591's default; without a secret, as a public client (`none`).
+7. **`CHANGELOG.md`** is not touched here: §13.5 puts it in PR 3, which ships in the same release.
+8. **Review fixes before commit**, each with a test that fails without it. A `/code-review` pass:
+   a 401 whose retry succeeds clears the refresh failure it recovered from; that failure no longer
+   stops a session-expired or dropped connection from reconnecting; a refresh response with no
+   `token_type` is Bearer, as the SDK reads it; login and logout reconnect under the reconnect lock.
+   A Codex review: a verdict carries the request that reached it, and a success clears only verdicts
+   older than itself or its own — a concurrent success used to clear another request's verdict before
+   its caller read it; a retry's 403 is classified like a first response's; and a refresh has an
+   elapsed-time deadline, since httpx's timeouts bound each read, not the exchange. A second Codex
+   round: a `NEEDS_AUTH` verdict is never cleared by a success — its caller may still be reading
+   the error body when another request starts and succeeds, and once read it moves the whole server
+   to `NEEDS_AUTH` anyway; the success rule now guards `REFRESH_FAILED` alone. And a refusal carries
+   the stamp of the credential that was refused, not of whatever the file holds when the 401
+   arrives, so a login that lands during the request is tried on the next call instead of being
+   read as already rejected. A third Codex round: the secret scanner skipped strings shorter than
+   20 characters, so a short `?code=…` escaped the new patterns (and a short `token=…` had already
+   escaped `kv_secret`); the cutoff is now 13, the shortest match. A fourth: a concurrent request's
+   failed refresh overwrote a pending `NEEDS_AUTH`; a refusal now outranks a failed refresh, as it
+   already outlived a success. A fifth: a connection attached its cached token until a refresh or a
+   401, so a logout elsewhere (another manager, another alias of the URL, another process) left a
+   still-valid token in use, and a login as another account left it acting as the old one. Each
+   request now compares the record file's stamp — one `stat` — and reloads on any change. A sixth:
+   only a *transient* refresh failure keeps the old token. After a terminal one — logged out while
+   waiting for the lock, or the grant rejected — the request goes without a token, even if the old
+   one is still inside its validity window; and a credential already refused (a 401 or a rejected
+   grant, not a scope 403) is neither sent nor refreshed again until the file changes, so a dead
+   grant costs one token request, not one per request. A credential file that is not valid UTF-8 is
+   unreadable like malformed JSON, so a login replaces it. A second `/code-review` pass: the "set
+   `type: sse`" hint no longer rides on a malformed `oauth` block or a failed refresh; and a
+   `REFRESH_FAILED` verdict no longer steers `call_tool` at all — it is the connection's, so another
+   call's refresh failure was relabelling this call's own error and skipping its reconnect. It now
+   only annotates an error that is itself an auth failure or the opaque HTTP one a refresh failure
+   would produce. A seventh Codex round: requests that entered the refresh window together each
+   re-submitted a grant the first had just seen rejected. The refusal is now rechecked under the
+   record lock, a waiter that finds it sends no token, and a tokenless 401 no longer re-records the
+   refusal under "no credential" — which had dropped the refused credential's stamp and let the
+   next request send it again. An eighth: a record whose stored URL does not parse
+   (`https://h:bad/mcp`) raised out of `load()`, failing connects and blocking the login that would
+   replace it; it is now unreadable like malformed JSON.

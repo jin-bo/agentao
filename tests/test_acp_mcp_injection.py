@@ -186,6 +186,8 @@ class TestTranslateHttp:
                 "type": "http",
                 "headers": {"Authorization": "Bearer abc"},
                 "trust": False,
+                # The editor authorizes its own servers (mcp-oauth.md §8.3).
+                "oauth": False,
             }
         }
 
@@ -197,8 +199,8 @@ class TestTranslateHttp:
                 {"name": "stdio_one", "command": "echo", "args": []},
             ]
         )
-        assert result["h"] == {"url": "https://x/mcp", "type": "http", "trust": False}
-        assert result["s"] == {"url": "https://x/sse", "type": "sse", "trust": False}
+        assert result["h"] == {"url": "https://x/mcp", "type": "http", "trust": False, "oauth": False}
+        assert result["s"] == {"url": "https://x/sse", "type": "sse", "trust": False, "oauth": False}
         assert result["stdio_one"]["command"] == "echo"
 
     def test_genuinely_unknown_type_is_dropped_with_warning(self, caplog):
@@ -448,7 +450,7 @@ class TestSessionNewMcpInjection:
         # The translator stamps the explicit transport for URL servers so a
         # bare url is not read back as the native http default.
         assert passed == {
-            "remote": {"url": "https://x/sse", "type": "sse", "trust": False}
+            "remote": {"url": "https://x/sse", "type": "sse", "trust": False, "oauth": False}
         }
 
 
@@ -473,7 +475,7 @@ def test_session_new_translates_http_mcp_server(initialized_server, tmp_path):
     )
     passed = factory.calls[0]["mcp_servers"]
     assert passed == {
-        "remote": {"url": "https://x/mcp", "type": "http", "trust": False}
+        "remote": {"url": "https://x/mcp", "type": "http", "trust": False, "oauth": False}
     }
 
 

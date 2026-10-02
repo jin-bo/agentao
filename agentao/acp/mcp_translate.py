@@ -227,7 +227,10 @@ def translate_acp_mcp_servers(
             # Stamp the explicit transport — both ways. A bare ``{"url": ...}``
             # would be read by the native resolver as ``http`` (the default),
             # so an ``sse`` entry must carry ``type: "sse"`` too.
-            cfg = {"url": url, "type": transport_type}
+            # ``oauth: false``: a server the editor passes is the editor's to
+            # authorize. Without it, agentao's own stored token for the same
+            # URL would be attached to it (docs/design/mcp-oauth.md §8.3).
+            cfg = {"url": url, "type": transport_type, "oauth": False}
             headers = _name_value_list_to_dict(
                 entry.get("headers"), server_name=name, field="headers"
             )
