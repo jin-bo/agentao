@@ -203,6 +203,47 @@ jobs:
         run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short -n logical
 
   # ─────────────────────────────────────────────────────────────
+  # Job 1a · macOS — the sandbox-exec backend
+  # ─────────────────────────────────────────────────────────────
+  # The only built-in OS sandbox is macOS sandbox-exec, and every test that
+  # runs a real profile is gated on darwin. Before this job no CI runner was a
+  # Mac, so those tests had never run anywhere but a maintainer's laptop.
+  #
+  # Scoped to the sandbox and shell modules rather than the full suite: that is
+  # what only a Mac can check, and the full suite already runs on Linux and
+  # Windows.
+  macos:
+    name: Test · macOS sandbox · Python 3.12
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies (same extras as the ubuntu test job)
+        run: uv sync --python 3.12 --extra cli --extra web --extra i18n --extra playwright
+
+      # The integration tests depend on both facts; printing them makes a red
+      # run readable without re-running it.
+      - name: Report sandbox-exec and SIP on this runner
+        run: |
+          sw_vers
+          command -v sandbox-exec
+          csrutil status || true
+
+      - name: Run the sandbox and shell tests
+        run: >
+          uv run --python 3.12 python -m pytest -v --tb=short
+          tests/test_sandbox_policy.py
+          tests/test_shell_tool_shell_dialect.py
+          tests/test_shell_output_bound.py
+
+  # ─────────────────────────────────────────────────────────────
   # Job 1b · MCP SDK compatibility across both supported majors
   # ─────────────────────────────────────────────────────────────
   # The lockfile pins one mcp version, so the `test` job above can only ever
