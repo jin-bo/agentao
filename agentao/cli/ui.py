@@ -42,6 +42,30 @@ def print_welcome(cli: "AgentaoCLI") -> None:
     console.print()
     console.print(f"  [dim]Model:[/dim] [green]{current_model}[/green]  [dim]|[/dim]  [dim]Type[/dim] [cyan]/help[/cyan] [dim]for commands[/dim]")
     console.print()
+    _print_mcp_needs_login(cli)
+
+
+def _print_mcp_needs_login(cli: "AgentaoCLI") -> None:
+    """One line per MCP server waiting for an OAuth login (mcp-oauth.md §8.1).
+
+    No browser opens at startup: the user runs ``/mcp login`` when they want to.
+    """
+    manager = getattr(cli.agent, "mcp_manager", None)
+    if manager is None:
+        return
+    try:
+        statuses = manager.get_server_status()
+    except Exception:
+        return
+    from rich.markup import escape
+
+    from .mcp_auth import needs_login_lines
+
+    lines = needs_login_lines(statuses)
+    for line in lines:
+        console.print(f"  [warning]{escape(line)}[/warning]")
+    if lines:
+        console.print()
 
 
 def print_help(cli: "AgentaoCLI") -> None:

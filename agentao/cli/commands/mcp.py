@@ -1,4 +1,4 @@
-"""``/mcp`` — list / add / remove MCP servers in the project config."""
+"""``/mcp`` — list / add / remove MCP servers, and log in to or out of OAuth ones."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
+from ...security.terminal_text import sanitize_terminal_text
 from .._globals import console, split_subcommand, unknown_subcommand
 
 if TYPE_CHECKING:
@@ -28,7 +29,8 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
         statuses = manager.get_server_status()
         console.print(f"\n[info]MCP Servers ({len(statuses)}):[/info]\n")
         for s in statuses:
-            color = "green" if s["status"] == "connected" else "red"
+            color = {"connected": "green", "needs_auth": "yellow"}.get(s["status"], "red")
+            label = "needs login" if s["status"] == "needs_auth" else s["status"]
             trust_marker = " [dim](trusted)[/dim]" if s["trusted"] else ""
             # ``protocol`` and ``error`` are server-authored strings, and every
             # line here is parsed as Rich markup: an unmatched "[/b]" in a
@@ -40,7 +42,7 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
             console.print(
                 f"  [{color}]●[/{color}] [cyan]{escape(s['name'])}[/cyan] "
                 f"[dim]{escape(s['transport'])}[/dim]{protocol} — "
-                f"[{color}]{s['status']}[/{color}], "
+                f"[{color}]{label}[/{color}], "
                 f"{s['tools']} tool(s){trust_marker}"
             )
             if s["error"]:
@@ -125,6 +127,53 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
         console.print(f"\n[success]Removed MCP server '{name}'.[/success]")
         console.print("[info]Restart agentao to apply changes.[/info]\n")
 
+    elif sub in ("login", "logout"):
+        _login_or_logout(cli, sub, sub_args)
+
     else:
         console.print(unknown_subcommand(sub))
-        console.print("[info]Available: /mcp list, /mcp add, /mcp remove[/info]\n")
+        console.print(
+            "[info]Available: /mcp list, /mcp add, /mcp remove, /mcp login, /mcp logout[/info]\n"
+        )
+
+
+def _say(text: str) -> None:
+    # ``soft_wrap``: an authorization URL must stay one copyable line.
+    # Both halves: ``escape`` stops Rich markup, and the sanitizer strips the
+    # terminal escapes an authorization server can put in an error description.
+    console.print(escape(sanitize_terminal_text(text)), soft_wrap=True)
+
+
+def _has_registered_tools(cli: AgentaoCLI, server_name: str) -> bool:
+    registry = cli.agent.tools
+    for tool in registry.list_tools():
+        if registry.origin(tool.name) == "mcp" and getattr(tool, "_server_name", None) == server_name:
+            return True
+    return False
+
+
+def _login_or_logout(cli: AgentaoCLI, sub: str, sub_args: str) -> None:
+    from ..mcp_auth import LoginOutcome, login, logout
+
+    tokens = sub_args.split() if sub_args else []
+    open_browser = "--no-browser" not in tokens
+    names = [t for t in tokens if t != "--no-browser"]
+    usage = "/mcp login <name> [--no-browser]" if sub == "login" else "/mcp logout <name>"
+    if len(names) != 1 or (sub == "logout" and not open_browser):
+        console.print(f"\n[error]Usage: {usage}[/error]\n")
+        return
+    name = names[0]
+    manager = cli.agent.mcp_manager
+    if manager is None:
+        console.print("\n[warning]No MCP servers configured.[/warning]\n")
+        return
+    console.print()
+    if sub == "logout":
+        logout(manager, name, write=_say)
+        console.print()
+        return
+    outcome = login(manager, name, open_browser=open_browser, write=_say)
+    if outcome is LoginOutcome.CONNECTED and not _has_registered_tools(cli, name):
+        # D8: tools are registered once, at startup; this server had none then.
+        console.print(f"[info]Restart agentao to load the tools of '{escape(name)}'.[/info]")
+    console.print()

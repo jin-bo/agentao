@@ -85,6 +85,8 @@ All commands start with `/`:
   - `/mcp` or `/mcp list` - List MCP servers with status and tools
   - `/mcp add [--http|--sse] <name> <command|url>` - Add an MCP server (a URL defaults to Streamable HTTP; `--sse` for legacy SSE)
   - `/mcp remove <name>` - Remove an MCP server
+  - `/mcp login <name> [--no-browser]` - Authorize an OAuth MCP server in the browser (or paste the redirect URL with `--no-browser`); `agentao mcp login <name>` does the same from a shell
+  - `/mcp logout <name>` - Delete an MCP server's stored OAuth credential
 - `/sandbox [subcommand]` - Control macOS sandbox-exec for shell commands (macOS only)
   - `/sandbox` or `/sandbox status` - Show current sandbox state
   - `/sandbox on` / `/sandbox off` - Toggle for this session
