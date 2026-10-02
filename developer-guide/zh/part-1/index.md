@@ -18,13 +18,14 @@
 - [**1.3 两种集成模式**](./3-integration-modes) — Python SDK vs ACP，按宿主语言和隔离要求做选择
 - [**1.4 5 分钟 Hello Agentao**](./4-hello-agentao) — 先跑通一个最小可用会话
 - [**1.5 运行环境要求**](./5-requirements) — Python 版本、extras、凭据、OS、网络和磁盘布局
+- [**1.6 与厂商 SDK 的对比**](./6-compared-to-vendor-sdks) — 与 Claude Agent SDK、OpenAI Agents SDK、Strands 的取舍，以及各自更合适的场景
 
 ## 怎么读
 
 | 你的状态 | 推荐路径 |
 |---------|----------|
 | 只想先跑起来 | [1.4 Hello](./4-hello-agentao) → [1.2 核心概念](./2-core-concepts) |
-| 要判断是否适合项目 | [1.1 Agentao 是什么](./1-what-is-agentao) → [1.3 两种集成模式](./3-integration-modes) |
+| 要判断是否适合项目 | [1.1 Agentao 是什么](./1-what-is-agentao) → [1.6 与厂商 SDK 的对比](./6-compared-to-vendor-sdks) → [1.3 两种集成模式](./3-integration-modes) |
 | 宿主是 Python | [1.4 Hello](./4-hello-agentao) → [第 2 部分](/zh/part-2/) |
 | 宿主不是 Python / 需要进程隔离 | [1.3 两种集成模式](./3-integration-modes) → [第 3 部分](/zh/part-3/) |
 | 准备部署生产 | [1.5 运行环境要求](./5-requirements) → [第 6 部分](/zh/part-6/) |

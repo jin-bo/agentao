@@ -114,6 +114,8 @@ CLI 手册：**[agentao.cn/zh/cli/](https://agentao.cn/zh/cli/)** —— 12 章�
 | **连接**（Connectivity） | Agent 必须能伸到训练数据之外的世界 | MCP（stdio / Streamable HTTP / SSE）· ACP（完整 agent 之间的 JSON-RPC）· 插件 · hooks |
 | **可观测**（Observability） | Agent 必须摆出它做了什么 | 实时思考显示 · 流式工具输出 · 完整 LLM 日志 · JSONL 回放 |
 
+与 Claude Agent SDK、OpenAI Agents SDK、Strands 相比如何，以及什么情况下它们更合适：**[与厂商 SDK 的对比](https://agentao.cn/zh/part-1/6-compared-to-vendor-sdks)**。
+
 ---
 
 ## 能力总览

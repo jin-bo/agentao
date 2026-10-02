@@ -18,13 +18,14 @@ You only need these terms on the first pass. Full definitions live in [Appendix 
 - [**1.3 Integration Modes**](./3-integration-modes) — Python SDK vs ACP, chosen by host language and isolation needs
 - [**1.4 Hello Agentao in 5 min**](./4-hello-agentao) — run a minimal working session first
 - [**1.5 Requirements**](./5-requirements) — Python version, extras, credentials, OS, network, and disk layout
+- [**1.6 Compared with Vendor SDKs**](./6-compared-to-vendor-sdks) — trade-offs against the Claude Agent SDK, the OpenAI Agents SDK and Strands, and when each is the better fit
 
 ## How to read
 
 | Your situation | Recommended path |
 |----------------|------------------|
 | I just want to run it | [1.4 Hello](./4-hello-agentao) → [1.2 Core Concepts](./2-core-concepts) |
-| I need to decide whether it fits | [1.1 What is Agentao](./1-what-is-agentao) → [1.3 Integration Modes](./3-integration-modes) |
+| I need to decide whether it fits | [1.1 What is Agentao](./1-what-is-agentao) → [1.6 Compared with Vendor SDKs](./6-compared-to-vendor-sdks) → [1.3 Integration Modes](./3-integration-modes) |
 | My host is Python | [1.4 Hello](./4-hello-agentao) → [Part 2](/en/part-2/) |
 | My host is not Python / I need process isolation | [1.3 Integration Modes](./3-integration-modes) → [Part 3](/en/part-3/) |
 | I am preparing for production | [1.5 Requirements](./5-requirements) → [Part 6](/en/part-6/) |
