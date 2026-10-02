@@ -23,6 +23,7 @@ importable — a vendored or patched SDK, or a 2.x prerelease, would be
 misread. Probing asks the object that will actually receive the value.
 """
 
+import importlib
 import inspect
 import sys
 from datetime import timedelta
@@ -166,3 +167,84 @@ UnexpectedClaimedResult = getattr(
 UNSUPPORTED_PROTOCOL_VERSION: int = getattr(
     mcp.types, "UNSUPPORTED_PROTOCOL_VERSION", -32022
 )
+
+
+# ---------------------------------------------------------------------------
+# OAuth (docs/design/mcp-oauth.md). Same rule as above: probe the installed
+# SDK, never a version string.
+# ---------------------------------------------------------------------------
+
+#: The ``Auth`` base the installed SDK's HTTP clients accept: ``httpx.Auth`` on
+#: 1.x, ``httpx2.Auth`` on 2.x. ``StoredTokenAuth`` subclasses it.
+AuthBase = httpx_for_mcp.Auth
+
+#: 2.x's callback handler returns an ``AuthorizationCodeResult`` (code, state,
+#: iss) and validates RFC 9207 ``iss``; 1.x's returns a ``(code, state)`` tuple
+#: and has no ``iss`` check at all. ``None`` on 1.x.
+AuthorizationCodeResult = getattr(
+    importlib.import_module("mcp.shared.auth"), "AuthorizationCodeResult", None
+)
+
+#: Whether the SDK binds a stored registration to the issuer that issued it
+#: (SEP-2352): 1.30 and 2.x record ``issuer`` on the client information and
+#: discard a mismatch after discovery; 1.26 has neither the field nor the check.
+#: Probed off the model the SDK stores, which is what would carry the binding.
+def _binds_issuer() -> bool:
+    import mcp.client.auth.utils as _utils
+    import mcp.shared.auth as _auth
+
+    return "issuer" in _auth.OAuthClientInformationFull.model_fields and hasattr(
+        _utils, "credentials_match_issuer"
+    )
+
+
+SDK_BINDS_ISSUER: bool = _binds_issuer()
+
+
+def make_callback_result(code: str, state: Optional[str], iss: Optional[str]) -> Any:
+    """What the installed SDK's ``callback_handler`` must return."""
+    if AuthorizationCodeResult is not None:
+        return AuthorizationCodeResult(code=code, state=state, iss=iss)
+    return code, state
+
+
+def provider_context(provider: Any) -> Dict[str, Any]:
+    """The internal ``OAuthClientProvider.context`` fields ``login()`` reads.
+
+    These are not public API (docs/design/mcp-oauth.md §5.5 step 5), so each is
+    probed, and a missing one is reported by name rather than read as ``None``:
+    a record built without them could not refresh. Raises ``RuntimeError``.
+    """
+    context = getattr(provider, "context", None)
+    missing = [
+        name
+        for name in ("auth_server_url", "oauth_metadata", "token_expiry_time", "client_info")
+        if context is None or not hasattr(context, name)
+    ]
+    if missing or not callable(getattr(context, "get_resource_url", None)):
+        raise RuntimeError(
+            "the installed MCP SDK's OAuth provider no longer exposes "
+            f"{', '.join(missing) or 'get_resource_url'}; agentao cannot record "
+            "a login it could refresh"
+        )
+    token_endpoint: Optional[str] = None
+    metadata = context.oauth_metadata
+    if metadata is not None and getattr(metadata, "token_endpoint", None):
+        token_endpoint = str(metadata.token_endpoint)
+    else:
+        # The SDK's own fallback for an AS without metadata (legacy servers).
+        fallback = getattr(provider, "_get_token_endpoint", None)
+        if callable(fallback):
+            token_endpoint = fallback()
+    include_resource = True
+    should_include = getattr(context, "should_include_resource_param", None)
+    if callable(should_include):
+        include_resource = bool(should_include(getattr(context, "protocol_version", None)))
+    return {
+        "auth_server_url": context.auth_server_url,
+        "oauth_metadata": metadata,
+        "token_expiry_time": context.token_expiry_time,
+        "client_info": context.client_info,
+        "token_endpoint": token_endpoint,
+        "resource": context.get_resource_url() if include_resource else None,
+    }

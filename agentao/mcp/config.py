@@ -33,6 +33,11 @@ Expected keys per server:
   url: str               — endpoint URL
   headers: dict[str,str] — HTTP headers
 
+  oauth: false | dict    — see resolve_oauth(). Absent → OAuth on for a URL
+                           server with no Authorization header; false → off;
+                           a dict carries optional client_id, client_secret
+                           ($VAR expanded), callback_port, redirect_host.
+
   # Common
   timeout: int | dict    — see resolve_timeouts(); int = connect/startup
                            seconds (default 60), or {startup, request}
@@ -230,6 +235,70 @@ def resolve_transport(config: McpServerConfig, *, return_source: bool = False):
     return (transport, source) if return_source else transport
 
 
+class McpOAuthConfigError(ValueError):
+    """A server's ``oauth`` key is malformed.
+
+    Fails closed like :class:`McpTransportConfigError`: a typo in the block
+    that names a pre-registered client must not quietly fall back to dynamic
+    registration with a different identity.
+    """
+
+
+#: Keys the ``oauth`` object may carry (docs/design/mcp-oauth.md §5.4). There is
+#: deliberately no ``scopes``: the SDK replaces the requested scope with the
+#: 401 challenge's, so the key would be accepted and ignored.
+_OAUTH_KEYS = ("client_id", "client_secret", "callback_port", "redirect_host")
+
+
+def resolve_oauth(config: McpServerConfig) -> Optional[Dict[str, Any]]:
+    """Whether a server uses OAuth, and with which settings. Fails closed.
+
+    Returns ``None`` when OAuth does not apply: a stdio server, ``"oauth":
+    false``, or a URL server whose ``headers`` already carry an
+    ``Authorization`` header (in any casing) — a 401 there is an ordinary
+    failure. Otherwise returns the settings dict, empty when ``oauth`` is
+    absent. Raises :class:`McpOAuthConfigError` for a malformed ``oauth`` value
+    and lets :class:`McpTransportConfigError` through from
+    :func:`resolve_transport`.
+    """
+    raw = config.get("oauth")
+    if raw is False:
+        return None
+    if raw is not None and not isinstance(raw, dict):
+        raise McpOAuthConfigError(
+            f"MCP 'oauth' must be false or an object, got {type(raw).__name__} ({raw!r})."
+        )
+    settings: Dict[str, Any] = dict(raw or {})
+    unknown = sorted(set(settings) - set(_OAUTH_KEYS))
+    if unknown:
+        raise McpOAuthConfigError(
+            f"Unknown MCP 'oauth' key(s) {', '.join(map(repr, unknown))}; "
+            f"expected any of {', '.join(_OAUTH_KEYS)}."
+        )
+    for key in ("client_id", "client_secret", "redirect_host"):
+        value = settings.get(key)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise McpOAuthConfigError(f"MCP 'oauth.{key}' must be a non-empty string.")
+    if settings.get("client_secret") is not None and settings.get("client_id") is None:
+        raise McpOAuthConfigError("MCP 'oauth.client_secret' requires 'oauth.client_id'.")
+    port = settings.get("callback_port")
+    if port is not None and (
+        isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535
+    ):
+        raise McpOAuthConfigError(
+            f"MCP 'oauth.callback_port' must be an integer from 1 to 65535, got {port!r}."
+        )
+
+    if resolve_transport(config) not in ("sse", "http"):
+        return None
+    headers = config.get("headers") or {}
+    if isinstance(headers, dict) and any(
+        isinstance(k, str) and k.lower() == "authorization" for k in headers
+    ):
+        return None
+    return settings
+
+
 def expand_env_vars(value: str) -> str:
     """Replace $VAR and ${VAR} references with environment values."""
     def _replace(m: re.Match) -> str:
@@ -253,6 +322,12 @@ def _expand_config_env(config: McpServerConfig) -> McpServerConfig:
     # Expand command args
     if "args" in result and isinstance(result["args"], list):
         result["args"] = [expand_env_vars(a) for a in result["args"]]
+
+    # Expand a pre-registered OAuth client secret (the only oauth value that
+    # is a credential; the rest are identifiers and ports).
+    oauth = result.get("oauth")
+    if isinstance(oauth, dict) and isinstance(oauth.get("client_secret"), str):
+        result["oauth"] = {**oauth, "client_secret": expand_env_vars(oauth["client_secret"])}
 
     return result
 

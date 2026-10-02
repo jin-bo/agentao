@@ -69,7 +69,7 @@ https://github.com/andrewyng/openworker）。agentao `main`@`50d55a2`（2026-07-
 | 6 | 读侧完全无路径约束 | 重 framing | **裁定不引入读侧 containment**（2026-08-21 评审） |
 | 7 | 按风险分组并行 / web_fetch 框定 | 已有裁定 / 已证伪 | 维持 |
 | 8 | 持久 shell 会话 | 拒绝（理由：破坏 containment） | **拒绝，理由更正为进程管理成本** |
-| 9 | MCP OAuth | 降级为一条原则 | 维持 |
+| 9 | MCP OAuth | 降级为一条原则 | **由 `mcp-oauth.md` 取代**（D1，2026-10-02 批准）；原则保留为其核心不变式 |
 | 10 | RiskClass 横切维度 | 维持记录 | **裁定不引入** |
 
 ---
@@ -439,6 +439,10 @@ rev 2 称「持久 shell 一上，shell 内一句 `cd ..` 就静默逃逸」。*
 ---
 
 ## 9. MCP OAuth —— 降级为一条原则
+
+> **2026-10-02 更新：本节结论已被 `docs/design/mcp-oauth.md` 取代**（其 D1，维护者已批准）。边界不变 ——
+> 浏览器和回调仍归宿主，而 agentao 自己的 CLI 就是一个宿主；SDK 已实现授权码流程，所以「宿主侧」不再
+> 意味着「不做」。下面这条原则被原样采纳为那份设计的核心不变式（§5.2）。以下为当时的原文。
 
 agentao MCP **无任何认证**（`grep -n "oauth|Authorization|bearer" agentao/mcp/*.py` → **无匹配**）；
 静态 `headers` 端到端可用（`mcp/config.py:34` → `mcp/client.py:152,360-366`），

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from agentao.replay.recorder import ReplayRecorder
 from agentao.replay.redact import SECRET_PATTERNS, scan_and_redact, scan_recursive
 from agentao.replay.sanitize import (
@@ -42,6 +44,7 @@ def test_pattern_kinds_cover_the_documented_set():
         "slack_token",
         "jwt",
         "bearer",
+        "oauth_token",
         "kv_secret",
     }
     assert kinds == expected
@@ -1375,3 +1378,29 @@ def test_legacy_tool_runner_import_path():
 
     assert ToolRunner is RuntimeToolRunner
     assert legacy.ToolRunner is RuntimeToolRunner
+
+
+@pytest.mark.parametrize(
+    "text, secret",
+    [
+        ("?code=abcdefgh", "abcdefgh"),
+        ('"code": "abcdefgh"', "abcdefgh"),
+        ("&code=abcdefgh", "abcdefgh"),
+        ("access_token=abcdefgh", "abcdefgh"),
+        ('{"refresh_token":"abcdefgh"}', "abcdefgh"),
+        ("code_verifier=abcdefgh", "abcdefgh"),
+        ("token=abcdefgh", "abcdefgh"),  # kv_secret: was under the old 20-char cutoff
+    ],
+)
+def test_short_credential_strings_are_still_scanned(text, secret):
+    from agentao.security.secret_scan import redact
+
+    # The length cutoff must not be longer than the shortest match: a short
+    # log line or replay field carrying an OAuth code is still a credential.
+    assert secret not in redact(text)
+
+
+def test_scan_cutoff_is_no_longer_than_the_shortest_match():
+    from agentao.security.secret_scan import _MIN_SCAN_LEN
+
+    assert _MIN_SCAN_LEN <= len("code=abcdefgh")

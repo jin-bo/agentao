@@ -84,6 +84,21 @@ SECRET_PATTERNS: List[Tuple[str, "re.Pattern[str]"]] = [
         ),
     ),
     (
+        # OAuth token-endpoint traffic (MCP OAuth, docs/design/mcp-oauth.md
+        # §6.2): ``access_token`` / ``refresh_token`` / ``id_token`` /
+        # ``code_verifier`` in a JSON body or a form body. ``kv_secret`` below
+        # does not reach them — its lookbehind refuses a ``_`` before
+        # ``token``. The authorization ``code`` only in its two wire shapes (a
+        # query/form ``code=`` after ``?`` or ``&``, a JSON ``"code":`` string),
+        # since a bare "code: …" is everywhere in ordinary logs.
+        "oauth_token",
+        re.compile(
+            r"(?i)(?:\b(?:access_token|refresh_token|id_token|code_verifier)[\"']?\s*[:=]\s*[\"']?"
+            r"|(?<=[?&])code=|\"code\"\s*:\s*\")"
+            r"[^\s\"'&,}]{8,}"
+        ),
+    ),
+    (
         # Inline key=value / key: value pairs. Uses a negative lookbehind on
         # word chars so "xapi_key=..." doesn't match (false-positive-heavy
         # outside of secret contexts). The quoted value is captured to keep
@@ -98,11 +113,14 @@ SECRET_PATTERNS: List[Tuple[str, "re.Pattern[str]"]] = [
 
 
 # Strings shorter than this cannot possibly contain any of the tokens
-# above (shortest real match is the ``AKIA...`` 20-char AWS key). Short
-# strings skip the regex loop — a cheap win for the many small string
+# above. The shortest match is 13 characters: ``oauth_token``'s ``code=``
+# followed by its 8-character minimum (``?code=abcdefgh`` is caught at the
+# ``code=``). It was 20 — the ``AKIA...`` AWS key — until the OAuth patterns
+# came in, and that already let a short ``token=abcdefgh`` past ``kv_secret``.
+# Short strings skip the regex loop — a cheap win for the many small string
 # fields (tool names, statuses, call ids, etc.) that flow through every
 # event.
-_MIN_SCAN_LEN = 20
+_MIN_SCAN_LEN = 13
 
 
 def scan_and_redact(text: str) -> Tuple[str, Dict[str, int]]:
