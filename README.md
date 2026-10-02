@@ -117,6 +117,8 @@ The name encodes the design: *Agent* (capability) + *Tao* (governance). Three pi
 | **Connectivity** (连接) | Agents must reach the world beyond training | MCP (stdio / Streamable HTTP / SSE) · ACP (full-agent JSON-RPC) · plugins · hooks |
 | **Observability** (可观测性) | Agents must show their work | Live thinking display · streaming tool output · full LLM logging · JSONL replay |
 
+How this compares with the Claude Agent SDK, the OpenAI Agents SDK and Strands — and when one of those is the better fit: **[Compared with Vendor SDKs](https://agentao.cn/en/part-1/6-compared-to-vendor-sdks)**.
+
 ---
 
 ## Feature Overview

@@ -44,6 +44,7 @@ const zhSidebar = [
       { text: '1.3 两种集成模式', link: '/zh/part-1/3-integration-modes' },
       { text: '1.4 5 分钟 Hello Agentao', link: '/zh/part-1/4-hello-agentao' },
       { text: '1.5 运行环境要求', link: '/zh/part-1/5-requirements' },
+      { text: '1.6 与厂商 SDK 的对比', link: '/zh/part-1/6-compared-to-vendor-sdks' },
     ],
   },
   {
@@ -183,6 +184,7 @@ const enSidebar = [
       { text: '1.3 Integration Modes', link: '/en/part-1/3-integration-modes' },
       { text: '1.4 Hello Agentao in 5 min', link: '/en/part-1/4-hello-agentao' },
       { text: '1.5 Requirements', link: '/en/part-1/5-requirements' },
+      { text: '1.6 Compared with Vendor SDKs', link: '/en/part-1/6-compared-to-vendor-sdks' },
     ],
   },
   {
