@@ -31,7 +31,7 @@ requires-dist = [
     { name = "beautifulsoup4", marker = "extra == 'full'", specifier = ">=4.12.0" },
     { name = "beautifulsoup4", marker = "extra == 'playwright'", specifier = ">=4.12.0" },
     { name = "beautifulsoup4", marker = "extra == 'web'", specifier = ">=4.12.0" },
-    { name = "filelock", specifier = ">=1.4.0" },
+    { name = "filelock", specifier = ">=3.0" },
     { name = "httpx", specifier = ">=0.25.0" },
     { name = "jieba", marker = "extra == 'full'", specifier = ">=0.42.1" },
     { name = "jieba", marker = "extra == 'i18n'", specifier = ">=0.42.1" },
@@ -1581,7 +1581,7 @@ name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ptyprocess" },
+    { name = "ptyprocess", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z" }
 wheels = [
@@ -2568,8 +2568,8 @@ name = "uvicorn"
 version = "0.46.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "h11" },
+    { name = "click", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'emscripten'" },
+    { name = "h11", marker = "python_full_version < '3.12' or python_full_version >= '3.14' or sys_platform != 'emscripten'" },
     { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1f/93/041fca8274050e40e6791f267d82e0e2e27dd165627bd640d3e0e378d877/uvicorn-0.46.0.tar.gz", hash = "sha256:fb9da0926999cc6cb22dc7cd71a94a632f078e6ae47ff683c5c420750fb7413d", size = 88758, upload-time = "2026-04-23T07:16:00.151Z" }
