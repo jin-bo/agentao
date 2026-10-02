@@ -21,6 +21,12 @@ your-project/
 └── ...
 ```
 
+### `AGENTS.md` fallback
+
+If there is no `AGENTAO.md`, Agentao reads `AGENTS.md` from the same directory instead — the cross-tool convention from [agents.md](https://agents.md/), so a project that already has one works without a copy. Only one file is ever read: with both present, `AGENTAO.md` is used and `AGENTS.md` is ignored. Only the project root is checked; `AGENTS.md` files in subdirectories are not.
+
+Either file comes straight from the working directory, so opening Agentao in a repository you did not write puts that repository's instructions into the system prompt. An embedding host that wants neither file read passes `Agentao(project_instructions="")`.
+
 ## What to Include
 
 The `AGENTAO.md` file can contain:

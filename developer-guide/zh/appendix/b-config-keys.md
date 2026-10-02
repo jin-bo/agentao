@@ -64,7 +64,7 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
 | `acp.json` | 仅项目 | [3.2](/zh/part-3/2-agentao-as-server) | ACP 子智能体注册表（Agentao 作为客户端时） |
 | `settings.json` | 仅项目 | [6.6](/zh/part-6/6-observability) | 持久化的权限模式、built-in agents 开关、replay 块 |
 | `skills_config.json` | 仅项目 | [5.2](/zh/part-5/2-skills) | 已禁用技能列表（用 `/skills disable` 管理） |
-| `AGENTAO.md` | 仅项目 | [5.6](/zh/part-5/6-system-prompt) | 项目专属指令，注入到 system prompt 顶端 |
+| `AGENTAO.md`（否则 `AGENTS.md`） | 仅项目 | [5.6](/zh/part-5/6-system-prompt) | 项目专属指令，注入到 system prompt 顶端；只在没有 `AGENTAO.md` 时读 `AGENTS.md` |
 | `memory.db` | 项目 + 用户 | [5.5](/zh/part-5/5-memory) | SQLite 持久化记忆（非 JSON；此处完整列出） |
 
 ### B.3.1 `mcp.json`

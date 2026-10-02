@@ -48,7 +48,7 @@ The following items serve secondary personas or non-product needs and are **defe
 - ✗ VSCode extensions (Cline/Roo already win)
 - ✗ Hosted SaaS (Anthropic/OpenHands already win)
 - ✗ Rust/Go rewrite (contradicts "embed in Python host" axis)
-- ✗ AGENTS.md — embedding hosts use `Agentao(project_instructions=...)`, not the file
+- ✗ AGENTS.md — embedding hosts use `Agentao(project_instructions=...)`, not the file. *Narrowed 2026-10-01 (maintainer decision): a root-only fallback — read `<cwd>/AGENTS.md` when `AGENTAO.md` is absent — landed for 0.5.10, because the ACP Registry listing brings editor users who expect the convention. The nested-lookup chain below stays P2.*
 - ✗ `agentao serve` daemon — clashes with "in-process harness" positioning
 - ✗ Cross-platform strong sandbox — embedding hosts already isolate at process level
 - ✗ Bilingual SWE-bench — should live in a separate `agentao-bench` repo
@@ -136,7 +136,7 @@ Start only after P0 lands AND PyPI dependents grows (≥ 3 lighthouse adopters):
 
 The following are placeholders, **not actively pursued**, only considered when concrete external demand materializes:
 
-- AGENTS.md support (with nested-lookup priority chain)
+- AGENTS.md nested-lookup priority chain (the root-only fallback landed for 0.5.10, see §2.3)
 - `agentao serve` long-lived daemon (WebSocket + SSE + small HTTP control plane)
 - Sandbox backend interface (macos-sandbox-exec / linux-bubblewrap / nsjail / windows-noop)
 - A2A/ACP gateway (wait for LF A2A v1.0 + real demand)

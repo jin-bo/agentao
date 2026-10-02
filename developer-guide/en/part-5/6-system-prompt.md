@@ -88,7 +88,7 @@ message is one cached block, and a `save_memory` re-writes all of it.
 
 ### 1. `AGENTAO.md` — project instructions
 
-Place it at the root of `working_directory`. Loaded automatically on construction.
+Place it at the root of `working_directory`. Loaded automatically on construction. If there is no `AGENTAO.md`, an `AGENTS.md` in the same place is read instead (never both). A repository you did not write may carry an `AGENTS.md`; pass `project_instructions=""` to read neither file.
 
 ```markdown
 # Project

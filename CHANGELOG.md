@@ -35,6 +35,18 @@ _Targeting 0.5.10. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **`AGENTS.md` is read when a project has no `AGENTAO.md`.** At
+  construction, `<working_directory>/AGENTAO.md` is still read first; only
+  when it is absent is `<working_directory>/AGENTS.md` (the cross-tool
+  agents.md convention) read instead. The first file that exists is the only
+  one used — the two are never merged, a project with both behaves exactly as
+  before, and an `AGENTAO.md` that exists but cannot be read does not fall
+  through. Root only; no nested lookup. **For hosts:** a workdir that held an
+  `AGENTS.md` but no `AGENTAO.md` now puts it in the system prompt, and
+  `AGENTS.md` is common in cloned repositories. To read neither file, pass
+  `Agentao(project_instructions="")`. Setting `project_instructions=` to any
+  string already skipped the disk read.
+
 ### Fixed
 
 ---

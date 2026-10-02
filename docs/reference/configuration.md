@@ -22,7 +22,7 @@ User-facing configuration files (the surfaces you may hand-edit):
 | 4 | MCP servers | `.agentao/mcp.json` *(add-only — cannot override user-scope names)* | `~/.agentao/mcp.json` | `mcp/FileBackedMCPRegistry` (see `mcp/config.py`) | `CLAUDE.md` § MCP |
 | 5 | ACP subagents | `.agentao/acp.json` | — *(project-only)* | `acp_client/config.py` | [acp-client.md](../guides/acp-client.md) / [acp-embedding.md](../guides/acp-embedding.md) |
 | 6 | Skills disable list | `.agentao/skills_config.json` | — | `skills/manager.py` | [SKILLS_GUIDE.md](../guides/skills.md) |
-| 7 | Project instructions | `AGENTAO.md` (cwd) | — | `agent.py::_build_system_prompt` | [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) |
+| 7 | Project instructions | `AGENTAO.md` (cwd), else `AGENTS.md` | — | `prompts/helpers.py::load_project_instructions` | [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) |
 | 8 | Memory store | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](../guides/memory-management.md) |
 | 9 | Run spec (`agentao run`) | any path passed to `--spec` (or stdin) | — | `cli/run_models.py::RunSpec`, `cli/run_template.py::render_spec` | [run-spec-parameters.md](../design/run-spec-parameters.md) |
 | 10 | Plugin hooks | `<plugin>/hooks/hooks.json`, or inline/declared via the plugin manifest's `hooks` | — *(travels with the plugin)* | `embedding/plugins/manager.py` (discovery) → `plugins/hooks/_parser.py` (parse) | §11 below; Developer Guide §5.7 |
@@ -455,8 +455,9 @@ See [SKILLS_GUIDE.md](../guides/skills.md) for skill discovery and activation ru
 
 ## 8. `AGENTAO.md` — project instructions
 
-- **Path.** `<cwd>/AGENTAO.md`. Optional.
-- **Loader.** `agent.py::_build_system_prompt` — content is prepended to the system prompt when present.
+- **Path.** `<cwd>/AGENTAO.md`. Optional. When it is absent, `<cwd>/AGENTS.md` (the cross-tool [agents.md](https://agents.md/) convention) is read instead. The first file that exists is the only one used; the two are never merged, and there is no nested lookup below `<cwd>`. An `AGENTAO.md` that exists but cannot be read does not fall through to `AGENTS.md`.
+- **Loader.** `prompts/helpers.py::load_project_instructions`, called once at construction; content is prepended to the system prompt when present.
+- **Trust.** Either file is taken from the working directory as-is. A cloned repository, or a workdir holding files a tenant uploaded, can therefore put instructions into the system prompt — and `AGENTS.md` is far more common than `AGENTAO.md`. A host that does not want any file read passes `Agentao(project_instructions="")`, which skips both.
 - **Schema.** Free-form Markdown; no required structure.
 
 See [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) for prompt-composition rules and conventions.

@@ -22,7 +22,7 @@
 | 4 | MCP 服务器 | `.agentao/mcp.json` *（仅可新增名字，不能覆盖用户级同名服务器）* | `~/.agentao/mcp.json` | `mcp/FileBackedMCPRegistry`（见 `mcp/config.py`） | `CLAUDE.md` § MCP |
 | 5 | ACP 子代理 | `.agentao/acp.json` | — *（仅项目级）* | `acp_client/config.py` | [acp-client.md](../guides/acp-client.md) / [acp-embedding.md](../guides/acp-embedding.md) |
 | 6 | 禁用 skill 列表 | `.agentao/skills_config.json` | — | `skills/manager.py` | [SKILLS_GUIDE.md](../guides/skills.md) |
-| 7 | 项目说明 | `AGENTAO.md`（cwd） | — | `agent.py::_build_system_prompt` | [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) |
+| 7 | 项目说明 | `AGENTAO.md`（cwd），不存在时读 `AGENTS.md` | — | `prompts/helpers.py::load_project_instructions` | [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) |
 | 8 | 记忆库 | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](../guides/memory-management.md) |
 | 9 | Run spec（`agentao run`） | `--spec` 传入的任意路径（或 stdin） | — | `cli/run_models.py::RunSpec`、`cli/run_template.py::render_spec` | [run-spec-parameters.zh.md](../design/run-spec-parameters.zh.md) |
 | 10 | 插件 hooks | `<plugin>/hooks/hooks.json`，或经插件 manifest 的 `hooks` 声明/内联 | — *（随插件走）* | `embedding/plugins/manager.py`（发现）→ `plugins/hooks/_parser.py`（解析） | 见下文 §11；Developer Guide §5.7 |
@@ -395,8 +395,9 @@ skill 的发现与激活规则见 [SKILLS_GUIDE.md](../guides/skills.md)。
 
 ## 8. `AGENTAO.md` — 项目说明
 
-- **路径。** `<cwd>/AGENTAO.md`。可选。
-- **Loader。** `agent.py::_build_system_prompt` —— 文件存在时其内容会被前置到 system prompt。
+- **路径。** `<cwd>/AGENTAO.md`。可选。不存在时改读 `<cwd>/AGENTS.md`（跨工具通用的 [agents.md](https://agents.md/) 约定）。只用第一个存在的文件，两者从不合并，也不在 `<cwd>` 以下做嵌套查找。`AGENTAO.md` 存在但读取失败时，不会退而读 `AGENTS.md`。
+- **Loader。** `prompts/helpers.py::load_project_instructions`，构造时调用一次；文件存在时其内容会被前置到 system prompt。
+- **信任。** 两个文件都按原样从工作目录读取。因此克隆来的仓库、或存放租户上传文件的工作目录，都能把指令放进 system prompt —— 而 `AGENTS.md` 远比 `AGENTAO.md` 常见。不希望读取任何文件的宿主可传 `Agentao(project_instructions="")`，两个文件都会跳过。
 - **Schema。** 自由 Markdown，无强制结构。
 
 prompt 组成规则与约定见 [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md)。

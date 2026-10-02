@@ -73,34 +73,47 @@ def extract_context_hints(messages: List[Dict[str, Any]]) -> List[str]:
     return hints[:20]
 
 
+# Read in this order; the first file that exists is the only one used.
+# ``AGENTS.md`` is the cross-tool convention (agents.md); it is read only when
+# a project has no ``AGENTAO.md``, so a project that has both keeps the
+# behaviour it had. Root of ``working_directory`` only — no nested lookup.
+PROJECT_INSTRUCTION_FILES = ("AGENTAO.md", "AGENTS.md")
+
+
 def load_project_instructions(
     working_directory: Path,
     logger: Optional[logging.Logger] = None,
 ) -> Optional[str]:
-    """Load project-specific instructions from ``AGENTAO.md`` if present.
+    """Load project-specific instructions from ``AGENTAO.md``, else ``AGENTS.md``.
 
-    A leading YAML frontmatter block (e.g. carried over from a Cursor rule or
-    another tool's instruction file) is stripped via :func:`strip_frontmatter`
-    so it does not leak into the system prompt. Returns the (frontmatter-free)
-    file contents or ``None`` when the file is absent or cannot be read. Errors
-    are logged at WARNING and swallowed — the agent should still start when the
-    project has no AGENTAO.md.
+    Only the first of :data:`PROJECT_INSTRUCTION_FILES` that exists is read;
+    the two are never merged. A leading YAML frontmatter block (e.g. carried
+    over from a Cursor rule or another tool's instruction file) is stripped
+    via :func:`strip_frontmatter` so it does not leak into the system prompt.
+    Returns the (frontmatter-free) file contents or ``None`` when neither
+    file is present or the chosen one cannot be read. Errors are logged at
+    WARNING and swallowed — the agent should still start. A file that exists
+    but cannot be read does not fall through to the next name: the project
+    meant that file, and reading a different one would be a silent swap.
     """
-    try:
-        agentao_md = working_directory / "AGENTAO.md"
-        if agentao_md.exists():
-            content = agentao_md.read_text(encoding="utf-8")
-            body = strip_frontmatter(content)
+    for name in PROJECT_INSTRUCTION_FILES:
+        path = working_directory / name
+        try:
+            if not path.exists():
+                continue
+            content = path.read_text(encoding="utf-8")
+        except Exception as exc:
             if logger is not None:
-                if body != content:
-                    logger.info(
-                        f"Loaded project instructions from {agentao_md} "
-                        f"(ignored leading YAML frontmatter)"
-                    )
-                else:
-                    logger.info(f"Loaded project instructions from {agentao_md}")
-            return body
-    except Exception as exc:
+                logger.warning(f"Could not load {name}: {exc}")
+            return None
+        body = strip_frontmatter(content)
         if logger is not None:
-            logger.warning(f"Could not load AGENTAO.md: {exc}")
+            if body != content:
+                logger.info(
+                    f"Loaded project instructions from {path} "
+                    f"(ignored leading YAML frontmatter)"
+                )
+            else:
+                logger.info(f"Loaded project instructions from {path}")
+        return body
     return None

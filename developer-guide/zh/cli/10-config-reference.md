@@ -13,7 +13,7 @@
 | **MCP 服务器** | `.agentao/mcp.json` | `~/.agentao/mcp.json` | `/mcp` | [§5](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#5-mcpjson--mcp-服务器注册表) |
 | **ACP 服务器** | `.agentao/acp.json` | — | `/acp` | [§6](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#6-acpjson--acp-子代理注册表) |
 | **Skill 启停** | `.agentao/skills_config.json` | — | `/skills enable` `/skills disable` | [§7](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#7-skills_configjson--每个项目的-skill-启停) |
-| **项目说明** | `AGENTAO.md`（cwd） | — | 每轮的系统提示 | [§8](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#8-agentaomd--项目说明) |
+| **项目说明** | `AGENTAO.md`（cwd），否则 `AGENTS.md` | — | 每轮的系统提示 | [§8](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#8-agentaomd--项目说明) |
 | **记忆库** | `.agentao/memory.db` | `~/.agentao/memory.db` | `/memory`、`save_memory` 工具 | [§9](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#9-memorydb--持久化记忆库) |
 
 ## "改 X 改哪" 速查表
