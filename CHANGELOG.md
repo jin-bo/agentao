@@ -25,7 +25,9 @@ _Targeting 0.5.10. Add entries under the relevant heading as work lands._
   a file that is itself a read-only root is refused too. A read-only root wins over a writable one, `raw` must be
   absolute, an empty `writable` refuses everything, and a path that cannot
   be resolved (a symlink loop) is refused rather than raised as
-  `RuntimeError`. The developer
+  `RuntimeError`. **Provisional:** it lives in `agentao.security`, not
+  in the `agentao.host` stability contract, and its signature may change
+  before it is promoted. The developer
   guide (part 6.4) now has a `PolicyFileSystem` recipe built on it, which
   `tests/test_fs_policy_wrapper_recipe.py` runs against the real
   `write_file` and `replace` tools. (`docs/design/host-fs-policy.md`

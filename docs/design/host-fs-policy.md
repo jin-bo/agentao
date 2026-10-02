@@ -531,7 +531,10 @@ re-creating a sandbox agentao already owns. Every embedding host inherits the be
 0.5 **Land `PathPolicy.contain_any(raw, writable, immutable)`** — small, no new API surface, but it
    centralizes the security-critical leaf-deref resolve so each host's wrapper can't get it wrong.
    This is the *one* slice worth landing early even while the rest stays demand-gated.
-   **Landed for 0.5.10** (keyword-only `writable=` / `immutable=`; `raw` must be absolute). The
+   **Landed for 0.5.10** (keyword-only `writable=` / `immutable=`; `raw` must be absolute), as
+   **provisional** public API in `agentao.security`, not in the `agentao.host` contract: promote it
+   once step 1 settles whether hosts keep calling it directly, or once a second host uses it
+   unchanged for a release cycle. The
    wrapper recipe built on it is in `developer-guide/*/part-6/4-multi-tenant-fs.md`, and
    `tests/test_fs_policy_wrapper_recipe.py` runs that recipe against the real write tools.
 1. **Gate-pushdown for the external-root facet** (option 2: built-in write tools honor a declared

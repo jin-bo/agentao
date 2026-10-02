@@ -442,7 +442,9 @@ shell enforcement 尤其**无法**在宿主侧实现,除非重造一套 agentao 
 0.5 **落 `PathPolicy.contain_any(raw, writable, immutable)`** —— 很小、无新 API 面,但它把安全关键的
    leaf-deref resolve 收敛起来,让每个宿主的 wrapper 不会写错。这是即便其余仍 demand-gated、也值得先落的
    *那一刀*。
-   **已为 0.5.10 落地**(`writable=` / `immutable=` 为仅关键字参数;`raw` 必须是绝对路径)。基于它的
+   **已为 0.5.10 落地**(`writable=` / `immutable=` 为仅关键字参数;`raw` 必须是绝对路径),
+   作为 `agentao.security` 中**暂定公开**(provisional)的 API,不在 `agentao.host` 契约内:等 step 1
+   定下宿主是否仍直接调用它,或有第二个宿主原样使用它撑过一个发布周期,再纳入契约。基于它的
    wrapper 示例在 `developer-guide/*/part-6/4-multi-tenant-fs.md`,`tests/test_fs_policy_wrapper_recipe.py`
    用真实的写工具运行这段示例。
 1. **external-root facet 的 gate 下推**(option 2:内置写工具经 `FileSystem` 能力遵守声明的多根策略;

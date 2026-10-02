@@ -182,6 +182,10 @@ Pair with the **sandbox** (6.2) for defense in depth.
 
 To keep the agent from writing some subpaths of an otherwise writable `working_directory` (source material under `raw/`, the project's `AGENTAO.md`), wrap the filesystem. `PathPolicy.contain_any` does the security-critical part: it follows a leaf symlink before testing the target, so `scratch/link -> raw/source.txt` is refused, and a read-only root always wins over a writable one. Read-only roots are matched case-insensitively, so they need not exist yet: `RAW/x` cannot create a protected `raw/` on macOS.
 
+::: warning Provisional
+`PathPolicy.contain_any` is provisional public API. You can use it, but it is not part of the `agentao.host` stability contract yet, and its signature may change before it is. `LocalFileSystem` is imported from `agentao.capabilities`, which is not on that contract either (see the embedding guide's capability-injection section).
+:::
+
 ```python
 from agentao.capabilities import LocalFileSystem
 from agentao.security import PathPolicy, PathPolicyError

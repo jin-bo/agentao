@@ -183,6 +183,10 @@ agent = Agentao(working_directory=...)
 
 要让 agent 不能写某些子路径（`raw/` 下的原始资料、项目的 `AGENTAO.md`），而 `working_directory` 其余部分照常可写，就包一层 filesystem。安全上最关键的一步由 `PathPolicy.contain_any` 完成：它先跟随末端符号链接再判断目标，所以 `scratch/link -> raw/source.txt` 会被拒；只读根与可写根重叠时，只读优先。只读根按不区分大小写的方式匹配，所以不必事先存在：在 macOS 上，`RAW/x` 无法创建出受保护的 `raw/`。
 
+::: warning 暂定公开
+`PathPolicy.contain_any` 是暂定公开（provisional）的 API：可以使用，但它还不属于 `agentao.host` 稳定契约，纳入之前签名可能调整。示例里的 `LocalFileSystem` 从 `agentao.capabilities` 导入，那里同样不属于稳定契约（见嵌入指南的能力注入一节）。
+:::
+
 ```python
 from agentao.capabilities import LocalFileSystem
 from agentao.security import PathPolicy, PathPolicyError

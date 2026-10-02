@@ -115,7 +115,13 @@ class PathPolicy:
 
         For a host's ``FileSystem`` wrapper that needs more than one
         writable root, or read-only subpaths inside a writable one (see
-        ``docs/design/host-fs-policy.md``). Returns the effective target
+        ``docs/design/host-fs-policy.md``).
+
+        **Provisional public API.** Hosts may call it, but it is not part
+        of the ``agentao.host`` stability contract yet and its signature
+        may change before it is. It is promoted once the design's
+        gate-pushdown step settles whether hosts keep calling it directly,
+        or once a second host uses it unchanged for a release cycle. Returns the effective target
         — where ``open()`` would actually write — and raises
         :class:`PathPolicyError` unless it is under some ``writable``
         root and under no ``immutable`` one. Immutable wins.
