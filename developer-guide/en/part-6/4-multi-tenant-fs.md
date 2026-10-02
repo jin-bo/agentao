@@ -180,7 +180,7 @@ Pair with the **sandbox** (6.2) for defense in depth.
 
 ### Read-only subpaths inside the workspace
 
-To keep the agent from writing some subpaths of an otherwise writable `working_directory` (source material under `raw/`, the project's `AGENTAO.md`), wrap the filesystem. `PathPolicy.contain_any` does the security-critical part: it follows a leaf symlink before testing the target, so `scratch/link -> raw/source.txt` is refused, and a read-only root always wins over a writable one.
+To keep the agent from writing some subpaths of an otherwise writable `working_directory` (source material under `raw/`, the project's `AGENTAO.md`), wrap the filesystem. `PathPolicy.contain_any` does the security-critical part: it follows a leaf symlink before testing the target, so `scratch/link -> raw/source.txt` is refused, and a read-only root always wins over a writable one. Read-only roots are matched case-insensitively, so they need not exist yet: `RAW/x` cannot create a protected `raw/` on macOS.
 
 ```python
 from agentao.capabilities import LocalFileSystem

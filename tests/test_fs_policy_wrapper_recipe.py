@@ -105,3 +105,14 @@ def test_set_policy_reaches_an_already_bound_tool(kb, fs):
 
 def test_reads_pass_through(kb, fs):
     assert fs.read_bytes(Path(kb / "raw" / "source.txt")) == b"original"
+
+
+@pytest.mark.parametrize("protected, attempt", [("raw", "RAW/source.txt"), ("AGENTAO.md", "agentao.md")])
+def test_case_variant_cannot_create_a_read_only_path(tmp_path, protected, attempt):
+    """The reported reproduction: the protected path does not exist yet."""
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    fs = PolicyFileSystem(LocalFileSystem(), writable=[kb], immutable=[kb / protected])
+    out = _bind(WriteFileTool(), kb, fs).execute(file_path=attempt, content="bad")
+    assert "read-only" in out, out
+    assert not (kb / attempt).exists()

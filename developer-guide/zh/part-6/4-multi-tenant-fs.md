@@ -181,7 +181,7 @@ agent = Agentao(working_directory=...)
 
 ### 工作区内的只读子路径
 
-要让 agent 不能写某些子路径（`raw/` 下的原始资料、项目的 `AGENTAO.md`），而 `working_directory` 其余部分照常可写，就包一层 filesystem。安全上最关键的一步由 `PathPolicy.contain_any` 完成：它先跟随末端符号链接再判断目标，所以 `scratch/link -> raw/source.txt` 会被拒；只读根与可写根重叠时，只读优先。
+要让 agent 不能写某些子路径（`raw/` 下的原始资料、项目的 `AGENTAO.md`），而 `working_directory` 其余部分照常可写，就包一层 filesystem。安全上最关键的一步由 `PathPolicy.contain_any` 完成：它先跟随末端符号链接再判断目标，所以 `scratch/link -> raw/source.txt` 会被拒；只读根与可写根重叠时，只读优先。只读根按不区分大小写的方式匹配，所以不必事先存在：在 macOS 上，`RAW/x` 无法创建出受保护的 `raw/`。
 
 ```python
 from agentao.capabilities import LocalFileSystem

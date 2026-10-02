@@ -17,6 +17,7 @@ Scope is deliberately small:
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
@@ -134,7 +135,12 @@ class PathPolicy:
         that exist, also by identity (``st_dev``/``st_ino``) against the
         target's existing ancestors, because on a case-insensitive volume
         ``kb/RAW/x`` is ``kb/raw/x`` on disk but not lexically under it.
-        A path that cannot be resolved (a symlink loop) is refused.
+        Read-only roots are additionally compared case- and
+        normalisation-insensitively, so one that does not exist yet
+        cannot be created through a case variant; on a case-sensitive
+        volume that over-refuses, never under-refuses. Writable roots get
+        no such widening — there it would fail open. A path that cannot
+        be resolved (a symlink loop) is refused.
         """
         candidate = Path(raw).expanduser()
         if not candidate.is_absolute():
@@ -191,8 +197,24 @@ class PathPolicy:
                 f"PathPolicy: refused '{raw}' — resolves to '{target}', "
                 f"outside every writable root"
             )
+        def _fold(path: Path) -> tuple[str, ...]:
+            return tuple(
+                unicodedata.normalize("NFC", part).casefold() for part in path.parts
+            )
+
+        def _under_folded(root: Path) -> bool:
+            # Identity only covers a root that exists. A read-only root
+            # that does not exist yet (``raw/`` before the first import,
+            # ``AGENTAO.md`` before it is written) has no inode, and a
+            # case variant would create it. Folded comparison closes that
+            # on case- and normalisation-insensitive volumes; on a
+            # case-sensitive one it over-refuses ``RAW/x`` beside a
+            # read-only ``raw/``, which is the safe direction.
+            t, r = _fold(target), _fold(root)
+            return t[: len(r)] == r
+
         for root in immutable_roots:
-            if _under(root):
+            if _under(root) or _under_folded(root):
                 raise PathPolicyError(
                     f"PathPolicy: refused '{raw}' — resolves to '{target}', "
                     f"inside read-only '{root}'"

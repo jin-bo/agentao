@@ -322,3 +322,35 @@ def test_contain_any_symlink_loop_is_a_policy_error(project_root):
     except PathPolicyError:
         return
     assert target.is_relative_to(project_root.resolve())
+
+
+@pytest.mark.parametrize(
+    "protected, attempt",
+    [
+        ("raw", "RAW/source.txt"),            # directory, not created yet
+        ("AGENTAO.md", "agentao.md"),         # file, not created yet
+        ("docs/raw", "DOCS/Raw/x.txt"),       # nested, existing parent in another case
+        ("caf\u00e9", "cafe\u0301/x.txt"),    # NFC root, NFD attempt
+    ],
+)
+def test_contain_any_refuses_variant_of_read_only_root_that_does_not_exist(
+    project_root, protected, attempt,
+):
+    """Identity cannot help before the root exists; folding must."""
+    (project_root / "docs").mkdir()
+    assert not (project_root / protected).exists()
+    with pytest.raises(PathPolicyError, match="read-only"):
+        PathPolicy.contain_any(
+            project_root / attempt,
+            writable=[project_root],
+            immutable=[project_root / protected],
+        )
+
+
+def test_contain_any_does_not_widen_writable_roots_by_case(tmp_path):
+    """Folding is for read-only roots only: on a case-sensitive volume
+    ``Share/`` beside a writable ``share/`` is a different directory."""
+    room = tmp_path / "room"
+    room.mkdir()
+    with pytest.raises(PathPolicyError, match="outside every writable root"):
+        PathPolicy.contain_any(room / "SHARE" / "x", writable=[room / "share"])
