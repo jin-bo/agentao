@@ -130,33 +130,69 @@ class PathPolicy:
         the ``raw`` policy for the wrong reason — as "outside raw" — and a
         wrapper reading that refusal as "not immutable" lets the write
         through the link. Here the leaf is dereferenced first and every
-        root is tested against that one target.
+        root is tested against that one target — by path, and for roots
+        that exist, also by identity (``st_dev``/``st_ino``) against the
+        target's existing ancestors, because on a case-insensitive volume
+        ``kb/RAW/x`` is ``kb/raw/x`` on disk but not lexically under it.
+        A path that cannot be resolved (a symlink loop) is refused.
         """
         candidate = Path(raw).expanduser()
         if not candidate.is_absolute():
             raise PathPolicyError(
                 f"PathPolicy: refused '{raw}' — not an absolute path"
             )
-        if candidate.name == "..":
-            # ``parent / name`` would keep the ``..`` literally, and a
-            # lexical ``is_relative_to`` then reads ``root/sub/..`` as
-            # inside ``root/sub``.
-            target = candidate.resolve(strict=False)
-        else:
-            target = candidate.parent.resolve(strict=False) / candidate.name
-            if target.is_symlink():
-                target = target.resolve(strict=False)
+        try:
+            if candidate.name == "..":
+                # ``parent / name`` would keep the ``..`` literally, and a
+                # lexical ``is_relative_to`` then reads ``root/sub/..`` as
+                # inside ``root/sub``.
+                target = candidate.resolve(strict=False)
+            else:
+                target = candidate.parent.resolve(strict=False) / candidate.name
+                if target.is_symlink():
+                    target = target.resolve(strict=False)
 
-        def _roots(paths: Iterable[str | Path]) -> list[Path]:
-            return [Path(p).expanduser().resolve(strict=False) for p in paths]
+            def _roots(paths: Iterable[str | Path]) -> list[Path]:
+                return [Path(p).expanduser().resolve(strict=False) for p in paths]
 
-        if not any(target.is_relative_to(r) for r in _roots(writable)):
+            writable_roots = _roots(writable)
+            immutable_roots = _roots(immutable)
+        except (RuntimeError, OSError) as e:
+            # A symlink loop raises RuntimeError on 3.12 and OSError on
+            # 3.13+. Refuse with *this* type, so a wrapper catching only
+            # PathPolicyError still reads it as a refusal.
+            raise PathPolicyError(
+                f"PathPolicy: refused '{raw}' — cannot resolve: {e}"
+            ) from e
+
+        # ``resolve`` does not canonicalise case on macOS, so on a
+        # case-insensitive volume ``kb/RAW/x`` is ``kb/raw/x`` on disk but
+        # not lexically under ``kb/raw``. Compare existing ancestors by
+        # identity too; a lexical match alone would let that write through.
+        ancestor_ids = set()
+        for p in (target, *target.parents):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            ancestor_ids.add((st.st_dev, st.st_ino))
+
+        def _under(root: Path) -> bool:
+            if target.is_relative_to(root):
+                return True
+            try:
+                st = root.stat()
+            except OSError:
+                return False
+            return (st.st_dev, st.st_ino) in ancestor_ids
+
+        if not any(_under(r) for r in writable_roots):
             raise PathPolicyError(
                 f"PathPolicy: refused '{raw}' — resolves to '{target}', "
                 f"outside every writable root"
             )
-        for root in _roots(immutable):
-            if target.is_relative_to(root):
+        for root in immutable_roots:
+            if _under(root):
                 raise PathPolicyError(
                     f"PathPolicy: refused '{raw}' — resolves to '{target}', "
                     f"inside read-only '{root}'"

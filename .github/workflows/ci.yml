@@ -209,9 +209,10 @@ jobs:
   # runs a real profile is gated on darwin. Before this job no CI runner was a
   # Mac, so those tests had never run anywhere but a maintainer's laptop.
   #
-  # Scoped to the sandbox and shell modules rather than the full suite: that is
-  # what only a Mac can check, and the full suite already runs on Linux and
-  # Windows.
+  # Scoped to the sandbox, path-policy and shell modules rather than the full
+  # suite: that is what only a Mac can check (test_path_policy.py has a
+  # case-insensitive-volume test that skips on Linux), and the full suite
+  # already runs on Linux and Windows.
   macos:
     name: Test · macOS sandbox · Python 3.12
     runs-on: macos-latest
@@ -240,6 +241,7 @@ jobs:
         run: >
           uv run --python 3.12 python -m pytest -v --tb=short
           tests/test_sandbox_policy.py
+          tests/test_path_policy.py
           tests/test_shell_tool_shell_dialect.py
           tests/test_shell_output_bound.py
 

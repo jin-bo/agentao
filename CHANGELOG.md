@@ -16,8 +16,13 @@ _Targeting 0.5.10. Add entries under the relevant heading as work lands._
   host's `FileSystem` wrapper. It follows a leaf symlink before testing the
   target, so `scratch/link -> raw/source.txt` is refused when `raw/` is
   read-only; testing with `contain_file` once per root lets that write
-  through. A read-only root wins over a writable one, `raw` must be
-  absolute, and an empty `writable` refuses everything. The developer
+  through. Roots that exist are also matched by file identity, so on a
+  case-insensitive volume (the macOS default) `RAW/x` is refused when
+  `raw/` is read-only, and so is a hard link to a file that is itself a
+  read-only root. A read-only root wins over a writable one, `raw` must be
+  absolute, an empty `writable` refuses everything, and a path that cannot
+  be resolved (a symlink loop) is refused rather than raised as
+  `RuntimeError`. The developer
   guide (part 6.4) now has a `PolicyFileSystem` recipe built on it, which
   `tests/test_fs_policy_wrapper_recipe.py` runs against the real
   `write_file` and `replace` tools. (`docs/design/host-fs-policy.md`

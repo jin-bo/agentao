@@ -293,3 +293,32 @@ def test_contain_any_rejects_relative_path(project_root, monkeypatch):
     monkeypatch.chdir(project_root)
     with pytest.raises(PathPolicyError, match="not an absolute path"):
         PathPolicy.contain_any("a.txt", writable=[project_root])
+
+
+def test_contain_any_rejects_case_variant_on_case_insensitive_fs(project_root, carved):
+    """``resolve`` keeps the caller's case on macOS, so a lexical check
+    alone reads ``RAW/secret.txt`` as outside ``raw/``."""
+    variant = project_root / "RAW"
+    if not variant.exists():
+        pytest.skip("case-sensitive filesystem")
+    with pytest.raises(PathPolicyError, match="read-only"):
+        PathPolicy.contain_any(variant / "secret.txt", **carved)
+    with pytest.raises(PathPolicyError, match="read-only"):
+        PathPolicy.contain_any(project_root / "agentao.md", **carved)
+
+
+def test_contain_any_symlink_loop_is_a_policy_error(project_root):
+    """A loop must not escape as RuntimeError (3.12) or a bare OSError.
+
+    Whether ``resolve(strict=False)`` raises on a loop differs by Python
+    version, so two outcomes are correct: a ``PathPolicyError``, or a
+    target that is still inside the root (the write itself then fails
+    with ELOOP). Anything else escaping fails the test.
+    """
+    loop = project_root / "loop"
+    os.symlink(loop, loop)
+    try:
+        target = PathPolicy.contain_any(loop, writable=[project_root])
+    except PathPolicyError:
+        return
+    assert target.is_relative_to(project_root.resolve())
