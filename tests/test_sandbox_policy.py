@@ -880,31 +880,101 @@ def test_all_builtin_profiles_pass_sandbox_exec_parser():
         assert r.returncode == 0, f"profile {sb.name} failed to parse: {r.stderr}"
 
 
+_NO_NETWORK_SB = (
+    Path(__file__).parent.parent / "agentao" / "sandbox" / "profiles" / "workspace-write-no-network.sb"
+)
+
+
+@pytest.fixture
+def local_http_server():
+    """A loopback HTTP server that counts the requests it answers.
+
+    The network test used to curl https://example.com and accept any
+    non-zero exit, which a runner with no network, a DNS failure or an
+    outage satisfies just as well as the sandbox does. A local server
+    lets the test first show the request *can* get through, and then
+    that under the profile it never arrives.
+    """
+    import http.server
+    import threading
+
+    hits = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/probe", hits
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.fixture
+def dir_outside_profile_writes():
+    """A writable directory that no write rule of the profile covers.
+
+    The profile allows writes under _RW1, /tmp, /var/tmp and
+    /private/var/folders/ -- the last one is where pytest's tmp_path
+    lives on macOS, so tmp_path cannot be the outside target. The
+    home directory is writable by the test user and covered by none of
+    those rules. (The old target, /private/etc, is not writable by the
+    test user at all, so EPERM there proved nothing about the sandbox.)
+    """
+    import shutil
+    import tempfile
+
+    d = Path(tempfile.mkdtemp(prefix=".agentao-sandbox-probe-", dir=Path.home()))
+    try:
+        yield d
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 @MACOS_ONLY
-def test_no_network_profile_actually_blocks_curl(tmp_path):
-    """Integration: curl should fail under workspace-write-no-network."""
+def test_no_network_profile_actually_blocks_curl(tmp_path, local_http_server):
+    """Integration: a request that succeeds unsandboxed never arrives under no-network."""
     import subprocess
-    sb = Path(__file__).parent.parent / "agentao" / "sandbox" / "profiles" / "workspace-write-no-network.sb"
+    url, hits = local_http_server
+    curl = f"curl -sS --max-time 3 {url} -o /dev/null"
+
+    # Control: without the sandbox the request reaches the server.
+    control = subprocess.run(
+        ["/bin/sh", "-c", curl], capture_output=True, text=True, timeout=15,
+    )
+    assert control.returncode == 0, f"control request failed: {control.stderr}"
+    assert len(hits) == 1
+
     r = subprocess.run(
         [
-            "sandbox-exec", "-D", f"_RW1={tmp_path}", "-f", str(sb),
-            "/bin/sh", "-c", "curl -sS --max-time 3 https://example.com -o /dev/null",
+            "sandbox-exec", "-D", f"_RW1={tmp_path}", "-f", str(_NO_NETWORK_SB),
+            "/bin/sh", "-c", curl,
         ],
         capture_output=True, text=True, timeout=15,
     )
     assert r.returncode != 0, "curl unexpectedly succeeded under no-network profile"
+    assert len(hits) == 1, "the sandboxed request reached the server"
 
 
 @MACOS_ONLY
-def test_workspace_write_profile_blocks_writes_outside(tmp_path):
-    """Integration: writing outside _RW1 must be denied; inside must succeed."""
+def test_workspace_write_profile_blocks_writes_outside(tmp_path, dir_outside_profile_writes):
+    """Integration: writing outside the profile's roots is denied; inside succeeds."""
     import subprocess
-    sb = Path(__file__).parent.parent / "agentao" / "sandbox" / "profiles" / "workspace-write-no-network.sb"
 
     # Inside the workspace — should succeed
     inside = subprocess.run(
         [
-            "sandbox-exec", "-D", f"_RW1={tmp_path}", "-f", str(sb),
+            "sandbox-exec", "-D", f"_RW1={tmp_path}", "-f", str(_NO_NETWORK_SB),
             "/bin/sh", "-c", f"echo ok > {tmp_path}/inside.txt && cat {tmp_path}/inside.txt",
         ],
         capture_output=True, text=True, timeout=10,
@@ -912,15 +982,23 @@ def test_workspace_write_profile_blocks_writes_outside(tmp_path):
     assert inside.returncode == 0, f"write inside workspace failed: {inside.stderr}"
     assert "ok" in inside.stdout
 
-    # Outside the workspace — should be denied. We target a path we know
-    # exists (/private/etc is protected by both sandbox and SIP, so EPERM
-    # is guaranteed) and don't actually create anything persistent.
+    # Control: without the sandbox the outside directory is writable.
+    control_target = dir_outside_profile_writes / "control.txt"
+    control = subprocess.run(
+        ["/bin/sh", "-c", f"echo ok > {control_target}"],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert control.returncode == 0, f"control write failed: {control.stderr}"
+    assert control_target.read_text() == "ok\n"
+
+    target = dir_outside_profile_writes / "probe.txt"
     outside = subprocess.run(
         [
-            "sandbox-exec", "-D", f"_RW1={tmp_path}", "-f", str(sb),
-            "/bin/sh", "-c", "echo bad > /private/etc/agentao_sandbox_probe",
+            "sandbox-exec", "-D", f"_RW1={tmp_path}", "-f", str(_NO_NETWORK_SB),
+            "/bin/sh", "-c", f"echo bad > {target}",
         ],
         capture_output=True, text=True, timeout=10,
     )
-    assert outside.returncode != 0, "write to /private/etc unexpectedly succeeded"
+    assert outside.returncode != 0, "write outside the profile's roots unexpectedly succeeded"
     assert "Operation not permitted" in (outside.stdout + outside.stderr)
+    assert not target.exists()
