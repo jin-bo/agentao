@@ -1,8 +1,8 @@
 # MCP OAuth — Design
 
 **Status:** **Approved (2026-10-02)** — the go-ahead and every §11 recommendation. **PR 1
-implemented** (auth module and record store; see *Implementation record* in Appendix A); PR 2 and
-PR 3 not started. Design history: proposal rev 8 (2026-10-02). Four design-review rounds passed it; a reverse review
+implemented** (auth module and record store, merged as #398) and **PR 2 implemented** (CLI login
+loop); see the *Implementation records* in Appendix A. PR 3 not started. Design history: proposal rev 8 (2026-10-02). Four design-review rounds passed it; a reverse review
 of rev 5 (→ rev 6) and an external review of rev 6 (→ rev 7, two P1s: auth failures are invisible
 once the transport has handled them, so the verdict must come from the auth object on every
 connection) were folded in, and its second round (→ rev 8: a shielded refresh must also survive
@@ -975,3 +975,61 @@ Where the code says more than the design did, or differs:
    next request send it again. An eighth: a record whose stored URL does not parse
    (`https://h:bad/mcp`) raised out of `load()`, failing connects and blocking the login that would
    replace it; it is now unreadable like malformed JSON.
+
+### Implementation record — PR 2 (2026-10-02)
+
+CLI login loop, as §13.4 lists it: `agentao/cli/mcp_login_ui.py` (the §7 UI) and
+`agentao/cli/mcp_auth.py` (login and logout shared by the two surfaces, and the `agentao mcp`
+subparser), both new; changes to `cli/commands/mcp.py` (`/mcp login <name> [--no-browser]`,
+`/mcp logout <name>`, `needs login` in `/mcp list`), `cli/ui.py` (the §8.1 startup line),
+`cli/_light.py`, `cli/__init__.py` and `cli/entrypoints.py` (`agentao mcp login|logout <name>`,
+routed through the light entry so it runs without the `[cli]` extras), and `cli/help_text.py`.
+Tests: `tests/test_mcp_oauth_cli.py`, 45 tests — the listener over real loopback sockets, the
+paste reader over a pseudo-terminal, and login → tool call → logout through the real UI against
+the PR 1 fake with a scripted browser that requests the redirect from the listener. Passing on
+mcp 2.0.0, 1.26.0 and 1.30.0, and on Python 3.10.
+
+Twelve mutation checks, each turned its test red: binding all interfaces; dropping the state
+check; dropping the path check; `close` not stopping the paste prompt; no wait timeout; echo left
+on; canonical mode; the terminal not restored; no paste size bound; the listener not closed;
+`SO_REUSEADDR` off; no fallback from a remembered port. Two first came back as a **hang** rather
+than a failure (no timeout, canonical mode), and one red only two runs in three (`SO_REUSEADDR`,
+which depended on which side closed the callback connection first); the tests were bounded and
+made deterministic before this record was written.
+
+Where the code says more than §7 did, or differs:
+
+1. **The callback checks `state`.** The listener is reachable by any local process, so only a
+   redirect carrying the `state` of the authorization URL this login opened can settle it; any
+   other request is answered 400 and the login keeps waiting. The SDK checks `state` too, but only
+   after the first redirect has been taken — without this, a stray request ends the login.
+2. **A port can be reused after TIME_WAIT.** The callback's server side closes first, so a second
+   login within a minute found its stored registration's port "in use". POSIX `SO_REUSEADDR` lets
+   that bind succeed and still refuses a port another program listens on; Windows keeps it off,
+   where it would allow exactly that.
+3. **Only a configured port fails when taken.** A port remembered from a stored registration
+   (no `oauth.callback_port`) falls back to an OS-assigned one: a dynamic registration simply
+   registers again, and a configured `client_id` gets §5.5's "set `callback_port`" message.
+4. **The paste prompt reads `/dev/tty` in non-canonical mode, without echo**, polling so `close`
+   can stop it when the listener wins. Canonical mode caps a line at the driver's limit (1024 bytes
+   on macOS), shorter than a real redirect URL. It runs on its own thread, not the loop's default
+   executor, which httpx resolves hostnames on.
+5. **No browser on a Linux session with no display.** `webbrowser` would fall back to a console
+   browser that takes over the terminal, so the paste path is used instead.
+6. **Exit status of `agentao mcp login`:** `0` connected, `1` failed or stored-but-not-connected,
+   `2` usage, `130` cancelled.
+7. **Review fixes before commit**, each with a test that fails without it. A `/code-review` pass:
+   a parse error on the `mcp` line printed twice (the light entry handed it on); `-h` before `mcp`
+   ran the login; the no-browser message dropped an IPv6 host's brackets; and Ctrl+C at the Windows
+   paste prompt raised on the reader thread, where it would have escaped the MCP loop. Codex, five
+   rounds: the scripted-browser tests would have waited out the timeout on headless Linux CI (the
+   browser is skipped without a display), and the headless path now has a test of its own; REPL
+   output from a login is passed through the terminal sanitizer, not only Rich escaping, since an
+   authorization server writes the error description; a redirect with more than 32 query fields
+   killed the paste prompt; a cancelled login now waits (bounded) for its UI to close, so the paste
+   prompt cannot hold the terminal under the REPL's next prompt; `agentao mcp login` finds plugin
+   MCP servers, installed or `--plugin-dir`, as the REPL does; `oauth.redirect_host` gets a listener
+   on the loopback address it names (`::1` included) and any non-loopback host is refused before
+   the login starts; a callback is refused until the authorization URL is opened, so a stale
+   redirect during discovery cannot end the login; and an invalid transport is reported, not raised.
+   The fifth round was clean.

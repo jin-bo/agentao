@@ -93,6 +93,9 @@ def _build_parser():
     from .run import add_run_subparser
     add_run_subparser(subparsers)
 
+    from .mcp_auth import add_mcp_subparser
+    add_mcp_subparser(subparsers)
+
     _sub_plugin_dir_kwargs = dict(
         dest="sub_plugin_dirs", action="append", default=None,
         metavar="DIR", help="Load a plugin from DIR (repeatable).",
@@ -203,7 +206,7 @@ def dispatch_acp_or_login(parser: Any, args: Any, extras: List[str]) -> bool:
 
 
 def run_light(argv: List[str]) -> bool:
-    """Handle *argv* if it asks for ``--acp`` / ``--login``; else ``False``.
+    """Handle *argv* if it asks for ``--acp`` / ``--login`` / ``mcp``; else ``False``.
 
     Only consulted when one of those tokens is present, so every other
     command still meets the extras check first. A command line that does not
@@ -213,8 +216,23 @@ def run_light(argv: List[str]) -> bool:
     parser = _build_parser()
     try:
         args, extras = parser.parse_known_args(argv)
-    except SystemExit:
+    except SystemExit as e:
+        if e.code == 0:
+            raise  # a subcommand's ``-h`` printed its help; printing it twice helps no one
+        if next((t for t in argv if not t.startswith("-")), None) == "mcp":
+            # The ``mcp`` subparser already printed its usage error; handing
+            # the line to the full entry point would print it a second time.
+            raise
         return False
+    if args.subcommand == "mcp" and not (args.login or args.acp):
+        if getattr(args, "show_help", False):
+            parser.print_help()
+            sys.exit(0)
+        if extras:
+            parser.error("unrecognized arguments: " + " ".join(extras))
+        from .mcp_auth import handle_mcp_subcommand
+
+        sys.exit(handle_mcp_subcommand(args))
     if not (args.login or args.acp):
         return False
     if getattr(args, "show_help", False):

@@ -233,6 +233,11 @@ def entrypoint():
             )
             sys.exit(2)
         _cli.handle_doctor_subcommand(args)
+    elif args.subcommand == "mcp":
+        if extras:
+            parser.error("unrecognized arguments: " + " ".join(extras))
+        from .mcp_auth import handle_mcp_subcommand
+        sys.exit(handle_mcp_subcommand(args))
     elif args.subcommand == "config":
         if extras:
             sys.stderr.write(
