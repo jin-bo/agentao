@@ -79,3 +79,6 @@ HIDDEN_*.md
 # pytest-cov data file
 .coverage
 .coverage.*
+
+# Maintainer-only metrics snapshots and checkpoint notes (path-a-roadmap §15.1, §16.3)
+docs/dev-notes/
