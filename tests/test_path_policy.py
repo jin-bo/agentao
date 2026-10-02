@@ -349,7 +349,16 @@ def test_contain_any_refuses_variant_of_read_only_root_that_does_not_exist(
 
 def test_contain_any_does_not_widen_writable_roots_by_case(tmp_path):
     """Folding is for read-only roots only: on a case-sensitive volume
-    ``Share/`` beside a writable ``share/`` is a different directory."""
+    ``Share/`` beside a writable ``share/`` is a different directory.
+
+    Skipped where pathlib itself compares case-insensitively (Windows):
+    there ``is_relative_to`` already matches ``SHARE`` to ``share``, which
+    is right for NTFS, and contain_any adds nothing on top of it.
+    """
+    from pathlib import Path
+
+    if Path("a") == Path("A"):
+        pytest.skip("pathlib compares paths case-insensitively on this platform")
     room = tmp_path / "room"
     room.mkdir()
     with pytest.raises(PathPolicyError, match="outside every writable root"):
