@@ -143,7 +143,7 @@ Constructor injection replaces private attribute mutation (`agent._memory_manage
 
 The `FileSystem` Protocol (`agentao.capabilities.FileSystem`) covers all file and search tool IO. Any compliant implementation works as a drop-in: a Docker-exec remote that delegates reads/writes into a container, an in-memory virtual filesystem for test isolation, or an audit proxy that logs every access before delegating to the real disk — without changing any tool code.
 
-> To enforce a **path-domain write boundary** (declare some subpaths read-only, or additional roots writable) rather than just isolate/redirect/audit IO, see the `PolicyFileSystem` interim recipe in [`docs/design/host-fs-policy.md`](../../../docs/design/host-fs-policy.md) — a leaf-symlink-safe wrapper over this same `filesystem=` injection point. (Proposal-stage / demand-gated; the recipe covers the within-cwd read-only facet today.)
+> To enforce a **path-domain write boundary** (some subpaths read-only) rather than just isolate, redirect or audit IO, wrap this same `filesystem=` injection point — see [Read-only subpaths inside the workspace](#read-only-subpaths-inside-the-workspace) below.
 
 **Solution B · One process per tenant** (strongest isolation, highest cost):
 
@@ -177,6 +177,48 @@ By default the agent can write anywhere the permission rules allow. **Multi-tena
 ```
 
 Pair with the **sandbox** (6.2) for defense in depth.
+
+### Read-only subpaths inside the workspace
+
+To keep the agent from writing some subpaths of an otherwise writable `working_directory` (source material under `raw/`, the project's `AGENTAO.md`), wrap the filesystem. `PathPolicy.contain_any` does the security-critical part: it follows a leaf symlink before testing the target, so `scratch/link -> raw/source.txt` is refused, and a read-only root always wins over a writable one.
+
+```python
+from agentao.capabilities import LocalFileSystem
+from agentao.security import PathPolicy, PathPolicyError
+
+class PolicyFileSystem:
+    """A FileSystem wrapper that only lets writes land where the rule allows."""
+
+    def __init__(self, inner, *, writable, immutable=()):
+        self._fs = inner
+        self._rule = (tuple(writable), tuple(immutable))
+
+    def set_policy(self, *, writable, immutable=()):
+        # One reference swap: a write sees the old rule or the new one, never half.
+        self._rule = (tuple(writable), tuple(immutable))
+
+    def write_text(self, path, data, *, append=False):
+        writable, immutable = self._rule
+        try:
+            PathPolicy.contain_any(path, writable=writable, immutable=immutable)
+        except PathPolicyError as e:
+            raise PermissionError(str(e)) from e
+        return self._fs.write_text(path, data, append=append)
+
+    def __getattr__(self, name):  # reads, listing, stat: unchanged
+        return getattr(self._fs, name)
+
+agent = Agentao(
+    working_directory=kb,
+    filesystem=PolicyFileSystem(
+        LocalFileSystem(), writable=[kb], immutable=[kb / "raw", kb / "AGENTAO.md"],
+    ),
+)
+```
+
+Every built-in write tool shares the one wrapper instance, so `set_policy(...)` reaches tools that are already registered. Assigning a new wrapper to `agent.filesystem` does not, because each tool keeps the instance it was given at registration.
+
+The wrapper can only **restrict**. It does not let native `write_file` write to a root outside `working_directory`, because the tool's own single-root check rejects that path before the wrapper runs. Shell commands and `mcp_*` tools do not go through `filesystem` at all. Background and the remaining design: [`docs/design/host-fs-policy.md`](../../../docs/design/host-fs-policy.md). `tests/test_fs_policy_wrapper_recipe.py` runs this recipe against the real write tools.
 
 ### Dynamic rule generation
 

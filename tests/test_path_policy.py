@@ -188,3 +188,108 @@ def test_for_tool_with_none_resnapshots_per_call(project_root, monkeypatch):
 
     assert p1.project_root != p2.project_root
     assert p2.project_root == other.resolve()
+
+
+# ---------------------------------------------------------------------------
+# contain_any: several writable roots, read-only carve-outs
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def carved(project_root):
+    """``project_root`` writable, with ``raw/`` and one file carved read-only."""
+    raw = project_root / "raw"
+    raw.mkdir()
+    (raw / "secret.txt").write_text("original")
+    (project_root / "AGENTAO.md").write_text("rules")
+    return {
+        "writable": [project_root],
+        "immutable": [raw, project_root / "AGENTAO.md"],
+    }
+
+
+def test_contain_any_accepts_write_inside_writable_root(project_root, carved):
+    target = project_root / "notes" / "a.txt"
+    assert PathPolicy.contain_any(str(target), **carved) == target.resolve()
+
+
+def test_contain_any_accepts_second_writable_root(project_root, outside):
+    target = outside / "share" / "x.txt"
+    resolved = PathPolicy.contain_any(target, writable=[project_root, outside])
+    assert resolved == target.resolve()
+
+
+def test_contain_any_rejects_outside_every_root(project_root, outside):
+    with pytest.raises(PathPolicyError, match="outside every writable root"):
+        PathPolicy.contain_any(outside / "x.txt", writable=[project_root])
+
+
+def test_contain_any_rejects_empty_writable(project_root):
+    with pytest.raises(PathPolicyError):
+        PathPolicy.contain_any(project_root / "x.txt", writable=[])
+
+
+def test_contain_any_rejects_immutable_subtree_and_file(project_root, carved):
+    with pytest.raises(PathPolicyError, match="read-only"):
+        PathPolicy.contain_any(project_root / "raw" / "new.txt", **carved)
+    with pytest.raises(PathPolicyError, match="read-only"):
+        PathPolicy.contain_any(project_root / "AGENTAO.md", **carved)
+
+
+def test_contain_any_rejects_leaf_symlink_into_immutable(project_root, carved):
+    """The case per-root ``contain_file`` gets wrong: the link sits in a
+    writable directory and points into the read-only one."""
+    scratch = project_root / "scratch"
+    scratch.mkdir()
+    link = scratch / "link"
+    os.symlink(project_root / "raw" / "secret.txt", link)
+
+    with pytest.raises(PathPolicyError, match="read-only"):
+        PathPolicy.contain_any(link, **carved)
+
+
+def test_contain_any_rejects_parent_symlink_into_immutable(project_root, carved):
+    alias = project_root / "alias"
+    os.symlink(project_root / "raw", alias, target_is_directory=True)
+
+    with pytest.raises(PathPolicyError, match="read-only"):
+        PathPolicy.contain_any(alias / "new.txt", **carved)
+
+
+def test_contain_any_rejects_leaf_symlink_out_of_writable(project_root, outside):
+    link = project_root / "link"
+    os.symlink(outside / "target.txt", link)
+
+    with pytest.raises(PathPolicyError, match="outside every writable root"):
+        PathPolicy.contain_any(link, writable=[project_root])
+
+
+def test_contain_any_rejects_dotdot_escape(project_root, carved):
+    with pytest.raises(PathPolicyError, match="read-only"):
+        PathPolicy.contain_any(project_root / "notes" / ".." / "raw" / "x", **carved)
+
+
+def test_contain_any_trailing_dotdot_is_resolved(project_root, outside):
+    """``root/sub/..`` is ``root``'s parent's child, not inside ``root/sub``."""
+    sub = outside / "sub"
+    sub.mkdir()
+    with pytest.raises(PathPolicyError, match="outside every writable root"):
+        PathPolicy.contain_any(sub / "..", writable=[sub])
+
+
+def test_contain_any_matches_roots_given_through_a_symlink(tmp_path, project_root):
+    """A root named by a symlinked path still contains the real target."""
+    alias = tmp_path / "alias"
+    os.symlink(project_root, alias, target_is_directory=True)
+
+    target = project_root / "a.txt"
+    assert PathPolicy.contain_any(target, writable=[alias]) == target.resolve()
+    with pytest.raises(PathPolicyError, match="read-only"):
+        PathPolicy.contain_any(target, writable=[project_root], immutable=[alias])
+
+
+def test_contain_any_rejects_relative_path(project_root, monkeypatch):
+    """No root to resolve against; the process cwd would be the wrong one."""
+    monkeypatch.chdir(project_root)
+    with pytest.raises(PathPolicyError, match="not an absolute path"):
+        PathPolicy.contain_any("a.txt", writable=[project_root])

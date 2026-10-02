@@ -531,6 +531,9 @@ re-creating a sandbox agentao already owns. Every embedding host inherits the be
 0.5 **Land `PathPolicy.contain_any(raw, writable, immutable)`** — small, no new API surface, but it
    centralizes the security-critical leaf-deref resolve so each host's wrapper can't get it wrong.
    This is the *one* slice worth landing early even while the rest stays demand-gated.
+   **Landed for 0.5.10** (keyword-only `writable=` / `immutable=`; `raw` must be absolute). The
+   wrapper recipe built on it is in `developer-guide/*/part-6/4-multi-tenant-fs.md`, and
+   `tests/test_fs_policy_wrapper_recipe.py` runs that recipe against the real write tools.
 1. **Gate-pushdown for the external-root facet** (option 2: built-in write tools honor a declared
    multi-root policy via the `FileSystem` capability; remove their single-root pre-check) — the first
    slice worth *building* when a host needs **native** external-root writes / to retire a bypass tool.

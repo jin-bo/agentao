@@ -144,7 +144,7 @@ agent = Agentao(
 
 `FileSystem` 协议（`agentao.capabilities.FileSystem`）涵盖所有文件和搜索工具的 IO。任何符合协议的实现都可以直接替换：把读写委托给容器的 Docker-exec 后端、用于测试隔离的内存虚拟文件系统、或在委托给真实磁盘前记录每次访问的审计代理——无需修改任何工具代码。
 
-> 若要 enforce 一条**按路径域的写边界**（声明某些子路径只读、或某些额外根可写），而非仅隔离/重定向/审计 IO，见 [`docs/design/host-fs-policy.md`](../../../docs/design/host-fs-policy.md) 里的 `PolicyFileSystem` interim recipe——它是基于同一个 `filesystem=` 注入点、对 leaf-symlink 安全的 wrapper。（提案阶段 / demand-gated；该 recipe 今天覆盖 cwd 内的只读 facet。）
+> 若要实施**按路径域的写边界**（某些子路径只读），而不只是隔离、重定向或审计 IO，就包一层同一个 `filesystem=` 注入点——见下文[工作区内的只读子路径](#工作区内的只读子路径)。
 
 **解决方案 B · 每租户独立进程**（隔离最强，成本最高）：
 
@@ -178,6 +178,48 @@ agent = Agentao(working_directory=...)
 ```
 
 配合**沙箱**（6.2）双重保险。
+
+### 工作区内的只读子路径
+
+要让 agent 不能写某些子路径（`raw/` 下的原始资料、项目的 `AGENTAO.md`），而 `working_directory` 其余部分照常可写，就包一层 filesystem。安全上最关键的一步由 `PathPolicy.contain_any` 完成：它先跟随末端符号链接再判断目标，所以 `scratch/link -> raw/source.txt` 会被拒；只读根与可写根重叠时，只读优先。
+
+```python
+from agentao.capabilities import LocalFileSystem
+from agentao.security import PathPolicy, PathPolicyError
+
+class PolicyFileSystem:
+    """A FileSystem wrapper that only lets writes land where the rule allows."""
+
+    def __init__(self, inner, *, writable, immutable=()):
+        self._fs = inner
+        self._rule = (tuple(writable), tuple(immutable))
+
+    def set_policy(self, *, writable, immutable=()):
+        # One reference swap: a write sees the old rule or the new one, never half.
+        self._rule = (tuple(writable), tuple(immutable))
+
+    def write_text(self, path, data, *, append=False):
+        writable, immutable = self._rule
+        try:
+            PathPolicy.contain_any(path, writable=writable, immutable=immutable)
+        except PathPolicyError as e:
+            raise PermissionError(str(e)) from e
+        return self._fs.write_text(path, data, append=append)
+
+    def __getattr__(self, name):  # reads, listing, stat: unchanged
+        return getattr(self._fs, name)
+
+agent = Agentao(
+    working_directory=kb,
+    filesystem=PolicyFileSystem(
+        LocalFileSystem(), writable=[kb], immutable=[kb / "raw", kb / "AGENTAO.md"],
+    ),
+)
+```
+
+所有内置写工具共用同一个 wrapper 实例，所以 `set_policy(...)` 对已经注册的工具也生效。给 `agent.filesystem` 赋一个新 wrapper 则不会生效，因为每个工具保留的是注册时拿到的那个实例。
+
+这个 wrapper 只能**收紧**。它不能让原生 `write_file` 写到 `working_directory` 之外的根，因为工具自己的单根检查在 wrapper 之前就拒绝了那个路径。shell 命令和 `mcp_*` 工具根本不经过 `filesystem`。背景与其余设计见 [`docs/design/host-fs-policy.md`](../../../docs/design/host-fs-policy.md)。`tests/test_fs_policy_wrapper_recipe.py` 用真实的写工具运行这段示例。
 
 ### 动态生成规则
 

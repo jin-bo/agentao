@@ -11,6 +11,18 @@ _Targeting 0.5.10. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`PathPolicy.contain_any(raw, *, writable, immutable=())`** — checks one
+  write against several writable roots with read-only carve-outs, for a
+  host's `FileSystem` wrapper. It follows a leaf symlink before testing the
+  target, so `scratch/link -> raw/source.txt` is refused when `raw/` is
+  read-only; testing with `contain_file` once per root lets that write
+  through. A read-only root wins over a writable one, `raw` must be
+  absolute, and an empty `writable` refuses everything. The developer
+  guide (part 6.4) now has a `PolicyFileSystem` recipe built on it, which
+  `tests/test_fs_policy_wrapper_recipe.py` runs against the real
+  `write_file` and `replace` tools. (`docs/design/host-fs-policy.md`
+  step 0.5.)
+
 ### Changed
 
 ### Fixed

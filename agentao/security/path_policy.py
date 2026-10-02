@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
     from ..tools.base import Tool
@@ -101,6 +101,67 @@ class PathPolicy:
         resolved = candidate.resolve(strict=False)
         self._assert_inside(resolved, raw)
         return resolved
+
+    @classmethod
+    def contain_any(
+        cls,
+        raw: str | Path,
+        *,
+        writable: Iterable[str | Path],
+        immutable: Iterable[str | Path] = (),
+    ) -> Path:
+        """Validate a write against several roots, with read-only carve-outs.
+
+        For a host's ``FileSystem`` wrapper that needs more than one
+        writable root, or read-only subpaths inside a writable one (see
+        ``docs/design/host-fs-policy.md``). Returns the effective target
+        — where ``open()`` would actually write — and raises
+        :class:`PathPolicyError` unless it is under some ``writable``
+        root and under no ``immutable`` one. Immutable wins.
+
+        ``raw`` must be absolute, as the ``FileSystem`` protocol requires:
+        there is no root to resolve a relative path against, and resolving
+        it against the process cwd would test a different path from the
+        one the tool writes. An empty ``writable`` refuses everything.
+
+        Do not compose this from :meth:`contain_file` per root. That
+        checks the parent-resolved path *before* following a leaf
+        symlink, so ``cwd/scratch/link -> cwd/raw/secret`` is refused by
+        the ``raw`` policy for the wrong reason — as "outside raw" — and a
+        wrapper reading that refusal as "not immutable" lets the write
+        through the link. Here the leaf is dereferenced first and every
+        root is tested against that one target.
+        """
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            raise PathPolicyError(
+                f"PathPolicy: refused '{raw}' — not an absolute path"
+            )
+        if candidate.name == "..":
+            # ``parent / name`` would keep the ``..`` literally, and a
+            # lexical ``is_relative_to`` then reads ``root/sub/..`` as
+            # inside ``root/sub``.
+            target = candidate.resolve(strict=False)
+        else:
+            target = candidate.parent.resolve(strict=False) / candidate.name
+            if target.is_symlink():
+                target = target.resolve(strict=False)
+
+        def _roots(paths: Iterable[str | Path]) -> list[Path]:
+            return [Path(p).expanduser().resolve(strict=False) for p in paths]
+
+        if not any(target.is_relative_to(r) for r in _roots(writable)):
+            raise PathPolicyError(
+                f"PathPolicy: refused '{raw}' — resolves to '{target}', "
+                f"outside every writable root"
+            )
+        for root in _roots(immutable):
+            if target.is_relative_to(root):
+                raise PathPolicyError(
+                    f"PathPolicy: refused '{raw}' — resolves to '{target}', "
+                    f"inside read-only '{root}'"
+                )
+        return target
 
     # ------------------------------------------------------------------
     # Internals
