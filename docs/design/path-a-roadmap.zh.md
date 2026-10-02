@@ -47,7 +47,7 @@ Agentao 在 0.3.1 落地了 `agentao.host` 公共契约后，下一步路线图�
 - ✗ VSCode 扩展（Cline/Roo 已占位）
 - ✗ Hosted SaaS（Anthropic/OpenHands 已占位）
 - ✗ Rust/Go 重写（违背"嵌入 Python 宿主"主轴）
-- ✗ AGENTS.md → 嵌入用户用 `Agentao(project_instructions=...)`，不读它
+- ✗ AGENTS.md → 嵌入用户用 `Agentao(project_instructions=...)`，不读它。*2026-10-01 收窄（维护者决定）：仅根目录的回退 —— `AGENTAO.md` 不存在时读 `<cwd>/AGENTS.md` —— 已为 0.5.10 落地，因为 ACP Registry 上架会带来习惯这一约定的编辑器用户。下面的嵌套查找链仍属 P2。*
 - ✗ `agentao serve` daemon → 与定位"in-process harness"形态冲突
 - ✗ 跨平台强 sandbox → 嵌入主体已有 host 进程隔离
 - ✗ 双语 SWE-bench → 应剥离到独立仓 `agentao-bench`
@@ -135,7 +135,7 @@ full = ["agentao[cli,web,i18n]"]
 
 下列条目保留位置但**不主动推**，仅当外部需求明确出现时再考虑：
 
-- AGENTS.md 支持（含 nested lookup 优先级链）
+- AGENTS.md 的嵌套查找优先级链（仅根目录的回退已为 0.5.10 落地，见 §2.3）
 - `agentao serve` 长驻 daemon（WebSocket + SSE + HTTP 控制面）
 - Sandbox backend interface（macos-sandbox-exec / linux-bubblewrap / nsjail / windows-noop）
 - A2A/ACP 网关（等 LF A2A v1.0 + 真实需求）

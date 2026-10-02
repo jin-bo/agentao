@@ -64,7 +64,7 @@ JSON config files live in an `.agentao/` directory (project at `<working_directo
 | `acp.json` | project only | [3.2](/en/part-3/2-agentao-as-server) | ACP subagent registry (when Agentao runs as client) |
 | `settings.json` | project only | [6.6](/en/part-6/6-observability) | Persisted permission mode, builtin-agents flag, replay block |
 | `skills_config.json` | project only | [5.2](/en/part-5/2-skills) | Disabled-skills list (managed via `/skills disable`) |
-| `AGENTAO.md` | project only | [5.6](/en/part-5/6-system-prompt) | Project-specific instructions, prepended to system prompt |
+| `AGENTAO.md` (else `AGENTS.md`) | project only | [5.6](/en/part-5/6-system-prompt) | Project-specific instructions, prepended to system prompt; `AGENTS.md` is read only when `AGENTAO.md` is absent |
 | `memory.db` | project + user | [5.5](/en/part-5/5-memory) | SQLite-backed persistent memory (not JSON; listed for completeness) |
 
 ### B.3.1 `mcp.json`

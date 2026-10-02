@@ -13,7 +13,7 @@ This is a CLI-centric **index** to every config file the CLI reads. The schema r
 | **MCP servers** | `.agentao/mcp.json` | `~/.agentao/mcp.json` | `/mcp` | [§5](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#5-mcpjson--mcp-server-registry) |
 | **ACP servers** | `.agentao/acp.json` | — | `/acp` | [§6](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#6-acpjson--acp-subagent-registry) |
 | **Skill enable/disable** | `.agentao/skills_config.json` | — | `/skills enable`, `/skills disable` | [§7](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#7-skills_configjson--per-project-skill-enabledisable) |
-| **Project instructions** | `AGENTAO.md` (cwd) | — | system prompt every turn | [§8](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#8-agentaomd--project-instructions) |
+| **Project instructions** | `AGENTAO.md` (cwd), else `AGENTS.md` | — | system prompt every turn | [§8](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#8-agentaomd--project-instructions) |
 | **Memory store** | `.agentao/memory.db` | `~/.agentao/memory.db` | `/memory`, `save_memory` tool | [§9](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#9-memorydb--persistent-memory-store) |
 
 ## "Where do I change X?" cheat-sheet

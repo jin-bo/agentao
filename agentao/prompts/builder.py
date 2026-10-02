@@ -174,7 +174,7 @@ class SystemPromptBuilder:
         agent = self._agent
         sections: Dict[str, str] = {}
 
-        # Project-specific instructions, when AGENTAO.md is present.
+        # Project-specific instructions, when AGENTAO.md (or AGENTS.md) is present.
         if agent.project_instructions:
             sections["project_instructions"] = (
                 f"=== Project Instructions ===\n\n"

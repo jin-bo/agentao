@@ -59,7 +59,7 @@ Agent 的指令是**每轮 chat() 动态重建**的，不是一个静态字符�
 
 ### 1. `AGENTAO.md` — 项目级指令
 
-放在 `working_directory` 根下，构造 Agent 时**自动读取**。
+放在 `working_directory` 根下，构造 Agent 时**自动读取**。没有 `AGENTAO.md` 时，会改读同一位置的 `AGENTS.md`（两者不会同时读）。不是你写的仓库可能自带 `AGENTS.md`；传 `project_instructions=""` 则两个文件都不读。
 
 ```markdown
 # 项目说明
