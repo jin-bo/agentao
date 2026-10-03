@@ -49,13 +49,13 @@ def test_reliability_keywords():
     agent = _make_agent()
     prompt = agent._build_system_prompt()
     for phrase in (
-        "assert facts",                    # #1
-        "differs from what you expected",  # #2
+        "Assert facts",                    # #1
+        "different from what you expected",  # #2
         "returns an error",                # #3
-        "Distinguish",                     # #4
-        "Never fabricate",                 # #5
-        "Report outcomes faithfully",      # #6
-        "collaborator, not just an executor",  # #7
+        "Keep checked facts apart from inference",  # #4
+        "Never invent numbers",            # #5
+        "Report outcomes accurately",      # #6
+        "collaborator, not only as an executor",  # #7
     ):
         assert phrase in prompt, f"Expected phrase not found in reliability section: {phrase!r}"
     print("✅ All seven reliability rule keywords present")

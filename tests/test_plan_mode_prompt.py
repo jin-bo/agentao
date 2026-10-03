@@ -43,12 +43,13 @@ def test_plan_mode_prompt_contains_proposal_only_constraints():
     prompt = _turn_text(agent)
 
     assert "=== PLAN MODE ===" in prompt
-    assert "reviewable" in prompt
-    assert "change proposal" in prompt
-    assert "proposal document" in prompt
+    # One sentence now carries "reviewable change proposal" and the old
+    # "your deliverable is a proposal document"; the prompt wraps inside it.
+    assert "write a change\nproposal that the user can review" in prompt
+    assert "Do NOT make changes, draft patches, or write" in prompt
     assert "proposal language only" in prompt
     assert "Hard Prohibitions" in prompt
-    assert "Do not delegate execution to sub-agents." in prompt
+    assert "Do not delegate to agents or sub-agents." in prompt
 
 
 def test_plan_mode_prompt_still_allows_clarification_and_research():
@@ -58,22 +59,24 @@ def test_plan_mode_prompt_still_allows_clarification_and_research():
     prompt = _turn_text(agent)
 
     assert "ask_user" in prompt
-    assert "read-only tools" in prompt
+    assert "use tools only to research, inspect, and check facts" in prompt
+    # Clarifying questions are a plan-mode rule, not only a core one.
+    assert "a requirement\n   is ambiguous, or a design choice has several viable approaches" in prompt
 
 
 def test_plan_mode_prompt_replaces_autonomous_completion_language():
     agent = _make_agent()
 
     normal_prompt = _turn_text(agent)
-    assert "Work autonomously until the task is fully resolved before yielding back to the user." in normal_prompt
-    assert "Use tools proactively only when they materially improve correctness" in normal_prompt
+    assert "Work autonomously until the task is complete." in normal_prompt
+    assert "Use a tool only when it materially improves correctness" in normal_prompt
 
     _activate_plan(agent)
     plan_prompt = _turn_text(agent)
-    assert "Work autonomously until the task is fully resolved before yielding back to the user." not in plan_prompt
-    assert "Use tools proactively only when they materially improve correctness" not in plan_prompt
-    assert "In plan mode, stop after the research and proposal are complete." in plan_prompt
-    assert "use tools only to research, inspect, and verify facts" in plan_prompt
+    assert "Work autonomously until the task is complete." not in plan_prompt
+    assert "Use a tool only when it materially improves correctness" not in plan_prompt
+    assert "In plan mode, stop when the research and the proposal are complete." in plan_prompt
+    assert "use tools only to research, inspect, and check facts" in plan_prompt
 
 
 def test_plan_mode_prompt_includes_tool_protocol():
@@ -85,9 +88,8 @@ def test_plan_mode_prompt_includes_tool_protocol():
     assert "plan_save" in prompt
     assert "plan_finalize" in prompt
     assert "draft_id" in prompt
-    # New wording: stop + no additional text
-    assert "stop immediately" in prompt
-    assert "Do not emit any text after plan_finalize" in prompt
+    # Stop, and no additional text after a successful finalize.
+    assert "After plan_finalize succeeds, stop. Do not write more text in that turn." in prompt
 
 
 def test_plan_mode_prompt_excludes_agents_section():
@@ -105,8 +107,8 @@ def test_plan_mode_prompt_requires_save_before_ending_turn():
 
     prompt = _turn_text(agent)
 
-    assert "must call plan_save" in prompt
-    assert "not considered complete until it has been saved and finalized" in prompt
+    assert "If a turn produces a new or changed plan, call plan_save(content) before" in prompt
+    assert "A plan is complete only after plan_save and plan_finalize both succeed." in prompt
 
 
 def test_plan_mode_prompt_handles_user_execute_intent():
@@ -115,7 +117,7 @@ def test_plan_mode_prompt_handles_user_execute_intent():
 
     prompt = _turn_text(agent)
 
-    assert "expresses intent to execute" in prompt
+    assert "If the user says to execute" in prompt
     assert "plan_finalize on the latest draft_id" in prompt
 
 
@@ -127,6 +129,7 @@ def test_plan_mode_prompt_stale_draft_retry():
 
     assert "stale draft_id" in prompt
     assert "call plan_save again" in prompt
+    assert "call plan_finalize again with the new draft_id" in prompt
 
 
 def test_plan_mode_prompt_prohibits_pseudo_code():
@@ -135,9 +138,8 @@ def test_plan_mode_prompt_prohibits_pseudo_code():
 
     prompt = _turn_text(agent)
 
-    assert "patch-style" in prompt
-    assert "diff-shaped" in prompt
-    assert "step-by-step code edits" in prompt
+    assert "no patches, diffs, pseudo-diffs, code\n  edits presented as plan steps" in prompt
+    assert "line-by-line edit instructions" in prompt
 
 
 def test_plan_mode_prompt_skill_boundary():
@@ -146,7 +148,7 @@ def test_plan_mode_prompt_skill_boundary():
 
     prompt = _turn_text(agent)
 
-    assert "Skills may be activated only for read-only" in prompt
+    assert "Activate a skill only for read-only domain knowledge" in prompt
 
 
 def test_plan_mode_prompt_tiered_sections():
@@ -156,7 +158,27 @@ def test_plan_mode_prompt_tiered_sections():
     prompt = _turn_text(agent)
 
     assert "Small tasks" in prompt
-    assert "Medium to large tasks" in prompt
+    assert "Medium and large tasks" in prompt
+
+
+def test_plan_mode_prompt_allows_only_its_own_persistence_tools():
+    """No-writes and plan_save are reconciled in one sentence, not left to conflict."""
+    agent = _make_agent()
+    _activate_plan(agent)
+
+    prompt = _turn_text(agent)
+
+    assert "plan_save and plan_finalize are the only exceptions." in prompt
+
+
+def test_plan_mode_override_does_not_reach_permissions_or_injection_boundary():
+    agent = _make_agent()
+    _activate_plan(agent)
+
+    prompt = _turn_text(agent)
+
+    assert "These rules have priority over the core execution rules," in prompt
+    assert "They do not override permission\nrestrictions or the Untrusted Input Boundary." in prompt
 
 
 def test_plan_tools_hidden_outside_plan_mode():

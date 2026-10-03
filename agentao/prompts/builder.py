@@ -381,7 +381,7 @@ class SystemPromptBuilder:
         if not described:
             return ""
         out = "\n\n=== Available Skills ===\n"
-        out += "You have access to specialized skills. Use the 'activate_skill' tool to activate them when needed.\n\n"
+        out += "To activate a skill when you need it, call activate_skill.\n\n"
         for skill_name, skill_info in sorted(described, key=lambda p: p[0]):
             description = skill_info['description'].strip()
             when_to_use = skill_info.get('when_to_use', '')
@@ -389,16 +389,15 @@ class SystemPromptBuilder:
             if when_to_use:
                 out += f"  Activate when: {when_to_use}\n"
         out += (
-            "\nWhen the user's request matches a skill's description and that "
-            "skill is not already active, use the activate_skill tool before "
-            "proceeding with the task. Active skills, if any, are listed with "
-            "their instructions under \"Active Skills\"."
+            "\nIf the request matches the description of an inactive skill, "
+            "activate that skill before you continue. \"Active Skills\" lists "
+            "the active skills and their instructions."
         )
         out += (
-            "\nSkill files (SKILL.md, scripts/, references/) live in each "
-            "skill's own directory, which is usually NOT your current working "
-            "directory; activation reports that directory when the skill has "
-            "one, and relative paths in skill instructions resolve against it."
+            "\nA skill's files (SKILL.md, scripts/, references/) are in its own "
+            "directory, which is usually NOT your working directory. Activation "
+            "reports that directory if the skill has one. Relative paths in the "
+            "skill's instructions resolve against it."
         )
         return out
 
