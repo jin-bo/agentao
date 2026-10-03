@@ -299,6 +299,8 @@ PowerShell 上会在它之上再叠一张 Windows 专属的不可恢复类别表
 | Streamable HTTP | `"http"`（或从 `url` 推断） | `url` | `headers`、`timeout`、`trust` |
 | SSE（legacy） | `"sse"` | `url` | `headers`、`timeout`、`trust` |
 
+所有传输都接受 **`resources`**（默认 `true`）。`"resources": false` 会把该 server 从通用资源入口中隐去 —— `list_mcp_resources`、`list_mcp_resource_templates`、`read_mcp_resource`、`/mcp resources`，以及工具结果里 resource link 附带的 `read_mcp_resource` 提示 —— 显式点名它也会在发出任何请求之前被拒绝（`resources are disabled for server '<name>'`）。除 `true` 或缺省以外的任何值都按禁用处理。这三个工具只在至少一个已连接 server 声明了 MCP `resources` capability 时才注册；它们是只读的（只读模式和 plan 模式下都允许），无论 server 的 `trust` 如何都不弹确认。二进制资源保存到 `<working_directory>/.agentao/tool-outputs/mcp-resource_*`（权限 0600，与其他保存的输出一起 7 天后清理）；超过 10 MiB 的 blob 只报告、从不解码。`https://` 资源一律经由其 server 读取，从不直接抓取。详见 `docs/design/mcp-resources.md`。
+
 > **`env` 与基础环境。** stdio server 的 `env` 条目是叠加在一份**已被清洗**的 agentao 环境之上的：`mcp/client.py` 通过 `build_child_env()` 构造子进程环境，会剔除 agentao 自己的 provider 凭据（`HARNESS_ENV_KEYS`）。原本靠*继承* `GEMINI_API_KEY`、`OPENAI_API_KEY` 等变量工作的 MCP server 现在会拿到 401 —— 请在 `env` 里显式传（`{"GEMINI_API_KEY": "$GEMINI_API_KEY"}`，它在清洗之后才应用），或设 `AGENTAO_SCRUB_CHILD_ENV=0`（§2）恢复完整继承。环境里的其他变量照常继承，不受影响。
 
 **传输选择（`mcp/config.py :: resolve_transport`）。** 可选的 `type` 字段选择传输：`"stdio"` / `"sse"` / `"http"`（别名 `"streamable-http"` / `"streamable_http"` 归一到 `"http"`）。省略 `type` 时按以下规则推断：`command` → stdio，`url` → **Streamable HTTP**。因此裸 `{"url": ...}` 表示 Streamable HTTP——旧版 SSE 传输需显式写 `"type": "sse"`。未知的 `type`、或缺少所需键的传输，会**快速失败**（`McpTransportConfigError`），而不是静默连到错误的协议。

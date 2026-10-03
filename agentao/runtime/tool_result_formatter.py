@@ -55,7 +55,12 @@ def _prune_tool_outputs(out_dir: Path, logger=None, *, now: Optional[float] = No
     cutoff = (time.time() if now is None else now) - TOOL_OUTPUT_RETENTION_S
     removed = 0
     try:
-        entries = list(out_dir.glob("*.txt"))
+        # ``*.txt`` are spilled text results; ``mcp-resource_*`` are binaries
+        # saved by an MCP resource read (``agentao/mcp/resources.py``). Both
+        # prefixes are generated, so the glob only matches files agentao wrote.
+        entries = list(out_dir.glob("*.txt")) + [
+            p for p in out_dir.glob("mcp-resource_*") if p.suffix != ".txt"
+        ]
     except OSError:
         return 0
     for entry in entries:

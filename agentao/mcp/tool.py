@@ -1,5 +1,6 @@
 """MCP tool wrapper that adapts MCP-discovered tools to the Agentao Tool interface."""
 
+import copy
 import re
 from typing import Any, Dict, Optional
 
@@ -7,6 +8,7 @@ from mcp.types import Tool as McpToolDef
 
 from ..tools.base import Tool
 from ._compat import annotations_dict, field
+from .resources import render_call_result, saver_for
 
 # Characters allowed in tool names (OpenAI function calling)
 _INVALID_CHARS_RE = re.compile(r"[^a-zA-Z0-9_]")
@@ -46,6 +48,9 @@ class McpTool(Tool):
         mcp_tool: McpToolDef,
         call_fn,
         trusted: bool = False,
+        *,
+        result_fn=None,
+        read_hint_fn=None,
     ):
         """
         Args:
@@ -53,11 +58,21 @@ class McpTool(Tool):
             mcp_tool: MCP tool definition from the server.
             call_fn: Callable(server_name, tool_name, arguments) -> str.
             trusted: If True, skip confirmation.
+            result_fn: Callable(server_name, tool_name, arguments) returning
+                the whole ``CallToolResult`` (or an error string). When given,
+                it is used instead of ``call_fn`` and the result is rendered
+                here, so an embedded binary resource is saved under this
+                tool's working directory (docs/design/mcp-resources.md §6).
+            read_hint_fn: Callable(server_name) -> bool, asked at render time
+                whether a ``resource_link`` may point at ``read_mcp_resource``.
         """
+        super().__init__()
         self._server_name = server_name
         self._mcp_tool = mcp_tool
         self._call_fn = call_fn
         self._trusted = trusted
+        self._result_fn = result_fn
+        self._read_hint_fn = read_hint_fn
         self._fqn = make_mcp_tool_name(server_name, mcp_tool.name)
 
     @property
@@ -115,5 +130,27 @@ class McpTool(Tool):
             return True
         return self.mcp_annotations.get("destructiveHint") is True
 
+    def without_read_hint(self) -> "McpTool":
+        """A copy that never points a resource link at ``read_mcp_resource``.
+
+        For a sub-agent that does not get that tool: it otherwise shares the
+        parent's instance, whose hint is checked against the *parent's*
+        registry. The copy still calls through the parent's manager, so it
+        opens no connection of its own.
+        """
+        clone = copy.copy(self)
+        clone._read_hint_fn = None
+        return clone
+
     def execute(self, **kwargs) -> str:
-        return self._call_fn(self._server_name, self._mcp_tool.name, kwargs)
+        if self._result_fn is None:
+            return self._call_fn(self._server_name, self._mcp_tool.name, kwargs)
+        result = self._result_fn(self._server_name, self._mcp_tool.name, kwargs)
+        if isinstance(result, str):
+            return result
+        hint = None
+        if self._read_hint_fn is not None and self._read_hint_fn(self._server_name) is True:
+            hint = self._server_name
+        return render_call_result(
+            result, save=saver_for(self.working_directory), read_hint=hint
+        )

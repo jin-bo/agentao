@@ -143,6 +143,11 @@ SUPPORTS_INPUT_REQUIRED = (
     "allow_input_required" in inspect.signature(ClientSession.call_tool).parameters
 )
 
+#: The same opt-in on ``ClientSession.read_resource`` (2.x only).
+READ_SUPPORTS_INPUT_REQUIRED = (
+    "allow_input_required" in inspect.signature(ClientSession.read_resource).parameters
+)
+
 #: The modern-era "I need more input before I can answer" result, or ``None``
 #: on an SDK with no modern era. Paired with the flag above so callers can
 #: ``isinstance`` the outcome instead of pattern-matching an error string.

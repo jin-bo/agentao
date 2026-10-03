@@ -1,7 +1,12 @@
 # MCP Resources — Design
 
-**Status:** **Proposal rev 3.4 (2026-10-02), not approved.** Nothing here is implemented. Two
-decisions remain for the maintainer (§10); the rest are written as defaults. The primary reference
+**Status:** **Implemented (2026-10-03), unreleased** — rev 3.4 as written, with D2 and D3 taken as
+recommended ((a) and (a)). One refinement over §5.2: an all-servers listing walks only servers
+whose connection has *ever* declared `resources` (`McpClient.resources_seen`), so a dropped
+resource server is recovered while servers that never offered any are not reconnected on every
+listing; naming a server explicitly still takes the full §5.1 order. The three tools live in
+`agentao/mcp/resource_tools.py` rather than `tools/mcp_resources.py` (§12) to avoid a `tools` ↔
+`mcp` import cycle. The primary reference
 implementation is **pi 1.0** (`earendil-works/pi` @ `v1.0.0`, `a13d35a`, released 2026-10-01).
 
 **Related:** [Pi 1.0 lessons for agentao](pi-1.0-lessons-for-agentao.zh.md) — the comparison this
@@ -331,9 +336,9 @@ something can read it.)
   (§5.1 steps 1 and 3 — step 2 is moot, the call has just succeeded over it). Otherwise the line stops after the description — the link's
   URI is kept, but the model is not pointed at a tool it cannot call or a server it would be
   refused by. The registry checked is the one `McpTool` was registered in; a sub-agent runs the
-  parent's instances, so one whose `tools:` omits `read_mcp_resource` can still see the hint and
-  gets tool-not-found if it follows it — one wasted turn, accepted rather than threading the
-  executing registry into the tool.
+  parent's instances, so `_narrow_tools` gives a sub-agent whose `tools:` omits
+  `read_mcp_resource` copies with the hint off (`McpTool.without_read_hint`) — still over the
+  parent's connections. (As implemented; rev 3.4 had accepted the stray hint as one wasted turn.)
 - **Embedded `resource` with `text`** — unchanged (the text), labelled with its URI when the result
   has more than one.
 - **Embedded `resource` with `blob`** → handled as in §5.4: size-checked first, decoded as text when

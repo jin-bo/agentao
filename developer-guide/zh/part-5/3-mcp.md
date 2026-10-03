@@ -153,6 +153,32 @@ Agentao 里的名字: "mcp_github_create_issue"
 - 你写自己的 Tool 时，**不要以 `mcp_` 打头**（避免看起来像 MCP 工具）
 - 权限规则可以按前缀匹配：`{"tool": "mcp_github_*", ...}`
 
+## MCP 资源（resources）
+
+声明了 `resources` capability 的 server 还会暴露可供模型读取的数据。只要有一个已连接的 server 声明了它，就会注册三个只读工具（名字和形状沿用 codex 与 pi，模型已经认识）：
+
+| 工具 | 参数 | 返回 |
+|---|---|---|
+| `list_mcp_resources` | `server?`、`cursor?` | JSON `{server?, resources: [{server, uri, name, …}], nextCursor?, errors?}` |
+| `list_mcp_resource_templates` | `server?`、`cursor?` | JSON `{server?, resourceTemplates: [{server, uriTemplate, name, …}], nextCursor?, errors?}` |
+| `read_mcp_resource` | `server`、`uri`（均必填） | 资源内容 |
+
+- 不带 `server` 时遍历所有 server；单个 server 的失败放进 `errors`。`cursor` 必须配 `server`。
+- 文本按文本返回。二进制资源保存到 `<working_directory>/.agentao/tool-outputs/`（0600）并返回路径；超过 10 MiB 的 blob 只报告、不解码。
+- 三者都是只读的：只读模式和 plan 模式下都允许，从不弹确认。点名它们的权限规则仍然生效，`disable_tools` / `enabled_tools` 也接受这三个名字。
+- server 配置 `"resources": false` 会把它从三个工具中隐去（点名也会被拒）。
+- 工具结果里的 `resource_link` 会保留 URI，并在模型能跟进时指明用 `read_mcp_resource` 及对应 server 读取。
+
+同样的操作在 manager 上是公开的，宿主可以据此做自己的选择器：
+
+```python
+page = agent.mcp_manager.list_resources("docs")            # ResourcePage
+templates = agent.mcp_manager.list_resource_templates("docs")
+read = agent.mcp_manager.read_resource("docs", "report://q3")  # ResourceRead（文本或 base64 blob）
+```
+
+失败时抛出 `agentao.mcp.resources.McpResourceError`（带 `kind`），不会返回残缺数据。CLI 里 `/mcp resources [server]` 可直接列出，不消耗模型轮次。
+
 ## 调试 MCP 接入
 
 ```python

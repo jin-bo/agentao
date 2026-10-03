@@ -131,6 +131,23 @@ def register_mcp_tools(agent: "Agentao", manager: "McpClientManager") -> None:
     created.
     """
     _ensure_mcp_classes()
+    from ..mcp.client import McpClientManager as _RealManager
+    from .registry import _bind_and_register
+
+    # The whole-result path (embedded blobs saved, resource-link read hints)
+    # needs the real manager's ``call_tool_result``; a host's duck-typed
+    # manager keeps the plain ``call_tool -> str`` path it was written for.
+    # ``isinstance``, not ``hasattr``: a mock answers any attribute.
+    real = isinstance(manager, _RealManager)
+
+    def read_hint(server_name: str) -> bool:
+        # §6: hint only when the model could follow it right now.
+        if "read_mcp_resource" not in agent.tools.tools:
+            return False
+        if not manager.resources_allowed(server_name):
+            return False
+        client = manager.get_client(server_name)
+        return client is not None and client.supports_resources
 
     for server_name, mcp_tool_def in manager.get_all_tools():
         client = manager.get_client(server_name)
@@ -140,8 +157,12 @@ def register_mcp_tools(agent: "Agentao", manager: "McpClientManager") -> None:
             mcp_tool=mcp_tool_def,
             call_fn=manager.call_tool,
             trusted=trusted,
+            result_fn=manager.call_tool_result if real else None,
+            read_hint_fn=read_hint if real else None,
         )
-        agent.tools.register(tool, origin="mcp")
+        # Bound like a built-in, so an embedded blob in its result is saved
+        # under this session's working directory (docs/design/mcp-resources.md §6).
+        _bind_and_register(agent, tool, origin="mcp")
         agent.llm.logger.info(f"Registered MCP tool: {tool.name}")
 
     count = sum(1 for _ in manager.get_all_tools())
@@ -149,3 +170,31 @@ def register_mcp_tools(agent: "Agentao", manager: "McpClientManager") -> None:
         agent.llm.logger.info(
             f"MCP: {count} tools from {len(manager.clients)} server(s)"
         )
+
+    if real:
+        register_mcp_resource_tools(agent, manager)
+
+
+def register_mcp_resource_tools(agent: "Agentao", manager: "McpClientManager") -> None:
+    """Register the three resource tools when a connected server declares ``resources``.
+
+    Fixed for the process, like MCP tools. ``disable_tools`` is honoured here
+    by name, since these do not pass through ``register_builtin_tools``;
+    ``enabled_tools`` prunes them in its final pass like any non-``mcp_*``
+    tool. ``origin="mcp"``: a sub-agent gets the parent's instances, over the
+    parent's connections. See docs/design/mcp-resources.md §5.2.
+    """
+    from ..mcp.resource_tools import resource_tools
+    from .registry import _bind_and_register
+
+    offered = any(
+        manager.resources_allowed(name) and client.supports_resources
+        for name, client in list(manager.clients.items())
+    )
+    if not offered:
+        return
+    for tool in resource_tools(manager):
+        if tool.name in agent._disable_tools:
+            continue
+        _bind_and_register(agent, tool, origin="mcp")
+        agent.llm.logger.info(f"Registered MCP resource tool: {tool.name}")

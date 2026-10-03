@@ -32,6 +32,10 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
             color = {"connected": "green", "needs_auth": "yellow"}.get(s["status"], "red")
             label = "needs login" if s["status"] == "needs_auth" else s["status"]
             trust_marker = " [dim](trusted)[/dim]" if s["trusted"] else ""
+            if s.get("resources") and s.get("resources_enabled", True):
+                trust_marker = ", resources" + trust_marker
+            elif s.get("resources"):
+                trust_marker = ", resources [dim](disabled by config)[/dim]" + trust_marker
             # ``protocol`` and ``error`` are server-authored strings, and every
             # line here is parsed as Rich markup: an unmatched "[/b]" in a
             # third-party error message raises MarkupError out of the command
@@ -130,10 +134,14 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
     elif sub in ("login", "logout"):
         _login_or_logout(cli, sub, sub_args)
 
+    elif sub == "resources":
+        _list_resources(cli, sub_args.strip())
+
     else:
         console.print(unknown_subcommand(sub))
         console.print(
-            "[info]Available: /mcp list, /mcp add, /mcp remove, /mcp login, /mcp logout[/info]\n"
+            "[info]Available: /mcp list, /mcp add, /mcp remove, /mcp login, /mcp logout, "
+            "/mcp resources[/info]\n"
         )
 
 
@@ -176,4 +184,91 @@ def _login_or_logout(cli: AgentaoCLI, sub: str, sub_args: str) -> None:
     if outcome is LoginOutcome.CONNECTED and not _has_registered_tools(cli, name):
         # D8: tools are registered once, at startup; this server had none then.
         console.print(f"[info]Restart agentao to load the tools of '{escape(name)}'.[/info]")
+    console.print()
+
+
+def _list_resources(cli: AgentaoCLI, server: str) -> None:
+    """``/mcp resources [server]`` — through the manager, no model turn."""
+    from ...mcp.resources import (
+        McpResourceError,
+        format_size,
+        list_everywhere,
+        visible_resources,
+        visible_templates,
+        walk_all_pages,
+    )
+
+    manager = cli.agent.mcp_manager
+    if manager is None or not manager.server_configs:
+        console.print("\n[warning]No MCP servers configured.[/warning]\n")
+        return
+
+    def clean(text) -> str:
+        return escape(sanitize_terminal_text(str(text)))
+
+    resources, templates, errors = [], [], []
+    if server:
+        if server not in manager.server_configs:
+            console.print(f"\n[error]MCP server '{clean(server)}' not found.[/error]\n")
+            return
+        if not manager.resources_allowed(server):
+            console.print(
+                f"\n[warning]Resources are disabled by config for '{clean(server)}' "
+                '("resources": false in mcp.json).[/warning]\n'
+            )
+            return
+        try:
+            def resource_page(cursor):
+                page = manager.list_resources(server, cursor)
+                return page.resources, page.next_cursor
+
+            def template_page(cursor):
+                page = manager.list_resource_templates(server, cursor)
+                return page.templates, page.next_cursor
+
+            resources = walk_all_pages(server, resource_page, "resources")
+            templates = walk_all_pages(server, template_page, "resource templates")
+        except McpResourceError as e:
+            if e.kind == "unsupported":
+                console.print(
+                    f"\n[info]MCP server '{clean(server)}' declares no resources.[/info]\n"
+                )
+            else:
+                console.print(f"\n[error]{clean(e)}[/error]\n")
+            return
+    else:
+        disabled = sorted(n for n in manager.server_configs if not manager.resources_allowed(n))
+        resources, errors = list_everywhere(manager, templates=False)
+        templates, template_errors = list_everywhere(manager, templates=True)
+        reported = {e["server"] for e in errors}
+        errors += [e for e in template_errors if e["server"] not in reported]
+        for name in disabled:
+            console.print(f"[dim]  {clean(name)}: resources disabled by config[/dim]")
+
+    resources = visible_resources(resources)
+    templates = visible_templates(templates)
+    if not resources and not templates and not errors:
+        where = f"'{clean(server)}'" if server else "any connected server"
+        console.print(f"\n[info]No MCP resources from {where}.[/info]\n")
+        return
+
+    console.print(f"\n[info]MCP resources ({len(resources)}):[/info]")
+    for r in resources:
+        details = ", ".join(
+            x for x in (r.mime_type, format_size(r.size) if isinstance(r.size, int) else None) if x
+        )
+        suffix = f" [dim]({clean(details)})[/dim]" if details else ""
+        console.print(
+            f"  [cyan]{clean(r.server)}[/cyan] {clean(r.uri)} — {clean(r.title or r.name)}{suffix}"
+        )
+    if templates:
+        console.print(f"\n[info]Resource templates ({len(templates)}):[/info]")
+        for t in templates:
+            suffix = f" [dim]({clean(t.mime_type)})[/dim]" if t.mime_type else ""
+            console.print(
+                f"  [cyan]{clean(t.server)}[/cyan] {clean(t.uri_template)} — "
+                f"{clean(t.title or t.name)}{suffix}"
+            )
+    for e in errors:
+        console.print(f"  [red]{clean(e['server'])}: {clean(e['error'])}[/red]")
     console.print()

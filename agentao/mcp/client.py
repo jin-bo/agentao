@@ -35,6 +35,7 @@ from ._compat import (
     UNSUPPORTED_PROTOCOL_VERSION,
     InputRequiredResult,
     McpProtocolError,
+    READ_SUPPORTS_INPUT_REQUIRED,
     UnexpectedClaimedResult,
     field,
     httpx_for_mcp,
@@ -49,6 +50,17 @@ from .config import (
     resolve_transport,
 )
 from .oauth import NEEDS_AUTH as _VERDICT_NEEDS_AUTH
+from .resources import (
+    MAX_CURSOR_BYTES as _MAX_RESOURCE_CURSOR_BYTES,
+    McpResourceError,
+    ResourcePage,
+    ResourceRead,
+    TemplatePage,
+    render_call_result,
+    resource_content,
+    resource_info,
+    template_info,
+)
 from .oauth import AuthVerdict, StoredTokenAuth
 from .oauth_store import OAuthRuntime
 
@@ -305,6 +317,13 @@ class McpClient:
         self._exit_stack: Optional[AsyncExitStack] = None
         self._tools: List[McpToolDef] = []
         self._protocol_version: Optional[str] = None
+        # The live connection's ``ServerCapabilities``; ``None`` whenever the
+        # version is (they describe the same session).
+        self._server_capabilities: Any = None
+        # Sticky: whether any connection of this client ever declared
+        # ``resources``. Lets the all-servers listing recover a *dropped*
+        # resource server without reconnecting every server that never had any.
+        self._resources_seen = False
         # The task that owns the live connection and the event that tells it
         # to close (see ``connect``).
         self._owner: Optional["asyncio.Task[None]"] = None
@@ -346,6 +365,26 @@ class McpClient:
         ``>=`` comparison, never equality.
         """
         return self._protocol_version
+
+    @property
+    def server_capabilities(self) -> Any:
+        """The live connection's ``ServerCapabilities``, or ``None``.
+
+        Reset with :attr:`protocol_version` — read it after any reconnect,
+        never before.
+        """
+        return self._server_capabilities
+
+    @property
+    def supports_resources(self) -> bool:
+        """Whether the live connection declares the ``resources`` capability."""
+        caps = self._server_capabilities
+        return caps is not None and getattr(caps, "resources", None) is not None
+
+    @property
+    def resources_seen(self) -> bool:
+        """Whether any connection of this client has declared ``resources``."""
+        return self._resources_seen
 
     @property
     def is_trusted(self) -> bool:
@@ -422,6 +461,7 @@ class McpClient:
                 self.status = ServerStatus.DISCONNECTED
                 self._session = None
                 self._protocol_version = None
+                self._server_capabilities = None
             stack, self._exit_stack = self._exit_stack, None
             if stack is not None:
                 try:
@@ -471,6 +511,7 @@ class McpClient:
         # Stale on a reconnect: the version belongs to the session about to be
         # replaced, and the new one renegotiates from scratch.
         self._protocol_version = None
+        self._server_capabilities = None
 
         # Resolve once and thread down (avoids a second parse — and a second
         # malformed-config warning — inside ``_connect_sse``). ``startup``
@@ -585,6 +626,7 @@ class McpClient:
         self.status = ServerStatus.DISCONNECTED
         self._session = None
         self._protocol_version = None
+        self._server_capabilities = None
         try:
             suppressed = await stack.__aexit__(*sys.exc_info())
         except asyncio.CancelledError:
@@ -668,6 +710,7 @@ class McpClient:
         # would call into a dead session object).
         self._session = None
         self._protocol_version = None
+        self._server_capabilities = None
         if self._exit_stack:
             try:
                 await self._exit_stack.__aexit__(None, None, None)
@@ -684,7 +727,21 @@ class McpClient:
         own.
         """
         await self._negotiate()
-        return await self._list_all_tools()
+        try:
+            return await self._list_all_tools()
+        except McpProtocolError as e:
+            # A server that serves only resources need not implement
+            # ``tools/list`` (docs/design/mcp-resources.md). Its ``-32601`` means
+            # "no tools" — but only when it did not declare ``tools``: a server
+            # that declared them and then refuses the method is broken, and one
+            # that answers without declaring keeps working as before.
+            code = getattr(getattr(e, "error", None), "code", None)
+            caps = self._server_capabilities
+            declares_tools = caps is not None and getattr(caps, "tools", None) is not None
+            if code == METHOD_NOT_FOUND and not declares_tools:
+                logger.info(f"MCP server '{self.name}' serves no tools/list; no tools")
+                return []
+            raise
 
     async def _list_all_tools(self) -> List[McpToolDef]:
         """Collect every page of ``tools/list``, bounded against a hostile peer.
@@ -867,6 +924,7 @@ class McpClient:
                 f"escalation also failed: {probe_error}"
             ) from probe_error
         self._protocol_version = self._session.protocol_version
+        self._record_capabilities(getattr(self._session, "server_capabilities", None))
 
     def _record_handshake_version(self, result: Any) -> None:
         """Store the version off an ``InitializeResult``.
@@ -877,6 +935,12 @@ class McpClient:
         cannot shadow the SDK-validated ``protocolVersion`` on 1.x.
         """
         self._protocol_version = field(result, "protocolVersion", "protocol_version")
+        self._record_capabilities(getattr(result, "capabilities", None))
+
+    def _record_capabilities(self, capabilities: Any) -> None:
+        self._server_capabilities = capabilities
+        if self.supports_resources:
+            self._resources_seen = True
 
     async def _connect_stdio(self) -> None:
         """Establish stdio transport."""
@@ -1092,6 +1156,23 @@ class McpClient:
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Call a tool on this server and return the result as text.
 
+        :meth:`call_tool_result` rendered by
+        :func:`agentao.mcp.resources.render_call_result` with nothing saved: an
+        embedded binary resource is described by URI, type and size.
+        """
+        result = await self.call_tool_result(tool_name, arguments)
+        if isinstance(result, str):
+            return result
+        return render_call_result(result)
+
+    async def call_tool_result(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
+        """Call a tool and return the SDK's whole ``CallToolResult``.
+
+        Or, for the paths that never produce one (a transport, auth or
+        connection failure, an ``InputRequiredResult``), the error *string*
+        :meth:`call_tool` has always returned for them. Rendering is the
+        caller's: ``McpTool`` renders with a save directory and a read hint.
+
         Retry policy is driven by :func:`classify_mcp_error`:
         ``AUTH`` surfaces immediately (retrying with the same credentials
         only produces another 401/403); ``SESSION_EXPIRED`` and
@@ -1195,44 +1276,7 @@ class McpClient:
             ):
                 return self._explain_input_required(tool_name, result)
 
-            # Convert result content to text
-            parts = []
-            for block in result.content:
-                if block.type == "text":
-                    parts.append(block.text)
-                elif block.type == "image":
-                    parts.append(f"[image: {field(block, 'mimeType', 'mime_type')}]")
-                elif block.type == "resource":
-                    text = getattr(block.resource, "text", None)
-                    if text:
-                        parts.append(text)
-                    else:
-                        parts.append(f"[resource: {getattr(block.resource, 'uri', 'unknown')}]")
-                else:
-                    parts.append(f"[{block.type}]")
-
-            # Fall back to structured output only when there are no content
-            # blocks at all. A spec-compliant server returns both ``content``
-            # (text/image, for the model) and ``structuredContent`` (JSON);
-            # we keep the content in that case and never clobber it. But a
-            # server that returns *only* ``structuredContent`` (content == [])
-            # would otherwise hand the model an empty string — so serialize
-            # the structured payload instead of dropping it.
-            if not result.content:
-                structured = field(result, "structuredContent", "structured_content")
-                if structured is not None:
-                    # ensure_ascii=False keeps CJK/emoji readable (codebase-wide
-                    # convention); default=str makes a non-JSON-native value
-                    # degrade to its repr instead of raising out of call_tool.
-                    parts.append(
-                        json.dumps(structured, ensure_ascii=False, default=str)
-                    )
-
-            text = "\n".join(parts)
-
-            if field(result, "isError", "is_error"):
-                return f"MCP tool error: {text}"
-            return text
+            return result
 
         return "MCP tool error: failed after reconnect attempt"
 
@@ -1270,14 +1314,19 @@ class McpClient:
         (#241) made both reachable. The connection's owner does see it close,
         so a call waits on that as well. mcp 2.0 answers them in both cases.
         """
-        request = asyncio.ensure_future(
+        return await self._send_on(
+            gone,
             session.call_tool(
                 tool_name, arguments, read_timeout_seconds=read_timeout,
                 # Take delivery of an ``InputRequiredResult`` instead of
                 # letting the SDK raise on it — see _explain_input_required.
                 **({"allow_input_required": True} if SUPPORTS_INPUT_REQUIRED else {}),
-            )
+            ),
         )
+
+    async def _send_on(self, gone: asyncio.Event, coro: Any) -> Any:
+        """Await ``coro``, given up once its connection starts to close (see ``_call_on``)."""
+        request = asyncio.ensure_future(coro)
         closing = asyncio.ensure_future(gone.wait())
         try:
             await asyncio.wait({request, closing}, return_when=asyncio.FIRST_COMPLETED)
@@ -1384,6 +1433,177 @@ class McpClient:
             "accepts it that way."
         )
 
+    # ------------------------------------------------------------------
+    # Resources (docs/design/mcp-resources.md §5.1)
+    # ------------------------------------------------------------------
+
+    async def _resource_request(
+        self,
+        send: Any,
+        *,
+        not_found_uri: Optional[str] = None,
+        method_not_found_ok: bool = False,
+    ) -> Any:
+        """``send(session)`` after the connection recovery and capability check.
+
+        Order is §5.1's: the existing recovery first (``_ensure_connected``,
+        the path ``call_tool_result`` takes), *then* the capability of the
+        connection now in hand — capabilities are reset with the session, so
+        checking before the reconnect would refuse exactly the call the
+        reconnect exists for. A drop mid-request reconnects once, as a tool
+        call does; a read cannot have acted, so the retry is safe.
+
+        Returns the SDK result, or ``None`` when ``method_not_found_ok`` and the
+        server answered ``-32601``. Every failure raises
+        :class:`McpResourceError`.
+        """
+        _startup, request_timeout = resolve_timeouts(self.config)
+        seen = self._connect_attempts
+        hint = self._needs_auth_unchanged()
+        if hint is not None:
+            raise McpResourceError(self.name, "auth", f"MCP auth error: {hint}")
+        for attempt in range(2):
+            if not self._session or self.status != ServerStatus.CONNECTED:
+                try:
+                    await self._ensure_connected(attempt, seen)
+                except Exception as e:
+                    raise McpResourceError(
+                        self.name, "connection",
+                        f"MCP connection error for '{self.name}': {e}",
+                    ) from e
+                if self.status == ServerStatus.NEEDS_AUTH:
+                    raise McpResourceError(
+                        self.name, "auth", f"MCP auth error: {self.error_message}"
+                    )
+                if self.status != ServerStatus.CONNECTED or not self._session:
+                    raise McpResourceError(
+                        self.name, "connection",
+                        f"MCP connection error for '{self.name}': "
+                        f"{self.error_message or 'reconnect failed'}",
+                    )
+            if not self.supports_resources:
+                raise McpResourceError(
+                    self.name, "unsupported",
+                    f"MCP server '{self.name}' does not declare the resources capability",
+                )
+
+            session, gone = self._session, self._gone
+            seen = self._connect_attempts
+            try:
+                coro = send(session)
+                if request_timeout is not None:
+                    coro = asyncio.wait_for(coro, timeout=request_timeout)
+                return await self._send_on(gone, coro)
+            except Exception as e:
+                # Only our own ``wait_for`` bound reads as "did not answer": with
+                # no ``request`` timeout configured, a ``TimeoutError`` is the
+                # transport's (on 3.11+ the same class) and is classified below.
+                if request_timeout is not None and isinstance(e, asyncio.TimeoutError):
+                    raise McpResourceError(
+                        self.name, "error",
+                        f"MCP server '{self.name}' did not answer within {request_timeout:g}s",
+                    ) from None
+                verdict = self._auth_verdict()
+                if verdict is not None and verdict.kind == _VERDICT_NEEDS_AUTH:
+                    self._enter_needs_auth(verdict)
+                    raise McpResourceError(
+                        self.name, "auth", f"MCP auth error: {verdict.message}"
+                    ) from e
+                if UnexpectedClaimedResult is not None and isinstance(
+                    e, UnexpectedClaimedResult
+                ):
+                    raise McpResourceError(
+                        self.name, "error",
+                        f"MCP server '{self.name}' answered with a protocol extension "
+                        "agentao did not negotiate",
+                    ) from e
+                code = getattr(getattr(e, "error", None), "code", None)
+                if isinstance(e, McpProtocolError):
+                    if method_not_found_ok and code == METHOD_NOT_FOUND:
+                        return None
+                    # -32602 on 2026-07-28; clients "SHOULD also accept -32002",
+                    # the earlier code.
+                    if not_found_uri is not None and code in (-32602, -32002):
+                        raise McpResourceError(
+                            self.name, "not_found",
+                            f"Resource not found on MCP server '{self.name}': "
+                            f"{not_found_uri} ({e}). List what it serves with "
+                            f"list_mcp_resources(server=\"{self.name}\").",
+                        ) from e
+                kind = classify_mcp_error(e)
+                if kind is McpErrorKind.AUTH:
+                    raise McpResourceError(self.name, "auth", f"MCP auth error: {e}") from e
+                if attempt == 0 and kind in (
+                    McpErrorKind.SESSION_EXPIRED,
+                    McpErrorKind.TRANSPORT_DROPPED,
+                ):
+                    logger.warning(
+                        f"MCP '{self.name}' transient {type(e).__name__} on a "
+                        f"resource request, retrying after reconnect: {e}"
+                    )
+                    await self._drop_session(session)
+                    continue
+                raise McpResourceError(
+                    self.name, "error", f"MCP resource error from '{self.name}': {e}"
+                ) from e
+        raise McpResourceError(
+            self.name, "connection",
+            f"MCP connection error for '{self.name}': failed after reconnect attempt",
+        )
+
+    def _checked_cursor(self, result: Any) -> Optional[str]:
+        cursor = field(result, "nextCursor", "next_cursor")
+        if cursor is not None and len(cursor.encode("utf-8")) > _MAX_RESOURCE_CURSOR_BYTES:
+            raise McpResourceError(
+                self.name, "catalog",
+                f"MCP server '{self.name}' returned a pagination cursor larger "
+                f"than {_MAX_RESOURCE_CURSOR_BYTES} bytes",
+            )
+        return cursor
+
+    async def list_resources(self, cursor: Optional[str] = None) -> ResourcePage:
+        """One page of ``resources/list``."""
+        params = PaginatedRequestParams(cursor=cursor) if cursor is not None else None
+        result = await self._resource_request(lambda s: s.list_resources(params=params))
+        return ResourcePage(
+            server=self.name,
+            resources=[resource_info(self.name, r) for r in result.resources],
+            next_cursor=self._checked_cursor(result),
+        )
+
+    async def list_resource_templates(self, cursor: Optional[str] = None) -> TemplatePage:
+        """One page of ``resources/templates/list``; ``-32601`` means no templates."""
+        params = PaginatedRequestParams(cursor=cursor) if cursor is not None else None
+        result = await self._resource_request(
+            lambda s: s.list_resource_templates(params=params), method_not_found_ok=True
+        )
+        if result is None:
+            return TemplatePage(server=self.name, templates=[])
+        templates = field(result, "resourceTemplates", "resource_templates") or []
+        return TemplatePage(
+            server=self.name,
+            templates=[template_info(self.name, t) for t in templates],
+            next_cursor=self._checked_cursor(result),
+        )
+
+    async def read_resource(self, uri: str) -> ResourceRead:
+        """``resources/read``. Contents come back as data; nothing is decoded."""
+        extra = {"allow_input_required": True} if READ_SUPPORTS_INPUT_REQUIRED else {}
+        result = await self._resource_request(
+            lambda s: s.read_resource(uri, **extra), not_found_uri=uri
+        )
+        if InputRequiredResult is not None and isinstance(result, InputRequiredResult):
+            raise McpResourceError(
+                self.name, "input_required",
+                f"MCP server '{self.name}' cannot return {uri} without interactive "
+                "input (sampling, elicitation or roots), which agentao does not provide.",
+            )
+        return ResourceRead(
+            server=self.name,
+            uri=uri,
+            contents=[resource_content(c) for c in (result.contents or [])],
+        )
+
     async def disconnect(self) -> None:
         """Disconnect from the server.
 
@@ -1401,6 +1621,7 @@ class McpClient:
         self._session = None
         self._tools = []
         self._protocol_version = None
+        self._server_capabilities = None
         self.status = ServerStatus.DISCONNECTED
 
 
@@ -1587,6 +1808,98 @@ class McpClientManager:
             raise RuntimeError(f"MCP server '{server_name}' not found")
         return await client.call_tool(tool_name, arguments)
 
+    def call_tool_result(
+        self, server_name: str, tool_name: str, arguments: Dict[str, Any]
+    ) -> Any:
+        """Like :meth:`call_tool`, returning the whole ``CallToolResult``.
+
+        Or the error string :meth:`call_tool` returns for a call that produced
+        no result (see :meth:`McpClient.call_tool_result`).
+        """
+        return self._run(self._call_tool_result_async(server_name, tool_name, arguments))
+
+    async def _call_tool_result_async(
+        self, server_name: str, tool_name: str, arguments: Dict[str, Any]
+    ) -> Any:
+        client = self._clients.get(server_name)
+        if not client:
+            raise RuntimeError(f"MCP server '{server_name}' not found")
+        return await client.call_tool_result(tool_name, arguments)
+
+    # -- resources (docs/design/mcp-resources.md) ------------------------
+
+    def resources_allowed(self, server_name: str) -> bool:
+        """Whether ``server_name`` is configured here and its config allows resources.
+
+        Static — config only, no connection state. ``"resources": false``
+        hides a server's resources from every generic surface (the three
+        tools, ``/mcp resources``, the read hint). Any value but ``true`` or
+        absent counts as disabled: a typo must not expose what was meant to
+        be hidden.
+        """
+        config = self._configs.get(server_name)
+        if config is None:
+            return False
+        return config.get("resources", True) is True
+
+    def resource_servers(self) -> List[str]:
+        """Servers an all-servers listing walks, sorted by label.
+
+        Allowed by config, and with a connection that has declared
+        ``resources`` at some point — so a *dropped* resource server is
+        recovered, while servers that never offered any are not reconnected
+        on every listing.
+        """
+        return sorted(
+            name
+            for name, client in list(self._clients.items())
+            if self.resources_allowed(name) and client.resources_seen
+        )
+
+    def _resource_client(self, server_name: str) -> McpClient:
+        """§5.1 step 1: refuse an unknown or disabled server before any request."""
+        if server_name not in self._configs and server_name not in self._clients:
+            raise McpResourceError(
+                server_name, "unknown_server", f"MCP server '{server_name}' not found"
+            )
+        if not self.resources_allowed(server_name):
+            raise McpResourceError(
+                server_name, "disabled",
+                f"resources are disabled for server '{server_name}'",
+            )
+        client = self._clients.get(server_name)
+        if client is None:
+            # Configured but never connected: the recovery step connects it.
+            # ``setdefault``, not a get-then-set: this runs on the caller's
+            # thread, and two parallel tool calls racing here would otherwise
+            # each install a client, orphaning the first one's connection.
+            client = self._clients.setdefault(
+                server_name,
+                McpClient(server_name, self._configs[server_name], oauth=self._oauth),
+            )
+        return client
+
+    def list_resources(self, server_name: str, cursor: Optional[str] = None) -> ResourcePage:
+        """One page of ``server_name``'s resources. Raises :class:`McpResourceError`."""
+        client = self._resource_client(server_name)
+        return self._run(client.list_resources(cursor))
+
+    def list_resource_templates(
+        self, server_name: str, cursor: Optional[str] = None
+    ) -> TemplatePage:
+        """One page of ``server_name``'s resource templates. Raises :class:`McpResourceError`."""
+        client = self._resource_client(server_name)
+        return self._run(client.list_resource_templates(cursor))
+
+    def read_resource(self, server_name: str, uri: str) -> ResourceRead:
+        """Read ``uri`` from ``server_name``. Raises :class:`McpResourceError`.
+
+        Always through the server: an ``https://`` URI is never fetched
+        directly, which would skip ``security/url_policy.py``.
+        """
+        client = self._resource_client(server_name)
+        return self._run(client.read_resource(uri))
+
     def login(self, server_name: str, ui: Any) -> ServerStatus:
         """Run an OAuth login for one server, then reconnect it.
 
@@ -1757,6 +2070,9 @@ class McpClientManager:
                 # None until the handshake settles it (see McpClient.protocol_version).
                 "protocol": client.protocol_version,
                 "tools": len(client.tools),
+                # Declared by the live connection; False while disconnected.
+                "resources": client.supports_resources,
+                "resources_enabled": self.resources_allowed(name),
                 "trusted": client.is_trusted,
                 "error": client.error_message,
             })

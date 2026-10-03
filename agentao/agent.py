@@ -518,7 +518,7 @@ class Agentao:
           (``mcp_`` prefix or plan-only). The unknown-name typo guard is
           deferred to :func:`apply_enabled_tools` (needs the live registry).
         """
-        from .tooling.registry import BUILTIN_TOOL_NAMES
+        from .tooling.registry import BUILTIN_TOOL_NAMES, MCP_RESOURCE_TOOL_NAMES
 
         seen: set = set()
         for tool in self._extra_tools:
@@ -530,13 +530,14 @@ class Agentao:
                 )
             seen.add(name)
 
-        unknown = sorted(self._disable_tools - BUILTIN_TOOL_NAMES)
+        disableable = BUILTIN_TOOL_NAMES | MCP_RESOURCE_TOOL_NAMES
+        unknown = sorted(self._disable_tools - disableable)
         if unknown:
             raise ValueError(
                 f"Agentao(disable_tools=): unknown built-in tool name(s) "
                 f"{unknown}. Only built-ins can be disabled (agent-path tools "
                 f"like codebase_investigator and plan tools are not disableable). "
-                f"Valid names: {sorted(BUILTIN_TOOL_NAMES)}."
+                f"Valid names: {sorted(disableable)}."
             )
 
         # ``enabled_tools`` allowlist — only the order-independent checks run
