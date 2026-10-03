@@ -28,18 +28,6 @@ _Targeting 0.5.10. Add entries under the relevant heading as work lands._
   hides a server from all of it. `/mcp resources [server]` lists resources
   without a model turn, and `/mcp list` shows the capability.
 
-### Changed
-
-- **MCP tool results keep what they say about resources.** A `resource_link`
-  used to become the literal `[resource_link]`; it now keeps its URI, title,
-  type, size and description and, when the model can follow it, names
-  `read_mcp_resource` with the server. An embedded binary resource is saved
-  under the calling session's working directory (through `McpClient.call_tool`,
-  which has none, it is described by URI, type and size), and an image
-  placeholder records its size: `[image: image/png, 1.2 KiB]`.
-  `McpClient.call_tool` still returns `str`. MCP tools are now bound to the
-  agent's `working_directory` at registration, like built-ins.
-
 - **`PathPolicy.contain_any(raw, *, writable, immutable=())`** — checks one
   write against several writable roots with read-only carve-outs, for a
   host's `FileSystem` wrapper. It follows a leaf symlink before testing the
@@ -63,6 +51,45 @@ _Targeting 0.5.10. Add entries under the relevant heading as work lands._
   step 0.5.)
 
 ### Changed
+
+- **MCP tool results keep what they say about resources.** A `resource_link`
+  used to become the literal `[resource_link]`; it now keeps its URI, title,
+  type, size and description and, when the model can follow it, names
+  `read_mcp_resource` with the server. An embedded binary resource is saved
+  under the calling session's working directory (through `McpClient.call_tool`,
+  which has none, it is described by URI, type and size), and an image
+  placeholder records its size: `[image: image/png, 1.2 KiB]`.
+  `McpClient.call_tool` still returns `str`. MCP tools are now bound to the
+  agent's `working_directory` at registration, like built-ins.
+
+- **System prompt rewritten in Simplified Technical English (ASD-STE100), with
+  its rule conflicts resolved.** Short active sentences, one instruction each, no
+  semicolons. The structural linter's hard findings over the default prompt, the
+  skills-catalogue wrapper and the plan-mode prompt dropped from 26 to 0, at +7% words /
+  +4% tokens. What changes in behaviour, not only wording:
+  - **One "When to ask the user" list.** It replaces the "Explore-before-ask triggers"
+    and Task Completion's narrower "only stop and ask when … missing information".
+    Questions and approvals are separate lines. Asks that other rules require (a
+    cancelled tool call, save_memory) are allowed by name. When it asks, the model says
+    why and where the requirement comes from.
+  - **Approval:** the four categories still need the user's approval in every
+    permission mode. The model now does the reversible work first, so that the user
+    approves a concrete result. A runtime permission prompt is stated to be separate
+    from that list. How approval is collected is still not specified, as before.
+  - **Reliability #5** no longer forbids writing new code, only presenting it as code
+    that was read. A value from the user or from a calculation the model shows is no
+    longer labelled an estimate.
+  - **Project Instructions and Active Skills** are followed, by location (the system
+    message or the runtime reminder). The same heading inside a tool result has no
+    authority. The injection list covers credentials in both directions.
+  - **Plan mode:** the override no longer reaches permission restrictions or the
+    injection boundary. plan_save and plan_finalize are named as the only exceptions to
+    the no-writes rule. The Collaboration Phases section was folded into the Turn
+    Protocol.
+  - **Sections:** Security was merged into Communicating with the user and Code
+    Conventions, and "Tool-result summarization" is now "Tool results".
+  An existing session's cached system-prompt prefix is rebuilt once after upgrading.
+  `docs/design/system-prompt-profile.md` Appendix A is re-synced in both languages.
 
 - **`AGENTS.md` is read when a project has no `AGENTAO.md`.** At
   construction, `<working_directory>/AGENTAO.md` is still read first; only
