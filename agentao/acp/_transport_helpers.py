@@ -42,6 +42,10 @@ _TOOL_KIND_MAP: Dict[str, str] = {
     "glob": "search",
     "search_file_content": "search",
     "web_search": "search",
+    # MCP resources (registered only when a server declares them)
+    "list_mcp_resources": "search",
+    "list_mcp_resource_templates": "search",
+    "read_mcp_resource": "read",
     # running commands
     "run_shell_command": "execute",
     # retrieving external data

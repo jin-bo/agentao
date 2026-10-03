@@ -49,6 +49,12 @@ def test_every_builtin_tool_has_an_explicit_kind():
     )
 
 
+def test_every_mcp_resource_tool_has_an_explicit_kind():
+    from agentao.mcp.resource_tools import MCP_RESOURCE_TOOL_NAMES
+
+    assert sorted(MCP_RESOURCE_TOOL_NAMES - set(_TOOL_KIND_MAP)) == []
+
+
 def test_the_table_names_no_tool_that_does_not_exist():
     """The half of the table that claims to be agentao's must be agentao's.
 
@@ -59,6 +65,7 @@ def test_the_table_names_no_tool_that_does_not_exist():
     from agentao.tools.agents import CLIHelpAgentTool, CodebaseInvestigatorTool
     from agentao.tools.goal import UpdateGoalTool
     from agentao.tools.plan import PlanFinalizeTool, PlanSaveTool
+    from agentao.mcp.resource_tools import MCP_RESOURCE_TOOL_NAMES
 
     # Registered outside BUILTIN_TOOL_NAMES: agent tools, plan tools, and the
     # CLI's injected update_goal. Anything else in the table is a phantom.
@@ -68,7 +75,7 @@ def test_the_table_names_no_tool_that_does_not_exist():
         PlanSaveTool.name.fget(None),
         PlanFinalizeTool.name.fget(None),
         UpdateGoalTool.name.fget(None),
-    }
+    } | MCP_RESOURCE_TOOL_NAMES
     phantom = sorted(set(_TOOL_KIND_MAP) - BUILTIN_TOOL_NAMES - outside_the_constant)
     assert phantom == []
 

@@ -153,6 +153,32 @@ So:
 - Don't name your own tools with the `mcp_` prefix (avoid confusion)
 - Permission rules can match by prefix: `{"tool": "mcp_github_*", ...}`
 
+## MCP resources
+
+A server that declares the `resources` capability also exposes data the model can read. When at least one connected server does, three read-only tools are registered (names and shapes follow codex and pi, so models already know them):
+
+| Tool | Parameters | Returns |
+|---|---|---|
+| `list_mcp_resources` | `server?`, `cursor?` | JSON `{server?, resources: [{server, uri, name, …}], nextCursor?, errors?}` |
+| `list_mcp_resource_templates` | `server?`, `cursor?` | JSON `{server?, resourceTemplates: [{server, uriTemplate, name, …}], nextCursor?, errors?}` |
+| `read_mcp_resource` | `server`, `uri` (both required) | the contents |
+
+- Without `server`, a listing walks every server; one server's failure goes into `errors`. A `cursor` needs a `server`.
+- Text comes back as text. A binary resource is saved under `<working_directory>/.agentao/tool-outputs/` (0600) and its path returned; a blob over 10 MiB is reported, never decoded.
+- They are read-only: allowed in read-only and plan mode, never confirmed. A permission rule naming one still applies, and `disable_tools` / `enabled_tools` accept the three names.
+- `"resources": false` on a server hides it from all three (and refuses it by name).
+- A tool result's `resource_link` keeps its URI and, when the model can follow it, names `read_mcp_resource` with the server.
+
+The same operations are public on the manager, for a host building its own picker:
+
+```python
+page = agent.mcp_manager.list_resources("docs")            # ResourcePage
+templates = agent.mcp_manager.list_resource_templates("docs")
+read = agent.mcp_manager.read_resource("docs", "report://q3")  # ResourceRead (text or base64 blob)
+```
+
+Each raises `agentao.mcp.resources.McpResourceError` (with a `kind`) instead of returning partial data. In the CLI, `/mcp resources [server]` lists them without spending a model turn.
+
 ## Debugging
 
 ```python

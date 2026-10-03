@@ -63,6 +63,19 @@ BUILTIN_TOOL_NAMES: frozenset = frozenset({
     "cancel_background_agent",
 })
 
+# The three MCP resource tools (``agentao/mcp/resource_tools.py``). They
+# register in ``tooling/mcp_tools.py``, only when a connected server declares
+# ``resources``, so they are kept out of ``BUILTIN_TOOL_NAMES`` (pinned to what
+# ``register_builtin_tools`` produces) — but both ``disable_tools`` and
+# ``enabled_tools`` validate against them: registration-eligible, like
+# ``web_search`` without ``[web]``. A literal, not an import, so this module
+# never loads the MCP SDK; a test pins it to the tool module's names.
+MCP_RESOURCE_TOOL_NAMES: frozenset = frozenset({
+    "list_mcp_resources",
+    "list_mcp_resource_templates",
+    "read_mcp_resource",
+})
+
 
 def _bind_and_register(
     agent: "Agentao", tool: "RegistrableTool", *, replace: bool = False, origin: str,
@@ -198,7 +211,7 @@ def apply_enabled_tools(agent: "Agentao") -> None:
     # Union with BUILTIN_TOOL_NAMES so a legal-but-absent built-in (e.g.
     # ``web_search`` without the ``[web]`` extra) isn't flagged as a typo —
     # same "registration eligibility != live availability" rule as disable_tools.
-    known = set(agent.tools.tools) | BUILTIN_TOOL_NAMES
+    known = set(agent.tools.tools) | BUILTIN_TOOL_NAMES | MCP_RESOURCE_TOOL_NAMES
     unknown = sorted(allow - known)
     if unknown:
         raise ValueError(

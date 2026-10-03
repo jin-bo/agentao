@@ -650,7 +650,12 @@ class TestRepl:
 
         from agentao.tools.base import ToolRegistry
 
-        return SimpleNamespace(agent=SimpleNamespace(mcp_manager=manager, tools=ToolRegistry()))
+        # The attributes ``register_mcp_tools`` binds onto each tool (as it
+        # binds a built-in) and the ``disable_tools`` it honours.
+        return SimpleNamespace(agent=SimpleNamespace(
+            mcp_manager=manager, tools=ToolRegistry(), _working_directory=None,
+            filesystem=None, shell=None, _disable_tools=frozenset(),
+        ))
 
     def _scripted_ui(self, monkeypatch, origin):
         from agentao.cli import mcp_login_ui

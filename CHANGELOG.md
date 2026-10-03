@@ -11,6 +11,35 @@ _Targeting 0.5.10. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **MCP resources** (`docs/design/mcp-resources.md`). Three read-only tools —
+  `list_mcp_resources(server?, cursor?)`, `list_mcp_resource_templates(server?,
+  cursor?)`, `read_mcp_resource(server, uri)`, named and shaped as in codex and
+  pi — registered when at least one connected server declares the
+  `resources` capability. Allowed in read-only and plan mode, never
+  confirmed; `disable_tools` / `enabled_tools` accept the three names. A
+  binary resource is saved to `<working_directory>/.agentao/tool-outputs/`
+  as `mcp-resource_*` (0600, pruned with the other saved outputs after 7
+  days); every blob is size-checked against 10 MiB before it is decoded; an
+  `https://` resource is read through its server, never fetched directly.
+  `McpClientManager` gains public `list_resources`, `list_resource_templates`,
+  `read_resource`, `resources_allowed` and `call_tool_result`; `McpClient`
+  keeps the server's capabilities (`server_capabilities`,
+  `supports_resources`). New per-server `mcp.json` key `"resources": false`
+  hides a server from all of it. `/mcp resources [server]` lists resources
+  without a model turn, and `/mcp list` shows the capability.
+
+### Changed
+
+- **MCP tool results keep what they say about resources.** A `resource_link`
+  used to become the literal `[resource_link]`; it now keeps its URI, title,
+  type, size and description and, when the model can follow it, names
+  `read_mcp_resource` with the server. An embedded binary resource is saved
+  under the calling session's working directory (through `McpClient.call_tool`,
+  which has none, it is described by URI, type and size), and an image
+  placeholder records its size: `[image: image/png, 1.2 KiB]`.
+  `McpClient.call_tool` still returns `str`. MCP tools are now bound to the
+  agent's `working_directory` at registration, like built-ins.
+
 - **`PathPolicy.contain_any(raw, *, writable, immutable=())`** — checks one
   write against several writable roots with read-only carve-outs, for a
   host's `FileSystem` wrapper. It follows a leaf symlink before testing the

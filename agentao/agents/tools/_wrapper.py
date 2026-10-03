@@ -53,6 +53,21 @@ _USAGE_KEYS = (
 )
 
 
+_READ_RESOURCE_TOOL = "read_mcp_resource"
+
+
+def _without_read_hint(tool: Any) -> Any:
+    """``tool`` with its resource-read hint off, if it is an ``McpTool``.
+
+    ``isinstance``, never a ``hasattr`` probe (a mock answers any attribute).
+    Imported here, not at module load: only reached when MCP tools exist, so
+    the SDK is already loaded.
+    """
+    from ...mcp.tool import McpTool
+
+    return tool.without_read_hint() if isinstance(tool, McpTool) else tool
+
+
 class AgentToolWrapper(Tool):
     """Wraps an agent definition as a callable Tool for the parent LLM."""
 
@@ -638,6 +653,13 @@ class AgentToolWrapper(Tool):
         agent_name = self._definition["name"]
         kept: List[Tuple[RegistrableTool, str]] = []
         left_out: List[str] = []
+        # A resource link in an MCP tool's result names ``read_mcp_resource``
+        # only when the agent running the tool can call it. The parent's
+        # instances check the parent's registry, so a child without the tool
+        # gets copies with the hint off.
+        child_reads = _READ_RESOURCE_TOOL in self._all_tools and (
+            requested is None or _READ_RESOURCE_TOOL in requested
+        )
         for name, tool in list(self._all_tools.items()):
             if requested is not None and name not in requested:
                 continue
@@ -646,6 +668,8 @@ class AgentToolWrapper(Tool):
             except KeyError:  # removed from the parent since the snapshot
                 continue
             if origin == "mcp":
+                if not child_reads:
+                    tool = _without_read_hint(tool)
                 kept.append((tool, "mcp"))
             elif origin == "builtin" and name in own.tools and own.origin(name) == "builtin":
                 own_tool = own.tools[name]

@@ -45,7 +45,8 @@ def test_image_block_with_structured_keeps_image_placeholder():
     # An image alongside structured data must not be clobbered by the JSON —
     # this is exactly opencode's #34505 regression, guarded here.
     client = connected_client(tool_result([image_block("image/png")], structured={"k": "v"}))
-    assert run_async(client.call_tool("t", {})) == "[image: image/png]"
+    # The dropped image's size is recorded in the placeholder ("AA==" is 1 byte).
+    assert run_async(client.call_tool("t", {})) == "[image: image/png, 1 byte]"
 
 
 def test_empty_content_falls_back_to_structured_json():
