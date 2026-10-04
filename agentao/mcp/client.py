@@ -1476,7 +1476,8 @@ class McpClient:
                     lambda task: task.cancelled() or task.exception()
                 )
         if abandoned:
-            # Classified as a dropped transport: reconnect and retry once.
+            # Classified as a dropped transport: a tool call reports an unknown
+            # result, a resource read reconnects and retries once.
             raise ConnectionError(f"MCP server '{self.name}': connection closed")
         return request.result()
 
