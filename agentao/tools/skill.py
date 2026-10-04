@@ -29,7 +29,7 @@ class ActivateSkillTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Activate a skill for specialized tasks. Skills provide enhanced capabilities for specific domains like PDF handling, spreadsheets, presentations, etc."
+        return "Activate a skill. A skill gives you instructions and files for one type of task."
 
     @property
     def parameters(self) -> Dict[str, Any]:
@@ -57,7 +57,7 @@ class ActivateSkillTool(Tool):
                 "skill_name": skill_prop,
                 "task_description": {
                     "type": "string",
-                    "description": "Description of the task to perform with this skill",
+                    "description": "The task that you will do with this skill.",
                 },
             },
             "required": ["skill_name", "task_description"],

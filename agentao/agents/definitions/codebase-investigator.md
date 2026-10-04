@@ -1,6 +1,6 @@
 ---
 name: codebase-investigator
-description: "Read-only codebase exploration: find files, search code patterns, analyze project structure. Use for investigation tasks that don't require file modifications."
+description: "Explore a codebase: find files, search code patterns, and analyze the project structure. Use this agent for investigation tasks that do not change files."
 tools:
   - read_file
   - list_directory

@@ -35,6 +35,10 @@ _SERVER_PARAM = {
     "type": "string",
     "description": "MCP server name. Omit to list every server's resources.",
 }
+_TEMPLATE_SERVER_PARAM = {
+    "type": "string",
+    "description": "MCP server name. Omit it to list the templates of every server.",
+}
 _CURSOR_PARAM = {
     "type": "string",
     "description": "Pagination cursor from a previous call's nextCursor. Requires server.",
@@ -67,7 +71,10 @@ class _ListTool(_McpResourceTool):
     def parameters(self) -> Dict[str, Any]:
         return {
             "type": "object",
-            "properties": {"server": _SERVER_PARAM, "cursor": _CURSOR_PARAM},
+            "properties": {
+                "server": _TEMPLATE_SERVER_PARAM if self._templates else _SERVER_PARAM,
+                "cursor": _CURSOR_PARAM,
+            },
         }
 
     def execute(self, server: Optional[str] = None, cursor: Optional[str] = None, **_: Any) -> str:

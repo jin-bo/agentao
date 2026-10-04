@@ -30,11 +30,12 @@ class AskUserTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Ask the user a clarifying question and wait for their response. "
-            "Use when you need missing information to proceed, or to confirm ambiguous requirements. "
-            "Do NOT use for yes/no confirmations — only use when free-form user input is needed. "
-            "Optionally pass `options` to suggest choices (set `multiple` to allow more than one, "
-            "and `allow_custom=false` to restrict the answer to the listed options)."
+            "Ask the user a question and wait for the answer. Use this tool when you "
+            "need information that you do not have, or when a requirement has more "
+            "than one meaning. Do not use this tool for a yes/no confirmation. "
+            "To offer choices, pass `options`. To let the user pick more than one "
+            "option, set `multiple` to true. To accept only the listed options, set "
+            "`allow_custom` to false."
         )
 
     @property

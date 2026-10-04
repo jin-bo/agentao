@@ -21,13 +21,16 @@ class SaveMemoryTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Save important information to long-term memory for future conversations. "
-            "Call this when the user explicitly asks to remember something, OR when the user "
-            "clearly states a durable fact or preference that would be useful across sessions "
-            "(e.g. preferred language, coding style, recurring workflow). "
-            "If unsure whether something is worth saving, ask first: 'Should I remember that?' "
-            "Do NOT save ephemeral or session-specific details, or general project context. "
-            "Use descriptive snake_case keys like 'user_preferred_language'."
+            "Save a fact to long-term memory, for use in later conversations. "
+            "Save a fact only in these cases:\n"
+            "- The user asks you to remember something.\n"
+            "- The user clearly states a durable fact or preference that would be useful "
+            "across sessions. Examples: a preferred language, a coding style, a recurring "
+            "workflow.\n\n"
+            "Do not save details that apply only to this session. Do not save general "
+            "project context. If you are not sure that a fact is worth saving, ask the "
+            "user in your reply text. Use a descriptive snake_case key, for example "
+            "'user_preferred_language'."
         )
 
     @property
@@ -37,7 +40,10 @@ class SaveMemoryTool(Tool):
             "properties": {
                 "key": {
                     "type": "string",
-                    "description": "A short identifier for this memory (e.g., 'user_preference', 'project_context')",
+                    "description": (
+                        "A short snake_case identifier, for example "
+                        "'user_preferred_language' or 'user_coding_style'."
+                    ),
                 },
                 "value": {
                     "type": "string",

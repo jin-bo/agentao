@@ -117,7 +117,12 @@ class ReadFileTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Read file contents with line numbers. Use offset/limit for large files."
+        return (
+            "Read a file and return its lines with line numbers. Without limit, "
+            f"the tool returns a maximum of {MAX_LINES_DEFAULT} lines. The tool cuts "
+            f"each line that is longer than {MAX_LINE_LENGTH} characters. To read a "
+            "different part of a large file, use offset and limit."
+        )
 
     @property
     def parameters(self) -> Dict[str, Any]:
@@ -134,7 +139,10 @@ class ReadFileTool(Tool):
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of lines to read (default: 0 = all lines)",
+                    "description": (
+                        "Maximum number of lines to read. "
+                        f"Default 0: a maximum of {MAX_LINES_DEFAULT} lines."
+                    ),
                 },
             },
             "required": ["file_path"],
@@ -524,11 +532,11 @@ class ReadFolderTool(Tool):
             "properties": {
                 "directory_path": {
                     "type": "string",
-                    "description": "Path to the directory to list (defaults to current directory)",
+                    "description": "Directory to list. Default: the working directory.",
                 },
                 "recursive": {
                     "type": "boolean",
-                    "description": "Whether to list recursively",
+                    "description": "If true, also list the contents of each subdirectory. Default false.",
                     "default": False,
                 },
             },
