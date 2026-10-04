@@ -119,6 +119,13 @@ agent = Agentao(
 | `timeout` | ❌ | 秒，默认 60 |
 | `trust` | ❌ | 同上 |
 
+三种 transport 还都接受两个键，对应下文的两个功能：
+
+| 字段 | 默认值 | 作用 |
+|------|--------|------|
+| `resources` | `true` | 设为其他任何值，该 server 都会从资源工具和 `/mcp resources` 中隐去，按名字指定它也会被拒绝 |
+| `skills` | `false` | 只有 `true` 才为该 server 开启 MCP Skills 扩展 |
+
 ::: info Streamable HTTP 已支持
 Agentao 的 MCP 客户端导入了 `stdio_client`、`sse_client`，**以及** `streamable_http_client`（外加 `create_mcp_http_client`），三种 transport 都能接入。`type` 选择 transport（`"stdio"` / `"http"` / `"sse"`）；省略时自动推断——`command` → stdio，裸 `url` → **Streamable HTTP**。旧版 SSE 需要显式写 `"type": "sse"`。未知的 `type` 或缺少必填键会 fail closed（`McpTransportConfigError`）。ACP 握手会通告 `mcpCapabilities.http: true`。
 :::
@@ -188,6 +195,10 @@ server 还可以通过 MCP Skills 扩展（`io.modelcontextprotocol/skills`）�
 - **文件。** `read_skill_file(skill, path)` 从该 skill 自己的 server 读取已激活 MCP skill 的文件并校验，不在清单里的路径一律拒绝。在已加载 skill 目录内的 `read_mcp_resource` 也按同样方式校验。
 - **闸门。** 只要有 MCP skill 已加载（直到 `/clear`，停用不算），`run_shell_command`、派生能执行 shell 的子代理、以及对其他 server 的 `read_mcp_resource` 都会询问，任何权限模式下都是如此。它们只会收紧：`deny` 规则和只读模式仍然拒绝。
 - **子代理**共享会话里已加载的 skill，所以闸门在子代理里同样生效。
+- **没有人可以询问的宿主。** 激活和每个闸门确认都需要人来回答。`NullTransport`、没有 `confirm_tool` 的 `SdkTransport`、没有 `confirmation_callback` 的 `build_compat_transport` 会一律拒绝。会记住"总是允许"的宿主必须读取 `agentao.transport.gate_note()`（见 4.5）。
+- **会话恢复。** `restore_agent_skills` 从不重新激活 MCP skill，会在恢复的消息里隐去 MCP skill 的内容，并重新打开闸门（见 2.4）。
+- **限制。** 每个 skill 最多 512 个文件、16 MiB。`SKILL.md` 超过 100,000 字节的 skill 会被列为不可用，因为已激活 skill 的 `SKILL.md` 每次请求都会发送。`read_skill_file` 每次最多返回 30,000 个字符，用 `offset` 和 `limit` 分页读取。
+- **内容保存在哪里。** skill 内容从不写入 `.agentao/tool-outputs/`。replay 文件和 `agentao.log` 原样保留工具结果，包括 MCP skill 内容；之后用 `read_file` 读取它们不受闸门限制。
 
 宿主可以从 manager 读到同样的数据：
 
@@ -350,5 +361,6 @@ MCP: 12 tools from 2 server(s)       ← 有些 Server 没起来
 - 多租户 token：构造时传 `extra_mcp_servers`（`{name: {command, args, env}}`），同名会覆盖 `.agentao/mcp.json`。项目级 `.agentao/mcp.json` 是**仅可新增**的 —— 不能覆盖用户级同名条目。
 - 工具命名：`mcp_{server}_{tool}` ——自动加前缀避免不同服务器的同名冲突。
 - 写操作能力的 Server **绝对不要**设 `trust: true`，会绕过所有确认。
+- server 的 **resources** 会变成三个只读工具（`"resources": false` 可隐去）。它的 **skills** 默认关闭，要设 `"skills": true`；加载了 MCP skill 期间，shell 和跨 server 读取在任何模式下都会询问。
 
 → 下一节：[5.4 权限引擎](./4-permissions)

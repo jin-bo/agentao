@@ -22,7 +22,7 @@ Facts about other projects come from their own documentation and repositories on
 | **Audit / observability** | Local JSONL replay files and an in-process event stream; no OpenTelemetry | OpenTelemetry export (opt-in); client-side cost estimates | Tracing with pluggable processors and many third-party integrations | OpenTelemetry |
 | **Permissions** | Four modes (`read-only`, `workspace-write`, `full-access`, `plan`); allow / deny / ask rules; per-call approval through the host | Six modes; allow / deny / ask rules; a `canUseTool` callback | Per-tool `needs_approval` with pause/resume; input, output and tool guardrails | Interrupts for human approval; the Strands harness adds opt-in "interventions" (it runs tools unasked by default) |
 | **Hooks** | Eight shell-hook events; reads hook files written for Claude Code (an enumerated subset) | Ten events in the Python SDK, more in TypeScript | Run and agent lifecycle callbacks | Typed hook events |
-| **MCP** | stdio, Streamable HTTP, SSE (no OAuth yet) | In-process servers, stdio, HTTP, SSE | Hosted MCP, Streamable HTTP, SSE, stdio | Yes |
+| **MCP** | stdio, Streamable HTTP, SSE; OAuth login for URL servers | In-process servers, stdio, HTTP, SSE | Hosted MCP, Streamable HTTP, SSE, stdio | Yes |
 | **Sandbox** | macOS `sandbox-exec`, off by default | Claude Code's sandbox: macOS, Linux and WSL2, off by default | Sandbox agents on local Unix or Docker, or hosted providers (E2B, Modal, Daytona, …) | Pluggable sandbox backends (Docker, SSH, custom) |
 | **ACP (agent ↔ editor)** | Built in: `agentao --acp --stdio` (and an ACP client) | Through a separate adapter published by the Agent Client Protocol project | Not documented | TypeScript `strands` CLI only (`--acp-server`); not in the Python packages |
 | **License** | MIT | MIT, use governed by Anthropic's Commercial Terms | MIT | Apache-2.0 |
@@ -42,7 +42,7 @@ All four also have sub-agents and saved, resumable sessions.
 - **You only use Claude and want Claude Code's behaviour exactly** → the Claude Agent SDK runs the same agent, with more hook events, file checkpointing, and Claude Code's sandbox on Linux as well as macOS.
 - **You want managed sandboxes or the OpenAI tracing ecosystem** → the OpenAI Agents SDK ships Docker and hosted sandbox backends, many session stores and tracing integrations.
 - **You are on AWS, or want OpenTelemetry, an evals package, or multi-agent patterns (graph, swarm, A2A)** → Strands covers those.
-- **You need Linux or container sandboxing, OpenTelemetry, or MCP OAuth today** → Agentao does not have them yet.
+- **You need Linux or container sandboxing, or OpenTelemetry, today** → Agentao does not have them yet.
 - **You need an ecosystem** → the vendor SDKs have far larger communities; Agentao is a small project.
 
 ## Before you choose

@@ -156,7 +156,7 @@ def confirm_tool(name, desc, args):
     return False  # default deny
 ```
 
-For batch jobs, **leave `confirm_tool` out entirely** — `NullTransport` auto-approves everything. Only safe when you've locked the tool set and the filesystem.
+For batch jobs, **leave `confirm_tool` out entirely** — `NullTransport` auto-approves everything except a confirmation the MCP Skills gate asks, which it refuses. Only safe when you've locked the tool set and the filesystem.
 
 ## Coordinating with the Permission Engine
 
@@ -204,6 +204,8 @@ In slow Web contexts this can shave ~100 ms of first-render delay.
 Production typically uses **layered** confirmation:
 
 ```python
+from agentao.transport import gate_note
+
 class SmartConfirm:
     def __init__(self, user_ui, tenant_rules: dict):
         self.ui = user_ui
@@ -211,6 +213,13 @@ class SmartConfirm:
         self._session_allow_all = False
 
     def __call__(self, name, desc, args):
+        # 0. A confirmation the MCP Skills gate asks: ask now, remember nothing
+        note = gate_note()
+        if note is not None:
+            if name in self.rules.get("deny", []):
+                return False                               # a deny still denies
+            return self.ui.ask(name, note, args) == "allow_once"
+
         # 1. Session-wide "allow all"
         if self._session_allow_all:
             return True
@@ -230,6 +239,8 @@ class SmartConfirm:
             return True
         return resp == "allow_once"
 ```
+
+Step 0 matters once an MCP server serves skills (`"skills": true`). While one is loaded, activating a skill, `run_shell_command`, a shell-capable sub-agent and a cross-server `read_mcp_resource` arrive **gated**. `gate_note()` then returns the reason, which is the text to show. A gated call must not be answered by "allow all" or an allowlist, and its answer must not be remembered. See host-api, *Answering a confirmation the MCP Skills gate asks*.
 
 ## TL;DR
 

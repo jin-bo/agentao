@@ -84,7 +84,7 @@ Agent 与宿主之间的**双向通道**。一个 Transport 实现 4 个方法�
 - `on_max_iterations(count, messages) -> dict` — 达到最大轮次时的兜底策略
 
 Agentao 内置 3 个 Transport：
-- `NullTransport` — 静默，自动批准一切（测试用）
+- `NullTransport` — 静默，除 MCP Skills 闸门确认（一律拒绝）外自动批准（测试用）
 - `SdkTransport` — 可配置回调，**库/服务嵌入的首选**
 - CLI 的 Rich Transport — 终端用户交互
 

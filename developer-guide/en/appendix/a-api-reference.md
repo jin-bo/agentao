@@ -6,7 +6,7 @@ Authoritative `__all__`:
 
 - `from agentao import ...` → `Agentao`, `SkillManager`
 - `from agentao.embedding import ...` → `build_from_environment`
-- `from agentao.transport import ...` → `AgentEvent`, `EventType`, `Transport`, `NullTransport`, `SdkTransport`, `build_compat_transport`
+- `from agentao.transport import ...` → `AgentEvent`, `EventType`, `Transport`, `NullTransport`, `SdkTransport`, `build_compat_transport`, `gate_note`
 - `from agentao.capabilities import ...` → `FileSystem`, `LocalFileSystem`, `FileEntry`, `FileStat`, `ShellExecutor`, `LocalShellExecutor`, `ShellRequest`, `ShellResult`, `BackgroundHandle`, `MemoryStore`, `SQLiteMemoryStore`, `MCPRegistry`, `FileBackedMCPRegistry`, `InMemoryMCPRegistry`
 - `from agentao.tools.base import ...` → `Tool`, `ToolRegistry`
 - `from agentao.permissions import ...` → `PermissionEngine`, `PermissionMode`, `PermissionDecision`
@@ -162,7 +162,7 @@ SdkTransport(
 )
 ```
 
-Any unset callback falls back to `NullTransport` behavior (allow, empty answer, stop).
+Any unset callback falls back to `NullTransport` behavior (allow, except an MCP Skills gated confirmation, which is refused; empty answer; stop).
 
 ### `build_compat_transport`
 

@@ -710,6 +710,40 @@ meaning changed under a name consumers already read.
   for the firehose. They run on independent code paths and don't
   interfere.
 
+### Answering a confirmation the MCP Skills gate asks (`gate_note`)
+
+With an MCP skill loaded, some confirmations are **gated**: activating an
+MCP skill, `run_shell_command`, spawning a sub-agent that can run shell
+commands, and `read_mcp_resource` on another server
+(`docs/design/mcp-skills.md`). A gated confirmation needs a person, for this
+call only. Read `agentao.transport.gate_note()` inside `confirm_tool`:
+
+- `None`: an ordinary confirmation. Answer it as you always do, including
+  from a remembered "always allow".
+- A string: a gated confirmation. The string says why the call is gated.
+  Show it to the user, do not answer from a remembered "always allow", and do
+  not remember the answer. A remembered "always reject" can still reject.
+
+```python
+from agentao.transport import NullTransport, gate_note
+
+class MyTransport(NullTransport):
+    def confirm_tool(self, name, description, args):
+        note = gate_note()
+        if note is None and name in self.always_allowed:
+            return True
+        return self.ui.ask(name, note or description, args)  # never stored when note is set
+```
+
+`gate_note()` is thread-local: a foreground sub-agent's confirmation runs on
+the sub-agent's thread through the parent's transport, so read it inside
+`confirm_tool`, never cache it. The built-in transports already follow this:
+`NullTransport`, `SdkTransport` with no `confirm_tool`, and
+`build_compat_transport` with no `confirmation_callback` approve every
+confirmation **except a gated one, which they refuse**. The CLI asks a gated
+confirmation even in `full-access`, and the ACP server offers only
+`allow_once` / `reject_once` for it.
+
 ### Known gaps (neither channel covers these today)
 
 - **MCP server lifecycle.** Connect / disconnect / `auth_failed` are

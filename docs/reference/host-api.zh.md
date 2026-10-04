@@ -585,6 +585,31 @@ for ev in events:
   sink，加一个 `SdkTransport(on_event=...)` 喂 firehose。两条路径
   独立运行、互不干扰。
 
+### 回答 MCP Skills 闸门发起的确认（`gate_note`）
+
+加载了 MCP skill 时，部分确认是**闸门确认**：激活 MCP skill、`run_shell_command`、启动能运行 shell 命令的子代理，以及对其他服务器调用
+`read_mcp_resource`（`docs/design/mcp-skills.md`）。闸门确认需要一个人来回答，而且只对这一次调用有效。在 `confirm_tool` 里读取
+`agentao.transport.gate_note()`：
+
+- `None`：普通确认。按原来的方式回答，包括使用已记住的"总是允许"。
+- 字符串：闸门确认，字符串说明了这次调用为什么被拦。把它展示给用户；不要用已记住的"总是允许"回答，也不要记住这次的回答。已记住的"总是拒绝"仍然可以拒绝。
+
+```python
+from agentao.transport import NullTransport, gate_note
+
+class MyTransport(NullTransport):
+    def confirm_tool(self, name, description, args):
+        note = gate_note()
+        if note is None and name in self.always_allowed:
+            return True
+        return self.ui.ask(name, note or description, args)  # note 有值时不要保存结果
+```
+
+`gate_note()` 是线程局部的：前台子代理的确认在子代理的线程上、经由父级的 transport 发起，所以要在 `confirm_tool` 内读取，不要缓存。
+内置 transport 已经遵守这条规则：`NullTransport`、没有 `confirm_tool` 的 `SdkTransport`、没有 `confirmation_callback` 的
+`build_compat_transport` 会批准所有确认，**唯独拒绝闸门确认**。CLI 即使在 `full-access` 下也会询问闸门确认，ACP 服务端对它只提供
+`allow_once` / `reject_once`。
+
 ### 已知缺口（两条通道目前都覆盖不到）
 
 - **MCP server 生命周期。** Connect / disconnect / `auth_failed`

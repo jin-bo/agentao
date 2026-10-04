@@ -174,6 +174,8 @@ Rules:
 
 Rule of thumb: **write it to the LLM itself** — "when the user says X, call me."
 
+**Keep every claim true.** The model acts on what the description says. If it promises "all lines" while the tool stops at 2000, or lists four of the five statuses the tool can return, the model works from facts that are false. Take numbers from your code instead of typing them, state every default, and list every value the tool can return. Agentao's built-in tools follow this rule, and a test checks it (`tests/test_tool_description_facts.py`).
+
 ## Path resolution helpers
 
 The `Tool` base class provides two helpers for path handling:

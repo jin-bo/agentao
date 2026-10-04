@@ -62,6 +62,11 @@ Env vars in the config use `$VAR_NAME` and are expanded at load time from your s
 > /mcp add github npx -y @modelcontextprotocol/server-github
 > /mcp add remote https://api.example.com/mcp
 > /mcp remove github
+> /mcp resources                       # list resources and templates (no model turn)
+> /mcp resources docs                  # one server only
+> /mcp login remote                     # authorize an OAuth server in the browser
+> /mcp login remote --no-browser        # print the URL, paste the redirect back
+> /mcp logout remote                    # delete its stored credential
 ```
 
 `/mcp list` output:
@@ -75,9 +80,44 @@ MCP Servers (3):
     Connection refused
 ```
 
+For a server with `"skills": true`, `/mcp list` adds a line under it: the number of skills it serves, or why its skills are unavailable.
+
 `/mcp add` writes to the **project** config (`.agentao/mcp.json`) — it never touches the user-global one.
 
 `/mcp remove` deletes the entry from the project config but **the change requires restart** (the message tells you so). The current session keeps the running connection.
+
+### `/mcp login` and `/mcp logout` — OAuth servers
+
+A URL server (Streamable HTTP or SSE) uses OAuth by default. Nothing in `mcp.json` turns it on. It does not apply to a stdio server, to a server with `"oauth": false`, or to a server whose `headers` already set `Authorization`. When such a server answers 401, agentao does not open a browser by itself. The server shows as `needs login` in `/mcp list`, and at startup the REPL prints:
+
+```text
+MCP server 'remote' needs login — run /mcp login remote
+```
+
+Run the login:
+
+1. `/mcp login remote` prints the authorization URL and opens your browser. It waits up to 300 s for the redirect. Ctrl+C cancels.
+2. You approve the request in the browser. The browser is sent back to a listener on `127.0.0.1` (`/callback/<server>`), and the page says you can close it.
+3. agentao stores the credential and reconnects the server in the running session: `Logged in to 'remote' — connected, 5 tool(s).`
+
+With `--no-browser`, or when no browser can open (for example over SSH with no display), agentao prints the URL and asks for `Redirect URL:`. Open the URL on any machine, approve, and paste the full address the browser was sent to, even if that page did not load. The input is hidden. The listener keeps running, so an SSH port forward also works.
+
+Tools load only when agentao starts. If the server had no tools when the session started, the login ends with `Restart agentao to load the tools of 'remote'.` If it had tools, the next call uses the new token.
+
+`/mcp logout remote` deletes the stored credential and disconnects the server. The server's tools stay listed. If the server requires login, calls to them fail and show the login hint until you log in again. With no credential stored, it says `'remote' had no stored credential.`
+
+From a shell, `agentao mcp login <name> [--no-browser]` and `agentao mcp logout <name>` do the same. They work in a library-only install too. Exit codes: `0` connected, `1` failed (or stored but the reconnect failed), `2` usage error, `130` cancelled. Use them for a headless `agentao run` or an ACP session, which never start a login themselves. Those processes read the new credential on the server's next connect or call.
+
+What to know:
+
+- **Credentials** are stored in `~/.agentao/mcp-oauth/`, one file per server URL (mode 0600, directory 0700). They are plain JSON, not in an OS keyring. Two server names with the same URL share one credential.
+- **Refresh** is automatic: 60 s before expiry, and once more after a 401. If the authorization server rejects the refresh, the server goes back to `needs login`. A network failure is reported as an ordinary error and does not ask you to log in.
+- **Settings** go in an optional `oauth` object on the server: `client_id`, `client_secret` (needs `client_id`, `$VAR` is expanded), `callback_port` (1–65535), and `redirect_host` (`localhost` or a loopback address). Any other key is an error. There is no `scopes` key: the login asks for the scope the server's 401 names. Without `client_id`, agentao registers itself with the server as public client `agentao`.
+- **ACP-supplied servers** (from an editor's `session/new`) never use agentao's OAuth. The editor handles their authorization.
+- **Limitations.**
+  - On mcp 1.x, the SDK does not check the authorization server's `iss` (RFC 9207). On mcp 1.26, each login also registers a new client. Use mcp 2.x for both.
+  - A `403 insufficient_scope` is reported with the scope the server wants, but a new login asks only for the scope in the server's 401. Logging in again may not clear it.
+  - The login reads internal fields of the SDK. If a future SDK release moves them, the login stops with a message, and servers that are already logged in keep working.
 
 ### Tool naming
 

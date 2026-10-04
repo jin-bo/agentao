@@ -74,6 +74,7 @@ agent.messages = [
 import json
 from pathlib import Path
 from agentao import Agentao
+from agentao.embedding.sessions import restore_agent_skills
 
 def save_session(agent: Agentao, session_id: str, db) -> None:
     """每次 chat() 后调用。"""
@@ -102,13 +103,13 @@ def load_session(session_id: str, db) -> Agentao:
     for msg in json.loads(row["messages"]):
         agent.messages.append(msg)  # 或：agent.add_message(msg["role"], msg["content"])
 
-    # 重新激活技能。``task_description`` 是必填的（它会以 "Task: ..." 渲染进
-    # <active-skills> 提示块）；而且保存之后被删除或禁用的技能是**返回**
-    # "Error: ..." 字符串而不是抛异常，所以要把返回值读回来判断。Agentao 已把
-    # 整条规则封装为 ``embedding.sessions.restore_agent_skills(agent,
-    # row["active_skills"])``，它还会收窄手工改过的列表。
-    for name in row["active_skills"]:
-        agent.skill_manager.activate_skill(name, "Restored from session")
+    # 用 Agentao 提供的 helper 重新激活技能，不要自己循环调用
+    # ``skill_manager.activate_skill``。helper 会收窄手工改过的列表，把
+    # "Error: ..." 返回值当作拒绝，并且会处理 MCP skill：从不重新激活它们
+    # （它们的批准只属于原来的会话），在恢复的消息里隐去它们的内容，并重新
+    # 打开 MCP Skills 门禁。直接调用 ``activate_skill`` 这些都不做，还会在
+    # 没有任何人同意的情况下激活 MCP skill。
+    restored, skipped = restore_agent_skills(agent, row["active_skills"])
 
     return agent
 ```

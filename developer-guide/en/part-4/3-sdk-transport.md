@@ -25,7 +25,7 @@ class SdkTransport:
 | Missing | Fallback |
 |---------|----------|
 | `on_event` | Events silently discarded |
-| `confirm_tool` | Auto-approve (returns `True`) |
+| `confirm_tool` | Auto-approve (returns `True`), except a confirmation the MCP Skills gate asks, which it refuses |
 | `ask_user` | Returns `"[ask_user: not available in non-interactive mode]"` |
 | `on_max_iterations` | `{"action": "stop"}` |
 
@@ -297,7 +297,7 @@ agent.close()
 
 ## TL;DR
 
-- 4 optional callbacks; each missing one falls back to `NullTransport` behavior (silent / auto-approve / non-interactive string / `{"action": "stop"}`).
+- 4 optional callbacks; each missing one falls back to `NullTransport` behavior (silent / auto-approve, except an MCP Skills gated confirmation / non-interactive string / `{"action": "stop"}`).
 - Group callbacks in a class when they share UI state or session id — closures + per-session `self` is the cleanest pattern.
 - Fan out events with a small dispatcher when multiple consumers (DB log + WebSocket + UI) need them.
 - **Never raise inside `on_event`** — wrap each branch in try/except, or `SdkTransport.emit` will swallow it for you (but downstream side-effects may be half-done).

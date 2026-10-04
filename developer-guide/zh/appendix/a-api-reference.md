@@ -6,7 +6,7 @@
 
 - `from agentao import ...` → `Agentao`、`SkillManager`
 - `from agentao.embedding import ...` → `build_from_environment`
-- `from agentao.transport import ...` → `AgentEvent`、`EventType`、`Transport`、`NullTransport`、`SdkTransport`、`build_compat_transport`
+- `from agentao.transport import ...` → `AgentEvent`、`EventType`、`Transport`、`NullTransport`、`SdkTransport`、`build_compat_transport`、`gate_note`
 - `from agentao.capabilities import ...` → `FileSystem`、`LocalFileSystem`、`FileEntry`、`FileStat`、`ShellExecutor`、`LocalShellExecutor`、`ShellRequest`、`ShellResult`、`BackgroundHandle`、`MemoryStore`、`SQLiteMemoryStore`、`MCPRegistry`、`FileBackedMCPRegistry`、`InMemoryMCPRegistry`
 - `from agentao.tools.base import ...` → `Tool`、`ToolRegistry`
 - `from agentao.permissions import ...` → `PermissionEngine`、`PermissionMode`、`PermissionDecision`
@@ -159,7 +159,7 @@ SdkTransport(
 )
 ```
 
-未设置的回调会回落到 `NullTransport` 行为（放行 / 空串 / 停止）。
+未设置的回调会回落到 `NullTransport` 行为（放行，MCP Skills 闸门确认除外，一律拒绝 / 空串 / 停止）。
 
 ### `build_compat_transport`
 

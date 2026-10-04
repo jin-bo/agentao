@@ -2,7 +2,7 @@
 
 **Status:** **Approved (2026-10-02)** — the go-ahead and every §11 recommendation. **PR 1
 implemented** (auth module and record store, merged as #398) and **PR 2 implemented** (CLI login
-loop); see the *Implementation records* in Appendix A. PR 3 not started. Design history: proposal rev 8 (2026-10-02). Four design-review rounds passed it; a reverse review
+loop); see the *Implementation records* in Appendix A. **PR 3 implemented** (docs, §13.5). Design history: proposal rev 8 (2026-10-02). Four design-review rounds passed it; a reverse review
 of rev 5 (→ rev 6) and an external review of rev 6 (→ rev 7, two P1s: auth failures are invisible
 once the transport has handled them, so the verdict must come from the auth object on every
 connection) were folded in, and its second round (→ rev 8: a shielded refresh must also survive

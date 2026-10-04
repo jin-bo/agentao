@@ -22,7 +22,7 @@
 | **审计 / 可观测性** | 本地 JSONL 回放文件和进程内事件流；没有 OpenTelemetry | OpenTelemetry 导出（需开启）；客户端侧的费用估算 | 可插拔 processor 的 tracing，第三方集成很多 | OpenTelemetry |
 | **权限** | 四种模式（`read-only`、`workspace-write`、`full-access`、`plan`）；allow / deny / ask 规则；由宿主逐次审批 | 六种模式；allow / deny / ask 规则；`canUseTool` 回调 | 按工具设 `needs_approval`，可暂停/恢复；输入、输出和工具 guardrail | 用 interrupt 做人工审批；Strands harness 另有需主动开启的"interventions"（默认不询问就执行工具） |
 | **Hooks** | 八个 shell hook 事件；能读取为 Claude Code 编写的 hook 文件（逐项列举的子集） | Python SDK 十个事件，TypeScript 更多 | run 与 agent 生命周期回调 | 带类型的 hook 事件 |
-| **MCP** | stdio、Streamable HTTP、SSE（尚无 OAuth） | 进程内 server、stdio、HTTP、SSE | 托管 MCP、Streamable HTTP、SSE、stdio | 支持 |
+| **MCP** | stdio、Streamable HTTP、SSE；URL 类 server 支持 OAuth 登录 | 进程内 server、stdio、HTTP、SSE | 托管 MCP、Streamable HTTP、SSE、stdio | 支持 |
 | **沙箱** | macOS `sandbox-exec`，默认关闭 | Claude Code 的沙箱：macOS、Linux 和 WSL2，默认关闭 | sandbox agent，可在本地 Unix 或 Docker 上运行，也可用托管服务（E2B、Modal、Daytona 等） | 可插拔的沙箱后端（Docker、SSH、自定义） |
 | **ACP（agent ↔ 编辑器）** | 内置：`agentao --acp --stdio`（另有 ACP 客户端） | 通过 Agent Client Protocol 项目发布的独立适配器 | 文档未提及 | 仅 TypeScript 的 `strands` CLI（`--acp-server`）；Python 包中没有 |
 | **许可证** | MIT | MIT，使用受 Anthropic 商业条款约束 | MIT | Apache-2.0 |
@@ -42,7 +42,7 @@
 - **只用 Claude，并且要和 Claude Code 的行为完全一致** → Claude Agent SDK 运行的就是同一个 agent，hook 事件更多，有文件 checkpoint，Claude Code 的沙箱除 macOS 外也支持 Linux。
 - **需要托管沙箱，或想用 OpenAI 的 tracing 生态** → OpenAI Agents SDK 提供 Docker 和托管沙箱后端、多种会话存储和 tracing 集成。
 - **在 AWS 上，或需要 OpenTelemetry、评测（evals）包、多 agent 模式（graph、swarm、A2A）** → Strands 都有覆盖。
-- **现在就需要 Linux 或容器沙箱、OpenTelemetry、MCP OAuth** → Agentao 目前还没有。
+- **现在就需要 Linux 或容器沙箱，或者 OpenTelemetry** → Agentao 目前还没有。
 - **需要生态** → 厂商 SDK 的社区大得多；Agentao 是个小项目。
 
 ## 选型前先回答

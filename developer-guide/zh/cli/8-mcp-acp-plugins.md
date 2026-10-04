@@ -62,6 +62,11 @@
 > /mcp add github npx -y @modelcontextprotocol/server-github
 > /mcp add remote https://api.example.com/mcp
 > /mcp remove github
+> /mcp resources                       # 列出资源和资源模板（不消耗模型轮次）
+> /mcp resources docs                  # 只看一个 server
+> /mcp login remote                     # 在浏览器里授权一个 OAuth server
+> /mcp login remote --no-browser        # 只打印 URL，再把跳转地址粘贴回来
+> /mcp logout remote                    # 删除它保存的凭据
 ```
 
 `/mcp list` 输出：
@@ -75,9 +80,44 @@ MCP Servers (3):
     Connection refused
 ```
 
+对开启了 `"skills": true` 的 server，`/mcp list` 会在它下面多显示一行：它提供的 skill 数量，或者 skills 不可用的原因。
+
 `/mcp add` 写到**项目**配置（`.agentao/mcp.json`）— 不动用户全局那一份。
 
 `/mcp remove` 从项目配置里删条目，但**改动需要重启**才生效（CLI 会提示）。当前会话保留运行中的连接。
+
+### `/mcp login` 与 `/mcp logout` —— OAuth server
+
+URL 类 server（Streamable HTTP 或 SSE）默认使用 OAuth，不需要在 `mcp.json` 里开启。以下情况不适用：stdio server、设置了 `"oauth": false` 的 server，以及 `headers` 里已经带 `Authorization` 的 server。这类 server 返回 401 时，agentao 不会自己打开浏览器，而是在 `/mcp list` 里显示为 `needs login`，REPL 启动时也会打印：
+
+```text
+MCP server 'remote' needs login — run /mcp login remote
+```
+
+登录步骤：
+
+1. `/mcp login remote` 打印授权 URL 并打开浏览器，最多等待 300 秒，按 Ctrl+C 取消。
+2. 在浏览器里同意授权。浏览器会跳转回 `127.0.0.1` 上的监听地址（`/callback/<server>`），页面提示你可以关闭它。
+3. agentao 保存凭据，并在当前会话中重新连接该 server：`Logged in to 'remote' — connected, 5 tool(s).`
+
+加上 `--no-browser`，或者无法打开浏览器时（例如通过 SSH 登录、没有图形界面），agentao 只打印 URL，并提示 `Redirect URL:`。在任意一台机器上打开 URL 并同意，然后把浏览器跳转到的完整地址粘贴回来，即使那个页面没有打开成功也可以。输入内容不会显示。监听一直在运行，所以 SSH 端口转发同样可行。
+
+工具只在 agentao 启动时加载。如果会话启动时该 server 没有任何工具，登录结束时会提示 `Restart agentao to load the tools of 'remote'.`；如果已有工具，下一次调用就会使用新 token。
+
+`/mcp logout remote` 删除保存的凭据并断开该 server。它的工具仍然列在会话里；如果该 server 要求登录，在重新登录之前，调用会失败并提示登录命令。没有保存凭据时提示 `'remote' had no stored credential.`
+
+在 shell 里，`agentao mcp login <name> [--no-browser]` 和 `agentao mcp logout <name>` 效果相同，只装库（不含 CLI 扩展）也能用。退出码：`0` 已连接，`1` 失败（或凭据已保存但重连失败），`2` 用法错误，`130` 已取消。无人值守的 `agentao run` 和 ACP 会话从不自己发起登录，需要用这两个命令在终端完成。这些进程会在该 server 下一次连接或调用时读取新凭据。
+
+需要知道的几点：
+
+- **凭据**保存在 `~/.agentao/mcp-oauth/`，每个 server URL 一个文件（文件 0600，目录 0700）。内容是明文 JSON，不使用操作系统钥匙串。URL 相同的两个 server 名共用一份凭据。
+- **刷新**是自动的：过期前 60 秒刷新一次，收到 401 后再试一次。授权服务器拒绝刷新时，该 server 回到 `needs login`；网络故障只报普通错误，不会要求重新登录。
+- **配置**写在 server 上可选的 `oauth` 对象里：`client_id`、`client_secret`（需要同时有 `client_id`，支持 `$VAR` 展开）、`callback_port`（1–65535）、`redirect_host`（`localhost` 或回环地址）。其他键都会报错。没有 `scopes` 键：登录时申请的是 server 在 401 中指明的 scope。不设 `client_id` 时，agentao 会以公共客户端 `agentao` 的身份向 server 注册。
+- **ACP 传入的 server**（来自编辑器的 `session/new`）从不使用 agentao 的 OAuth，由编辑器负责授权。
+- **限制。**
+  - 在 mcp 1.x 上，SDK 不检查授权服务器的 `iss`（RFC 9207）；在 mcp 1.26 上，每次登录还会注册一个新的客户端。这两点都建议用 mcp 2.x 解决。
+  - 收到 `403 insufficient_scope` 时会报出 server 需要的 scope，但重新登录只会申请 server 在 401 中指明的 scope，所以重新登录不一定能消除这个错误。
+  - 登录过程会读取 SDK 的内部字段。如果将来的 SDK 版本移动了这些字段，登录会停止并给出提示，已经登录的 server 不受影响。
 
 ### 工具命名
 

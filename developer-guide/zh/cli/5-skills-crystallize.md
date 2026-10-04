@@ -46,6 +46,8 @@ Available skills (12):
 | `/skills enable <name>` | 撤销 disable，让 skill 可加载 |
 | `/skills reload` | 重扫 `skills/` 目录。改了某个 `SKILL.md` 或加了新 skill 文件夹后用 |
 
+开启了 `"skills": true` 的 MCP server 会在 `/skills` 里多出一个 **MCP Skills** 分组：按 server 列出它的 skill，名字是完整的 `mcp:<server>:<SKILL.md URI>`，并给出每个无法加载的 skill 的原因。`/skills activate mcp:<server>:<uri>` 本身就算你的同意，不会再问一次；由模型激活时，每个会话会问你一次。见 [5.3 节 MCP skills](/zh/part-5/3-mcp#mcp-skills)。
+
 ::: tip activate vs. enable
 - **activate / deactivate** 是会话级 — 临时，只对*当前*这次对话生效
 - **enable / disable** 是持久级 — 配置层面，影响所有未来会话
