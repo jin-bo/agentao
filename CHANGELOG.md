@@ -150,6 +150,24 @@ _Targeting 0.5.10. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **Tool descriptions no longer tell the model things the code does not do.**
+  `read_file` said `limit=0` returns all lines; it returns at most 2000, and
+  cuts each line at 2000 characters. `check_background_agent` listed four of
+  the five statuses (`cancelled` was missing). The bundled
+  `codebase-investigator` agent called itself read-only while it has
+  `run_shell_command`, and `generalist` claimed every tool although agent and
+  plan tools are withheld. `list_mcp_resource_templates`' `server` parameter
+  described resources. `activate_skill` named PDF, spreadsheet and
+  presentation skills that agentao does not ship. Three pairs also
+  contradicted each other: `save_memory`'s key example was the
+  `project_context` it says not to save, and it suggested a yes/no question
+  that `ask_user` refuses; `ask_user` allowed only free-form answers and also
+  offered `allow_custom=false`. Directory defaults now say "the working
+  directory" everywhere, `search_file_content` states its defaults and its
+  100-line cap, and `todo_write` uses one name, "task list". The wording follows
+  Simplified Technical English (ASD-STE100), as the system prompt does since
+  #402. `tests/test_tool_description_facts.py` ties each claim to the code.
+
 ---
 
 ## [0.5.9] — 2026-10-01

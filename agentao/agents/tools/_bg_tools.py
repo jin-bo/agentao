@@ -47,13 +47,14 @@ class CheckBackgroundAgentTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Check the status of a background sub-agent previously launched with "
-            "run_in_background=true. Returns 'pending', 'running', 'completed' (with result), "
-            "or 'failed' (with error). Pass agent_id='' to list this conversation's "
-            "background agents (and any still running). "
-            "Only when you need the result before you can continue in this turn, pass "
-            f"wait_seconds (up to {MAX_WAIT_SECONDS}) to wait for it once. If the wait "
-            "times out, do not repeat it: end the turn or cancel the agent."
+            "Check the status of a background sub-agent that you launched with "
+            "run_in_background=true. The status is one of these: 'pending', 'running', "
+            "'completed' (with the result), 'failed' (with the error), or 'cancelled'. "
+            "To list the background agents of this conversation, pass agent_id=''. "
+            "The list also includes each agent that is still running. "
+            f"Use wait_seconds (up to {MAX_WAIT_SECONDS}) only if you need the result "
+            "before you can continue this turn. Wait one time only. If the wait times "
+            "out, do not wait again. End the turn or cancel the agent."
         )
 
     @property
@@ -214,9 +215,9 @@ class CancelBackgroundAgentTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Cancel a background sub-agent that was launched with run_in_background=true. "
-            "Works on both pending (not yet started) and running agents. "
-            "Completed or failed agents cannot be cancelled."
+            "Cancel a background sub-agent that you launched with run_in_background=true. "
+            "You can cancel an agent that is pending (not running yet) or running. "
+            "You cannot cancel an agent that is completed, failed, or cancelled."
         )
 
     @property

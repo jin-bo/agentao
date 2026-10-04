@@ -142,7 +142,7 @@ class FindFilesTool(Tool):
                 },
                 "directory": {
                     "type": "string",
-                    "description": "Base directory to search from (defaults to current directory)",
+                    "description": "Directory to search. Default: the working directory.",
                     "default": ".",
                 },
             },
@@ -205,11 +205,13 @@ class SearchTextTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Search for text patterns in files. Supports regex patterns and "
-            "can search across multiple files. Heavyweight directories "
-            "(.git, node_modules, .venv, dist, build, __pycache__, language "
-            "caches) are skipped by default; reference one explicitly in "
-            "`directory` or `file_pattern` to include it."
+            "Search files for text or for a regular expression. By default, the "
+            "search is case-sensitive and treats the pattern as plain text. The "
+            "tool shows a maximum of 100 matching lines and the number of the "
+            "other matches. By default, the tool skips large directories: .git, "
+            "node_modules, .venv, dist, build, __pycache__, and language caches. "
+            "To search one of these directories, name it in `directory` or "
+            "`file_pattern`."
         )
 
     @property
@@ -228,17 +230,17 @@ class SearchTextTool(Tool):
                 },
                 "directory": {
                     "type": "string",
-                    "description": "Base directory to search from",
+                    "description": "Directory to search. Default: the working directory.",
                     "default": ".",
                 },
                 "case_sensitive": {
                     "type": "boolean",
-                    "description": "Whether to perform case-sensitive search",
+                    "description": "If true, match upper and lower case exactly. Default true.",
                     "default": True,
                 },
                 "regex": {
                     "type": "boolean",
-                    "description": "Whether to treat pattern as regex",
+                    "description": "If true, treat pattern as a regular expression. Default false: plain text.",
                     "default": False,
                 },
             },

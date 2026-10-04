@@ -56,9 +56,9 @@ class ReadSkillFileTool(Tool):
     def description(self) -> str:
         return (
             "Read a file of an MCP skill that is active in this session. Give the "
-            "skill's full name (mcp:<server>:<uri>) and the file's path relative to "
-            "the skill directory, as listed when the skill was activated. The "
-            "content is verified against the skill's manifest."
+            "full name of the skill (mcp:<server>:<SKILL.md URI>) and the path of "
+            "the file relative to the skill directory. The activation result lists "
+            "these paths. The tool checks the content against the skill manifest."
         )
 
     @property

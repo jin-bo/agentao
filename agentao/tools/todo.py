@@ -28,11 +28,11 @@ class TodoWriteTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Update the task checklist for the current session. "
-            "Use this at the start of multi-step tasks to create a plan, "
-            "and update statuses (pending → in_progress → completed) as you work. "
-            "Always pass the COMPLETE list — this replaces the previous list entirely. "
-            "Do NOT use this for trivial single-step requests."
+            "Replace the task list for this session. Use this tool at the start of "
+            "a task with several steps. Update each status as you work: pending, then "
+            "in_progress, then completed. Always send the complete task list, because "
+            "each call replaces the previous list. Do not use this tool for a request "
+            "with one simple step."
         )
 
     @property
@@ -42,13 +42,13 @@ class TodoWriteTool(Tool):
             "properties": {
                 "todos": {
                     "type": "array",
-                    "description": "The complete updated todo list (replaces current list)",
+                    "description": "The complete task list. It replaces the current task list.",
                     "items": {
                         "type": "object",
                         "properties": {
                             "content": {
                                 "type": "string",
-                                "description": "Task description",
+                                "description": "What the task is.",
                             },
                             "status": {
                                 "type": "string",

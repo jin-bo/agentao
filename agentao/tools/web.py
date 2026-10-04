@@ -815,7 +815,7 @@ class WebFetchTool(AsyncToolBase):
                 },
                 "extract_text": {
                     "type": "boolean",
-                    "description": "Whether to extract only text content (default: True)",
+                    "description": "If true, return only the text content. Default true.",
                     "default": True,
                 },
             },
