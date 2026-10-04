@@ -11,6 +11,18 @@ _Targeting 0.5.11. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **Two accounts on one MCP server URL: `oauth.profile`.** OAuth
+  credentials were stored one per server URL, so two `mcp.json` entries
+  pointing at the same URL, or two projects connecting to it, shared
+  whichever account logged in last. An entry can now set
+  `"oauth": {"profile": "<name>"}` to get its own stored login for that URL.
+  `/mcp login` / `agentao mcp login`, `logout`, token refresh and the
+  re-check after a login in another process all use the entry's profile.
+  An entry with a profile never falls back to the URL's no-profile login.
+  Entries without a profile are unchanged: existing logins keep their file
+  and nobody is logged out by the upgrade. See
+  `docs/reference/configuration.md` and `docs/design/mcp-oauth.md` §6.4.
+
 ### Changed
 
 ### Fixed

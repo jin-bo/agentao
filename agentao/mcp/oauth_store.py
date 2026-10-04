@@ -1,7 +1,11 @@
 """The OAuth credential record store and its locks (docs/design/mcp-oauth.md §6, §5.3).
 
-One JSON file per MCP server URL under ``user_root()/mcp-oauth/``, mode 0600 in
-a 0700 directory, written atomically. Every write — a refresh, a login's
+One JSON file per credential under ``user_root()/mcp-oauth/``, mode 0600 in a
+0700 directory, written atomically. A credential is a server URL plus an
+optional profile (``oauth.profile`` in the server's config), so two accounts
+can be logged in to one URL at once. Without a profile the file is keyed by
+the URL alone, exactly as before profiles existed, so existing logins carry
+over unchanged. Every write — a refresh, a login's
 commit, a logout — goes through :meth:`OAuthRuntime.exclusive`, which holds two
 locks for the whole read-modify-write:
 
@@ -85,11 +89,34 @@ def canonical_server_url(url: str) -> str:
     return urlunsplit((scheme, host, parts.path, parts.query, ""))
 
 
+def _profile_or_none(profile: Optional[str]) -> Optional[str]:
+    """``None`` for no profile. Any other value must be a non-empty string."""
+    if profile is None:
+        return None
+    if not isinstance(profile, str) or not profile:
+        raise ValueError(f"an OAuth credential profile must be a non-empty string, got {profile!r}")
+    return profile
+
+
+def credential_key(server_url: str, profile: Optional[str] = None) -> str:
+    """What one credential is keyed by: the canonical URL, plus the profile if any.
+
+    Without a profile this is the canonical URL itself, so a record written
+    before profiles existed is found under the same name. With one, the
+    profile is appended after a newline, which no URL contains, so no URL can
+    spell another URL's profiled key.
+    """
+    url = canonical_server_url(server_url)
+    profile = _profile_or_none(profile)
+    return url if profile is None else f"{url}\nprofile={profile}"
+
+
 @dataclass
 class OAuthRecord:
     """One server's stored credential (docs/design/mcp-oauth.md §6.2).
 
-    ``issuer`` is the SDK's binding key — ``context.auth_server_url``, falling
+    ``profile`` is the credential profile it was written for, ``None`` for the
+    URL's default credential. ``issuer`` is the SDK's binding key — ``context.auth_server_url``, falling
     back to the metadata issuer only when that is unset — stored exactly as the
     SDK reported it and compared exactly. ``expires_at`` is absolute (epoch
     seconds), or ``None`` when the server sent no ``expires_in``.
@@ -106,6 +133,7 @@ class OAuthRecord:
     expires_at: Optional[float] = None
     refresh_token: Optional[str] = None
     scope: Optional[str] = None
+    profile: Optional[str] = None
 
     def expires_within(self, seconds: float, now: Optional[float] = None) -> bool:
         if self.expires_at is None:
@@ -132,6 +160,7 @@ class OAuthRecord:
                 expires_at=data.get("expires_at"),
                 refresh_token=data.get("refresh_token"),
                 scope=data.get("scope"),
+                profile=_profile_or_none(data.get("profile")),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -149,18 +178,19 @@ class RecordStore:
     def __init__(self, root: Path):
         self.root = Path(root)
 
-    def _stem(self, server_url: str) -> str:
-        return hashlib.sha256(canonical_server_url(server_url).encode("utf-8")).hexdigest()
+    def _stem(self, server_url: str, profile: Optional[str] = None) -> str:
+        key = credential_key(server_url, profile)
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
-    def path(self, server_url: str) -> Path:
-        return self.root / f"{self._stem(server_url)}.json"
+    def path(self, server_url: str, profile: Optional[str] = None) -> Path:
+        return self.root / f"{self._stem(server_url, profile)}.json"
 
-    def lock_path(self, server_url: str) -> Path:
+    def lock_path(self, server_url: str, profile: Optional[str] = None) -> Path:
         # Separate from the record, and never deleted by agentao — not even by
         # a logout: removing a lock file another process is waiting on would
         # let two holders exist. (filelock itself may unlink it on release; it
         # handles that race on its own side.)
-        return self.root / f"{self._stem(server_url)}.json.lock"
+        return self.root / f"{self._stem(server_url, profile)}.json.lock"
 
     def ensure_root(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -169,16 +199,16 @@ class RecordStore:
         except OSError:  # pragma: no cover - e.g. a filesystem without modes
             pass
 
-    def stamp(self, server_url: str) -> Optional[float]:
+    def stamp(self, server_url: str, profile: Optional[str] = None) -> Optional[float]:
         """The record file's mtime, or ``None`` — a cheap "did it change?"."""
         try:
-            return self.path(server_url).stat().st_mtime_ns / 1e9
+            return self.path(server_url, profile).stat().st_mtime_ns / 1e9
         except OSError:
             return None
 
-    def load(self, server_url: str) -> Optional[OAuthRecord]:
+    def load(self, server_url: str, profile: Optional[str] = None) -> Optional[OAuthRecord]:
         try:
-            raw = self.path(server_url).read_text(encoding="utf-8")
+            raw = self.path(server_url, profile).read_text(encoding="utf-8")
         except FileNotFoundError:
             return None
         except UnicodeDecodeError:
@@ -198,8 +228,9 @@ class RecordStore:
                 "log in again to replace it"
             )
             return None
-        # The guard opencode's ``getForUrl`` has: a record names the URL it was
-        # written for, and a hash collision or a hand-copied file is ignored.
+        # The guard opencode's ``getForUrl`` has: a record names the URL (and
+        # profile) it was written for, and a hash collision or a hand-copied
+        # file is ignored.
         try:
             stored_url = canonical_server_url(record.server_url)
         except ValueError:
@@ -212,11 +243,13 @@ class RecordStore:
             return None
         if stored_url != canonical_server_url(server_url):
             return None
+        if record.profile != _profile_or_none(profile):
+            return None
         return record
 
     def save(self, record: OAuthRecord) -> None:
         self.ensure_root()
-        target = self.path(record.server_url)
+        target = self.path(record.server_url, record.profile)
         fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=str(self.root))
         try:
             try:
@@ -235,9 +268,9 @@ class RecordStore:
                 pass
             raise
 
-    def delete(self, server_url: str) -> bool:
+    def delete(self, server_url: str, profile: Optional[str] = None) -> bool:
         try:
-            self.path(server_url).unlink()
+            self.path(server_url, profile).unlink()
             return True
         except FileNotFoundError:
             return False
@@ -267,22 +300,22 @@ class OAuthRuntime:
         # Resolved lazily so a test that patches the home directory sees it.
         return RecordStore(self._root if self._root is not None else default_root())
 
-    def _lock(self, server_url: str) -> asyncio.Lock:
-        key = canonical_server_url(server_url)
+    def _lock(self, server_url: str, profile: Optional[str] = None) -> asyncio.Lock:
+        key = credential_key(server_url, profile)
         lock = self._locks.get(key)
         if lock is None:
             lock = self._locks[key] = asyncio.Lock()
         return lock
 
-    def locked(self, server_url: str) -> bool:
-        return self._lock(server_url).locked()
+    def locked(self, server_url: str, profile: Optional[str] = None) -> bool:
+        return self._lock(server_url, profile).locked()
 
-    async def _acquire_file_lock(self, server_url: str) -> Any:
+    async def _acquire_file_lock(self, server_url: str, profile: Optional[str] = None) -> Any:
         from filelock import FileLock, Timeout
 
         store = self.store
         store.ensure_root()
-        lock = FileLock(str(store.lock_path(server_url)))
+        lock = FileLock(str(store.lock_path(server_url, profile)))
         deadline = time.monotonic() + self.token_timeout + _LOCK_MARGIN_S
         while True:
             try:
@@ -296,17 +329,23 @@ class OAuthRuntime:
                     ) from None
                 await asyncio.sleep(_LOCK_POLL_S)
 
-    async def exclusive(self, server_url: str, work: Callable[[], Awaitable[T]]) -> T:
+    async def exclusive(
+        self,
+        server_url: str,
+        work: Callable[[], Awaitable[T]],
+        *,
+        profile: Optional[str] = None,
+    ) -> T:
         """Run ``work`` holding the record's in-process lock and file lock.
 
         Waiting is cancellable and holds nothing. Once both locks are held,
         ``work`` runs as a shielded task that releases them itself, so a
         cancelled caller returns at once while the task finishes and writes.
         """
-        lock = self._lock(server_url)
+        lock = self._lock(server_url, profile)
         await lock.acquire()
         try:
-            file_lock = await self._acquire_file_lock(server_url)
+            file_lock = await self._acquire_file_lock(server_url, profile)
         except BaseException:
             lock.release()
             raise

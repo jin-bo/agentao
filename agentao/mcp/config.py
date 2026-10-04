@@ -36,7 +36,8 @@ Expected keys per server:
   oauth: false | dict    — see resolve_oauth(). Absent → OAuth on for a URL
                            server with no Authorization header; false → off;
                            a dict carries optional client_id, client_secret
-                           ($VAR expanded), callback_port, redirect_host.
+                           ($VAR expanded), callback_port, redirect_host,
+                           profile (a separate stored login for the same URL).
 
   # Common
   timeout: int | dict    — see resolve_timeouts(); int = connect/startup
@@ -251,7 +252,7 @@ class McpOAuthConfigError(ValueError):
 #: Keys the ``oauth`` object may carry (docs/design/mcp-oauth.md §5.4). There is
 #: deliberately no ``scopes``: the SDK replaces the requested scope with the
 #: 401 challenge's, so the key would be accepted and ignored.
-_OAUTH_KEYS = ("client_id", "client_secret", "callback_port", "redirect_host")
+_OAUTH_KEYS = ("client_id", "client_secret", "callback_port", "redirect_host", "profile")
 
 
 def resolve_oauth(config: McpServerConfig) -> Optional[Dict[str, Any]]:
@@ -279,10 +280,17 @@ def resolve_oauth(config: McpServerConfig) -> Optional[Dict[str, Any]]:
             f"Unknown MCP 'oauth' key(s) {', '.join(map(repr, unknown))}; "
             f"expected any of {', '.join(_OAUTH_KEYS)}."
         )
-    for key in ("client_id", "client_secret", "redirect_host"):
+    for key in ("client_id", "client_secret", "redirect_host", "profile"):
         value = settings.get(key)
         if value is not None and (not isinstance(value, str) or not value.strip()):
             raise McpOAuthConfigError(f"MCP 'oauth.{key}' must be a non-empty string.")
+    # Compared exactly, like the URL's path: " work" and "work" would be two
+    # logins that look like one.
+    profile = settings.get("profile")
+    if profile is not None and profile != profile.strip():
+        raise McpOAuthConfigError(
+            "MCP 'oauth.profile' must not start or end with whitespace."
+        )
     if settings.get("client_secret") is not None and settings.get("client_id") is None:
         raise McpOAuthConfigError("MCP 'oauth.client_secret' requires 'oauth.client_id'.")
     port = settings.get("callback_port")

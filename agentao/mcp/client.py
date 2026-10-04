@@ -613,9 +613,11 @@ class McpClient:
             # Every OAuth-eligible URL server gets the auth object, record or
             # not: without one it only observes, and it is the only place a
             # Bearer challenge is still visible (docs/design/mcp-oauth.md §5.4).
-            if resolve_oauth(self.config) is not None:
+            oauth_settings = resolve_oauth(self.config)
+            if oauth_settings is not None:
                 self._auth = StoredTokenAuth(
-                    self.name, self.config["url"], self.oauth_runtime
+                    self.name, self.config["url"], self.oauth_runtime,
+                    profile=oauth_settings.get("profile"),
                 )
 
             self._exit_stack = AsyncExitStack()
@@ -1427,9 +1429,15 @@ class McpClient:
         if self.status != ServerStatus.NEEDS_AUTH or verdict is None:
             return None
         url = self.config.get("url")
-        if url and self.oauth_runtime.store.stamp(url) != verdict.stamp:
+        if url and self.oauth_runtime.store.stamp(url, self._oauth_profile()) != verdict.stamp:
             return None
         return verdict.message
+
+    def _oauth_profile(self) -> Optional[str]:
+        """``oauth.profile`` from the config, which ``resolve_oauth`` validated at connect."""
+        oauth = self.config.get("oauth")
+        profile = oauth.get("profile") if isinstance(oauth, dict) else None
+        return profile if isinstance(profile, str) else None
 
     async def _call_on(
         self,
@@ -2282,7 +2290,11 @@ class McpClientManager:
         from .oauth import logout as _logout
 
         client = self._oauth_client(server_name)
-        deleted = await _logout(client.config["url"], self._oauth)
+        settings = resolve_oauth(client.config)
+        assert settings is not None  # checked by _oauth_client
+        deleted = await _logout(
+            client.config["url"], self._oauth, profile=settings.get("profile")
+        )
         async with client._reconnect_lock:
             await client.disconnect()
         return deleted

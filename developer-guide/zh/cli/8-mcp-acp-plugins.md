@@ -110,9 +110,21 @@ MCP server 'remote' needs login — run /mcp login remote
 
 需要知道的几点：
 
-- **凭据**保存在 `~/.agentao/mcp-oauth/`，每个 server URL 一个文件（文件 0600，目录 0700）。内容是明文 JSON，不使用操作系统钥匙串。URL 相同的两个 server 名共用一份凭据。
+- **凭据**保存在 `~/.agentao/mcp-oauth/`，每个 server URL 加档案一个文件（文件 0600，目录 0700）。内容是明文 JSON，不使用操作系统钥匙串。URL 相同且都没有档案的两个 server 名共用一份凭据，在所有项目中都是如此。
 - **刷新**是自动的：过期前 60 秒刷新一次，收到 401 后再试一次。授权服务器拒绝刷新时，该 server 回到 `needs login`；网络故障只报普通错误，不会要求重新登录。
-- **配置**写在 server 上可选的 `oauth` 对象里：`client_id`、`client_secret`（需要同时有 `client_id`，支持 `$VAR` 展开）、`callback_port`（1–65535）、`redirect_host`（`localhost` 或回环地址）。其他键都会报错。没有 `scopes` 键：登录时申请的是 server 在 401 中指明的 scope。不设 `client_id` 时，agentao 会以公共客户端 `agentao` 的身份向 server 注册。
+- **配置**写在 server 上可选的 `oauth` 对象里：`client_id`、`client_secret`（需要同时有 `client_id`，支持 `$VAR` 展开）、`callback_port`（1–65535）、`redirect_host`（`localhost` 或回环地址）、`profile`（见下条）。其他键都会报错。没有 `scopes` 键：登录时申请的是 server 在 401 中指明的 scope。不设 `client_id` 时，agentao 会以公共客户端 `agentao` 的身份向 server 注册。
+- **同一 server 用两个账号。** 给每个条目设置各自的 `oauth.profile`。每个档案是该 URL 的一份独立登录，两个账号可以同时保持登录：
+
+  ```json
+  {
+    "mcpServers": {
+      "tracker-work":     { "url": "https://mcp.example.com/mcp", "oauth": { "profile": "work" } },
+      "tracker-personal": { "url": "https://mcp.example.com/mcp", "oauth": { "profile": "personal" } }
+    }
+  }
+  ```
+
+  分别运行一次 `/mcp login tracker-work` 和 `/mcp login tracker-personal`。`/mcp logout` 只删除该条目对应档案的凭据。档案标识的是账号，不是条目：两个项目里 URL 和档案都相同的条目共用一份登录，改条目名也不影响。设了档案的条目从不使用该 URL 无档案的登录，所以即使那份登录存在，它的初始状态也是 `needs login`。档案出现之前的登录对没有档案的条目照常有效。登录哪个账号由浏览器决定；如果浏览器直接以另一个账号完成登录，先在浏览器里退出，或者用 `--no-browser`，在另一个浏览器档案里打开打印出的链接。档案是非空字符串，首尾不能有空格，精确比较：`Work` 和 `work` 是两个档案。
 - **ACP 传入的 server**（来自编辑器的 `session/new`）从不使用 agentao 的 OAuth，由编辑器负责授权。
 - **限制。**
   - 在 mcp 1.x 上，SDK 不检查授权服务器的 `iss`（RFC 9207）；在 mcp 1.26 上，每次登录还会注册一个新的客户端。这两点都建议用 mcp 2.x 解决。

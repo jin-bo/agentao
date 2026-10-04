@@ -2,7 +2,8 @@
 
 **Status:** **Approved (2026-10-02)** — the go-ahead and every §11 recommendation. **PR 1
 implemented** (auth module and record store, merged as #398) and **PR 2 implemented** (CLI login
-loop); see the *Implementation records* in Appendix A. **PR 3 implemented** (docs, §13.5). Design history: proposal rev 8 (2026-10-02). Four design-review rounds passed it; a reverse review
+loop); see the *Implementation records* in Appendix A. **PR 3 implemented** (docs, §13.5). **Credential profiles** (`oauth.profile`, two accounts on
+one URL) added for 0.5.11, §6.4. Design history: proposal rev 8 (2026-10-02). Four design-review rounds passed it; a reverse review
 of rev 5 (→ rev 6) and an external review of rev 6 (→ rev 7, two P1s: auth failures are invisible
 once the transport has handled them, so the verdict must come from the auth object on every
 connection) were folded in, and its second round (→ rev 8: a shielded refresh must also survive
@@ -486,6 +487,40 @@ what gemini-cli and opencode ship today. The registered client is stored in the 
 to the next login only under the conditions of §5.5 step 2: the redirect URI still matches, the
 SDK binds registrations to an issuer (1.30, 2.0), and the stored registration's `issuer` is set —
 on 1.26, or with an empty `issuer`, a dynamic registration is never offered.
+
+### 6.4 Credential profiles (0.5.11)
+
+Keying by URL alone means one login per URL: two `mcp.json` entries pointing at one URL (a work and
+a personal account), or two projects connecting to it, share whatever account logged in last,
+because the store is per user. An optional **`oauth.profile`** names a separate credential for the
+same URL.
+
+- **Key.** No profile: the canonical URL, exactly as in §6.2, so every record written before
+  profiles existed is found under the same file name and an upgrade logs nobody out. With a
+  profile: the canonical URL, a newline, `profile=<name>`. No URL contains a newline, so no URL can
+  spell another URL's profiled key. The file name is the SHA-256 of the key; the lock file and the
+  in-process lock use the same key.
+- **The record names its profile**, and a load checks it alongside the URL (the §6.2 guard), so a
+  file copied to another credential's name is ignored. A record without the field is the default
+  credential. The record format stays version 1: an older agentao never opens a profiled file,
+  since its name differs.
+- **Opt-in and explicit, not keyed by server name.** Pi 1.0 keys by server name + URL; §6.2
+  already rejected name keys because tokens would follow a renamed or re-pointed entry, and renaming
+  an entry would log it out. A profile is a name for the *account*, so entries in different
+  projects can share one deliberately, and renaming an entry changes nothing.
+- **No fallback.** An entry with a profile never reads the default credential, or another
+  profile's: borrowing one would act as the wrong account. It starts at `needs login`.
+- **Everything goes through the key.** Steady-state load and refresh (`StoredTokenAuth`), a login's
+  load of the stored registration and its commit, logout, and the `needs_auth` re-check that wakes
+  a server after a login in another process. Each profile's record keeps its own client
+  registration.
+- **Which account a login picks is the browser's.** agentao sends the same authorization request
+  for every profile; an identity provider that is already signed in may complete it with that
+  account. `--no-browser` prints the URL, which can be opened in another browser profile.
+- **Validation**, fail-closed like the other keys: a non-empty string with no leading or trailing
+  whitespace, compared exactly (`Work` and `work` are two profiles).
+
+Tests: `tests/test_mcp_oauth_profiles.py`.
 
 ---
 
