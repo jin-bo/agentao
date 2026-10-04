@@ -43,6 +43,10 @@ Expected keys per server:
                            seconds (default 60), or {startup, request}
                            to also bound each tool call after init.
   trust: bool            — skip confirmation if True
+  resources: bool        — false hides the server from the generic resource
+                           tools (docs/design/mcp-resources.md)
+  skills: bool           — true opts in to the MCP Skills extension
+                           (docs/design/mcp-skills.md); only ``true`` counts
 """
 
 

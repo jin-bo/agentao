@@ -17,7 +17,7 @@ import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ..capabilities.shell_spec import PASS, AbsPath, DecidedCall, Deny, Exhausted
 from ..permissions import PermissionDecision, PermissionDecisionDetail, PermissionEngine
@@ -102,6 +102,12 @@ def _synth(
     return PermissionDecisionDetail(
         decision, matched_rule=None, reason=reason,
     )
+
+
+#: Reason prefix on a decision the MCP Skills gate tightened to ASK
+#: (docs/design/mcp-skills.md §5.5, §6). The text after it is the prompt note
+#: the confirmation shows.
+MCP_SKILL_GATE_REASON = "mcp-skill: "
 
 
 def pre_tool_hook_reason(hook_reason: str | None) -> str:
@@ -406,6 +412,10 @@ class ToolCallPlanner:
         self._tools = tools
         self._permission_engine = permission_engine
         self._logger = logger
+        #: ``(tool_name, args, tool) -> note | None`` — the MCP Skills gate,
+        #: set by the agent. A note tightens ALLOW / no-match to ASK; it is
+        #: consulted only after every DENY path, so it never loosens one.
+        self.mcp_skill_gate: Optional[Callable[[str, Dict[str, Any], Any], Optional[str]]] = None
         self._doom_counter: Counter = Counter()
         # Counts *consecutive* parse failures per tool name; reset on the
         # first successful parse for that tool. Distinct from
@@ -590,6 +600,26 @@ class ToolCallPlanner:
 
         return result
 
+    def _mcp_skill_note(
+        self, tool: RegistrableTool, function_name: str, function_args: Dict[str, Any],
+    ) -> Optional[str]:
+        """The gate's prompt note, or ``None``. A gate that raises asks.
+
+        Fail-closed: an error here means the gate could not say the call is
+        safe, so it is asked rather than allowed.
+        """
+        gate = self.mcp_skill_gate
+        if gate is None:
+            return None
+        try:
+            note = gate(function_name, function_args, tool)
+        except Exception:
+            self._logger.warning(
+                "MCP skill gate failed for %s; asking", function_name, exc_info=True,
+            )
+            return "The MCP skill gate could not decide this call."
+        return note if isinstance(note, str) and note else None
+
     @property
     def _floor_enabled(self) -> bool:
         """Whether the hardline floor is on, read from the one engine that owns the flag.
@@ -636,10 +666,19 @@ class ToolCallPlanner:
             if self._permission_engine is not None
             else None
         )
-        if engine_detail is not None and engine_detail.decision is PermissionDecision.ALLOW:
-            return ToolCallDecision.ALLOW, engine_detail
         if engine_detail is not None and engine_detail.decision is PermissionDecision.DENY:
             return ToolCallDecision.DENY, engine_detail
+
+        # Past every DENY: the MCP Skills gate may only tighten from here —
+        # an engine ALLOW (full-access, an ``allow`` rule) and a no-match
+        # become ASK, and the read-only and engine DENYs above stay DENY.
+        gate_note = self._mcp_skill_note(tool, function_name, function_args)
+        if gate_note is not None:
+            return ToolCallDecision.ASK, _synth(
+                PermissionDecision.ASK, MCP_SKILL_GATE_REASON + gate_note,
+            )
+        if engine_detail is not None and engine_detail.decision is PermissionDecision.ALLOW:
+            return ToolCallDecision.ALLOW, engine_detail
 
         # Engine returned ASK or no match: fall through to the tool's
         # own confirmation setting, preserving the engine detail so the

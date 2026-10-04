@@ -518,7 +518,11 @@ class Agentao:
           (``mcp_`` prefix or plan-only). The unknown-name typo guard is
           deferred to :func:`apply_enabled_tools` (needs the live registry).
         """
-        from .tooling.registry import BUILTIN_TOOL_NAMES, MCP_RESOURCE_TOOL_NAMES
+        from .tooling.registry import (
+            BUILTIN_TOOL_NAMES,
+            MCP_RESOURCE_TOOL_NAMES,
+            MCP_SKILL_TOOL_NAMES,
+        )
 
         seen: set = set()
         for tool in self._extra_tools:
@@ -530,7 +534,7 @@ class Agentao:
                 )
             seen.add(name)
 
-        disableable = BUILTIN_TOOL_NAMES | MCP_RESOURCE_TOOL_NAMES
+        disableable = BUILTIN_TOOL_NAMES | MCP_RESOURCE_TOOL_NAMES | MCP_SKILL_TOOL_NAMES
         unknown = sorted(self._disable_tools - disableable)
         if unknown:
             raise ValueError(
@@ -731,6 +735,101 @@ class Agentao:
             host_permission_emitter=self._host_permission_emitter,
             working_directory=self._working_directory,
         )
+        # The MCP Skills gate reads the *session's* held entries through the
+        # live skill manager, so a sub-agent — whose manager is a child view
+        # sharing that object — is gated by the parent's loads and the
+        # parent by its own (docs/design/mcp-skills.md §5.5 step 3, §6.2).
+        # Compaction reads the session's MCP origins too (see
+        # ``ContextManager.commit_compaction``).
+        self.context_manager.mcp_origins_provider = self._mcp_session_origins
+        self.tool_runner.set_mcp_skill_gate(
+            self._mcp_skill_gate,
+            begin_batch=self._mcp_skill_begin_batch,
+            end_batch=self._mcp_skill_end_batch,
+            on_confirmed=self._mcp_skill_confirmed,
+            admit=self._mcp_admit,
+        )
+
+    def _mcp_skill_gate(self, tool_name: str, args: Dict[str, Any], tool: Any) -> Optional[str]:
+        mcp_skills = getattr(self.skill_manager, "mcp_skills", None)
+        if mcp_skills is None:
+            orphan = getattr(self.skill_manager, "mcp_orphan_origins", None)
+            if isinstance(orphan, set) and orphan:
+                from .mcp.skills import restored_gate_note
+
+                return restored_gate_note(tool_name, tool, sorted(orphan))
+            return None
+        if tool_name == "activate_skill" and isinstance(args, dict):
+            # A disabled skill is refused at activation whatever the user
+            # answers, so asking consent for it would be a prompt for nothing.
+            # Not a bypass: activation still requires the approved manifest.
+            disabled = getattr(self.skill_manager, "disabled_skills", None) or ()
+            if args.get("skill_name") in disabled:
+                return None
+        return mcp_skills.gate(
+            tool_name, args, tool, view=getattr(self.skill_manager, "mcp_view", None),
+        )
+
+    def _mcp_skill_begin_batch(self, arguments: Any) -> Any:
+        mcp_skills = getattr(self.skill_manager, "mcp_skills", None)
+        if mcp_skills is None:
+            return None
+        return mcp_skills.begin_batch(
+            arguments, view=getattr(self.skill_manager, "mcp_view", None),
+        )
+
+    def _mcp_session_origins(self) -> set:
+        """Every MCP origin this conversation carries: loaded, pending, restored."""
+        manager = getattr(self, "skill_manager", None)
+        origins: set = set()
+        orphan = getattr(manager, "mcp_orphan_origins", None)
+        if isinstance(orphan, set):
+            origins |= orphan
+        mcp_skills = getattr(manager, "mcp_skills", None)
+        if mcp_skills is not None:
+            origins |= set(mcp_skills.origins(getattr(manager, "mcp_view", None)))
+        return origins
+
+    def _mcp_admit(self, text: Any) -> Any:
+        """Let text carrying an MCP-origin marker into this conversation.
+
+        A sub-agent result or a background notification can carry another
+        conversation's MCP skill content — after ``/clear``, or from a task
+        started before it. Its marker's origins count as loaded here, so the
+        §6 gates come back on before the next call is planned. With no
+        Skills session to gate with, the text is withheld instead.
+        """
+        from .skills.provenance import summary_origins
+
+        labels = summary_origins(text)
+        if not labels:
+            return text
+        mcp_skills = getattr(self.skill_manager, "mcp_skills", None)
+        if mcp_skills is None:
+            # Origins the restore-only gate already covers are gated here
+            # as they are in the transcript: a sub-agent of a restored
+            # session inherits them and marks every result with them, and
+            # withholding those would withhold every sub-agent's answer.
+            orphan = getattr(self.skill_manager, "mcp_orphan_origins", None)
+            if isinstance(orphan, set) and labels <= orphan:
+                return text
+            from .embedding.sessions import withheld
+
+            return withheld(labels)
+        mcp_skills.taint(labels, getattr(self.skill_manager, "mcp_view", None))
+        return text
+
+    def _mcp_skill_confirmed(self, tool_name: str, args: Dict[str, Any], note: str) -> None:
+        mcp_skills = getattr(self.skill_manager, "mcp_skills", None)
+        if mcp_skills is not None:
+            mcp_skills.confirmed(
+                tool_name, args, view=getattr(self.skill_manager, "mcp_view", None), note=note,
+            )
+
+    def _mcp_skill_end_batch(self, token: Any) -> None:
+        mcp_skills = getattr(self.skill_manager, "mcp_skills", None)
+        if mcp_skills is not None:
+            mcp_skills.end_batch(token)
 
     def _init_host_emitters(self) -> None:
         """Build the tool / permission / subagent host-event emitters.
@@ -1243,6 +1342,15 @@ class Agentao:
         if self.bg_store is not None:
             self.bg_store.start_new_conversation()
         self.skill_manager.clear_active_skills()
+        # The acting window of every loaded MCP skill ends with the
+        # conversation that held its SKILL.md, and the §6 gates lift with it.
+        mcp_skills = getattr(self.skill_manager, "mcp_skills", None)
+        # A sub-agent's manager is a view of the parent's session: only the
+        # session's own reader starts a new generation (as on restore).
+        if mcp_skills is not None and getattr(self.skill_manager, "mcp_view", None) is None:
+            mcp_skills.clear_held()
+        if isinstance(getattr(self.skill_manager, "mcp_orphan_origins", None), set):
+            self.skill_manager.mcp_orphan_origins = set()
         self.todo_tool.clear()
         # Reset context and session token counters for the fresh session
         self.context_manager.invalidate_token_anchor()

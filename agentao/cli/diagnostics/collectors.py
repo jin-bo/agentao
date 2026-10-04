@@ -256,6 +256,11 @@ def _validate_mcp_server_fields(servers: Dict[str, Any]) -> List[str]:
     """
     messages: List[str] = []
     for name, cfg in servers.items():
+        # Only ``true`` turns Skills on (docs/design/mcp-skills.md §5.1); a
+        # ``"true"`` string would leave them silently off.
+        skills = cfg.get("skills")
+        if skills is not None and not isinstance(skills, bool):
+            messages.append(f"server {name!r}: 'skills' must be true or false")
         for field_name in ("env", "headers"):
             value = cfg.get(field_name)
             if value is None:

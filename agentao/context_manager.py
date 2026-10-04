@@ -1183,12 +1183,42 @@ class ContextManager:
         # never break the compaction pipeline.
         if self.memory_manager is not None:
             try:
-                self.memory_manager.crystallize_user_messages(prep.to_summarize)
+                from .skills.provenance import marker_origins
+
+                # A ``user`` message carrying an MCP origin marker (a
+                # background sub-agent's result) holds server-written text,
+                # not the user's: a review item from it would reach a later
+                # session's prompt with no gate, as the summary below would.
+                self.memory_manager.crystallize_user_messages(
+                    [m for m in prep.to_summarize if not marker_origins(m)]
+                )
             except Exception:
                 pass
 
+        # MCP skill content in the window (docs/design/mcp-skills.md): the
+        # summary paraphrases it, so it says so — a restore reads the marker
+        # to keep the gates on — and it is not saved for the cross-session
+        # tail, which would replay it into a later session's prompt.
+        from .skills.provenance import skill_origins, strip_markers, summary_marker
+
+        # The summary is model text in a system message, where a marker is
+        # trusted: one it wrote is quoted. Its real origins are added below.
+        if isinstance(summary, str):
+            summary = strip_markers(summary)
+
+        mcp_origins = skill_origins(prep.to_summarize)
+        # Plus what the live session holds: an MCP skill put in context only
+        # through the active-skills block (a host's direct activation) leaves
+        # no message, but the model's messages may still be derived from it.
+        provider = getattr(self, "mcp_origins_provider", None)
+        if callable(provider):
+            try:
+                mcp_origins |= set(provider())
+            except Exception:
+                mcp_origins.add("*")
+
         # --- Step 6: save session summary to SQLite --------------------------
-        if self.memory_manager is not None:
+        if self.memory_manager is not None and not mcp_origins:
             try:
                 self.memory_manager.save_session_summary(
                     summary=summary,
@@ -1214,7 +1244,8 @@ class ContextManager:
             "role": "system",
             "content": (
                 f"[Conversation Summary]\n{summary}\n"
-                f"{self.SUMMARY_END_MARKER}\n"
+                + (f"{summary_marker(mcp_origins)}\n" if mcp_origins else "")
+                + f"{self.SUMMARY_END_MARKER}\n"
                 "(The above is historical context. Resume from the live messages "
                 "below; do not re-execute already-completed work.)"
             ),

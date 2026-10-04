@@ -2,6 +2,7 @@
 
 from typing import Callable, List, Optional
 
+from . import confirmation as _confirmation
 from .broadcast import EventBroadcaster
 from .events import AgentEvent
 
@@ -26,7 +27,11 @@ class NullTransport:
         return self._broadcast.subscribe(listener)
 
     def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
-        return True
+        # A confirmation the MCP Skills gate asks is consent nobody here can
+        # give: approving it would load server-written instructions, or run a
+        # command while they are loaded, unasked. Headless answers no
+        # (docs/design/mcp-skills.md §5.5, §6.2).
+        return _confirmation.gate_note() is None
 
     def ask_user(
         self,

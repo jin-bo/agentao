@@ -76,6 +76,11 @@ MCP_RESOURCE_TOOL_NAMES: frozenset = frozenset({
     "read_mcp_resource",
 })
 
+# ``read_skill_file`` (``agentao/mcp/skill_tools.py``), registered in
+# ``tooling/mcp_tools.py`` only when a Skills-enabled MCP server passed the gate
+# (docs/design/mcp-skills.md §6.1). Same treatment as the resource tools.
+MCP_SKILL_TOOL_NAMES: frozenset = frozenset({"read_skill_file"})
+
 
 def _bind_and_register(
     agent: "Agentao", tool: "RegistrableTool", *, replace: bool = False, origin: str,
@@ -211,7 +216,12 @@ def apply_enabled_tools(agent: "Agentao") -> None:
     # Union with BUILTIN_TOOL_NAMES so a legal-but-absent built-in (e.g.
     # ``web_search`` without the ``[web]`` extra) isn't flagged as a typo —
     # same "registration eligibility != live availability" rule as disable_tools.
-    known = set(agent.tools.tools) | BUILTIN_TOOL_NAMES | MCP_RESOURCE_TOOL_NAMES
+    known = (
+        set(agent.tools.tools)
+        | BUILTIN_TOOL_NAMES
+        | MCP_RESOURCE_TOOL_NAMES
+        | MCP_SKILL_TOOL_NAMES
+    )
     unknown = sorted(allow - known)
     if unknown:
         raise ValueError(

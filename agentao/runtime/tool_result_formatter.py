@@ -75,9 +75,32 @@ def _prune_tool_outputs(out_dir: Path, logger=None, *, now: Optional[float] = No
     return removed
 
 
+class _NotPersisted(Exception):
+    """Internal: skip the save path for content that must not reach disk."""
+
+
+def _is_mcp_skill_content(tool_name: str, result: str) -> bool:
+    """Whether a result carries MCP skill content, so must not reach disk.
+
+    By provenance: the three skill tools' wrapped results, and any result
+    bearing the origin marker — a sub-agent's answer (``agent_*``,
+    ``check_background_agent``) that came from a run holding skill content.
+    """
+    from ..skills.provenance import carries_marker, is_skill_result, summary_origins
+
+    # Off disk, every ``read_skill_file`` result: whatever its shape, keeping
+    # one from spilling costs nothing. (Which of them is *content* — for
+    # provenance — is ``is_skill_result``'s narrower question.)
+    if tool_name == "read_skill_file" or is_skill_result(tool_name, result):
+        return True
+    # A marker counts only on a tool that can carry ours; in a ``read_file``
+    # or grep result it is quoted text, and the result spills as usual.
+    return carries_marker(tool_name) and bool(summary_origins(result))
+
+
 def _save_and_truncate(
     content: str, tool_name: str, logger=None,
-    *, output_dir: Optional[Path] = None,
+    *, output_dir: Optional[Path] = None, persist: bool = True,
 ) -> Tuple[str, Optional[str]]:
     """Save large tool output to *output_dir* and return
     ``(excerpt, disk_path_or_None)``.
@@ -99,7 +122,24 @@ def _save_and_truncate(
 
     file_ref = ""
     disk_path: Optional[str] = None
+    if not persist:
+        # An MCP skill's content is never spilled: a spill file exists to be
+        # read back with ``read_file``, which would bring it back after its
+        # approval with no skill gate (docs/design/mcp-skills.md). Replay and
+        # ``agentao.log`` still record it verbatim; that is not covered here.
+        # The loaded SKILL.md stays in context through the active-skills block.
+        # The paging hint applies only to the skill tools themselves; a
+        # sub-agent's marked answer cannot be re-read with read_skill_file.
+        file_ref = (
+            "  (MCP skill content is not saved to disk; read a skill file in "
+            "pages with read_skill_file's offset and limit)"
+            if tool_name in ("activate_skill", "read_skill_file", "read_mcp_resource")
+            else "  (this result carries MCP skill content, so it is not saved to "
+            "disk and the omitted part cannot be read back)"
+        )
     try:
+        if not persist:
+            raise _NotPersisted
         out_dir = _TOOL_OUTPUT_DIR if output_dir is None else output_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         ts = int(time.time())
@@ -134,6 +174,8 @@ def _save_and_truncate(
             f"{redaction_note}"
         )
         disk_path = str(out_file)
+    except _NotPersisted:
+        pass
     except Exception as exc:
         if logger:
             logger.warning(f"Could not save tool output to file: {exc}")
@@ -242,6 +284,7 @@ class ToolResultFormatter:
             out_dir = self._output_dir()
             result, disk_path = _save_and_truncate(
                 result, fn_name, self._logger, output_dir=out_dir,
+                persist=not _is_mcp_skill_content(fn_name, result),
             )
             if not self._pruned:
                 self._pruned = True

@@ -515,7 +515,7 @@ class BackgroundTaskStore:
         # terminal: the flush just above is a window in which ``delete()`` or
         # a rebind can drop this task's entry.
         if status == "completed" and result is not None:
-            preview = result[:300] + "…" if len(result) > 300 else result
+            preview = _preview(result)
             self._push_task_notification(
                 generation,
                 f"Background agent '{agent_name}' (ID: {agent_id}) completed.\n{preview}",
@@ -998,3 +998,24 @@ class BackgroundTaskStore:
                         if aid not in merged:
                             self._owned_ids.discard(aid)
                             self._owner_path.pop(aid, None)
+
+
+#: Characters of a finished task's result shown in its notification.
+_PREVIEW_CHARS = 300
+
+
+def _preview(result: str) -> str:
+    """The head of a finished task's result, for its notification.
+
+    A leading MCP skill origin marker (``AgentToolWrapper._format_result``)
+    is kept whole, outside the character budget: the chat loop re-arms the
+    gates from it, and one cut mid-marker no longer parses — long or
+    percent-encoded server labels can push it past the budget on its own.
+    """
+    from ..skills.provenance import summary_origins
+
+    head, sep, rest = result.partition("\n")
+    if sep and summary_origins(head):
+        body = rest[:_PREVIEW_CHARS] + "…" if len(rest) > _PREVIEW_CHARS else rest
+        return head + "\n" + body
+    return result[:_PREVIEW_CHARS] + "…" if len(result) > _PREVIEW_CHARS else result

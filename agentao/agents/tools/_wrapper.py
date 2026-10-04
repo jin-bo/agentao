@@ -27,7 +27,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...llm._usage import positive_int
-from ...tools.base import RegistrableTool, Tool
+from ...tools.base import SHELL_TOOL_NAME, RegistrableTool, Tool
 from ..bg_store import BackgroundTaskStore
 from ._complete import CompleteTaskTool, TaskComplete
 from ._inherit import (
@@ -54,6 +54,29 @@ _USAGE_KEYS = (
 
 
 _READ_RESOURCE_TOOL = "read_mcp_resource"
+
+
+def _session_mcp_origins(sub_agent: Any) -> set:
+    """MCP skill origins of the conversation a sub-agent ran in.
+
+    The child's own transcript does not show everything it saw: its
+    ``parent_context`` is the parent's recent messages flattened into a user
+    message, and the parent's loaded skills are not tool results there. The
+    conversation's loaded (and restored-summary) origins, read at the
+    child's own generation, cover what it inherited. Never raises.
+    """
+    try:
+        manager = getattr(sub_agent, "skill_manager", None)
+        # Restored without a Skills session to gate with (see
+        # ``embedding/sessions.py``): inherited by the child all the same.
+        orphan = getattr(manager, "mcp_orphan_origins", None)
+        origins = set(orphan) if isinstance(orphan, set) else set()
+        mcp_skills = getattr(manager, "mcp_skills", None)
+        if mcp_skills is not None:
+            origins |= set(mcp_skills.origins(getattr(manager, "mcp_view", None)))
+        return origins
+    except Exception:  # pragma: no cover - defensive
+        return set()
 
 
 def _without_read_hint(tool: Any) -> Any:
@@ -164,6 +187,20 @@ class AgentToolWrapper(Tool):
         return self._definition["description"]
 
     @property
+    def spawns_shell_capable_agent(self) -> bool:
+        """Whether the sub-agent this spawns can run ``run_shell_command``.
+
+        Read by the MCP Skills gate (docs/design/mcp-skills.md §6.2): with an
+        MCP skill loaded, spawning such a sub-agent is asked, since it is the
+        one way around the gate on the shell itself. Mirrors
+        ``_narrow_tools``: no ``tools:`` list means every parent tool.
+        """
+        if SHELL_TOOL_NAME not in self._all_tools:
+            return False
+        requested = self._definition.get("tools")
+        return requested is None or SHELL_TOOL_NAME in requested
+
+    @property
     def parameters(self) -> Dict[str, Any]:
         # Hide ``run_in_background`` from the LLM when the bg subsystem is disabled.
         properties: Dict[str, Any] = {
@@ -209,6 +246,14 @@ class AgentToolWrapper(Tool):
     _AGENT_END   = "__agent_end__"
 
     def execute(self, task: str, run_in_background: bool = False) -> str:
+        # The child's skill manager is derived here, on the launching thread
+        # and *before* the parent's messages are read: deriving it registers
+        # the conversation generation it reads (MCP Skills), so a ``/clear``
+        # or a resume that lands before a background worker starts cannot
+        # hand the old conversation's context to a child gated by the new,
+        # empty generation. In the other order the race fails safe — new
+        # context, old gates.
+        skills = _child_skill_manager(self._skill_manager_getter, self._definition["name"])
         parent_context = self._build_parent_context()
 
         # Resolve the current cancellation token: prefer the one injected by
@@ -230,7 +275,7 @@ class AgentToolWrapper(Tool):
                     "run_in_background=True but background-agent store "
                     "is disabled (bg_store=None) on this runtime."
                 )
-            return self._launch_background(task, parent_context)
+            return self._launch_background(task, parent_context, skill_manager=skills)
 
         agent_name = self._definition["name"]
         max_turns  = self._definition.get("max_turns", 15)
@@ -260,6 +305,7 @@ class AgentToolWrapper(Tool):
         try:
             result, stats = self._run_sync(
                 task, parent_context, cancellation_token=token, settled=settled,
+                skill_manager=skills,
             )
         except AgentCancelledError:
             # Defensive only: ``runtime/turn.py`` maps this to
@@ -383,6 +429,8 @@ class AgentToolWrapper(Tool):
         if not msgs:
             return ""
 
+        from ...skills.provenance import result_marker, skill_origins, strip_markers
+
         recent = msgs[-self.PARENT_CONTEXT_MESSAGES:]
         lines: List[str] = []
         for m in recent:
@@ -393,11 +441,21 @@ class AgentToolWrapper(Tool):
                     b.get("text", "") for b in content
                     if isinstance(b, dict) and b.get("type") == "text"
                 )
+            # The excerpt lands in the child's ``user`` message, where any
+            # origin marker is trusted — but there it has lost the tool name
+            # that said whether to trust it. So every marker is removed, and
+            # one is re-added for the origins trusted on the whole original
+            # message (a quoted phrase in ``read_file`` output has none).
+            origins = skill_origins([m]) if isinstance(m, dict) else set()
+            mark = f"\n{result_marker(origins)}" if origins else ""
+            # ``""`` for an empty or ``None`` content: the tool branch below
+            # slices it, and ``None[:300]`` would raise out of the spawn.
+            content = strip_markers(str(content)) if content else ""
             if role == "tool":
                 name = m.get("name", "tool")
-                lines.append(f"[tool/{name}]: {str(content)[:300]}")
-            elif role in ("user", "assistant") and content:
-                lines.append(f"[{role}]: {str(content)[:400]}")
+                lines.append(f"[tool/{name}]: {content[:300]}{mark}")
+            elif role in ("user", "assistant") and (content or mark):
+                lines.append(f"[{role}]: {(content or '')[:400]}{mark}")
             elif role == "assistant" and m.get("tool_calls"):
                 tc_names = []
                 for tc in m["tool_calls"]:
@@ -421,6 +479,7 @@ class AgentToolWrapper(Tool):
         self, task: str, parent_context: str = "", suppress_output: bool = False,
         cancellation_token: Optional[Any] = None,
         settled: Optional[Dict[str, Any]] = None,
+        skill_manager: Optional[Any] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Create, run and close a sub-agent. Returns (result, stats).
 
@@ -436,7 +495,7 @@ class AgentToolWrapper(Tool):
                 suppressed so a background thread does not interleave output
                 with the foreground session.
         """
-        sub_agent, setup = self._build_sub_agent(suppress_output)
+        sub_agent, setup = self._build_sub_agent(suppress_output, skill_manager)
         # Everything after construction runs under ``finally``: the sub-agent
         # holds resources of its own (its memory stores), and nothing else
         # releases them, since it is a local the parent's ``close()`` does not
@@ -456,9 +515,14 @@ class AgentToolWrapper(Tool):
                 settled["usage"] = usage
             self._close_sub_agent(sub_agent)
 
-    def _build_sub_agent(self, suppress_output: bool) -> Tuple[Any, Dict[str, Any]]:
+    def _build_sub_agent(
+        self, suppress_output: bool, skill_manager: Optional[Any] = None,
+    ) -> Tuple[Any, Dict[str, Any]]:
         """Construct a sub-agent. Returns it with the keyword arguments
         ``_drive_sub_agent`` needs from the same config read.
+
+        ``skill_manager`` is the child view :meth:`execute` derived at the
+        call; ``None`` derives one now.
 
         The caller owns the returned sub-agent and must pass it to
         ``_close_sub_agent``.
@@ -582,8 +646,9 @@ class AgentToolWrapper(Tool):
             # holds, so replacing the attribute afterwards left the tool
             # activating skills out of a manager the system prompt is no
             # longer built from.
-            skill_manager=_child_skill_manager(
-                self._skill_manager_getter, agent_name,
+            skill_manager=(
+                skill_manager if skill_manager is not None
+                else _child_skill_manager(self._skill_manager_getter, agent_name)
             ),
             # A memory store of the child's own: transient, unread, and
             # discarded with it (#234). Left to the default it opened the
@@ -670,6 +735,14 @@ class AgentToolWrapper(Tool):
             if origin == "mcp":
                 if not child_reads:
                     tool = _without_read_hint(tool)
+                # The two skill-reading tools read one conversation generation
+                # of the shared MCP skills: the sub-agent's own, not the
+                # parent's current one (docs/design/mcp-skills.md, Appendix B).
+                for_view = getattr(type(tool), "for_view", None)
+                if callable(for_view):
+                    tool = tool.for_view(
+                        getattr(getattr(sub_agent, "skill_manager", None), "mcp_view", None)
+                    )
                 kept.append((tool, "mcp"))
             elif origin == "builtin" and name in own.tools and own.origin(name) == "builtin":
                 own_tool = own.tools[name]
@@ -839,6 +912,12 @@ class AgentToolWrapper(Tool):
             sub_agent.tool_runner.set_permission_engine(engine)
 
         # Prepend parent context to the task
+        # ``task`` is the model's text and lands in the child's ``user``
+        # message, where a whole-line marker is trusted: one it contains is
+        # quoted, not provenance (the real origins are in the context).
+        from ...skills.provenance import strip_markers
+
+        task = strip_markers(task) if isinstance(task, str) else task
         if parent_context:
             full_task = f"{parent_context}\n[Your Task]\n{task}"
         else:
@@ -907,8 +986,16 @@ class AgentToolWrapper(Tool):
         tool_calls = sum(1 for m in sub_agent.messages if m.get("role") == "tool")
         approx_tokens = sub_agent.context_manager.estimate_tokens(sub_agent.messages)
 
+        from ...skills.provenance import skill_origins
+
         stats = {
             "agent_name": self._definition["name"],
+            # MCP skill content the child's transcript held: the parent's
+            # copy of its result must carry that provenance (restore,
+            # compaction), whatever the child chose to repeat.
+            "mcp_origins": sorted(
+                skill_origins(sub_agent.messages) | _session_mcp_origins(sub_agent)
+            ),
             "turns": turns,
             "tool_calls": tool_calls,
             "tokens": approx_tokens,
@@ -924,6 +1011,27 @@ class AgentToolWrapper(Tool):
 
     @staticmethod
     def _format_result(result: str, stats: Dict[str, Any]) -> str:
+        """:meth:`_format_body`, led by the MCP origin marker when there is one.
+
+        First, not in the footer: a background task's notification is a short
+        preview of the head of its result, and any truncation keeps the head.
+        The marker has to survive both.
+        """
+        from ...skills.provenance import result_marker, strip_markers
+
+        # The child's answer is model text: a marker in it is quoted, and
+        # would be trusted on this tool's result. Its real origins are
+        # ``stats["mcp_origins"]``.
+        if isinstance(result, str):
+            result = strip_markers(result)
+        body = AgentToolWrapper._format_body(result, stats)
+        if not stats.get("mcp_origins"):
+            return body
+
+        return result_marker(stats["mcp_origins"]) + "\n" + body
+
+    @staticmethod
+    def _format_body(result: str, stats: Dict[str, Any]) -> str:
         """Render the sub-agent's result for the parent LLM.
 
         A stats footer on its own reads as an affirmative productivity
@@ -955,7 +1063,9 @@ class AgentToolWrapper(Tool):
     # Background (async) execution
     # ------------------------------------------------------------------
 
-    def _launch_background(self, task: str, parent_context: str) -> str:
+    def _launch_background(
+        self, task: str, parent_context: str, skill_manager: Optional[Any] = None,
+    ) -> str:
         agent_id = uuid.uuid4().hex[:8]
         agent_name = self._definition["name"]
         # First, so a launch refused for capacity (``BackgroundCapacityError``)
@@ -1009,7 +1119,9 @@ class AgentToolWrapper(Tool):
                 return settled["usage"]
 
             try:
-                sub_agent, setup = self._build_sub_agent(suppress_output=True)
+                sub_agent, setup = self._build_sub_agent(
+                    suppress_output=True, skill_manager=skill_manager,
+                )
                 result, stats = self._drive_sub_agent(
                     sub_agent,
                     task=task,

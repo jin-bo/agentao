@@ -37,10 +37,19 @@ class ActivateSkillTool(Tool):
             "type": "string",
             "description": "Name of the skill to activate",
         }
-        # Dynamic enum constraint to prevent typos (similar to Gemini CLI)
+        # Dynamic enum constraint to prevent typos (similar to Gemini CLI).
+        # Dropped when a Skills-enabled MCP server is connected: such a server
+        # may serve a skill by URI that its listing omits, and the name
+        # ``mcp:<server>:<uri>`` must then be accepted (docs/design/mcp-skills.md D2).
         if self.skill_manager:
             skill_names = list(self.skill_manager.list_available_skills())
-            if skill_names:
+            mcp = getattr(self.skill_manager, "mcp_skills", None)
+            if mcp is not None and getattr(mcp, "servers", None):
+                skill_prop["description"] = (
+                    "Name of the skill to activate. A skill from an MCP server is "
+                    "named mcp:<server>:<SKILL.md URI>."
+                )
+            elif skill_names:
                 skill_prop["enum"] = skill_names
         return {
             "type": "object",
@@ -60,7 +69,24 @@ class ActivateSkillTool(Tool):
             return "Error: Skill manager not initialized"
 
         try:
-            result = self.skill_manager.activate_skill(skill_name, task_description)
+            # The model's activation: an MCP skill loads only in the version
+            # the user approved at the confirmation (docs/design/mcp-skills.md).
+            activate = self.skill_manager.activate_skill
+            if _takes(activate, "require_mcp_approval"):
+                result = activate(skill_name, task_description, require_mcp_approval=True)
+            else:
+                # A host-injected manager written before the keyword existed;
+                # it has no MCP skills to load.
+                result = activate(skill_name, task_description)
             return result
         except Exception as e:
             return f"Error activating skill: {str(e)}"
+
+
+def _takes(fn: Any, keyword: str) -> bool:
+    import inspect
+
+    try:
+        return keyword in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False

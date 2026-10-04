@@ -8,6 +8,7 @@ import inspect
 import warnings
 from typing import Any, Callable, Dict, List, Optional
 
+from . import confirmation as _confirmation
 from .broadcast import EventBroadcaster
 from .events import AgentEvent, EventType
 from .null import NullTransport
@@ -101,7 +102,9 @@ class SdkTransport:
     def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
         if self._confirm_tool:
             return self._confirm_tool(tool_name, description, args)
-        return True  # auto-approve when no callback
+        # Auto-approve when no callback — except a confirmation the MCP Skills
+        # gate asks, which only a person can answer (see ``NullTransport``).
+        return _confirmation.gate_note() is None
 
     def ask_user(
         self,
@@ -276,7 +279,10 @@ def build_compat_transport(
     def _confirm(name: str, desc: str, args: dict) -> bool:
         if confirmation_callback:
             return confirmation_callback(name, desc, args)
-        return True
+        # No callback approves, as ``NullTransport`` does — except a
+        # confirmation the MCP Skills gate asks, which only a person can
+        # answer (``transport/confirmation.py``).
+        return _confirmation.gate_note() is None
 
     def _ask(question: str) -> str:
         if ask_user_callback:

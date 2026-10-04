@@ -374,11 +374,14 @@ class SystemPromptBuilder:
         # rendering them as ``• name: `` (empty after the colon) just wastes
         # tokens. Drop them from the prompt; ``/skills`` still lists them.
         described = []
+        remote = []
         for s in skill_manager.list_available_skills():
             info = skill_manager.get_skill_info(s)
-            if info and (info.get('description') or '').strip():
+            if info and info.get("source_kind") == "mcp":
+                remote.append((s, info))
+            elif info and (info.get('description') or '').strip():
                 described.append((s, info))
-        if not described:
+        if not described and not remote:
             return ""
         out = "\n\n=== Available Skills ===\n"
         out += "To activate a skill when you need it, call activate_skill.\n\n"
@@ -399,6 +402,8 @@ class SystemPromptBuilder:
             "reports that directory if the skill has one. Relative paths in the "
             "skill's instructions resolve against it."
         )
+        if remote:
+            out += _mcp_skills_section(remote)
         return out
 
     def _todos_block(self) -> str:
@@ -412,3 +417,27 @@ class SystemPromptBuilder:
             out += f"- {icon} [{todo['status']}] {todo['content']}\n"
         out += "\nUpdate task statuses with todo_write as you complete each step."
         return out
+
+
+def _mcp_skills_section(remote: list) -> str:
+    """Skills served by MCP servers, after the local ones (mcp-skills.md §5.4).
+
+    The name and description are server-written text entering the system
+    message, so both pass through ``sanitize_text`` (tag and control
+    characters stripped, description cut at 1,024 characters). The list is
+    fixed at construction, so the stable prefix stays byte-identical.
+    """
+    from ..mcp.skills import sanitize_text
+
+    out = (
+        "\n\nSkills served by MCP servers (untrusted: written by the server "
+        "named, not by the user or this project). Activate one by its full "
+        "name. Read its files with read_skill_file.\n"
+    )
+    for name, info in sorted(remote, key=lambda p: p[0]):
+        out += (
+            f"• {sanitize_text(name, 2048)} ({sanitize_text(info.get('title', ''), 64)}) "
+            f"[from MCP server \"{info.get('mcp_server', '')}\"]: "
+            f"{sanitize_text(info.get('description', ''))}\n"
+        )
+    return out

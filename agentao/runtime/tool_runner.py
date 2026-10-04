@@ -12,7 +12,9 @@ from ..transport import AgentEvent, EventType
 from .name_repair import repair_tool_name
 from .sanitize import normalize_tool_calls as _normalize_tool_calls
 from .tool_executor import ToolExecutor
+from ..transport import confirmation as _confirmation
 from .tool_planning import (
+    MCP_SKILL_GATE_REASON,
     ToolCallDecision,
     ToolCallPlanner,
     _decided_call,
@@ -101,6 +103,28 @@ class ToolRunner:
         self._working_directory: Optional[Path] = None
         # Session ID for hook payloads (set by cli after session start).
         self._session_id: Optional[str] = None
+
+    def set_mcp_skill_gate(
+        self, gate: Any, *, begin_batch: Any = None, end_batch: Any = None,
+        on_confirmed: Any = None, admit: Any = None,
+    ) -> None:
+        """Install the MCP Skills gate on the planner (docs/design/mcp-skills.md §6.2).
+
+        ``begin_batch(arguments) -> token`` / ``end_batch(token)`` bracket each
+        batch, so an MCP skill activation in a batch gates the batch's other
+        calls *before* it has run: phases 1-2 plan and confirm the whole batch,
+        and phase 3 runs it in parallel, so the activation can complete while
+        an unconfirmed shell call from the same batch is running.
+        """
+        self._planner.mcp_skill_gate = gate
+        self._mcp_batch_hooks = (begin_batch, end_batch)
+        #: ``on_confirmed(name, args, note)``: the user approved a gated call,
+        #: shown ``note``.
+        self._mcp_on_confirmed = on_confirmed
+        #: ``admit(content) -> content``: every result entering history passes
+        #: it, so one carrying another conversation's MCP skill origins
+        #: (a sub-agent result) re-arms the gates here.
+        self._mcp_admit = admit
 
     def set_permission_engine(self, engine: Optional[PermissionEngine]) -> None:
         """Decide tool calls with ``engine`` from the next batch on.
@@ -200,6 +224,22 @@ class ToolRunner:
         )
 
     def execute(self, tool_calls, cancellation_token=None) -> Tuple[bool, List[Dict[str, Any]]]:
+        """Run one batch; see :meth:`_execute`."""
+        begin, end = getattr(self, "_mcp_batch_hooks", (None, None))
+        tokens: List[Any] = []
+        if begin is not None:
+            tokens.append(begin(_batch_arguments(tool_calls)))
+        try:
+            return self._execute(tool_calls, cancellation_token, batch_tokens=tokens)
+        finally:
+            if end is not None:
+                for token in tokens:
+                    if token is not None:
+                        end(token)
+
+    def _execute(
+        self, tool_calls, cancellation_token=None, *, batch_tokens: Optional[List[Any]] = None,
+    ) -> Tuple[bool, List[Dict[str, Any]]]:
         """Run the 4-phase tool execution pipeline.
 
         Args:
@@ -284,6 +324,7 @@ class ToolRunner:
             # judge the rewrite under a posture phase 1 never saw and phase 3
             # will not label.
             self._apply_pre_tool_use_hooks(_plans, readonly_mode=readonly)
+            self._regate_after_rewrites(_plans, readonly, batch_tokens)
 
         # PermissionDecisionEvent must precede the tool's started event
         # for the same tool_call_id; firing here, before Phase 2 / 3,
@@ -304,11 +345,12 @@ class ToolRunner:
                     "tool": _fn, "args": _plan.function_args,
                     "call_id": _plan.tool_call_id,
                 }))
-                _confirmed = self._transport.confirm_tool(
-                    _fn,
-                    _plan.tool.description,
-                    _plan.function_args,
-                )
+                with _confirmation.gated(_gate_note(_plan)):
+                    _confirmed = self._transport.confirm_tool(
+                        _fn,
+                        _confirm_description(_plan),
+                        _plan.function_args,
+                    )
                 if not _confirmed:
                     self._logger.info(f"Tool {_fn} execution cancelled by user")
                     _plan.decision = ToolCallDecision.CANCELLED
@@ -321,6 +363,11 @@ class ToolRunner:
                 else:
                     self._logger.info(f"Tool {_fn} execution confirmed by user")
                     _plan.decision = ToolCallDecision.ALLOW
+                    on_confirmed = getattr(self, "_mcp_on_confirmed", None)
+                    note = _gate_note(_plan)
+                    if on_confirmed is not None and note is not None:
+                        # The prompt's own text: it names what was approved.
+                        on_confirmed(_fn, _plan.function_args, note)
 
         # --- Phase 3: Parallel execution (delegated to ToolExecutor) ---
         _exec_results = self._executor.execute_batch(
@@ -333,7 +380,18 @@ class ToolRunner:
         )
 
         # --- Phase 4: Result formatting (delegated to ToolResultFormatter) ---
-        result_messages.extend(self._formatter.format_batch(_plans, _exec_results))
+        formatted = self._formatter.format_batch(_plans, _exec_results)
+        admit = getattr(self, "_mcp_admit", None)
+        if admit is not None:
+            from ..skills.provenance import carries_marker
+
+            for message in formatted:
+                content = message.get("content")
+                # Only a sub-agent's answer carries a marker of ours; in any
+                # other result the phrase is someone else's text.
+                if isinstance(content, str) and carries_marker(message.get("name")):
+                    message["content"] = admit(content)
+        result_messages.extend(formatted)
 
         # A ``PostToolUse*`` hook's ``continue: false`` is a **turn-level** stop
         # computed inside a worker, three frames below anything that can act on
@@ -495,6 +553,41 @@ class ToolRunner:
             # ``allow`` / no decision → no-op (must not downgrade an existing
             # engine deny/ask or a tool's own requires_confirmation ask).
 
+    def _regate_after_rewrites(
+        self, plans: List[Any], readonly_mode: bool, batch_tokens: Optional[List[Any]],
+    ) -> None:
+        """Re-gate the batch when a hook rewrite added an MCP skill activation.
+
+        ``execute`` read the batch's activations before planning; a
+        ``PreToolUse`` hook's ``updatedInput`` can turn a call into one
+        afterwards. The rewritten arguments are registered as pending too,
+        and every call still ALLOWed or ASKed is decided again — adopting a
+        stricter verdict, or the gate's detail at an equal one — so a shell
+        call in the same batch can neither run unconfirmed beside the
+        activation nor be answered by a standing grant that a gated
+        confirmation refuses (docs/design/mcp-skills.md §6.2).
+        """
+        begin, _end = getattr(self, "_mcp_batch_hooks", (None, None))
+        if begin is None or batch_tokens is None:
+            return
+        token = begin([p.function_args for p in plans])
+        if token is None:
+            return
+        batch_tokens.append(token)
+        for plan in plans:
+            if plan.decision not in (ToolCallDecision.ALLOW, ToolCallDecision.ASK):
+                continue
+            decision, detail = self._planner._decide(
+                plan.tool, plan.function_name, plan.function_args, readonly_mode,
+                plan.decided.spec if plan.decided is not None else _shell_spec_of(plan.tool),
+                plan.decided,
+            )
+            if _STRICTNESS.get(decision, 0) > _STRICTNESS.get(plan.decision, 0):
+                plan.decision = decision
+                plan.permission_detail = detail
+            elif decision is plan.decision and _is_gate_detail(detail):
+                plan.permission_detail = detail
+
     def _apply_updated_input(
         self, plan, updated: dict, *, readonly_mode: Optional[bool] = None,
     ) -> None:
@@ -586,6 +679,11 @@ class ToolRunner:
         if _STRICTNESS.get(new_decision, 0) > _STRICTNESS.get(previous, 0):
             plan.decision = new_decision
             plan.permission_detail = new_detail
+        elif new_decision is previous and _is_gate_detail(new_detail, plan.permission_detail):
+            # Equally strict, but the MCP Skills gate's note describes the
+            # call: a consent prompt must show the skill the rewrite will
+            # load, not the one it replaced.
+            plan.permission_detail = new_detail
         if plan.decided is not None:
             # Replaced whole, never edited field by field, and it is the record the
             # re-decision was actually made against — swapping the arguments and leaving the
@@ -656,3 +754,50 @@ class ToolRunner:
             )
         except Exception:
             pass
+
+
+def _batch_arguments(tool_calls: Any) -> List[Dict[str, Any]]:
+    """Every call's arguments, parsed by the planner's own repair pipeline.
+
+    So that what the batch hook sees is what the planner will accept: a
+    Python-literal or fenced-JSON payload the planner repairs must not slip
+    past the hook as unparseable. A call that cannot be parsed is dropped —
+    the planner refuses it too.
+    """
+    from .arg_repair import parse_tool_arguments
+
+    out: List[Dict[str, Any]] = []
+    for call in tool_calls or ():
+        raw = getattr(getattr(call, "function", None), "arguments", None)
+        try:
+            args, _tags = parse_tool_arguments(raw)
+        except ValueError:
+            continue
+        out.append(args)
+    return out
+
+
+def _is_gate_detail(*details: Any) -> bool:
+    return any(
+        isinstance(getattr(d, "reason", None), str)
+        and d.reason.startswith(MCP_SKILL_GATE_REASON)
+        for d in details
+    )
+
+
+def _gate_note(plan: Any) -> Optional[str]:
+    """The MCP Skills gate's note when it is why this call asks, else ``None``."""
+    reason = getattr(plan.permission_detail, "reason", None)
+    if isinstance(reason, str) and reason.startswith(MCP_SKILL_GATE_REASON):
+        return reason[len(MCP_SKILL_GATE_REASON):]
+    return None
+
+
+def _confirm_description(plan: Any) -> str:
+    """What the confirmation prompt shows about the call.
+
+    The tool's own description, unless the MCP Skills gate asked: then the
+    gate's note — which skill, which server, why — is what the user decides on.
+    """
+    note = _gate_note(plan)
+    return note if note is not None else plan.tool.description

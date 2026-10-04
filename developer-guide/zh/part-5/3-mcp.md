@@ -179,6 +179,26 @@ read = agent.mcp_manager.read_resource("docs", "report://q3")  # ResourceRead（
 
 失败时抛出 `agentao.mcp.resources.McpResourceError`（带 `kind`），不会返回残缺数据。CLI 里 `/mcp resources [server]` 可直接列出，不消耗模型轮次。
 
+## MCP skills
+
+server 还可以通过 MCP Skills 扩展（`io.modelcontextprotocol/skills`）发布 Agent Skills。它**默认关闭**：在 `mcp.json` 里给该 server 加上 `"skills": true`。需要 mcp 2.x，且 server 的协议版本不低于 2026-07-28。
+
+- **目录。** 连接时列出该 server 的 skill（不取任何文件）。每个 skill 的名字是 `mcp:<server>:<SKILL.md URI>`，即身份本身，所以两个同名 skill 不会冲突；它们在系统提示词里单独成节，并标明由该 server 编写。
+- **激活。** `activate_skill("mcp:docs:skill://pdf-processing/SKILL.md")` 每个会话问用户一次，然后取回 `SKILL.md`，按 server 的条目核对大小、摘要和 frontmatter。正文放在 `<mcp-skill server="…" uri="…">` 里交给模型。列表里没有的 skill 也能用这个名字加载。
+- **文件。** `read_skill_file(skill, path)` 从该 skill 自己的 server 读取已激活 MCP skill 的文件并校验，不在清单里的路径一律拒绝。在已加载 skill 目录内的 `read_mcp_resource` 也按同样方式校验。
+- **闸门。** 只要有 MCP skill 已加载（直到 `/clear`，停用不算），`run_shell_command`、派生能执行 shell 的子代理、以及对其他 server 的 `read_mcp_resource` 都会询问，任何权限模式下都是如此。它们只会收紧：`deny` 规则和只读模式仍然拒绝。
+- **子代理**共享会话里已加载的 skill，所以闸门在子代理里同样生效。
+
+宿主可以从 manager 读到同样的数据：
+
+```python
+agent.mcp_manager.skill_servers()                 # 通过闸门的 server
+entries, unavailable, problem = agent.mcp_manager.skill_listing("docs")
+entry = agent.mcp_manager.get_skill("docs", "skill://pdf-processing/SKILL.md")  # skills/get
+```
+
+`/skills` 按 server 列出 MCP skill，并说明哪些无法加载以及原因；`/mcp list` 显示每个开启了 skills 的 server 有多少个 skill，或者为什么一个都没有。
+
 ## 调试 MCP 接入
 
 ```python

@@ -13,6 +13,7 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
+from ..transport import confirmation as _confirmation
 from .protocol import (
     ASK_USER_UNAVAILABLE_SENTINEL,
     METHOD_ASK_USER,
@@ -41,14 +42,23 @@ _OUTCOME_SELECTED = "selected"
 _OUTCOME_CANCELLED = "cancelled"
 
 
-def _build_permission_options() -> List[Dict[str, str]]:
+def _build_permission_options(*, once_only: bool = False) -> List[Dict[str, str]]:
     """Return the standard ACP permission options for a tool confirmation.
 
     Agentao offers all four ACP option kinds so clients can present a
     rich confirmation dialog. ``optionId`` deliberately equals the
     ``kind`` — clients that echo the id back in the outcome give us a
     unambiguous mapping with no extra lookups.
+
+    ``once_only`` drops the two ``*_always`` kinds, for a confirmation the
+    MCP Skills gate asks (``transport/confirmation.py``): its answer is for
+    this call and may not become a standing grant for the tool.
     """
+    if once_only:
+        return [
+            {"optionId": PERMISSION_ALLOW_ONCE, "name": "Allow once", "kind": PERMISSION_ALLOW_ONCE},
+            {"optionId": PERMISSION_REJECT_ONCE, "name": "Reject once", "kind": PERMISSION_REJECT_ONCE},
+        ]
     return [
         {"optionId": PERMISSION_ALLOW_ONCE, "name": "Allow once", "kind": PERMISSION_ALLOW_ONCE},
         {"optionId": PERMISSION_ALLOW_ALWAYS, "name": "Always allow", "kind": PERMISSION_ALLOW_ALWAYS},
@@ -141,9 +151,17 @@ class _InteractionMixin:
             )
             return False
 
+        # A call the MCP Skills gate asks is answered for this call only: no
+        # remembered "Always allow" may answer it, and its own answer is not
+        # remembered (docs/design/mcp-skills.md §5.5, §6.2). A remembered
+        # "Always reject" still rejects — refusing never loosens anything.
+        gate_note = _confirmation.gate_note()
+
         # 1) Fast path: session override already decided this tool.
         with session.permission_lock:
-            if tool_name in session.permission_overrides:
+            if tool_name in session.permission_overrides and not (
+                gate_note is not None and session.permission_overrides[tool_name]
+            ):
                 decided = session.permission_overrides[tool_name]
                 logger.debug(
                     "acp: confirm_tool short-circuit for %s → %s (session override)",
@@ -183,7 +201,9 @@ class _InteractionMixin:
         if content:
             tool_call_payload["content"] = content
 
-        options: List[Dict[str, str]] = _build_permission_options()
+        options: List[Dict[str, str]] = _build_permission_options(
+            once_only=gate_note is not None
+        )
         params: Dict[str, Any] = {
             "sessionId": self._session_id,
             "toolCall": tool_call_payload,
@@ -229,14 +249,19 @@ class _InteractionMixin:
             )
             return False
 
-        # 4) Map outcome → bool.
-        return self._apply_permission_outcome(session, tool_name, result)
+        # 4) Map outcome → bool. A gated call's answer is never remembered,
+        # even from a client that sends an ``*_always`` id it was not offered.
+        return self._apply_permission_outcome(
+            session, tool_name, result, remember=gate_note is None
+        )
 
     def _apply_permission_outcome(
         self,
         session: Any,
         tool_name: str,
         raw_result: Any,
+        *,
+        remember: bool = True,
     ) -> bool:
         """Translate an ACP ``RequestPermissionResponse`` into a bool.
 
@@ -284,6 +309,10 @@ class _InteractionMixin:
         if option_id == PERMISSION_ALLOW_ONCE:
             return True
         if option_id == PERMISSION_REJECT_ONCE:
+            return False
+        if option_id == PERMISSION_ALLOW_ALWAYS and not remember:
+            return True
+        if option_id == PERMISSION_REJECT_ALWAYS and not remember:
             return False
         if option_id == PERMISSION_ALLOW_ALWAYS:
             with session.permission_lock:

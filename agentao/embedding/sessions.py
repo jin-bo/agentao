@@ -137,6 +137,7 @@ def save_session(
     *,
     project_root: Path,
     supersedes: Optional[Path] = None,
+    mcp_skill_origins: Optional[List[str]] = None,
 ) -> Tuple[Path, str]:
     """Serialize conversation to disk and rotate old sessions.
 
@@ -152,6 +153,10 @@ def save_session(
             save, and does not evict other sessions to make room. Ignored
             unless it is in this project's session directory and records
             the same ``session_id``.
+        mcp_skill_origins: Server labels of MCP skill content the
+            conversation carried (docs/design/mcp-skills.md). Written as a
+            top-level field only when non-empty; :func:`load_session_record`
+            turns it back into a provenance record in the transcript.
 
     Returns:
         ``(path, session_id)`` — path of the saved file and the stable session UUID.
@@ -198,6 +203,8 @@ def save_session(
         "active_skills": active_skills or [],
         "messages": messages,
     }
+    if mcp_skill_origins:
+        data["mcp_skill_origins"] = list(mcp_skill_origins)
     partial = session_file.with_name(session_file.name + ".tmp")
     try:
         with open(partial, "w", encoding="utf-8") as f:
@@ -258,6 +265,7 @@ def persist_agent_session(
         session_id=session_id,
         project_root=project_root,
         supersedes=supersedes,
+        mcp_skill_origins=_mcp_skill_origins(agent, active_skills),
     )
 
 
@@ -265,6 +273,163 @@ def persist_agent_session(
 #: into the ``<active-skills>`` prompt block as ``Task: ...``, so it is
 #: model-facing text — one spelling for every restore path.
 RESTORE_TASK_DESCRIPTION = "Restored from session"
+
+
+def _mcp_skill_origins(agent: Any, active_skills: List[str]) -> List[str]:
+    """Every MCP skill origin the conversation carries, for the session file.
+
+    Saved beside the messages rather than in them, so a restore re-arms the
+    gates whatever happened to the transcript: a path that moved skill
+    content without its marker, or a host's direct ``activate_skill`` later
+    deactivated, which left no message at all. The union of what the live
+    session holds, what the transcript names and the saved active skills.
+    Never raises; on an error the answer is the unknown origin, so the
+    restore errs towards asking.
+    """
+    from ..skills import provenance
+
+    try:
+        origins = set(provenance.skill_origins(getattr(agent, "messages", None) or []))
+        origins |= {
+            label for label in map(provenance.name_origin, active_skills) if label
+        }
+        session_origins = getattr(agent, "_mcp_session_origins", None)
+        if callable(session_origins):
+            origins |= set(session_origins())
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("could not collect MCP skill origins before saving")
+        origins = {provenance.UNKNOWN_ORIGIN}
+    return sorted(o for o in origins if isinstance(o, str))
+
+
+def withheld(labels: Any) -> str:
+    """The placeholder for withheld MCP skill content, with its origins.
+
+    The marker keeps the provenance through the next save: a session
+    restored, saved and restored again still re-arms the gates for the
+    servers the withheld content came from.
+    """
+    from ..skills.provenance import UNKNOWN_ORIGIN, result_marker
+
+    return MCP_SKILL_WITHHELD + "\n" + result_marker(set(labels) or {UNKNOWN_ORIGIN})
+
+
+#: What a restored transcript shows in place of MCP skill content.
+MCP_SKILL_WITHHELD = (
+    "[MCP skill content withheld: it was loaded in an earlier session, and its "
+    "approval does not carry over. Activate the skill again to reload it.]"
+)
+
+
+def withhold_mcp_skill_content(messages: Any) -> int:
+    """Remove MCP skill content from a restored transcript; return how many messages changed.
+
+    A restored session does not re-activate MCP skills (their approval is the
+    old session's, docs/design/mcp-skills.md D5), so nothing in the new
+    session holds them — and the §6 gates key on held entries. Left in the
+    transcript, a skill's instructions would be in context with no gate on
+    the shell. So the content goes until the user approves it again: every
+    ``<mcp-skill>`` block, every ``<mcp-skill-file>`` block (a skill file
+    read through ``read_skill_file`` or a verified ``read_mcp_resource``), and
+    every ``read_skill_file`` result whatever its shape, and — by the call's
+    arguments — every read-back of such a result the formatter spilled to
+    ``.agentao/tool-outputs/``.
+
+    Replaces changed messages in the list with new dicts rather than editing
+    them: ACP replays the loaded history to its client from the same dicts,
+    and what the *user* is shown of their own history is not what this
+    withholds from the model. Never raises.
+    """
+    from ..skills import provenance
+
+    changed = 0
+    if not isinstance(messages, list):
+        return 0
+    for index, message in enumerate(messages):
+        # By provenance: only results of the three tools that put a loaded
+        # skill's content into the transcript (never spilled, so no
+        # ``read_file`` of a spill is one). A ``read_file`` of a source file
+        # that merely mentions the tag is not skill content.
+        if not provenance.is_skill_message(message):
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        if message.get("name") in ("activate_skill", "read_mcp_resource"):
+            new = provenance.BLOCK.sub(
+                lambda block: withheld(provenance.content_origins(block.group(0))), content,
+            )
+            if provenance.WRAPPER.search(new):
+                # A wrapper with one end missing — a long result is kept as
+                # head + tail, which can drop either tag. Where its content
+                # ends cannot be told, so the whole message goes.
+                new = withheld(provenance.content_origins(content))
+        else:
+            new = withheld(provenance.content_origins(content))
+        if new != content:
+            messages[index] = {**message, "content": new}
+            changed += 1
+    return changed
+
+
+def _gate_restored_origins(agent: Any, labels: set) -> None:
+    """Keep the gates on for MCP skill content the restored transcript carried.
+
+    The skill results themselves are withheld, but what was derived from
+    them is not and cannot be told apart: an assistant message quoting the
+    instructions, a summary paraphrasing them, a sub-agent's answer. So the
+    origins count as loaded in the new conversation — the shell, shell-
+    capable spawns and resource reads are asked, as when the content was
+    live — until ``/clear``. With no Skills session, the skill manager's
+    restore-only origin set gates the same calls, and marked summaries are
+    withheld as well. Never raises.
+    """
+    from ..skills import provenance
+
+    try:
+        manager = getattr(agent, "skill_manager", None)
+        mcp_skills = getattr(manager, "mcp_skills", None)
+        if mcp_skills is not None:
+            mcp_skills.taint(labels, getattr(manager, "mcp_view", None))
+            return
+        if manager is not None:
+            manager.mcp_orphan_origins = set(labels)
+        messages = getattr(agent, "messages", None)
+        for index, message in enumerate(messages or ()):
+            origins = provenance.marker_origins(message)
+            if origins:
+                messages[index] = {**message, "content": withheld(origins)}
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("could not gate restored MCP skill origins")
+
+
+def _leave_outgoing_mcp_skills(agent: Any) -> None:
+    """End the outgoing conversation's MCP skill state at a restore.
+
+    An in-process resume (``/sessions resume``) swaps the transcript without
+    ``clear_history()``: the outgoing session's MCP activations would stay
+    in the volatile prompt, and its held entries and approvals would carry
+    the gates and the consent over. A new conversation generation and the
+    MCP entries dropped from ``active_skills`` end both. Never raises.
+    """
+    try:
+        manager = getattr(agent, "skill_manager", None)
+        # The outgoing transcript's restore-only origins go with it; the
+        # incoming one's are set afresh by the caller.
+        if isinstance(getattr(manager, "mcp_orphan_origins", None), set):
+            manager.mcp_orphan_origins = set()
+        mcp_skills = getattr(manager, "mcp_skills", None)
+        if mcp_skills is None:
+            return
+        active = getattr(manager, "active_skills", None)
+        if isinstance(active, dict):
+            for name in [n for n, info in active.items()
+                         if isinstance(info, dict) and info.get("mcp_key") is not None]:
+                del active[name]
+        if getattr(manager, "mcp_view", None) is None:
+            mcp_skills.clear_held()
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("could not reset MCP skill state on restore")
 
 
 def restore_agent_skills(
@@ -313,6 +478,35 @@ def restore_agent_skills(
     ``context`` is a label used only in log lines (e.g. ``"session/load"``,
     ``"resume"``, ``"/sessions resume"``).
     """
+    # First, and whatever the skill list holds: the transcript was hydrated
+    # before this runs, on every restore path. Origins are read *before* the
+    # content is withheld: what the model said about a skill (an assistant
+    # message quoting it) stays, so its gates must come back.
+    from ..skills import provenance
+
+    try:
+        carried = provenance.skill_origins(getattr(agent, "messages", None) or [])
+    except Exception:  # pragma: no cover - defensive
+        carried = {provenance.UNKNOWN_ORIGIN}
+    # And the saved active skills: an MCP skill a host activated directly put
+    # its instructions in context through the active-skills block alone,
+    # leaving no message — its name on disk is the only record.
+    if isinstance(active_skills, (list, tuple)):
+        carried |= {
+            label for label in map(provenance.name_origin, active_skills) if label
+        }
+    try:
+        withheld_count = withhold_mcp_skill_content(getattr(agent, "messages", None))
+    except Exception:  # pragma: no cover - defensive; the helper does not raise
+        withheld_count = 0
+    if withheld_count:
+        logger.info(
+            "%s withheld MCP skill content from %d restored message(s) for %s",
+            context, withheld_count, session_id or "session",
+        )
+    _leave_outgoing_mcp_skills(agent)
+    if carried:
+        _gate_restored_origins(agent, carried)
     if isinstance(active_skills, (list, tuple)):
         names = [n for n in active_skills if isinstance(n, str) and n]
         dropped = len(active_skills) - len(names)
@@ -366,6 +560,21 @@ def restore_agent_skills(
     restored: List[str] = []
     skipped: List[str] = []
     for name in names:
+        # An MCP skill's approval is for the session that gave it
+        # (docs/design/mcp-skills.md D5), and a restore runs outside the
+        # planner's consent gate: re-activating here would load
+        # server-written instructions — or, for a name absent from the
+        # listing, an arbitrary URI from the session file — with no consent.
+        if name.startswith("mcp:"):
+            logger.info(
+                "%s did not restore MCP skill %r for %s: its approval does not "
+                "carry over; activate it again to be asked",
+                context,
+                name,
+                session_id or "session",
+            )
+            skipped.append(name)
+            continue
         try:
             outcome = activate(name, RESTORE_TASK_DESCRIPTION)
         except Exception:
@@ -499,12 +708,53 @@ def load_session_record(
             f"session file {session_file.name} is not a JSON object"
         )
 
+    messages = data.get("messages", [])
+    _append_saved_mcp_origins(messages, data.get("mcp_skill_origins"))
     return (
         data.get("session_id") or session_file.stem,
-        data.get("messages", []),
+        messages,
         data.get("model", ""),
         data.get("active_skills", []),
     )
+
+
+def _append_saved_mcp_origins(messages: Any, saved: Any) -> None:
+    """Carry a session file's ``mcp_skill_origins`` into its transcript.
+
+    Every restore path reads provenance from the messages
+    (:func:`restore_agent_skills`), so the saved field reaches all of them by
+    becoming a system record there — only for origins the messages do not
+    already name. The field is untrusted: anything present that is not a
+    list of non-empty strings reads as the unknown origin, so a damaged
+    field still gates. Never raises.
+    """
+    from ..skills import provenance
+
+    if not isinstance(messages, list) or saved is None or saved == []:
+        return
+    try:
+        if isinstance(saved, list) and saved and all(
+            isinstance(label, str) and label for label in saved
+        ):
+            labels = set(saved)
+        else:
+            labels = {provenance.UNKNOWN_ORIGIN}
+        missing = labels - provenance.skill_origins(messages)
+        if missing:
+            # A ``user`` message in ``<system-reminder>``, the runtime's form
+            # for a note in history: a ``system`` message after the first
+            # turn is refused by strict chat templates. Replay and titles
+            # skip the block; the marker line is trusted on ``user``.
+            messages.append({
+                "role": "user",
+                "content": (
+                    "<system-reminder>\n[MCP skill content from these servers was "
+                    "in this conversation's context.]\n"
+                    + provenance.result_marker(missing) + "\n</system-reminder>"
+                ),
+            })
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("could not read the saved MCP skill origins")
 
 
 def load_session(

@@ -52,8 +52,8 @@ def child_wires(monkeypatch):
     scripts, built = [], []
     real_build = AgentToolWrapper._build_sub_agent
 
-    def build(self, suppress_output):
-        sub_agent, setup = real_build(self, suppress_output)
+    def build(self, suppress_output, skill_manager=None):
+        sub_agent, setup = real_build(self, suppress_output, skill_manager)
         attach(sub_agent.llm, scripts.pop(0))
         built.append(sub_agent)
         return sub_agent, setup

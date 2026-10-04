@@ -8,6 +8,7 @@ would close an import cycle (``mcp/tool.py`` already imports ``tools.base``).
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any, Dict, Optional
 
@@ -134,6 +135,18 @@ class ListMcpResourceTemplatesTool(_ListTool):
 
 
 class ReadMcpResourceTool(_McpResourceTool):
+    #: The session's ``McpSkills``, set when a Skills server is connected
+    #: (docs/design/mcp-skills.md §6.1). ``None``: every read is ordinary.
+    skill_session: Any = None
+    #: The conversation generation of ``skill_session`` this instance reads;
+    #: a sub-agent's copy is bound to its own (:meth:`for_view`).
+    skill_view: Optional[int] = None
+
+    def for_view(self, view: Optional[int]) -> "ReadMcpResourceTool":
+        clone = copy.copy(self)
+        clone.skill_view = view
+        return clone
+
     @property
     def name(self) -> str:
         return READ_RESOURCE
@@ -162,18 +175,56 @@ class ReadMcpResourceTool(_McpResourceTool):
         if not server or not uri:
             return "Error: read_mcp_resource requires both server and uri."
         try:
-            read = self.resolve_read(server, uri)
+            # One routing decision for both the read and its rendering: a
+            # second look could disagree (a concurrent load or ``/clear``)
+            # and render verified skill content as an ordinary, saved read.
+            read, is_skill = self._resolve(server, uri)
         except McpResourceError as e:
             return f"Error: {e}"
-        return render_read(read, saver_for(self.working_directory))
+        if not is_skill:
+            rendered = render_read(read, saver_for(self.working_directory))
+            from ..skills.provenance import is_skill_result
+
+            if is_skill_result(READ_RESOURCE, rendered):
+                # Server text shaped like the wrapper only this tool writes for
+                # verified skill content: it is not provenance. Led by a line
+                # of ours so compaction, a restore and the spill path do not
+                # read it as a loaded skill's content.
+                rendered = f"[Resource {uri} from MCP server '{server}']\n" + rendered
+            return rendered
+        # A loaded skill's content: this tool never saves it as a file (a saved
+        # copy would outlive the approval, readable with ``read_file`` and no
+        # gate), and it is marked so a session restore withholds it.
+        from .skills import wrap_skill_file
+
+        return wrap_skill_file(server, uri, render_read(read, _refuse_to_save))
 
     def resolve_read(self, server: str, uri: str):
         """The one function every read goes through, before any request.
 
-        A seam for the Skills extension (docs/design/mcp-skills.md §6.1), which
-        routes a read inside a loaded skill's directory to its verifier here.
+        The Skills extension (docs/design/mcp-skills.md §6.1) routes a read
+        inside the directory of a skill loaded from ``server`` to the skill's
+        verifier here: a manifest file comes back verified, an unlisted one
+        is refused before any request. Every other read is ordinary — a raw
+        read of a SKILL.md loads nothing.
         """
-        return self._manager.read_resource(server, uri)
+        return self._resolve(server, uri)[0]
+
+    def _resolve(self, server: str, uri: str):
+        """``(read, is_skill_read)`` — :meth:`resolve_read` and how it routed."""
+        session = self.skill_session
+        if session is not None and self._manager.resources_allowed(server):
+            # Config first, as for every resource call: ``"resources": false``
+            # refuses the generic tool even for a loaded skill's files, which
+            # stay readable through ``read_skill_file``.
+            verified = session.generic_read(server, uri, self.skill_view)
+            if verified is not None:
+                return verified(), True
+        return self._manager.read_resource(server, uri), False
+
+
+def _refuse_to_save(_data: bytes, _uri: str, _mime: Any) -> str:
+    raise OSError("MCP skill content is not saved to disk; read it with read_skill_file")
 
 
 def resource_tools(manager: Any) -> list:

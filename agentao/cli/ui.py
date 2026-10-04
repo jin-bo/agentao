@@ -6,7 +6,7 @@ the ``AgentaoCLI`` instance as their first argument.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rich.markdown import Markdown
 
@@ -72,6 +72,47 @@ def print_help(cli: "AgentaoCLI") -> None:
     console.print(Markdown(CLI_HELP_TEXT))
 
 
+def _safe(text: Any) -> str:
+    """Text from outside agentao, made safe for one Rich ``console.print``.
+
+    Terminal controls and bidi overrides first, then Rich markup —
+    ``rich.markup.escape`` alone handles only the latter. Skill names can be
+    server-written (``mcp:<server>:<uri>``) and tasks model-written, and an
+    unbalanced ``[/cyan]`` in either raises ``MarkupError`` out of the whole
+    listing.
+    """
+    from rich.markup import escape
+
+    from ..security.terminal_text import sanitize_terminal_text
+
+    return escape(sanitize_terminal_text(str(text)))
+
+
+def _list_mcp_skills(sm: Any, remote: list) -> None:
+    """``/skills``' MCP group: per server, with what cannot be loaded and why.
+
+    Everything here is server-written, so every string is escaped before it
+    reaches Rich markup (docs/design/mcp-skills.md §5.4, §5.6).
+    """
+    escape = _safe
+
+    mcp = getattr(sm, "mcp_skills", None)
+    if mcp is None:
+        return
+    console.print(f"\n[info]MCP Skills ({len(remote)}):[/info]\n")
+    for label in mcp.servers:
+        listing = mcp.listing(label)
+        console.print(f"  [cyan]{escape(label)}[/cyan]")
+        for skill_name in sorted(n for n in remote if (sm.get_skill_info(n) or {}).get("mcp_server") == label):
+            info = sm.get_skill_info(skill_name) or {}
+            console.print(f"    • [cyan]{escape(skill_name)}[/cyan] - {escape(str(info.get('title', '')))}")
+            desc = str(info.get("description", ""))[:100]
+            if desc:
+                console.print(f"      {escape(desc)}...")
+        for uri, reason in (listing.unavailable if listing else []):
+            console.print(f"    • [dim]{escape(uri)}[/dim] — unavailable: {escape(reason)}")
+
+
 def list_skills(cli: "AgentaoCLI") -> None:
     sm = cli.agent.skill_manager
     available = sm.list_available_skills()
@@ -88,28 +129,35 @@ def list_skills(cli: "AgentaoCLI") -> None:
     # clear one — needs the name to be typed.
     stale = sorted(disabled_set - known)
 
+    remote = [
+        n for n in available
+        if (sm.get_skill_info(n) or {}).get("source_kind") == "mcp"
+    ]
+    available = [n for n in available if n not in remote]
     console.print(f"\n[info]Available Skills ({len(available)}):[/info]\n")
     for skill_name in sorted(available):
         skill_info = sm.get_skill_info(skill_name)
         title = skill_info.get('title', skill_name) if skill_info else skill_name
         desc = skill_info.get('description', 'No description')[:100] if skill_info else 'No description'
-        console.print(f"  • [cyan]{skill_name}[/cyan] - {title}")
+        console.print(f"  • [cyan]{_safe(skill_name)}[/cyan] - {_safe(title)}")
         if desc:
-            console.print(f"    {desc}...")
+            console.print(f"    {_safe(desc)}...")
+
+    _list_mcp_skills(sm, remote)
 
     if disabled:
         console.print(f"\n[info]Disabled Skills ({len(disabled)}):[/info]\n")
         for skill_name in disabled:
             skill_info = sm.get_skill_info(skill_name)
             title = skill_info.get('title', skill_name) if skill_info else skill_name
-            console.print(f"  • [dim]{skill_name}[/dim] - {title}")
+            console.print(f"  • [dim]{_safe(skill_name)}[/dim] - {_safe(title)}")
 
     if stale:
         console.print(
             f"\n[info]Disabled, not found by the last scan ({len(stale)}):[/info]\n"
         )
         for skill_name in stale:
-            console.print(f"  • [dim]{skill_name}[/dim]")
+            console.print(f"  • [dim]{_safe(skill_name)}[/dim]")
         console.print(
             "  [dim]Kept so the skill comes back disabled if it reappears; "
             "clear one with /skills enable <name>.[/dim]"
@@ -119,7 +167,7 @@ def list_skills(cli: "AgentaoCLI") -> None:
     active = sm.get_active_skills()
     if active:
         for skill, info in active.items():
-            console.print(f"  • [success]{skill}[/success]: {info['task']}")
+            console.print(f"  • [success]{_safe(skill)}[/success]: {_safe(info['task'])}")
     else:
         console.print("  None")
     console.print()

@@ -173,6 +173,7 @@ def register_mcp_tools(agent: "Agentao", manager: "McpClientManager") -> None:
 
     if real:
         register_mcp_resource_tools(agent, manager)
+        register_mcp_skills(agent, manager)
 
 
 def register_mcp_resource_tools(agent: "Agentao", manager: "McpClientManager") -> None:
@@ -198,3 +199,45 @@ def register_mcp_resource_tools(agent: "Agentao", manager: "McpClientManager") -
             continue
         _bind_and_register(agent, tool, origin="mcp")
         agent.llm.logger.info(f"Registered MCP resource tool: {tool.name}")
+
+
+def register_mcp_skills(agent: "Agentao", manager: "McpClientManager") -> None:
+    """Attach the session's MCP skills and register ``read_skill_file``.
+
+    Only for servers with ``"skills": true`` whose connection passed the gate
+    (docs/design/mcp-skills.md §5.2). One :class:`McpSkills` per session: the
+    skill manager carries it, and its child views — every sub-agent's —
+    share it, which is what lets the §6 gates and same-origin verification
+    see every load in the session. ``read_skill_file`` is registered even
+    when the servers list nothing: a skill can still be loaded by URI (D2).
+    """
+    servers = manager.skill_servers()
+    if not servers:
+        return
+    # A host-injected skill manager written before MCP Skills has no
+    # ``attach_mcp_skills``: Skills stay off for it, rather than the
+    # missing method raising out of ``Agentao.__init__``.
+    if not callable(getattr(agent.skill_manager, "attach_mcp_skills", None)):
+        agent.llm.logger.warning(
+            "MCP: skills from %s not offered: the skill manager in use has no "
+            "attach_mcp_skills", ", ".join(servers),
+        )
+        return
+    from ..mcp.skill_tools import ReadSkillFileTool
+    from ..mcp.skills import McpSkills
+    from .registry import _bind_and_register
+
+    mcp_skills = McpSkills(manager, servers)
+    agent.skill_manager.attach_mcp_skills(mcp_skills)
+    # The generic resource read routes a read inside a loaded skill's
+    # directory to the skill's verifier (§6.1, same origin).
+    reader = agent.tools.tools.get("read_mcp_resource")
+    if reader is not None and hasattr(reader, "skill_session"):
+        reader.skill_session = mcp_skills
+    tool = ReadSkillFileTool(mcp_skills)
+    if tool.name not in agent._disable_tools:
+        _bind_and_register(agent, tool, origin="mcp")
+    listed = sum(1 for e in mcp_skills.catalogue() if not e.unavailable)
+    agent.llm.logger.info(
+        f"MCP: {listed} skill(s) from {len(servers)} Skills server(s)"
+    )
