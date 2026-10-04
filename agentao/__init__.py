@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 warnings.filterwarnings("ignore", message="urllib3.*or chardet.*doesn't match")
 
-__version__ = "0.5.10.dev0"
+__version__ = "0.5.10"
 
 
 def _ensure_utf8() -> None:
