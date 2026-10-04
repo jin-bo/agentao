@@ -4,7 +4,8 @@
 until a trigger condition (below) is met. **Updated 2026-08-03** with pi-mono as
 a second reference implementation — it does *not* change the decision, and its
 driver is provider-led rather than tool-list bloat, so it is not a second
-instance of the trigger.
+instance of the trigger. **Measured 2026-10-03** (see *Measurement* below): the
+cost is now known for a six-server setup; no trigger has been observed.
 **Audience:** agentao maintainers considering tool-list-budget pressure from
 MCP / plugin growth.
 **Companion:** `tool-search.zh.md`.
@@ -301,6 +302,45 @@ behavior change.
 - **Not an excuse to skip the tool-budget conversation.** If a host is hitting
   tool-list bloat, the first response is usually "fewer MCP servers" or "split
   the embed into focused agents", not "add `tool_search`".
+
+## Measurement (2026-10-03)
+
+Run with `scripts/measure_tool_tokens.py`. It makes no model request. It counts
+the tool list `ToolRegistry.to_openai_format()` returns, in `tiktoken`
+`o200k_base`, with MCP tools in their `mcp_<server>_<tool>` wrappers. Other
+providers tokenize differently, so these are relative sizes.
+
+| Setup | Tools | Tool-definition tokens | Plus system prompt |
+| --- | ---: | ---: | ---: |
+| Built-ins only | 13 | 2,864 | 6,606 |
+| Built-ins + 6 public MCP servers | 92 | 17,838 | 21,579 |
+
+The six servers, at pinned versions: `playwright` (25 tools, 4,925 tokens),
+`github` (26, 4,915; the archived npm server, so a floor for GitHub's current
+one), `filesystem` (14, 2,166), `memory` (9, 1,277), `sequential-thinking`
+(1, 954) and `fetch` (1, 305). Their 76 tools cost 14,543 tokens, a median of
+170 per tool; the 3 resource tools add 432. The largest built-in is
+`run_shell_command` at 547.
+
+What this means against the 200,000-token default window:
+
+- Built-ins alone, with the system prompt, are 3.3% of the window per request.
+  The six-server setup is 10.8%. Its tool definitions alone are 16% of the
+  110,000 tokens a request can reach before microcompaction starts (55%).
+- The definitions sit in the cached prefix and are sorted by name, so on an
+  endpoint that caches, repeat requests read them from the cache.
+- Compaction already counts them: after the first response its threshold is
+  anchored on the provider's `prompt_tokens`, which includes the tool list.
+  Only a session's first request uses a local estimate that leaves them out.
+- The most `tool_search` could save here is about the MCP share, 14.5k tokens
+  per request, less the search tool's own definition and whatever it loads.
+
+Against the triggers below: (1) is not met. The six-server setup has more than
+30 MCP tools and a measurable cost, but it is a constructed one; no real embed
+has reported it (issue search, 2026-10-03), and the maintainer's projects on the
+machine where this was measured configure no MCP servers. (2) is not measured; it needs an eval against a real
+model. (3) is not met; agentao has no plugin tool registration. The decision
+stays as it is. These numbers are what a report under (1) can be compared to.
 
 ## Trigger conditions for implementation
 

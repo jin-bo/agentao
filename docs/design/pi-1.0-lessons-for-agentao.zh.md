@@ -116,7 +116,7 @@ Pi 1.0 没有 `skills/list`、`skills/get` 或 `io.modelcontextprotocol/skills` 
 | 顺序 | 工作 | 先验证什么 |
 | --- | --- | --- |
 | 1 | 复现并修正 MCP 重试边界（已实施，见第 3 节） | 执行后断线是否造成重复调用 |
-| 2 | 测量工具定义成本 | 代表性任务的工具定义 Token |
+| 2 | 测量工具定义成本（已测量，见 tool-search.md“测量”一节；未满足触发条件） | 代表性任务的工具定义 Token |
 | 3 | 按真实需求决定工具搜索或 OAuth 多账号隔离 | 是否满足 tool-search.md 的触发条件；是否有同 URL 双账号需求 |
 
 后台任务恢复（Durable）、Codemode 和可选全屏 TUI 保留为观察项，出现真实需求后再评估。MCP Resources 与远程 Skills 已在 0.5.10 发布，不在此列。
