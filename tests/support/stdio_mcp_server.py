@@ -7,14 +7,16 @@ needs to observe is a file in its ``marks`` directory:
 - ``started-<pid>`` for every launch;
 - ``called-<tool>`` when a call arrives;
 - ``overlap`` when two calls are in flight at once;
-- ``eof-<pid>`` when its stdin closes.
+- ``eof-<pid>`` when its stdin closes;
+- ``calls``, one line per tool call it has run, across launches.
 
 Files the test creates in the same directory change what it does:
 
 - ``refuse``: exit at launch;
 - ``mute``: read stdin and never answer;
 - ``hang``: leave tool calls unanswered;
-- ``deafen``: close its stdin after a tool call, and stay alive.
+- ``deafen``: close its stdin after a tool call, and stay alive;
+- ``die``: run a tool call, then exit without answering it.
 
 Its handshake echoes the client's protocol version, which suits tests of call
 scheduling and connection lifetime, not of negotiation (``tests/support/mcp.py``
@@ -61,6 +63,10 @@ SCRIPT = textwrap.dedent('''
             if active[0] >= 2:
                 (marks / "overlap").touch()
         (marks / f"called-{name}").touch()
+        with open(marks / "calls", "a") as log:
+            log.write(name + "\\n")
+        if (marks / "die").exists():
+            os._exit(0)  # the call ran; its answer never leaves
         if (marks / "hang").exists():
             return  # never answered
         time.sleep(delay)
@@ -111,6 +117,12 @@ def stdio_server(directory: Path, *, delay: float = 0.5) -> Tuple[Dict[str, Any]
         "trust": True,
     }
     return config, marks
+
+
+def calls(marks: Path) -> list:
+    """Every tool call the server ran, in order, across launches."""
+    log = marks / "calls"
+    return log.read_text().splitlines() if log.exists() else []
 
 
 def started(marks: Path) -> list:

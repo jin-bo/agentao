@@ -15,6 +15,22 @@ _Targeting 0.5.11. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **An MCP tool call is no longer sent twice when its connection drops.**
+  `McpClient.call_tool` reconnected and re-sent a call after a dropped
+  transport (`Connection closed`, a reset, `BrokenResourceError`, …) raised
+  inside the SDK call. That error does not show whether the server received
+  the call, so a server that ran it and died before answering ran it again on
+  the new connection. Now the call returns an error that says the result is
+  unknown, the session is dropped, and the next call reconnects. A connection
+  already seen closing before the call is sent is still reconnected first, and
+  a session the server refused (404 `Session terminated`, `Session not found`)
+  is still retried once. mcp 2.x's `-32603 Session terminated before the
+  request completed`, sent for a request already in flight, is now treated as
+  a dropped transport rather than a refusal. Resource reads keep their
+  reconnect-and-retry. Cost: a stdio server that died while idle is noticed
+  only by the next call, which then reports an unknown result for a call that
+  never ran; the call after it reconnects.
+
 ---
 
 ## [0.5.10] — 2026-10-03

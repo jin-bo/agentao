@@ -1,9 +1,10 @@
 """Tests for MCP error classification helpers.
 
 The classifier turns the old "retry on any first-attempt exception"
-loop into a classified retry: session-expired / transport-dropped
-errors reconnect-and-retry, auth failures surface immediately, all
-other errors surface without reconnecting.
+loop into a classified policy: a session the server refused reconnects
+and retries, a dropped transport reports the result as unknown and is
+not sent again (the server can have run it), auth failures surface
+immediately, all other errors surface without reconnecting.
 """
 
 import asyncio
@@ -11,6 +12,9 @@ from unittest.mock import patch
 
 import pytest
 
+from mcp.types import INTERNAL_ERROR, INVALID_REQUEST, ErrorData
+
+from agentao.mcp._compat import McpProtocolError
 from agentao.mcp.client import (
     McpClient,
     McpErrorKind,
@@ -68,6 +72,37 @@ def test_classify_mcp_error_by_type_name(type_name):
     """
     exc = type(type_name, (Exception,), {})()
     assert classify_mcp_error(exc) is McpErrorKind.TRANSPORT_DROPPED
+
+
+def _protocol_error(code: int, message: str) -> Exception:
+    """The SDK's JSON-RPC exception, across the 1.x / 2.x constructor split
+    (``_compat.McpProtocolError`` is only safe to *catch*; see its docstring)."""
+    try:
+        return McpProtocolError(code=code, message=message, data=None)
+    except TypeError:
+        return McpProtocolError(ErrorData(code=code, message=message))
+
+
+@pytest.mark.parametrize(
+    "code, message, kind",
+    [
+        # The SDK client's spelling of a 404 on a known session: refused.
+        (INVALID_REQUEST, "Session terminated", McpErrorKind.SESSION_EXPIRED),
+        # The SDK server's answer to an unknown session id: refused.
+        (INVALID_REQUEST, "Session not found", McpErrorKind.SESSION_EXPIRED),
+        # mcp 2.x's server, for a request in flight when its session ended
+        # (``server/streamable_http.py``): the handler had it, so it can have run.
+        (
+            INTERNAL_ERROR,
+            "Session terminated before the request completed",
+            McpErrorKind.TRANSPORT_DROPPED,
+        ),
+    ],
+)
+def test_a_session_error_is_a_refusal_only_when_the_server_did_not_take_the_request(
+    code, message, kind
+):
+    assert classify_mcp_error(_protocol_error(code, message)) is kind
 
 
 # ---------------------------------------------------------------------------
@@ -166,17 +201,38 @@ def test_generic_error_does_not_reconnect():
     assert connect_calls["n"] == 0
 
 
-def test_transport_dropped_triggers_reconnect_and_retry():
-    """A dropped transport (anyio ClosedResourceError, broken pipe, …)
-    must reconnect-and-retry once, the same as a session-expired error.
-    The previous behavior retried any first-call failure, and dropping
-    that broad retry without covering transport-loss errors lost
-    automatic recovery for genuinely recoverable cases.
-    """
+def _spy_connect_count():
+    calls = {"n": 0}
+
+    async def _spy_connect(self_):
+        calls["n"] += 1
+
+    return calls, _spy_connect
+
+
+def test_transport_dropped_is_not_sent_again():
+    """A dropped transport (anyio ClosedResourceError, broken pipe, …) after
+    the call went out does not show whether the server ran it. Sending it
+    again could run a tool with side effects twice, so the call reports an
+    unknown result, drops the session for the next call, and does not
+    reconnect itself."""
+    calls, spy = _spy_connect_count()
     client = _make_client_with_session([RuntimeError("connection reset by peer")])
-    with _patch_connect_with_ok_session("ok"):
+    with patch.object(McpClient, "connect", spy):
         out = _run(client.call_tool("t", {}))
-    assert out == "ok"
+
+    assert out.startswith("MCP tool error: the connection to MCP server 'svr' closed"), out
+    assert "The result is unknown" in out
+    assert calls["n"] == 0
+    assert client._session is None
+    assert client.status is ServerStatus.DISCONNECTED
+
+
+def test_the_call_after_a_dropped_transport_reconnects():
+    client = _make_client_with_session([RuntimeError("connection reset by peer")])
+    _run(client.call_tool("t", {}))
+    with _patch_connect_with_ok_session("ok"):
+        assert _run(client.call_tool("t", {})) == "ok"
 
 
 def test_auth_failure_with_session_wording_does_not_retry():
@@ -201,12 +257,41 @@ def test_auth_failure_with_session_wording_does_not_retry():
     assert connect_calls["n"] == 0
 
 
-def test_anyio_closed_resource_error_class_triggers_retry():
+def test_anyio_closed_resource_error_class_is_not_sent_again():
     """Even when the exception's str() is empty, the type name
     ``ClosedResourceError`` should still classify as transport-dropped.
     """
+    calls, spy = _spy_connect_count()
     closed_err = type("ClosedResourceError", (Exception,), {})()
     client = _make_client_with_session([closed_err])
-    with _patch_connect_with_ok_session("ok-after-reconnect"):
+    with patch.object(McpClient, "connect", spy):
         out = _run(client.call_tool("t", {}))
-    assert out == "ok-after-reconnect"
+    assert "The result is unknown" in out, out
+    assert calls["n"] == 0
+
+
+def test_a_session_terminated_mid_request_is_not_sent_again():
+    """The ``-32603`` form carries session wording but is not a refusal."""
+    calls, spy = _spy_connect_count()
+    client = _make_client_with_session(
+        [_protocol_error(INTERNAL_ERROR, "Session terminated before the request completed")]
+    )
+    with patch.object(McpClient, "connect", spy):
+        out = _run(client.call_tool("t", {}))
+    assert "The result is unknown" in out, out
+    assert calls["n"] == 0
+
+
+def test_a_refused_session_still_reconnects_and_retries():
+    client = _make_client_with_session([_protocol_error(INVALID_REQUEST, "Session terminated")])
+    with _patch_connect_with_ok_session("ok"):
+        assert _run(client.call_tool("t", {})) == "ok"
+
+
+def test_a_connection_already_closing_is_reconnected_before_the_call_is_sent():
+    """Nothing has gone out on a connection whose owner has already seen it
+    close, so the call reconnects first instead of failing on it."""
+    client = _make_client_with_session([AssertionError("sent on a closing connection")])
+    client._gone.set()
+    with _patch_connect_with_ok_session("ok"):
+        assert _run(client.call_tool("t", {})) == "ok"
