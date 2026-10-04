@@ -119,6 +119,13 @@ Merge rule: **same-name entries override** those from `.agentao/mcp.json`.
 | `timeout` | ❌ | Seconds, default 60 |
 | `trust` | ❌ | Same as above |
 
+All three transports also take two keys for the features below:
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `resources` | `true` | Any other value hides this server from the resource tools and `/mcp resources`, and refuses it by name |
+| `skills` | `false` | Only `true` turns on the MCP Skills extension for this server |
+
 ::: info Streamable HTTP is supported
 Agentao's MCP client imports `stdio_client`, `sse_client`, **and** `streamable_http_client` (plus `create_mcp_http_client`), so all three transports connect. `type` selects the transport (`"stdio"` / `"http"` / `"sse"`); if omitted it's inferred — `command` → stdio, a bare `url` → **Streamable HTTP**. Legacy SSE requires an explicit `"type": "sse"`. An unknown `type` or a missing required key fails closed (`McpTransportConfigError`). The ACP handshake advertises `mcpCapabilities.http: true`.
 :::
@@ -188,6 +195,10 @@ A server can also publish Agent Skills through the MCP Skills extension (`io.mod
 - **Files.** `read_skill_file(skill, path)` reads a file of an active MCP skill from that skill's own server, verified, and refuses a path that is not in the manifest. A `read_mcp_resource` inside a loaded skill's directory is verified the same way.
 - **Gates.** While any MCP skill is loaded (until `/clear`, not merely until deactivation), `run_shell_command`, spawning a sub-agent that can run shell commands, and `read_mcp_resource` on another server are asked, in every permission mode. They only tighten: a `deny` rule or read-only mode still denies.
 - **Sub-agents** share the session's loaded skills, so the gates hold inside them too.
+- **Hosts with no person to ask.** Activation and every gated call need a person. `NullTransport`, `SdkTransport` with no `confirm_tool`, and `build_compat_transport` with no `confirmation_callback` refuse them. A host that remembers "always allow" must read `agentao.transport.gate_note()` (4.5).
+- **Session restore.** `restore_agent_skills` never re-activates an MCP skill, withholds MCP skill content from the restored messages, and turns the gates back on (2.4).
+- **Limits.** At most 512 files and 16 MiB per skill. A `SKILL.md` over 100,000 bytes is listed as unavailable, because an active skill's `SKILL.md` is sent with every request. `read_skill_file` returns at most 30,000 characters per call, with `offset` and `limit` to page.
+- **Where the content is kept.** Skill content is never saved to `.agentao/tool-outputs/`. Replay files and `agentao.log` keep tool results verbatim, MCP skill content included, and a later `read_file` of them is not gated.
 
 A host reads the same data from the manager:
 
@@ -351,5 +362,6 @@ Don't lightly set `trust: true` on servers that can write/delete — you bypass 
 - Per-tenant tokens: pass `extra_mcp_servers` at construction (`{name: {command, args, env}}`); merges over `.agentao/mcp.json`. Project `.agentao/mcp.json` is **add-only** — it cannot override a user-scope name.
 - Tool naming: `mcp_{server}_{tool}` — auto-prefixed to avoid name collisions across servers.
 - Never set `trust: true` on write-capable servers — it bypasses confirmation entirely.
+- A server's **resources** become three read-only tools (`"resources": false` hides them). Its **skills** are off until `"skills": true`, and while one is loaded, shell and cross-server reads ask in every mode.
 
 → Next: [5.4 Permission Engine](./4-permissions)

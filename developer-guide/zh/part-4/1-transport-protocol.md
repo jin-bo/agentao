@@ -267,7 +267,7 @@ def test_my_transport():
 
 - Transport = **4 个方法**：`emit`（fire-and-forget）·`confirm_tool`（阻塞 bool）·`ask_user`（阻塞 str）·`on_max_iterations`（阻塞 dict）。
 - `emit` 抛出的异常会被吞；其他三个的异常会向上传播。
-- `NullTransport` = 静默 + 自动批准——适合测试和无人值守批处理。
+- `NullTransport` = 静默 + 自动批准——适合测试和无人值守批处理。MCP Skills 闸门发起的确认例外：它一律拒绝，因为这种同意只能由人给出（见 4.5）。
 - 自己实现 Transport 时 4 个方法都要给（哪怕是 no-op stub），让 Agent 循环在所有路径上都安全。
 
 → 下一节：[4.2 AgentEvent 事件清单](./2-agent-events)

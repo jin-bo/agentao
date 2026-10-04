@@ -11,6 +11,36 @@ _Targeting 0.5.10. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **MCP OAuth** (`docs/design/mcp-oauth.md`, #398, #399). A URL server
+  (Streamable HTTP or SSE) now uses OAuth by default: a 401 with a `Bearer`
+  challenge shows the server as `needs login`, and `/mcp login <name>
+  [--no-browser]` — or `agentao mcp login <name>` from a shell, for `agentao
+  run` and ACP sessions, which never start a login — authorizes it in the
+  browser, or by pasting the redirect URL, and reconnects it. `/mcp logout`
+  deletes the credential. Credentials live in `~/.agentao/mcp-oauth/` (0600,
+  one file per server URL, no OS keyring) and refresh automatically. An
+  optional `oauth` object in `mcp.json` takes `client_id`, `client_secret`,
+  `callback_port` and `redirect_host`; `"oauth": false`, a stdio server or an
+  `Authorization` header turns it off, and an ACP-supplied server never uses
+  it. **For hosts:** a URL server that answered 401 used to be a failed
+  connect; it is now `needs_auth` in `get_server_status()`. Limitations: on mcp
+  1.x the SDK does not check the authorization server's `iss` (RFC 9207), and
+  on 1.26 each login registers a new client; a `403 insufficient_scope` is
+  reported, not resolved by a new login; the login reads internal SDK fields,
+  so an SDK release that moves them stops the login with a message (logged-in
+  servers keep working). A server that needed login from startup loads its
+  tools after a restart.
+
+- **`agentao.transport.gate_note`** is now a public export. A host transport
+  that remembers "always allow" calls it inside `confirm_tool`: `None` means an
+  ordinary confirmation, and a string means the MCP Skills gate asked this one,
+  which must be put to a person, must not be answered from a remembered grant,
+  and must not be remembered. Before, only the built-in CLI and ACP transports
+  could read it, from `agentao.transport.confirmation`, which still works. The
+  developer guide's layered-confirmation example (4.5) now uses it, and
+  host-api documents it. The guides also stop saying that a transport with no
+  confirmation callback approves everything: it refuses a gated confirmation.
+
 - **MCP resources** (`docs/design/mcp-resources.md`). Three read-only tools —
   `list_mcp_resources(server?, cursor?)`, `list_mcp_resource_templates(server?,
   cursor?)`, `read_mcp_resource(server, uri)`, named and shaped as in codex and

@@ -84,7 +84,7 @@ The **bidirectional channel** between the agent and the host. A transport implem
 - `on_max_iterations(count, messages) -> dict` — fallback when the loop cap is hit
 
 Three built-ins:
-- `NullTransport` — silent, auto-approve (for tests)
+- `NullTransport` — silent, auto-approve except an MCP Skills gated confirmation, which it refuses (for tests)
 - `SdkTransport` — callback-driven, **the default for library embedding**
 - Rich CLI transport — for terminal users
 

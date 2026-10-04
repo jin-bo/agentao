@@ -14,6 +14,16 @@ construction time instead, see [../design/host-tool-injection.md](../design/host
    requests, file writes, deletions. This is what routes the tool through
    `PermissionEngine` — see [tool-confirmation.md](tool-confirmation.md).
 3. Register in `agentao/tooling/registry.py::register_builtin_tools()`.
+4. Write the description and the parameter text in Simplified Technical English
+   (ASD-STE100), as the system prompt does since #402: no semicolons, active voice,
+   one instruction per sentence, and a numbered list for a sequence of steps.
+   `tests/test_tool_description_facts.py` refuses a semicolon in any built-in tool.
+5. Make every claim in the description true. Take numbers from the code's
+   constants (`f"... {MAX_LINES_DEFAULT} lines"`), state each default, and list
+   every status or value the code can return. When a claim depends on the code,
+   add a test to `tests/test_tool_description_facts.py`. #404 and #405 fixed
+   descriptions that said what the code did not do, among them a background
+   shell command that was "checked for errors" and a line limit of "all lines".
 
 Note that `agent.py::_register_tools()` is a thin delegation — the real wiring lives in
 `register_builtin_tools()`, so registering in `agent.py` is the wrong place.

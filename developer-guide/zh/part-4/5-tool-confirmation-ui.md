@@ -164,7 +164,7 @@ def confirm_tool(name, desc, args):
     return False  # 默认拒绝
 ```
 
-对于批处理，**完全不传 `confirm_tool`** 也行——`NullTransport` 会自动批准所有工具。但这只在**绝对信任**的场景（比如你锁死了可用工具集 + 文件沙箱）才安全。
+对于批处理，**完全不传 `confirm_tool`** 也行——`NullTransport` 会自动批准所有工具，唯独拒绝 MCP Skills 闸门发起的确认。但这只在**绝对信任**的场景（比如你锁死了可用工具集 + 文件沙箱）才安全。
 
 ## 和权限引擎的协同
 
@@ -213,6 +213,8 @@ def confirm_tool(name, desc, args):
 生产场景往往是**多级组合**：
 
 ```python
+from agentao.transport import gate_note
+
 class SmartConfirm:
     def __init__(self, user_ui, tenant_rules: dict):
         self.ui = user_ui
@@ -221,6 +223,13 @@ class SmartConfirm:
         self._denied_until_restart = set()
 
     def __call__(self, name, desc, args):
+        # 0. MCP Skills 闸门确认：当场询问，什么都不记住
+        note = gate_note()
+        if note is not None:
+            if name in self.rules.get("deny", []):
+                return False                               # 黑名单照样拒绝
+            return self.ui.ask(name, note, args) == "allow_once"
+
         # 1. 本次会话"全部允许"
         if self._session_allow_all:
             return True
@@ -240,6 +249,8 @@ class SmartConfirm:
             return True
         return resp == "allow_once"
 ```
+
+第 0 步在 MCP 服务器提供 skills（`"skills": true`）时才起作用。加载了 MCP skill 期间，激活 skill、`run_shell_command`、能运行 shell 的子代理，以及跨服务器的 `read_mcp_resource` 都会以**闸门确认**的形式到来，此时 `gate_note()` 返回原因，也就是要展示给用户的文字。闸门确认不能用"全部允许"或白名单回答，回答也不能被记住。见 host-api《回答 MCP Skills 闸门发起的确认》。
 
 ## TL;DR
 

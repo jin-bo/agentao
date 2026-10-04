@@ -10,7 +10,7 @@ Agentao has four permission modes. Three are user-selectable; one (`plan`) is se
 |------|----------------|-----|-----------------|
 | `read-only` | **blocked** | asks | only for web calls — writes and shell are refused outright |
 | `workspace-write` | allowed for safe ops | **asks per domain** | shown for risky ops |
-| `full-access` | allowed | allowed | **never shown** |
+| `full-access` | allowed | allowed | **never shown**, except an MCP Skills gated call |
 | `plan` | blocked (safe shell allowlisted) | allowlist / asks, as `workspace-write` | (research-only; see ch. 4) |
 
 `workspace-write` is the default and the one you should run in 95% of the time.
@@ -78,7 +78,7 @@ Use when: normal development. The default for a reason.
 
 ### `full-access`
 
-Everything allowed without prompting. Skips the confirmation UI completely.
+Everything allowed without prompting. Skips the confirmation UI, with one exception: while an MCP skill is loaded, the MCP Skills gate still asks before activating an MCP skill, `run_shell_command`, a sub-agent that can run shell commands, and a `read_mcp_resource` on another server (ch. 8). That prompt shows a **Why:** line and offers only `1` (this call only) and `3`.
 
 ::: danger Don't leave full-access on
 Switching to full-access is a **session-wide** decision. The next turn could `rm -rf`, exfiltrate data, or call paid APIs at scale. Use it only when:
@@ -112,7 +112,7 @@ Single-key input. No Enter needed. Behavior:
 | Key | Effect |
 |-----|--------|
 | `1` | Run **this** tool call. Next risky call asks again. |
-| `2` | Switch session to `full-access`. **Every subsequent tool call runs without asking** until you `/mode workspace-write` or restart. |
+| `2` | Switch session to `full-access`. **Every subsequent tool call runs without asking** until you `/mode workspace-write` or restart — except an MCP Skills gated call, which still asks and does not offer `2`. |
 | `3` | Cancel this tool call. The agent gets `Tool execution declined` as the result and continues — usually it adapts. |
 | `Esc` / `Ctrl+C` | Same as `3`. |
 | Other keys | Silently ignored. |

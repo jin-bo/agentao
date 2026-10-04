@@ -10,7 +10,7 @@ Agentao 共有四种权限模式。三种用户可切；第四种 (`plan`) 由 `
 |---|---|---|---|
 | `read-only` | **拒绝** | 问 | 只对网络调用弹 — 写和 shell 直接拒 |
 | `workspace-write` | 安全操作放行 | **按域名问** | 风险操作时弹 |
-| `full-access` | 放行 | 放行 | **永不弹** |
+| `full-access` | 放行 | 放行 | **永不弹**（MCP Skills 闸门确认除外） |
 | `plan` | 拒绝（安全 shell 走白名单） | 与 `workspace-write` 相同：白名单 / 问 | （只读研究模式，见第 4 章） |
 
 `workspace-write` 是默认值，95% 时间应该用它。
@@ -78,7 +78,7 @@ plan 模式激活时不能 `/mode` — 先 `/plan implement` 或 `/plan clear` �
 
 ### `full-access`
 
-全放行，不弹确认。
+全放行，不弹确认。只有一个例外：加载了 MCP skill 期间，MCP Skills 闸门在激活 MCP skill、`run_shell_command`、启动能运行 shell 的子代理、对其他服务器 `read_mcp_resource` 之前仍会询问（见第 8 章）。这个提示会多一行 **Why:**，并且只提供 `1`（仅本次）和 `3`。
 
 ::: danger 别让 full-access 一直开着
 切到 full-access 是**整个会话级别**的决定。下一轮可能 `rm -rf`、可能把数据外泄、可能高频调付费 API。只在以下情况开：
@@ -112,7 +112,7 @@ Press 1, 2, or 3 (single key, no Enter needed) · Esc to cancel
 | 键 | 效果 |
 |---|---|
 | `1` | 跑**这一次**调用，下一次危险调用还会再问。 |
-| `2` | 整个会话切到 `full-access`。**之后所有工具调用一律不再问**，直到你 `/mode workspace-write` 或重启。 |
+| `2` | 整个会话切到 `full-access`。**之后所有工具调用一律不再问**，直到你 `/mode workspace-write` 或重启。MCP Skills 闸门确认除外：它仍会询问，且不提供 `2`。 |
 | `3` | 取消本次调用。Agent 收到 `Tool execution declined` 的结果继续，通常会调整方向。 |
 | `Esc` / `Ctrl+C` | 同 `3`。 |
 | 其他键 | 静默忽略。 |

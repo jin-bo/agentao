@@ -508,6 +508,8 @@ When a tool with `requires_confirmation=True` is about to run, `ACPTransport.con
 | `reject_once` | Reject this single tool call. |
 | `reject_always` | Reject this tool for the rest of the session. Stored as `False`; subsequent calls also short-circuit. |
 
+**Exception: a confirmation the MCP Skills gate asks.** While an MCP skill is loaded, activating an MCP skill, `run_shell_command`, a shell-capable sub-agent and a `read_mcp_resource` on another server are gated. For a gated call the server offers only `allow_once` and `reject_once`, puts the reason in the tool call's `content`, ignores a stored `allow_always`, and stores nothing. A stored `reject_always` still rejects without a round trip. See `docs/reference/host-api.md`, *Answering a confirmation the MCP Skills gate asks*.
+
 Per-session overrides are **never** shared across sessions and are cleared on session close — see `tests/test_acp_multi_session.py::TestPermissionOverrideIsolation` for the isolation regression tests.
 
 ### Failure modes (all resolve to "tool rejected")

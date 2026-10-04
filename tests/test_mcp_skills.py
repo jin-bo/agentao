@@ -962,6 +962,34 @@ def test_acp_always_reject_still_rejects_a_gated_call():
     assert server.calls == []
 
 
+def test_a_host_transport_honours_the_gate_through_the_public_export():
+    # The pattern the developer guide (4.5) gives a host with an "always
+    # allow" grant, written against ``agentao.transport.gate_note``.
+    from agentao.transport import NullTransport, confirmation, gate_note
+
+    assert gate_note is confirmation.gate_note
+
+    class Remembering(NullTransport):
+        def __init__(self):
+            super().__init__()
+            self.allowed = {"run_shell_command"}
+            self.asked = []
+
+        def confirm_tool(self, name, description, args):
+            note = gate_note()
+            if note is None and name in self.allowed:
+                return True
+            self.asked.append((name, note))
+            return False
+
+    transport = Remembering()
+    assert transport.confirm_tool("run_shell_command", "d", {}) is True
+    assert transport.asked == []
+    with confirmation.gated("An MCP skill is loaded."):
+        assert transport.confirm_tool("run_shell_command", "d", {}) is False
+    assert transport.asked == [("run_shell_command", "An MCP skill is loaded.")]
+
+
 @modern
 @pytest.mark.parametrize("raw", [
     "{'skill_name': 'mcp:docs:skill://pdf-processing/SKILL.md', 'task_description': 't'}",

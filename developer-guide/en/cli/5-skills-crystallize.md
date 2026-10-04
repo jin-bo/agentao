@@ -46,6 +46,8 @@ Available skills (12):
 | `/skills enable <name>` | Reverse `/skills disable`. Skill is loadable again. |
 | `/skills reload` | Re-scan the `skills/` directory. Use after editing a `SKILL.md` or adding a new skill folder. |
 
+An MCP server with `"skills": true` adds an **MCP Skills** group to `/skills`. It lists the skills of each server by full name, `mcp:<server>:<SKILL.md URI>`, and gives the reason for each skill that cannot be loaded. `/skills activate mcp:<server>:<uri>` counts as your consent, so it does not ask again. When the model activates one, you are asked once per session. See [Part 5.3, MCP skills](/en/part-5/3-mcp#mcp-skills).
+
 ::: tip activate vs. enable
 - **activate / deactivate** is per-session — temporary, for *this* conversation
 - **enable / disable** is persistent — config-level, affects all future sessions

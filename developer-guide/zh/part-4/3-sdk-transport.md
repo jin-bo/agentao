@@ -25,7 +25,7 @@ class SdkTransport:
 | 未设 | 回退行为 |
 |------|---------|
 | `on_event` | 丢弃事件（静默） |
-| `confirm_tool` | 自动批准所有工具（返回 `True`） |
+| `confirm_tool` | 自动批准（返回 `True`）；MCP Skills 闸门发起的确认除外，一律拒绝 |
 | `ask_user` | 返回固定字符串 `"[ask_user: not available in non-interactive mode]"` |
 | `on_max_iterations` | `{"action": "stop"}` |
 
@@ -303,7 +303,7 @@ agent.close()
 
 ## TL;DR
 
-- 4 个回调全部可选；缺哪个就 fallback 到 `NullTransport` 的对应行为（静默 / 自动批准 / 非交互字符串 / `{"action": "stop"}`）。
+- 4 个回调全部可选；缺哪个就 fallback 到 `NullTransport` 的对应行为（静默 / 自动批准，MCP Skills 闸门确认除外 / 非交互字符串 / `{"action": "stop"}`）。
 - 当多个回调共享 UI 状态或会话 id 时，**用类把它们组织起来** —— 闭包 + per-session `self` 是最干净的写法。
 - 多个消费者同时关心事件（DB log + WebSocket + UI）时，加一个简单的 dispatcher 做 fan-out。
 - **永远不要在 `on_event` 里 raise** —— 每个分支都加 try/except，否则 `SdkTransport.emit` 会替你吞下异常但下游副作用可能只做了一半。

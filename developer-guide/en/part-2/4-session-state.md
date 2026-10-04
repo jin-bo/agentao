@@ -74,6 +74,7 @@ Minimal pattern — one column per session, store the whole message list as JSON
 import json
 from pathlib import Path
 from agentao import Agentao
+from agentao.embedding.sessions import restore_agent_skills
 
 def save_session(agent: Agentao, session_id: str, db) -> None:
     """Call after every chat() turn."""
@@ -102,14 +103,14 @@ def load_session(session_id: str, db) -> Agentao:
     for msg in json.loads(row["messages"]):
         agent.messages.append(msg)  # or: agent.add_message(msg["role"], msg["content"])
 
-    # Re-activate skills. ``task_description`` is required (it is rendered
-    # into the <active-skills> prompt block as "Task: ..."), and a skill
-    # deleted or disabled since the save is *answered* with an "Error: ..."
-    # string rather than raising — so read the outcome back. Agentao ships
-    # the whole rule as ``embedding.sessions.restore_agent_skills(agent,
-    # row["active_skills"])``, which also narrows a hand-edited list.
-    for name in row["active_skills"]:
-        agent.skill_manager.activate_skill(name, "Restored from session")
+    # Re-activate skills through Agentao's helper, not a loop over
+    # ``skill_manager.activate_skill``. The helper narrows a hand-edited list,
+    # reads an "Error: ..." answer back as a refusal, and handles MCP skills:
+    # it never re-activates one (its approval was for the old session),
+    # withholds their content from the restored messages, and turns the
+    # MCP Skills gates back on. A direct ``activate_skill`` call does none of
+    # that, and activates an MCP skill without asking anyone.
+    restored, skipped = restore_agent_skills(agent, row["active_skills"])
 
     return agent
 ```

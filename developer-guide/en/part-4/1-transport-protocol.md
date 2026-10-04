@@ -270,7 +270,7 @@ def test_my_transport():
 
 - Transport = **4 methods**: `emit` (fire-and-forget), `confirm_tool` (blocking bool), `ask_user` (blocking str), `on_max_iterations` (blocking dict).
 - `emit` exceptions are swallowed; the other three's exceptions propagate.
-- `NullTransport` = silent + auto-approve — fine for tests and headless batch jobs.
+- `NullTransport` = silent + auto-approve — fine for tests and headless batch jobs. It refuses a confirmation the MCP Skills gate asks, because only a person can give that consent (see 4.5).
 - Implement all 4 if you build a custom transport — even a no-op stub keeps the agent loop honest.
 
 → Next: [4.2 AgentEvent Reference](./2-agent-events)
