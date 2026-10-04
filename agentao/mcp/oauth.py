@@ -141,9 +141,19 @@ class StoredTokenAuth(AuthBase):  # type: ignore[misc,valid-type]
     carrying a ``Bearer`` challenge means the server wants a login.
     """
 
-    def __init__(self, server_name: str, server_url: str, runtime: OAuthRuntime):
+    def __init__(
+        self,
+        server_name: str,
+        server_url: str,
+        runtime: OAuthRuntime,
+        *,
+        profile: Optional[str] = None,
+    ):
         self.server_name = server_name
         self.server_url = server_url
+        #: The credential profile (``oauth.profile``); ``None`` is the URL's
+        #: default credential. Every record read, write and lock names it.
+        self.profile = profile
         self.runtime = runtime
         self.verdict: Optional[AuthVerdict] = None
         # The record file's stamp for each credential this object has used, so
@@ -165,8 +175,8 @@ class StoredTokenAuth(AuthBase):  # type: ignore[misc,valid-type]
         reconnect later, never a missed one.
         """
         store = self.runtime.store
-        stamp = store.stamp(self.server_url)
-        record = store.load(self.server_url)
+        stamp = store.stamp(self.server_url, self.profile)
+        record = store.load(self.server_url, self.profile)
         self._stamps[record.access_token if record is not None else None] = stamp
         return record
 
@@ -180,7 +190,8 @@ class StoredTokenAuth(AuthBase):  # type: ignore[misc,valid-type]
         """
         cached = self._record
         key = cached.access_token if cached is not None else None
-        if key not in self._stamps or self.runtime.store.stamp(self.server_url) != self._stamps[key]:
+        stamp = self.runtime.store.stamp(self.server_url, self.profile)
+        if key not in self._stamps or stamp != self._stamps[key]:
             self._record = self._load()
         return self._record
 
@@ -379,7 +390,9 @@ class StoredTokenAuth(AuthBase):  # type: ignore[misc,valid-type]
     async def _refresh(self, seen: OAuthRecord, *, forced: bool) -> Optional[OAuthRecord]:
         try:
             result = await self.runtime.exclusive(
-                self.server_url, lambda: self._refresh_locked(seen, forced=forced)
+                self.server_url,
+                lambda: self._refresh_locked(seen, forced=forced),
+                profile=self.profile,
             )
         except Exception as e:  # lock timeout and the like: an ordinary failure
             self._refresh_failed(str(e) or type(e).__name__)
@@ -465,7 +478,7 @@ class StoredTokenAuth(AuthBase):  # type: ignore[misc,valid-type]
 
         merged = merge_token_response(current, body)
         store.save(merged)
-        self._stamps[merged.access_token] = store.stamp(self.server_url)
+        self._stamps[merged.access_token] = store.stamp(self.server_url, self.profile)
         logger.info(f"MCP '{self.server_name}': OAuth token refreshed")
         return merged
 
@@ -643,9 +656,12 @@ async def login(
     from .config import resolve_transport
 
     url = config["url"]
+    profile = settings.get("profile")
     transport = resolve_transport(config)
     store = runtime.store
-    existing = store.load(url)
+    # A profile's record keeps its own client registration too: reusing the
+    # default credential's would tie two accounts to one registered client.
+    existing = store.load(url, profile)
     stored_info = dict(existing.client_info) if existing else {}
 
     preferred_port = settings.get("callback_port")
@@ -726,12 +742,13 @@ async def login(
             expires_at=context["token_expiry_time"],
             refresh_token=tokens.refresh_token,
             scope=tokens.scope,
+            profile=profile,
         )
 
         async def commit() -> None:
             store.save(record)
 
-        await runtime.exclusive(url, commit)
+        await runtime.exclusive(url, commit, profile=profile)
         logger.info(f"MCP '{name}': OAuth login stored")
         return record
     finally:
@@ -776,10 +793,14 @@ async def _authorized_request(
         return status
 
 
-async def logout(url: str, runtime: OAuthRuntime) -> bool:
-    """Delete the record under its lock; an in-flight refresh finishes first."""
+async def logout(url: str, runtime: OAuthRuntime, *, profile: Optional[str] = None) -> bool:
+    """Delete the record under its lock; an in-flight refresh finishes first.
+
+    Deletes only the credential ``profile`` names: logging out of one profile
+    leaves the URL's other credentials alone.
+    """
 
     async def remove() -> bool:
-        return runtime.store.delete(url)
+        return runtime.store.delete(url, profile)
 
-    return await runtime.exclusive(url, remove)
+    return await runtime.exclusive(url, remove, profile=profile)

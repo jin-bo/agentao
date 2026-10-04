@@ -110,9 +110,21 @@ From a shell, `agentao mcp login <name> [--no-browser]` and `agentao mcp logout 
 
 What to know:
 
-- **Credentials** are stored in `~/.agentao/mcp-oauth/`, one file per server URL (mode 0600, directory 0700). They are plain JSON, not in an OS keyring. Two server names with the same URL share one credential.
+- **Credentials** are stored in `~/.agentao/mcp-oauth/`, one file per server URL and profile (mode 0600, directory 0700). They are plain JSON, not in an OS keyring. Two server names with the same URL and no profile share one credential, in every project.
 - **Refresh** is automatic: 60 s before expiry, and once more after a 401. If the authorization server rejects the refresh, the server goes back to `needs login`. A network failure is reported as an ordinary error and does not ask you to log in.
-- **Settings** go in an optional `oauth` object on the server: `client_id`, `client_secret` (needs `client_id`, `$VAR` is expanded), `callback_port` (1–65535), and `redirect_host` (`localhost` or a loopback address). Any other key is an error. There is no `scopes` key: the login asks for the scope the server's 401 names. Without `client_id`, agentao registers itself with the server as public client `agentao`.
+- **Settings** go in an optional `oauth` object on the server: `client_id`, `client_secret` (needs `client_id`, `$VAR` is expanded), `callback_port` (1–65535), `redirect_host` (`localhost` or a loopback address), and `profile` (below). Any other key is an error. There is no `scopes` key: the login asks for the scope the server's 401 names. Without `client_id`, agentao registers itself with the server as public client `agentao`.
+- **Two accounts on one server.** Give each entry its own `oauth.profile`. Each profile is a separate login for that URL, so both stay logged in at once:
+
+  ```json
+  {
+    "mcpServers": {
+      "tracker-work":     { "url": "https://mcp.example.com/mcp", "oauth": { "profile": "work" } },
+      "tracker-personal": { "url": "https://mcp.example.com/mcp", "oauth": { "profile": "personal" } }
+    }
+  }
+  ```
+
+  Run `/mcp login tracker-work` and `/mcp login tracker-personal` once each. `/mcp logout` removes only that entry's profile. The profile names the account, not the entry: entries in two projects with the same URL and profile share one login, and renaming an entry keeps it. An entry with a profile never uses the URL's no-profile login, so it starts at `needs login` even when that login exists. Logins from before profiles existed keep working for entries without one. The browser decides which account you sign in with. If it signs you straight back in as the other account, sign out there first, or use `--no-browser` and open the printed link in another browser profile. A profile is a non-empty string with no leading or trailing spaces, and the comparison is exact: `Work` and `work` are two profiles.
 - **ACP-supplied servers** (from an editor's `session/new`) never use agentao's OAuth. The editor handles their authorization.
 - **Limitations.**
   - On mcp 1.x, the SDK does not check the authorization server's `iss` (RFC 9207). On mcp 1.26, each login also registers a new client. Use mcp 2.x for both.

@@ -63,6 +63,8 @@ Agentao 的 [oauth_store.py](../../agentao/mcp/oauth_store.py) 当前按规范�
 
 可考虑服务器名与 URL，或显式 `credential_profile` 与 URL 的组合。后者能将账号身份与配置名称分开，避免改名就失去登录状态；这是 Agentao 的设计选项，不是 Pi 1.0 的实现。
 
+**实施状态（0.5.11）：** 已按后一种方式实施，配置键为 `oauth.profile`。不设档案时凭据仍只按 URL 保存，文件名不变，无需迁移；设了档案的条目不回退到无档案的凭据。见 [mcp-oauth.md](mcp-oauth.md) §6.4。追加 scope 与 issuer 检查未在此次改动范围内。
+
 Agentao 已有跨进程锁、刷新保护和 issuer 兼容处理，应保留这些能力。追加 scope、空或 null 可选字段、issuer 检查需要结合不同 MCP SDK 版本验证，不能只根据 Pi 的修复记录认定 Agentao 存在同样问题。
 
 参考：[Pi 1.0 OAuth 实现](https://github.com/earendil-works/pi/blob/v1.0.0/packages/coding-agent/src/extensions/mcp/oauth.ts)。
@@ -117,7 +119,7 @@ Pi 1.0 没有 `skills/list`、`skills/get` 或 `io.modelcontextprotocol/skills` 
 | --- | --- | --- |
 | 1 | 复现并修正 MCP 重试边界（已实施，见第 3 节） | 执行后断线是否造成重复调用 |
 | 2 | 测量工具定义成本（已测量，见 tool-search.md“测量”一节；未满足触发条件） | 代表性任务的工具定义 Token |
-| 3 | 按真实需求决定工具搜索或 OAuth 多账号隔离 | 是否满足 tool-search.md 的触发条件；是否有同 URL 双账号需求 |
+| 3 | 按真实需求决定工具搜索或 OAuth 多账号隔离（OAuth 多账号已实施，见第 4 节；工具搜索仍推迟） | 是否满足 tool-search.md 的触发条件；是否有同 URL 双账号需求 |
 
 后台任务恢复（Durable）、Codemode 和可选全屏 TUI 保留为观察项，出现真实需求后再评估。MCP Resources 与远程 Skills 已在 0.5.10 发布，不在此列。
 
