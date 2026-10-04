@@ -65,7 +65,7 @@ class CheckBackgroundAgentTool(Tool):
                 "agent_id": {
                     "type": "string",
                     "description": (
-                        "The agent ID returned when the background agent was launched. "
+                        "The agent_id that you got when you launched the background agent. "
                         "Pass empty string to list this conversation's background "
                         "agents."
                     ),
@@ -227,7 +227,7 @@ class CancelBackgroundAgentTool(Tool):
             "properties": {
                 "agent_id": {
                     "type": "string",
-                    "description": "The agent ID returned when the background agent was launched.",
+                    "description": "The agent_id that you got when you launched the background agent.",
                 }
             },
             "required": ["agent_id"],

@@ -41,7 +41,7 @@ _TEMPLATE_SERVER_PARAM = {
 }
 _CURSOR_PARAM = {
     "type": "string",
-    "description": "Pagination cursor from a previous call's nextCursor. Requires server.",
+    "description": "The nextCursor value from the previous call. Use it only together with server.",
 }
 
 
@@ -118,10 +118,12 @@ class ListMcpResourcesTool(_ListTool):
     @property
     def description(self) -> str:
         return (
-            "List resources (files, documents, data) that connected MCP servers expose. "
-            "With server, returns one page (continue with cursor); without, every "
-            "server's resources. Each item names its server; read one with "
-            "read_mcp_resource."
+            "List the resources (files, documents, data) that connected MCP servers "
+            "expose. Each item names its server. To read an item, use "
+            "read_mcp_resource.\n"
+            "- With server: the tool returns one page. To get the next page, pass "
+            "cursor.\n"
+            "- Without server: the tool returns the resources of every server."
         )
 
 
@@ -161,10 +163,10 @@ class ReadMcpResourceTool(_McpResourceTool):
     @property
     def description(self) -> str:
         return (
-            "Read a resource from an MCP server by URI. The server is required — "
-            "use the server an item was listed under, or the one a tool result's "
-            "resource link names. Binary content is saved to a file whose path is "
-            "returned."
+            "Read a resource from an MCP server by its URI. You must give the "
+            "server. Use the server that listed the item, or the server that a "
+            "resource link in a tool result names. If the content is binary, the "
+            "tool saves it to a file and returns the file path."
         )
 
     @property

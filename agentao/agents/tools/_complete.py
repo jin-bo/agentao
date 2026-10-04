@@ -35,7 +35,7 @@ class CompleteTaskTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Call this tool when you have completed the assigned task. "
+            "Call this tool when you finish the assigned task. "
             "Pass the final result as a string. You MUST call this tool to finish."
         )
 

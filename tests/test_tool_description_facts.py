@@ -77,3 +77,81 @@ def test_bundled_agent_descriptions_match_their_tools():
             # No ``tools:`` list still withholds agent and plan tools
             # (``_narrow_tools``), so "all tools" is never true.
             assert "all tools" not in description, md.name
+
+
+def test_shell_background_steps_match_run_background(monkeypatch, tmp_path):
+    # ``_run_background`` returns as soon as ``Popen`` does: nothing waits
+    # for the command or reads its errors. POSIX reports a PGID, Windows a
+    # PID with a tree kill.
+    from agentao.tools.shell import ShellTool
+
+    monkeypatch.setattr("agentao.tools.shell.IS_WINDOWS", False)
+    posix = ShellTool().description
+    assert "does not check the command for errors" in posix
+    assert "briefly" not in posix
+    assert "kill -- -PGID" in posix
+
+    monkeypatch.setattr("agentao.tools.shell.IS_WINDOWS", True)
+    windows = ShellTool().description
+    assert "taskkill /F /T /PID <PID>" in windows
+    assert "PGID" not in windows
+
+
+def test_builtin_descriptions_use_no_semicolon(tmp_path):
+    # ASD-STE100 Rule 8.1, which the system prompt follows since #402.
+    import logging
+
+    from agentao.agent import Agentao
+
+    agent = Agentao(
+        working_directory=tmp_path, logger=logging.getLogger("test"),
+        api_key="x", base_url="http://127.0.0.1:1", model="m",
+    )
+    from agentao.agents.tools import AgentToolWrapper
+    from agentao.agents.tools._complete import CompleteTaskTool
+    from agentao.mcp.resource_tools import ReadMcpResourceTool
+    from agentao.mcp.skill_tools import ReadSkillFileTool
+    from agentao.tools.goal import UpdateGoalTool
+    from agentao.tools.plan import PlanFinalizeTool, PlanSaveTool
+
+    # Tools a bare agent does not register: background agents, MCP resources
+    # and skills, goal, plan and sub-agent tools.
+    tools = list(agent.tools.tools.values()) + [
+        CheckBackgroundAgentTool(MagicMock()),
+        CancelBackgroundAgentTool(MagicMock()),
+        ListMcpResourcesTool(MagicMock()),
+        ListMcpResourceTemplatesTool(MagicMock()),
+        ReadMcpResourceTool(MagicMock()),
+        ReadSkillFileTool(MagicMock()),
+        UpdateGoalTool(MagicMock()),
+        PlanSaveTool(MagicMock()),
+        PlanFinalizeTool(MagicMock()),
+        CompleteTaskTool(),
+    ]
+    for tool in tools:
+        text = tool.description + json.dumps(tool.parameters)
+        assert ";" not in text, tool.name
+
+    # A sub-agent's own description is its definition's, so only the
+    # schema is ours. Only ``parameters`` is read, and it needs the store.
+    wrapper = AgentToolWrapper.__new__(AgentToolWrapper)
+    wrapper._bg_store = MagicMock(max_concurrent=4)
+    assert ";" not in json.dumps(wrapper.parameters)
+
+
+def test_shell_posix_result_without_a_group_names_a_posix_stop(monkeypatch, tmp_path):
+    # ``getpgid`` can lose the race with a command that already exited, and a
+    # host executor may report no group. The result must still be POSIX.
+    from agentao.capabilities.shell import BackgroundHandle
+    from agentao.tools.shell import ShellTool
+
+    class _NoGroup:
+        def run_background(self, request):
+            return BackgroundHandle(pid=99, pgid=None, command=request.command, cwd=tmp_path)
+
+    monkeypatch.setattr("agentao.tools.shell.IS_WINDOWS", False)
+    tool = ShellTool()
+    tool.shell = _NoGroup()
+    out = tool._run_background("sleep 1", tmp_path, None)
+    assert "To stop: kill 99" in out
+    assert "taskkill" not in out

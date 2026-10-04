@@ -342,38 +342,41 @@ class ShellTool(Tool):
 
     @property
     def description(self) -> str:
-        background_instructions = (
-            "To run a command in the background, set is_background=true. "
-            "The command will start, run briefly to check for immediate errors, "
-            "then detach. The returned PGID can be used to stop it later."
-        )
-        efficiency_guidelines = (
-            "\n\nEfficiency Guidelines:\n"
-            "- Quiet flags: prefer silent/quiet flags to reduce output volume "
-            "(e.g. `npm install --silent`, `git --no-pager`, `pip install -q`).\n"
-            "- Pagination: always disable terminal pagination so commands terminate "
-            "(e.g. `git --no-pager`, `PAGER=cat`)."
-        )
-        returned_info = (
-            "\n\nThe following information is returned:\n"
-            "- Output: stdout and stderr (shown separately). "
-            "Can be empty or partial on timeout.\n"
-            "- Exit code: only included if non-zero (command failed).\n"
-            "- Signal: only included if the process was killed by a signal.\n"
-            "- Background PGID: only included when is_background=true."
-        )
-        shell_desc = self._invocation()
-        stop_desc = (
-            "taskkill /F /PID <PID>" if IS_WINDOWS
-            else "`kill -- -PGID` or signaled as `kill -s SIGNAL -- -PGID`"
-        )
+        # The background steps state what ``_run_background`` does: it
+        # returns as soon as the process starts, checks nothing, and reports a
+        # PGID on POSIX only, and there only when the executor knows one.
+        if IS_WINDOWS:
+            ids = "4. The result gives the process ID (PID).\n"
+            stop = "5. To stop the command, run `taskkill /F /T /PID <PID>`."
+        else:
+            ids = (
+                "4. The result gives the process ID (PID). It also gives the "
+                "process group ID (PGID) when one is available.\n"
+            )
+            stop = (
+                "5. To stop the command, run the stop command that the result "
+                "gives. With a PGID, this is `kill -- -PGID`. To send a different "
+                "signal, run `kill -s SIGNAL -- -PGID`."
+            )
         return (
-            f"This tool executes a given shell command as `{shell_desc}`. "
-            f"{background_instructions} "
-            "Command is executed as a subprocess that leads its own process group. "
-            f"Command process group can be terminated as {stop_desc}."
-            f"{efficiency_guidelines}"
-            f"{returned_info}"
+            f"Run a shell command as `{self._invocation()}`. "
+            "The command runs in its own process group.\n\n"
+            "Background commands:\n"
+            "1. Set is_background to true.\n"
+            "2. The tool starts the command and returns at once. It does not wait "
+            "for the command, and it does not check the command for errors.\n"
+            "3. The tool discards the stdout and stderr of a background command.\n"
+            f"{ids}{stop}\n\n"
+            "Output volume:\n"
+            "- Use quiet flags when they exist, for example `npm install --silent` "
+            "or `pip install -q`.\n"
+            "- Always turn off terminal pagination so that the command can end, "
+            "for example `git --no-pager` or `PAGER=cat`.\n\n"
+            "The result of a foreground command contains:\n"
+            "- Output: stdout and stderr, shown separately. After a timeout, the "
+            "output can be empty or partial.\n"
+            "- Exit code: only if the exit code is not zero.\n"
+            "- Signal: only if a signal stopped the process."
         )
 
     @property
@@ -384,40 +387,40 @@ class ShellTool(Tool):
                 "command": {
                     "type": "string",
                     "description": (
-                        f"Exact command to execute. Runs as `{self._invocation()}`."
+                        f"The exact command to run. The tool runs it as `{self._invocation()}`."
                     ),
                 },
                 "description": {
                     "type": "string",
                     "description": (
-                        "Brief description of what this command does, shown to the user "
-                        "in the confirmation prompt and progress indicator. "
-                        "Be specific and concise. Ideally one sentence, no line breaks."
+                        "One sentence that tells the user what the command does. The "
+                        "confirmation prompt and the progress indicator show this text. "
+                        "Be specific. Do not use line breaks."
                     ),
                 },
                 "working_directory": {
                     "type": "string",
                     "description": (
-                        "Directory to run the command in. Must be an existing directory. "
-                        "Defaults to the current working directory."
+                        "Directory to run the command in. The directory must exist. "
+                        "Default: the working directory."
                     ),
                 },
                 "timeout": {
                     "type": "number",
                     "description": (
-                        "Inactivity timeout in seconds (default: 120). "
-                        "Resets whenever the command produces output. "
-                        "Use is_background=true for commands that should run indefinitely."
+                        "Inactivity timeout in seconds. Default 120. Any new output "
+                        "starts the timer again. For a command that must run with no "
+                        "end, use is_background."
                     ),
                     "default": 120,
                 },
                 "is_background": {
                     "type": "boolean",
                     "description": (
-                        "If true, the command is started, allowed to run briefly to catch immediate errors, "
-                        "then detached to the background. Returns the process group ID (PGID) immediately; "
-                        "stdout/stderr are discarded. "
-                        "Use for long-running servers or file watchers."
+                        "If true, start the command in the background and return at once. "
+                        "The tool does not check the command for errors, and it discards "
+                        "the stdout and stderr. Use this for long-running servers and "
+                        "file watchers."
                     ),
                     "default": False,
                 },
@@ -705,13 +708,24 @@ class ShellTool(Tool):
         except Exception as e:
             return f"Error starting background command: {e}"
 
-        if IS_WINDOWS or handle.pgid is None:
+        if IS_WINDOWS:
             return (
                 f"Background process started.\n"
                 f"PID: {handle.pid}\n"
                 f"Command: {_clip_command(command)}\n"
                 f"Working directory: {cwd}\n"
                 f"To stop: taskkill /F /T /PID {handle.pid}"
+            )
+        if handle.pgid is None:
+            # POSIX with no group: ``getpgid`` lost the race with a command
+            # that already exited, or a host executor reports none. ``taskkill``
+            # does not exist here, and the group cannot be named.
+            return (
+                f"Background process started.\n"
+                f"PID: {handle.pid}\n"
+                f"Command: {_clip_command(command)}\n"
+                f"Working directory: {cwd}\n"
+                f"To stop: kill {handle.pid}"
             )
         return (
             f"Background process started.\n"

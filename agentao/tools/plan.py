@@ -19,8 +19,8 @@ class PlanSaveTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Persist the current plan draft to .agentao/plan.md. "
-            "Returns a draft_id that must be passed to plan_finalize."
+            "Save the current plan draft to .agentao/plan.md. The tool returns "
+            "a draft_id. Pass this draft_id to plan_finalize."
         )
 
     @property
