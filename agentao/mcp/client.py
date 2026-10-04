@@ -19,7 +19,7 @@ from mcp.client.streamable_http import (
     create_mcp_http_client,
     streamable_http_client,
 )
-from mcp.types import METHOD_NOT_FOUND, PaginatedRequestParams
+from mcp.types import INTERNAL_ERROR, METHOD_NOT_FOUND, PaginatedRequestParams
 from mcp.types import Tool as McpToolDef
 
 from .. import __version__
@@ -73,8 +73,12 @@ class McpErrorKind(str, Enum):
 
     Drives the retry policy in :meth:`McpClient.call_tool`:
     ``AUTH`` surfaces immediately (creds won't change on retry);
-    ``SESSION_EXPIRED`` and ``TRANSPORT_DROPPED`` reconnect-and-retry once;
-    ``OTHER`` surfaces without reconnecting.
+    ``SESSION_EXPIRED`` — the server refused the request, so it did not run —
+    reconnects and retries once; ``TRANSPORT_DROPPED`` — the connection went
+    with the request possibly delivered — drops the session and reports the
+    result as unknown, since a retry could run the tool twice; ``OTHER``
+    surfaces without reconnecting. A resource read, which cannot have acted,
+    reconnects and retries once on either of the two.
     """
 
     AUTH = "auth"
@@ -137,6 +141,13 @@ def classify_mcp_error(exc: Exception) -> McpErrorKind:
     Some anyio types stringify to an empty body but their class name
     carries the signal, so transport markers are matched against both
     ``str(exc).lower()`` and ``type(exc).__name__.lower()``.
+
+    A session error the server sends as ``INTERNAL_ERROR`` is not a refusal:
+    mcp 2.x's server answers a request that was in flight when its session
+    ended with ``-32603 Session terminated before the request completed``. The
+    request had reached the handler, so it is ``TRANSPORT_DROPPED``. The
+    refusal forms are the SDK client's 404 ``Session terminated`` (code
+    ``INVALID_REQUEST``) and the server's ``Session not found``.
     """
     msg = str(exc).lower()
     type_name = type(exc).__name__.lower()
@@ -144,6 +155,12 @@ def classify_mcp_error(exc: Exception) -> McpErrorKind:
     for kind, markers, match_type_name in _ERROR_RULES:
         haystack = haystack_with_type if match_type_name else msg
         if any(marker in haystack for marker in markers):
+            if (
+                kind is McpErrorKind.SESSION_EXPIRED
+                and isinstance(exc, McpProtocolError)
+                and getattr(getattr(exc, "error", None), "code", None) == INTERNAL_ERROR
+            ):
+                return McpErrorKind.TRANSPORT_DROPPED
             return kind
     return McpErrorKind.OTHER
 
@@ -1264,9 +1281,21 @@ class McpClient:
 
         Retry policy is driven by :func:`classify_mcp_error`:
         ``AUTH`` surfaces immediately (retrying with the same credentials
-        only produces another 401/403); ``SESSION_EXPIRED`` and
-        ``TRANSPORT_DROPPED`` reconnect-and-retry once; ``OTHER``
-        surfaces without reconnecting.
+        only produces another 401/403); ``SESSION_EXPIRED`` reconnects and
+        retries once; ``TRANSPORT_DROPPED`` drops the session and returns
+        :meth:`_outcome_unknown` without a retry; ``OTHER`` surfaces without
+        reconnecting.
+
+        The line is whether the call can have been sent. A connection found
+        closing *before* the call goes out is reconnected first. Once the call
+        is inside the SDK, a dropped transport does not show whether the
+        server received it: a server that runs the call and dies before it
+        answers looks the same as one that died first. A retry there could
+        run a tool with side effects twice, so the model is told the result is
+        unknown instead. The cost: a stdio server that died while idle is
+        noticed only by the next call, which then reports an unknown result
+        for a call that never ran. Neither SDK major records that its
+        receive loop has ended, so nothing earlier can tell.
 
         A configured per-request ``timeout.request`` (see
         :func:`resolve_timeouts`) bounds each individual tool call; when
@@ -1284,6 +1313,10 @@ class McpClient:
         if hint is not None:
             return f"MCP auth error: {hint}"
         for attempt in range(2):
+            if self._session is not None and self._gone.is_set():
+                # Its connection is already closing, and nothing has been sent
+                # on it by this call: reconnecting first is safe.
+                await self._drop_session(self._session)
             if not self._session or self.status != ServerStatus.CONNECTED:
                 try:
                     await self._ensure_connected(attempt, seen)
@@ -1345,12 +1378,13 @@ class McpClient:
                 suffix = f" ({refresh_note})" if explains else ""
                 if kind is McpErrorKind.AUTH:
                     return f"MCP auth error: {e}{suffix}"
-                if attempt == 0 and kind in (
-                    McpErrorKind.SESSION_EXPIRED,
-                    McpErrorKind.TRANSPORT_DROPPED,
-                ):
+                if kind is McpErrorKind.TRANSPORT_DROPPED:
+                    # The next call reconnects; this one is not sent again.
+                    await self._drop_session(session)
+                    return self._outcome_unknown(tool_name, e)
+                if attempt == 0 and kind is McpErrorKind.SESSION_EXPIRED:
                     logger.warning(
-                        f"MCP '{self.name}' transient {type(e).__name__}, "
+                        f"MCP '{self.name}' session refused {type(e).__name__}, "
                         f"retrying after reconnect: {e}"
                     )
                     # Tear down the failed transport before reconnecting;
@@ -1368,6 +1402,19 @@ class McpClient:
             return result
 
         return "MCP tool error: failed after reconnect attempt"
+
+    def _outcome_unknown(self, tool_name: str, exc: Exception) -> str:
+        """What the model reads when a call's connection drops after it was sent."""
+        logger.warning(
+            f"MCP '{self.name}': connection dropped during '{tool_name}' "
+            f"({type(exc).__name__}: {exc}); not retried, result unknown"
+        )
+        return (
+            f"MCP tool error: the connection to MCP server '{self.name}' closed "
+            f"after the call to '{tool_name}' was sent ({exc}). The result is "
+            "unknown: the server can have run the call. Check its effect before "
+            "you call it again. The next call reconnects."
+        )
 
     def _needs_auth_unchanged(self) -> Optional[str]:
         """The login hint, while nothing could have changed the verdict.
@@ -1429,7 +1476,8 @@ class McpClient:
                     lambda task: task.cancelled() or task.exception()
                 )
         if abandoned:
-            # Classified as a dropped transport: reconnect and retry once.
+            # Classified as a dropped transport: a tool call reports an unknown
+            # result, a resource read reconnects and retries once.
             raise ConnectionError(f"MCP server '{self.name}': connection closed")
         return request.result()
 

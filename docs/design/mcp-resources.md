@@ -295,7 +295,9 @@ manager's `ResourceRead`:
   the [pi 1.0 lessons](pi-1.0-lessons-for-agentao.zh.md) §3 rule, retry what cannot have acted —
   and is left to a later change of its own. This design adds no retry to tool calls and does
   **not** change `call_tool`'s reconnect-and-retry-once, which that section flags as unaudited; that
-  audit is the lessons doc's first-ranked item (§9).
+  audit is the lessons doc's first-ranked item (§9). *(Since done, for 0.5.11: a tool call no longer
+  re-sends after a dropped transport and reports an unknown result instead; reads keep their retry.
+  See `CHANGELOG.md`.)*
 
 The URI may be any string the server accepts — a listed URI, one from a tool result's
 `resource_link`, or one the model expanded from a template. agentao does not check it against a

@@ -34,7 +34,7 @@ from agentao.mcp.client import (
     ServerStatus,
 )
 
-from tests.support.stdio_mcp_server import started as _started, stdio_server
+from tests.support.stdio_mcp_server import calls as _calls, started as _started, stdio_server
 
 _TEARDOWN_WARNINGS = ("cancel scope", "Error disconnecting")
 
@@ -129,32 +129,70 @@ def _kill(pid):
     os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
 
 
-def _fail_together_on_the_current_session(manager):
-    """Hold calls on the live session until two have arrived, so both run on
-    it — and both fail on it — rather than the second finding it replaced."""
-    session = manager.get_client("probe")._session
-    real_call = session.call_tool
-    arrived = {"n": 0}
-    both = threading.Event()
+_UNKNOWN = "The result is unknown"
 
-    async def gated(*args, **kwargs):
+
+def _unknown(outcome):
+    return all(isinstance(text, str) and _UNKNOWN in text for text in outcome.values())
+
+
+def _reconnect_together(manager):
+    """Hold calls at the reconnect until two have arrived, so both saw the
+    same connect count and the second takes the first one's outcome."""
+    client = manager.get_client("probe")
+    real = client._ensure_connected
+    arrived = {"n": 0}
+    both = asyncio.Event()
+
+    async def gated(attempt, seen):
         arrived["n"] += 1
         if arrived["n"] == 2:
             both.set()
-        while not both.is_set():
-            await asyncio.sleep(0.01)
-        return await real_call(*args, **kwargs)
+        await both.wait()
+        return await real(attempt, seen)
 
-    session.call_tool = gated
+    client._ensure_connected = gated
 
 
-def test_two_calls_that_fail_on_one_dropped_connection_reconnect_once(server, caplog):
+def _drop_with_one_call(manager, marks):
+    """Kill the server while idle; the next call finds out and drops the session.
+
+    It reports an unknown result for a call the dead server never ran: the
+    price of not sending a call twice, since nothing tells the client the
+    server is gone before it sends."""
+    (first,) = _started(marks)
+    _kill(int(first.name.split("-", 1)[1]))
+    out = manager.call_tool("probe", "slow_c", {})
+    assert _UNKNOWN in out, out
+    assert manager.get_client("probe").status is ServerStatus.DISCONNECTED
+
+
+def test_a_call_whose_server_dies_after_running_it_is_not_sent_again(server):
+    """The server runs the call and exits before it answers. A retry on a new
+    connection would run it a second time."""
     config, marks = server(delay=0.1)
     manager = _connected(config)
     try:
-        (first,) = _started(marks)
-        _kill(int(first.name.split("-", 1)[1]))
-        _fail_together_on_the_current_session(manager)
+        (marks / "die").touch()
+        out = manager.call_tool("probe", "slow_a", {})
+        assert _UNKNOWN in out, out
+        assert _calls(marks) == ["slow_a"]
+        assert len(_started(marks)) == 1
+
+        (marks / "die").unlink()
+        assert manager.call_tool("probe", "slow_b", {}) == "slow_b"
+        assert _calls(marks) == ["slow_a", "slow_b"]
+        assert len(_started(marks)) == 2
+    finally:
+        manager.disconnect_all()
+
+
+def test_two_calls_that_find_the_connection_dropped_reconnect_once(server, caplog):
+    config, marks = server(delay=0.1)
+    manager = _connected(config)
+    try:
+        _drop_with_one_call(manager, marks)
+        _reconnect_together(manager)
 
         outcome = {}
         with caplog.at_level(logging.WARNING, logger="agentao.mcp"):
@@ -187,12 +225,12 @@ def _call_each(manager, names, outcome):
     ]
 
 
-def test_calls_waiting_on_a_server_that_dies_all_retry(server):
+def test_calls_waiting_on_a_server_that_dies_all_come_back(server):
     """Three calls are waiting for their answers when the server dies. Before
     mcp 1.30, the session fails pending requests from a loop over a dict that
     each answer shrinks, so it raises after the second and never answers the
     third. A call must not rely on the session to learn that its connection is
-    gone. All three retry, over one reconnect."""
+    gone. All three come back with an unknown result; none is sent again."""
     config, marks = server(delay=0.1)
     manager = _connected(config)
     outcome = {}
@@ -206,18 +244,23 @@ def test_calls_waiting_on_a_server_that_dies_all_retry(server):
         for thread in threads:
             thread.join(20)
 
-        assert outcome == {n: n for n in _CALLS}
-        assert len(_started(marks)) == 2
+        assert set(outcome) == set(_CALLS)
+        assert _unknown(outcome), outcome
+        assert sorted(_calls(marks)) == sorted(_CALLS)
+        assert len(_started(marks)) == 1
     finally:
         manager.disconnect_all()
 
 
-def test_calls_waiting_when_the_transport_fails_all_retry(server):
+def test_calls_waiting_when_the_transport_fails_all_come_back(server):
     """The server stops reading but stays alive, so the next write to it fails
     and no end-of-file ever arrives. mcp 1.x's task group then cancels its own
     receive loop, which leaves every pending request unanswered. This is what
     a server dying mid-call can look like on Linux, where the write can fail
-    before the read sees end-of-file (seen in CI on 1.26)."""
+    before the read sees end-of-file (seen in CI on 1.26).
+
+    Both report an unknown result. ``slow_b`` never ran — its write is the one
+    that failed — but the client cannot tell that from the SDK's error."""
     config, marks = server(delay=0.1)
     manager = _connected(config)
     outcome = {}
@@ -232,8 +275,10 @@ def test_calls_waiting_when_the_transport_fails_all_retry(server):
         for thread in threads:
             thread.join(20)
 
-        assert outcome == {"slow_a": "slow_a", "slow_b": "slow_b"}
-        assert len(_started(marks)) == 2
+        assert set(outcome) == {"slow_a", "slow_b"}
+        assert _unknown(outcome), outcome
+        assert _calls(marks) == ["slow_a"]
+        assert len(_started(marks)) == 1
     finally:
         manager.disconnect_all()
 
@@ -244,10 +289,9 @@ def test_two_calls_that_find_the_server_gone_try_to_reconnect_once(server):
     config, marks = server(delay=0.1)
     manager = _connected(config)
     try:
-        (first,) = _started(marks)
+        _drop_with_one_call(manager, marks)
         (marks / "refuse").touch()
-        _kill(int(first.name.split("-", 1)[1]))
-        _fail_together_on_the_current_session(manager)
+        _reconnect_together(manager)
 
         outcome = {}
         threads = [

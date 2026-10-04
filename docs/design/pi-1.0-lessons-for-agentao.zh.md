@@ -51,6 +51,8 @@ Agentao 的 [McpClient.call_tool](../../agentao/mcp/client.py) 当前对部分�
 
 验证应使用可记录副作用的测试服务器，在执行后主动断开连接，检查客户端是否重复发起调用，并覆盖调用前断开与资源读取的情况。
 
+**实施状态（0.5.11）：** 已按上述边界实施。复现结果：服务器执行调用后退出，原实现在新连接上把同一调用又执行了一次。修复后只执行一次，返回“结果未知”，下一次调用重新连接。另发现 mcp 2.x 服务器对执行中被终止的请求返回 `-32603 Session terminated before the request completed`，原分类器把它当成会话过期并重试；现按传输断开处理。代价：stdio 服务器空闲时退出，客户端要到下一次调用才发现，这次调用会报告“结果未知”，尽管它并未执行。两个 SDK 主版本都不记录接收循环已结束，客户端无法提前判断。详见 `CHANGELOG.md`。
+
 参考：[Pi 1.0 MCP 文档](https://github.com/earendil-works/pi/blob/v1.0.0/packages/coding-agent/docs/mcp.md)。
 
 ## 4. OAuth 账号隔离：范围明确的改进
@@ -113,7 +115,7 @@ Pi 1.0 没有 `skills/list`、`skills/get` 或 `io.modelcontextprotocol/skills` 
 
 | 顺序 | 工作 | 先验证什么 |
 | --- | --- | --- |
-| 1 | 复现并修正 MCP 重试边界 | 执行后断线是否造成重复调用 |
+| 1 | 复现并修正 MCP 重试边界（已实施，见第 3 节） | 执行后断线是否造成重复调用 |
 | 2 | 测量工具定义成本 | 代表性任务的工具定义 Token |
 | 3 | 按真实需求决定工具搜索或 OAuth 多账号隔离 | 是否满足 tool-search.md 的触发条件；是否有同 URL 双账号需求 |
 
