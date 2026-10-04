@@ -50,8 +50,8 @@ def _answer() -> bytes:
 def child_wire(monkeypatch):
     real_build = AgentToolWrapper._build_sub_agent
 
-    def build(self, suppress_output):
-        sub_agent, setup = real_build(self, suppress_output)
+    def build(self, suppress_output, skill_manager=None):
+        sub_agent, setup = real_build(self, suppress_output, skill_manager)
         attach(sub_agent.llm, Wire(_answer()))
         return sub_agent, setup
 

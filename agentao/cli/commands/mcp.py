@@ -49,6 +49,11 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
                 f"[{color}]{label}[/{color}], "
                 f"{s['tools']} tool(s){trust_marker}"
             )
+            if s.get("skills") is not None:
+                skills_line = f"{s['skills']} skill(s)"
+                if s.get("skills_error"):
+                    skills_line = f"skills unavailable: {s['skills_error']}"
+                console.print(f"    [dim]{escape(skills_line)}[/dim]")
             if s["error"]:
                 console.print(f"    [red]{escape(s['error'])}[/red]")
         console.print()
@@ -128,6 +133,7 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
 
         del servers[name]
         save_mcp_config(servers, config_dir=project_dir)
+        _forget_mcp_skill_approvals(cli, name)
         console.print(f"\n[success]Removed MCP server '{name}'.[/success]")
         console.print("[info]Restart agentao to apply changes.[/info]\n")
 
@@ -177,7 +183,8 @@ def _login_or_logout(cli: AgentaoCLI, sub: str, sub_args: str) -> None:
         return
     console.print()
     if sub == "logout":
-        logout(manager, name, write=_say)
+        if logout(manager, name, write=_say):
+            _forget_mcp_skill_approvals(cli, name)
         console.print()
         return
     outcome = login(manager, name, open_browser=open_browser, write=_say)
@@ -185,6 +192,19 @@ def _login_or_logout(cli: AgentaoCLI, sub: str, sub_args: str) -> None:
         # D8: tools are registered once, at startup; this server had none then.
         console.print(f"[info]Restart agentao to load the tools of '{escape(name)}'.[/info]")
     console.print()
+
+
+def _forget_mcp_skill_approvals(cli: AgentaoCLI, name: str) -> None:
+    """Drop the session's approvals for ``name``'s MCP skills (mcp-skills.md §7).
+
+    After a logout or removal the next activation asks again, and nothing
+    read before is served from the cache. Loaded skills stay held: their
+    instructions are still in context, so their gates stay on.
+    """
+    manager = getattr(getattr(cli, "agent", None), "skill_manager", None)
+    mcp_skills = getattr(manager, "mcp_skills", None)
+    if mcp_skills is not None:
+        mcp_skills.forget_server(name)
 
 
 def _list_resources(cli: AgentaoCLI, server: str) -> None:

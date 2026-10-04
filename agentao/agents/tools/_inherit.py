@@ -57,6 +57,23 @@ def _child_skill_manager(
     def _no_skills() -> Any:
         return SkillManager(skills_dir=_NO_SKILLS_DIR)
 
+    def _no_skills_gated(parent: Any) -> Any:
+        # The fallback has no MCP Skills session, so nothing would gate the
+        # child's shell — while the parent's context, which the child is
+        # briefed with, may carry a loaded skill's instructions. Its origins
+        # as of now become the child's restore-only origins: the same gates,
+        # failing towards asking (docs/design/mcp-skills.md §6.2).
+        child = _no_skills()
+        try:
+            origins = set(getattr(parent, "mcp_orphan_origins", None) or ())
+            mcp_skills = getattr(parent, "mcp_skills", None)
+            if mcp_skills is not None:
+                origins |= set(mcp_skills.origins(getattr(parent, "mcp_view", None)))
+        except Exception:
+            origins = {"*"}
+        child.mcp_orphan_origins = {o for o in origins if isinstance(o, str)}
+        return child
+
     if getter is None:
         return _no_skills()
     try:
@@ -67,6 +84,11 @@ def _child_skill_manager(
             "manager raised %s: %s",
             agent_name, type(exc).__name__, exc,
         )
+        # Not gated, unlike the fallbacks below: a skill manager that cannot
+        # be read cannot have loaded an MCP skill either (activation goes
+        # through it), so there is nothing to gate — and a ``*`` origin here
+        # would mark every sub-agent answer, which a parent with no Skills
+        # session withholds whole.
         return _no_skills()
     if parent is None:
         # A getter was supplied and answered with nothing — the runtime has
@@ -86,7 +108,7 @@ def _child_skill_manager(
             "%s, which has no child_view().",
             agent_name, type(parent).__name__,
         )
-        return _no_skills()
+        return _no_skills_gated(parent)
     try:
         child = derive()
     except Exception as exc:
@@ -95,7 +117,7 @@ def _child_skill_manager(
             "raised %s: %s",
             agent_name, type(exc).__name__, exc,
         )
-        return _no_skills()
+        return _no_skills_gated(parent)
     if child is None:
         logger.warning(
             "Sub-agent '%s' gets no skills: %s.child_view() returned None. A "
@@ -104,7 +126,7 @@ def _child_skill_manager(
             "the parent does not advertise.",
             agent_name, type(parent).__name__,
         )
-        return _no_skills()
+        return _no_skills_gated(parent)
     return child
 
 

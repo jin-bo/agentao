@@ -63,6 +63,7 @@ from .resources import (
 )
 from .oauth import AuthVerdict, StoredTokenAuth
 from .oauth_store import OAuthRuntime
+from . import skills as _skills
 
 logger = logging.getLogger("agentao.mcp")
 
@@ -324,6 +325,15 @@ class McpClient:
         # ``resources``. Lets the all-servers listing recover a *dropped*
         # resource server without reconnecting every server that never had any.
         self._resources_seen = False
+        # Skills (docs/design/mcp-skills.md §5.3). Listed at most once per
+        # client, at its first connect (D8) — a gate failure there settles it
+        # too, since the catalogue is fixed for the session; a reconnect keeps
+        # whatever that attempt found.
+        self._skills_listed = False
+        self._skill_entries: List[Any] = []
+        self._skills_unavailable: List[Tuple[str, str]] = []
+        # Why this opted-in server's skills are unavailable, or ``None``.
+        self._skills_problem: Optional[str] = None
         # The task that owns the live connection and the event that tells it
         # to close (see ``connect``).
         self._owner: Optional["asyncio.Task[None]"] = None
@@ -385,6 +395,57 @@ class McpClient:
     def resources_seen(self) -> bool:
         """Whether any connection of this client has declared ``resources``."""
         return self._resources_seen
+
+    @property
+    def skills_requested(self) -> bool:
+        """``"skills": true`` in this server's config — the opt-in (§5.1).
+
+        Only ``True`` counts: any other value leaves Skills off.
+        """
+        return self.config.get("skills") is True
+
+    def skills_gate_problem(self) -> Optional[str]:
+        """Why the live connection cannot serve Skills, or ``None`` (§5.2).
+
+        All four conditions, read off the connection now in hand: the SDK can
+        speak the modern era, the negotiated version is at least the
+        extension's base revision, the extension is declared, and so is
+        ``resources``.
+        """
+        if not SUPPORTS_MODERN_ERA:
+            return "skills need mcp>=2 (installed: 1.x)"
+        version = self._protocol_version
+        if version is None:
+            return "the server is not connected"
+        if version < _skills.MIN_PROTOCOL_VERSION:
+            return (
+                f"the server speaks {version}; skills need "
+                f"{_skills.MIN_PROTOCOL_VERSION} or later"
+            )
+        caps = self._server_capabilities
+        extensions = getattr(caps, "extensions", None) if caps is not None else None
+        if not isinstance(extensions, dict) or _skills.EXTENSION_ID not in extensions:
+            return f"the server does not declare {_skills.EXTENSION_ID}"
+        if not self.supports_resources:
+            return (
+                f"the server declares {_skills.EXTENSION_ID} without the "
+                "resources capability"
+            )
+        return None
+
+    @property
+    def skill_entries(self) -> List[Any]:
+        """The validated entries listed at connect (``SkillEntry``)."""
+        return self._skill_entries
+
+    @property
+    def skills_unavailable(self) -> List[Tuple[str, str]]:
+        """``(uri, reason)`` for listed skills that cannot be loaded."""
+        return self._skills_unavailable
+
+    @property
+    def skills_problem(self) -> Optional[str]:
+        return self._skills_problem
 
     @property
     def is_trusted(self) -> bool:
@@ -519,6 +580,7 @@ class McpClient:
         # ``sse_client`` / ``streamable_http_client``) AND the post-transport
         # handshake below.
         startup_timeout, request_timeout = resolve_timeouts(self.config)
+        started = time.monotonic()
 
         # Pre-init so the ``except`` can reference them even if
         # ``resolve_transport`` itself raises a config error (in which case the
@@ -584,6 +646,10 @@ class McpClient:
                 f"(protocol {self._protocol_version or 'unknown'}), "
                 f"{len(self._tools)} tools"
             )
+            if self.skills_requested and not self._skills_listed:
+                await self._list_skills_safely(
+                    startup_timeout - (time.monotonic() - started)
+                )
 
         except asyncio.CancelledError:
             cause = await self._unwind_transport_cancel()
@@ -876,6 +942,27 @@ class McpClient:
         this one round-trip. The enclosing ``startup`` budget in :meth:`connect`
         still bounds the handshake as a whole.
         """
+        discover_refused = False
+        if self.skills_requested and self._can_discover():
+            # Discover-first, for an opted-in server only (D9): a dual-era
+            # server is reachable on the modern era — the only one Skills
+            # are specified for — only by asking first. The cost the
+            # handshake-first order avoids (a 1.x server's rejection noise)
+            # is paid by servers whose operator asked for Skills.
+            try:
+                await self._session.discover()
+            except (McpProtocolError, RuntimeError) as exc:
+                logger.debug(
+                    f"MCP '{self.name}': server/discover refused ({exc}); "
+                    "falling back to the initialize handshake"
+                )
+                discover_refused = True
+            else:
+                self._protocol_version = self._session.protocol_version
+                self._record_capabilities(
+                    getattr(self._session, "server_capabilities", None)
+                )
+                return
         try:
             self._record_handshake_version(await self._session.initialize())
             return
@@ -888,13 +975,15 @@ class McpClient:
         if not (definite or code == METHOD_NOT_FOUND):
             raise handshake_error
 
-        if not self._can_discover():
+        if discover_refused or not self._can_discover():
             if not definite:
                 raise handshake_error
             # Two different reasons we cannot escalate, and blaming the wrong
             # one sends the user to the wrong fix.
             why = (
-                "this session cannot speak it"
+                "its 'server/discover' was refused as well"
+                if discover_refused
+                else "this session cannot speak it"
                 if SUPPORTS_MODERN_ERA
                 else "the installed MCP SDK cannot speak it — mcp 1.x has no "
                 "'server/discover'; upgrade to mcp>=2"
@@ -1443,6 +1532,8 @@ class McpClient:
         *,
         not_found_uri: Optional[str] = None,
         method_not_found_ok: bool = False,
+        require_skills: bool = False,
+        not_found_what: str = "skill",
     ) -> Any:
         """``send(session)`` after the connection recovery and capability check.
 
@@ -1486,6 +1577,13 @@ class McpClient:
                     self.name, "unsupported",
                     f"MCP server '{self.name}' does not declare the resources capability",
                 )
+            if require_skills:
+                problem = self.skills_gate_problem()
+                if problem is not None:
+                    raise McpResourceError(
+                        self.name, "unsupported",
+                        f"MCP server '{self.name}' cannot serve skills: {problem}",
+                    )
 
             session, gone = self._session, self._gone
             seen = self._connect_attempts
@@ -1521,6 +1619,12 @@ class McpClient:
                 if isinstance(e, McpProtocolError):
                     if method_not_found_ok and code == METHOD_NOT_FOUND:
                         return None
+                    if require_skills and not_found_uri is not None and code == -32602:
+                        raise McpResourceError(
+                            self.name, "not_found",
+                            f"MCP server '{self.name}' serves no {not_found_what} at "
+                            f"{not_found_uri} ({e})",
+                        ) from e
                     # -32602 on 2026-07-28; clients "SHOULD also accept -32002",
                     # the earlier code.
                     if not_found_uri is not None and code in (-32602, -32002):
@@ -1597,6 +1701,149 @@ class McpClient:
                 self.name, "input_required",
                 f"MCP server '{self.name}' cannot return {uri} without interactive "
                 "input (sampling, elicitation or roots), which agentao does not provide.",
+            )
+        return ResourceRead(
+            server=self.name,
+            uri=uri,
+            contents=[resource_content(c) for c in (result.contents or [])],
+        )
+
+    # ------------------------------------------------------------------
+    # Skills (docs/design/mcp-skills.md §5.3, §5.5)
+    # ------------------------------------------------------------------
+
+    async def _list_skills_safely(self, budget: float) -> None:
+        """List skills at connect; a failure turns Skills off, never the server.
+
+        Runs after the tools are in hand, in its own ``try`` and with what is
+        left of the startup budget, and never raises: ``connect()``'s failure
+        path (``_cleanup_failed_connect``) tears the whole connection down,
+        and an opted-in server's tools must keep working without its skills.
+        Cancellation is the one thing let through.
+        """
+        self._skills_listed = True
+        problem = self.skills_gate_problem()
+        if problem is not None:
+            self._skills_problem = problem
+            logger.warning(f"MCP server '{self.name}': skills unavailable: {problem}")
+            return
+        if budget <= 0:
+            self._skills_problem = "no startup budget was left to list skills"
+            logger.warning(
+                f"MCP server '{self.name}': skills unavailable: {self._skills_problem}"
+            )
+            return
+        try:
+            entries, unavailable = await asyncio.wait_for(
+                self._list_all_skills(), timeout=budget
+            )
+        except asyncio.TimeoutError:
+            self._skills_problem = (
+                f"skills/list did not finish within the {budget:g}s left of the "
+                "startup budget"
+            )
+        except Exception as e:  # noqa: BLE001 — any failure ends at "no skills"
+            self._skills_problem = f"skills/list failed: {e}"
+        else:
+            self._skill_entries, self._skills_unavailable = entries, unavailable
+            logger.info(
+                f"MCP server '{self.name}': {len(entries)} skill(s) listed"
+                + (f", {len(unavailable)} unavailable" if unavailable else "")
+            )
+            return
+        logger.warning(
+            f"MCP server '{self.name}': skills unavailable: {self._skills_problem}"
+        )
+
+    async def _list_all_skills(self) -> Tuple[List[Any], List[Tuple[str, str]]]:
+        """Every ``skills/list`` page, under ``tools/list``'s bounds. No file is fetched."""
+        entries: List[Any] = []
+        unavailable: List[Tuple[str, str]] = []
+        seen_uris: set = set()
+        seen_cursors: set = set()
+        dropped = 0
+        cursor: Optional[str] = None
+        adapter = _skills.result_adapter()
+        for _ in range(_skills.MAX_SKILL_PAGES):
+            raw = await self._session.send_request(
+                _skills.list_skills_request(cursor), adapter
+            )
+            items = raw.get("skills")
+            if not isinstance(items, list):
+                raise McpCatalogError(f"MCP server '{self.name}': skills/list has no skills array")
+            # ``unavailable`` also holds valid-but-unloadable entries, which
+            # are in ``seen_uris`` too; count each listed item once.
+            if len(seen_uris) + dropped + len(items) > _skills.MAX_SKILLS:
+                raise McpCatalogError(
+                    f"MCP server '{self.name}' exceeded the {_skills.MAX_SKILLS}-skill limit"
+                )
+            for item in items:
+                uri = item.get("uri") if isinstance(item, dict) else None
+                try:
+                    entry = _skills.validate_entry(self.name, item)
+                    if entry.uri in seen_uris:
+                        raise _skills.SkillEntryError("listed twice")
+                except _skills.SkillEntryError as e:
+                    # Never silently: named in the log and in ``/skills``.
+                    logger.warning(
+                        f"MCP server '{self.name}': skill {uri!r} dropped: {e}"
+                    )
+                    unavailable.append((str(uri), f"invalid entry: {e}"))
+                    dropped += 1
+                    continue
+                seen_uris.add(entry.uri)
+                if entry.unavailable:
+                    unavailable.append((entry.uri, entry.unavailable))
+                entries.append(entry)
+            cursor = raw.get("nextCursor")
+            if cursor is None:
+                return entries, unavailable
+            if not isinstance(cursor, str) or len(cursor.encode("utf-8")) > _skills.MAX_CURSOR_BYTES:
+                raise McpCatalogError(
+                    f"MCP server '{self.name}' returned a malformed or oversized "
+                    "skills/list cursor"
+                )
+            if cursor in seen_cursors:
+                raise McpCatalogError(
+                    f"MCP server '{self.name}' returned a repeated skills/list cursor"
+                )
+            seen_cursors.add(cursor)
+        raise McpCatalogError(
+            f"MCP server '{self.name}' exceeded {_skills.MAX_SKILL_PAGES} pages of skills/list"
+        )
+
+    async def get_skill(self, uri: str) -> Any:
+        """``skills/get`` → a validated ``SkillEntry``. Raises :class:`McpResourceError`."""
+        adapter = _skills.result_adapter()
+        raw = await self._resource_request(
+            lambda s: s.send_request(_skills.get_skill_request(uri), adapter),
+            not_found_uri=uri, require_skills=True,
+        )
+        item = raw.get("skill") if isinstance(raw, dict) else None
+        try:
+            entry = _skills.validate_entry(self.name, item)
+        except _skills.SkillEntryError as e:
+            raise McpResourceError(
+                self.name, "invalid", f"MCP server '{self.name}': invalid skill entry for {uri}: {e}"
+            ) from None
+        if entry.uri != uri:
+            raise McpResourceError(
+                self.name, "invalid",
+                f"MCP server '{self.name}' answered skills/get for {uri} with {entry.uri}",
+            )
+        return entry
+
+    async def read_skill_resource(self, uri: str) -> ResourceRead:
+        """``resources/read`` for a skill file, gated on Skills rather than ``resources``."""
+        extra = {"allow_input_required": True} if READ_SUPPORTS_INPUT_REQUIRED else {}
+        result = await self._resource_request(
+            lambda s: s.read_resource(uri, **extra), not_found_uri=uri, require_skills=True,
+            not_found_what="skill file",
+        )
+        if InputRequiredResult is not None and isinstance(result, InputRequiredResult):
+            raise McpResourceError(
+                self.name, "input_required",
+                f"MCP server '{self.name}' cannot return {uri} without interactive input.",
             )
         return ResourceRead(
             server=self.name,
@@ -1900,6 +2147,55 @@ class McpClientManager:
         client = self._resource_client(server_name)
         return self._run(client.read_resource(uri))
 
+    # -- skills (docs/design/mcp-skills.md) --------------------------------
+
+    def skills_allowed(self, server_name: str) -> bool:
+        """``"skills": true`` in ``server_name``'s config (§5.1). Only ``True`` counts."""
+        config = self._configs.get(server_name)
+        return config is not None and config.get("skills") is True
+
+    def skill_servers(self) -> List[str]:
+        """Opted-in servers whose connection passed the §5.2 gate, sorted."""
+        return sorted(
+            name
+            for name, client in list(self._clients.items())
+            if self.skills_allowed(name)
+            and client.status == ServerStatus.CONNECTED
+            and client.skills_gate_problem() is None
+            and client.skills_problem is None
+        )
+
+    def skill_listing(self, server_name: str) -> Tuple[List[Any], List[Tuple[str, str]], Optional[str]]:
+        """``(entries, unavailable, problem)`` recorded at connect."""
+        client = self._clients.get(server_name)
+        if client is None:
+            return [], [], "not connected"
+        return list(client.skill_entries), list(client.skills_unavailable), client.skills_problem
+
+    def _skill_client(self, server_name: str) -> McpClient:
+        if not self.skills_allowed(server_name):
+            raise McpResourceError(
+                server_name, "disabled", f"skills are not enabled for MCP server '{server_name}'"
+            )
+        client = self._clients.get(server_name)
+        if client is None:
+            raise McpResourceError(
+                server_name, "unknown_server", f"MCP server '{server_name}' not found"
+            )
+        return client
+
+    def get_skill(self, server_name: str, uri: str) -> Any:
+        """``skills/get`` on ``server_name`` → ``SkillEntry``. Raises :class:`McpResourceError`."""
+        return self._run(self._skill_client(server_name).get_skill(uri))
+
+    def read_skill_resource(self, server_name: str, uri: str) -> ResourceRead:
+        """Read one skill file from its own server. Raises :class:`McpResourceError`.
+
+        Gated on ``skills`` rather than ``resources``: ``"resources": false``
+        hides a server from the *generic* surfaces, not from its skills.
+        """
+        return self._run(self._skill_client(server_name).read_skill_resource(uri))
+
     def login(self, server_name: str, ui: Any) -> ServerStatus:
         """Run an OAuth login for one server, then reconnect it.
 
@@ -2073,6 +2369,14 @@ class McpClientManager:
                 # Declared by the live connection; False while disconnected.
                 "resources": client.supports_resources,
                 "resources_enabled": self.resources_allowed(name),
+                # None for a server without "skills": true; else how many of
+                # the skills listed at connect can be loaded (the count the
+                # catalogue offers), with ``skills_error`` saying why none.
+                "skills": (
+                    sum(1 for e in client.skill_entries if not e.unavailable)
+                    if client.skills_requested else None
+                ),
+                "skills_error": client.skills_problem if client.skills_requested else None,
                 "trusted": client.is_trusted,
                 "error": client.error_message,
             })

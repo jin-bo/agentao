@@ -46,6 +46,7 @@ _TOOL_KIND_MAP: Dict[str, str] = {
     "list_mcp_resources": "search",
     "list_mcp_resource_templates": "search",
     "read_mcp_resource": "read",
+    "read_skill_file": "read",
     # running commands
     "run_shell_command": "execute",
     # retrieving external data

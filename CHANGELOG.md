@@ -28,6 +28,51 @@ _Targeting 0.5.10. Add entries under the relevant heading as work lands._
   hides a server from all of it. `/mcp resources [server]` lists resources
   without a model turn, and `/mcp list` shows the capability.
 
+- **MCP Skills** (`docs/design/mcp-skills.md`, issue #397) — client support
+  for the `io.modelcontextprotocol/skills` extension. Off by default; new
+  per-server `mcp.json` key `"skills": true` (only `true` counts). Such a
+  server is connected discover-first (`server/discover`, falling back to
+  `initialize`); every other server keeps the handshake-first order. Needs
+  mcp 2.x and a server on protocol 2026-07-28+ declaring the extension and
+  `resources`; otherwise `/mcp list` says why. Skills are listed once at
+  connect (no file fetched) and join the catalogue as
+  `mcp:<server>:<SKILL.md URI>` in their own sanitized, server-labelled
+  section; a listing failure turns off that server's skills and keeps its
+  tools. `activate_skill` asks once per skill per session — in every mode,
+  under an `allow` rule too — then verifies `SKILL.md`'s size, SHA-256
+  digest and frontmatter against the server's entry; a changed skill
+  revokes the approval and asks again, and a skill missing from the
+  listing loads by name through `skills/get`. New tool `read_skill_file`
+  reads a manifest file of an active MCP skill from its own server,
+  verified; `read_mcp_resource` inside a loaded skill's directory is
+  verified the same way. While any MCP skill is loaded (until `/clear`),
+  `run_shell_command`, spawning a shell-capable sub-agent and a
+  `read_mcp_resource` on another server are asked; a `deny` rule or
+  read-only mode still denies. Sub-agents share the session's loaded
+  skills. The `mcp:` skill-name prefix is now reserved: a local or plugin
+  skill using it is not loaded. `McpClientManager` gains `skills_allowed`,
+  `skill_servers`, `skill_listing`, `get_skill` and `read_skill_resource`;
+  `get_server_status()` rows gain `skills` / `skills_error`. `read_skill_file`
+  pages long files (`offset` / `limit`); a skill whose `SKILL.md` is over
+  100,000 bytes is listed as unavailable, because an active skill's
+  `SKILL.md` is sent with every request; skill content is never spilled to
+  `.agentao/tool-outputs/` (the replay file and `agentao.log` still record
+  tool results verbatim, and the gates do not cover a later `read_file` of
+  them). A restored, compacted or sub-agent-relayed copy of
+  skill content keeps its server provenance and re-arms the gates; such a
+  compaction summary is not saved to the cross-session memory tail. A saved
+  session records those origins in a new top-level `mcp_skill_origins`
+  field, so a restore keeps the gates even where a marker was lost. An
+  embedded host with no one to answer — the default `NullTransport`, an
+  `SdkTransport` without `confirm_tool`, or `build_compat_transport()`
+  without `confirmation_callback` — still approves every other
+  confirmation, but now refuses the ones the MCP Skills gate asks: an MCP
+  skill activation, and a shell call (or shell-capable sub-agent, or
+  cross-server resource read) while an MCP skill is loaded. A host that
+  wants them must pass a `confirm_tool`. Not
+  supported: `"dynamic"` skills, persisted approvals, a disk cache, runtime
+  refresh.
+
 - **`PathPolicy.contain_any(raw, *, writable, immutable=())`** — checks one
   write against several writable roots with read-only carve-outs, for a
   host's `FileSystem` wrapper. It follows a leaf symlink before testing the

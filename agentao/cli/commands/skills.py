@@ -11,9 +11,38 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .._globals import console, split_subcommand
+from ..ui import _safe
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
+
+
+def _record_mcp_activation(cli: AgentaoCLI, manager, name: str) -> None:
+    """Leave a durable provenance record of a user's MCP skill activation.
+
+    A model's activation leaves its ``<mcp-skill>`` result in the
+    transcript; this path puts the skill into context only through the
+    active-skills block, which is rebuilt per request and never saved. The
+    record is what compaction and a session restore read (they see only
+    ``agent.messages``), so derived content keeps its gates after either.
+    """
+    info = (getattr(manager, "active_skills", None) or {}).get(name)
+    key = info.get("mcp_key") if isinstance(info, dict) else None
+    messages = getattr(getattr(cli, "agent", None), "messages", None)
+    if key is None or not isinstance(messages, list):
+        return
+    from ...skills.provenance import result_marker
+
+    # A ``user`` message in ``<system-reminder>``: a mid-history ``system``
+    # message is refused by strict chat templates (see sessions.py).
+    messages.append({
+        "role": "user",
+        "content": (
+            f"<system-reminder>\n[The user activated MCP skill {name}; its "
+            f"instructions are in \"Active Skills\".]\n{result_marker([key[0]])}"
+            "\n</system-reminder>"
+        ),
+    })
 
 
 def handle_skills_command(cli: AgentaoCLI, args: str) -> None:
@@ -56,39 +85,42 @@ def handle_skills_command(cli: AgentaoCLI, args: str) -> None:
                 f"cannot be activated. Run /skills enable {sub_arg} first."
             )
         if result.startswith("Error"):
-            console.print(f"\n[warning]{result}[/warning]\n")
+            console.print(f"\n[warning]{_safe(result)}[/warning]\n")
         else:
-            console.print(f"\n[success]Skill '{sub_arg}' activated.[/success]\n")
+            _record_mcp_activation(cli, manager, sub_arg)
+            console.print(f"\n[success]Skill '{_safe(sub_arg)}' activated.[/success]\n")
         return
 
     if sub_cmd == "deactivate":
         if not sub_arg:
             console.print("[warning]Usage: /skills deactivate <skill_name>[/warning]")
             return
-        if sub_arg not in manager.available_skills:
+        # An MCP skill loaded by URI is active without a catalogue entry.
+        active = getattr(manager, "active_skills", None) or {}
+        if sub_arg not in manager.available_skills and sub_arg not in active:
             available = ", ".join(sorted(manager.list_available_skills()))
             console.print(
-                f"[warning]Unknown skill '{sub_arg}'. Available: {available}[/warning]"
+                f"[warning]Unknown skill '{_safe(sub_arg)}'. Available: {_safe(available)}[/warning]"
             )
             return
         if manager.deactivate_skill(sub_arg):
-            console.print(f"\n[success]Skill '{sub_arg}' deactivated.[/success]\n")
+            console.print(f"\n[success]Skill '{_safe(sub_arg)}' deactivated.[/success]\n")
         else:
-            console.print(f"\n[info]Skill '{sub_arg}' is not currently active.[/info]\n")
+            console.print(f"\n[info]Skill '{_safe(sub_arg)}' is not currently active.[/info]\n")
         return
 
     if sub_cmd == "disable":
         if not sub_arg:
             console.print("[warning]Usage: /skills disable <skill_name>[/warning]")
             return
-        console.print(f"\n{manager.disable_skill(sub_arg)}\n")
+        console.print(f"\n{_safe(manager.disable_skill(sub_arg))}\n")
         return
 
     if sub_cmd == "enable":
         if not sub_arg:
             console.print("[warning]Usage: /skills enable <skill_name>[/warning]")
             return
-        console.print(f"\n{manager.enable_skill(sub_arg)}\n")
+        console.print(f"\n{_safe(manager.enable_skill(sub_arg))}\n")
         return
 
     if sub_cmd == "reload":
@@ -97,6 +129,6 @@ def handle_skills_command(cli: AgentaoCLI, args: str) -> None:
         return
 
     console.print(
-        f"[warning]Unknown subcommand '{sub_cmd}'. "
+        f"[warning]Unknown subcommand '{_safe(sub_cmd)}'. "
         f"Use: activate, deactivate, disable, enable, reload[/warning]"
     )

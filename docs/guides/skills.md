@@ -245,6 +245,25 @@ You: /status
 
 Shows conversation status including active skills.
 
+## Skills from MCP Servers
+
+An MCP server can serve skills too, through the MCP Skills extension. Turn it on per server in `.agentao/mcp.json`:
+
+```json
+{ "mcpServers": { "docs": { "url": "https://docs.example/mcp", "skills": true } } }
+```
+
+Such a skill is listed by `/skills` under its server and named `mcp:<server>:<SKILL.md URI>`, for example `mcp:docs:skill://pdf-processing/SKILL.md`. The `mcp:` prefix is reserved: a local or plugin skill with a name that starts with it is not loaded.
+
+What is different from a local skill:
+
+- **You approve it.** The first activation in a session asks you, showing the server, the description, and the file count and size. Approval lasts for the session and binds to the files the server listed. If the server later changes them, you are asked again.
+- **It is verified.** `SKILL.md` and every file read later must match the size, SHA-256 digest and frontmatter the server published, or they are not used.
+- **Its files stay on the server.** The model reads them with `read_skill_file`, never from disk.
+- **It tightens permissions.** From the first MCP skill loaded until `/clear`, shell commands, sub-agents that can run shell commands, and resource reads from other servers ask first, even in `full-access`.
+
+Requirements and limits: mcp 2.x, a server on protocol 2026-07-28 or later, at most 512 files and 16 MiB per skill, and a `SKILL.md` of at most 100,000 bytes (an active skill's `SKILL.md` is sent with every request; put long material in a supporting file, which `read_skill_file` reads in pages). `"dynamic"` skills are shown as unavailable. See the `skills` key in `docs/reference/configuration.md`, and `docs/design/mcp-skills.md`.
+
 ## Skill Structure Best Practices
 
 ### File Organization

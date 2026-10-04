@@ -10,6 +10,7 @@ from rich.markup import escape as markup_escape
 
 from ..security.terminal_text import sanitize_terminal_text
 from ..transport import AgentEvent, EventType
+from ..transport import confirmation as _confirmation
 from ._globals import console
 
 if TYPE_CHECKING:
@@ -143,7 +144,16 @@ def confirm_tool_execution(cli: AgentaoCLI, tool_name: str, tool_description: st
     """Prompt user to confirm tool execution with menu options."""
     from ..permissions import PermissionMode
 
-    if (cli.current_mode == PermissionMode.FULL_ACCESS or cli.allow_all_tools) and not cli._plan_session.is_active:
+    # The MCP Skills gate tightens full-access and "allow all" to ASK
+    # (docs/design/mcp-skills.md §5.5, §6.2); auto-approving here would undo
+    # it, so a gated call is always put to the user, with the gate's note.
+    # The runner says which calls are gated (``transport/confirmation.py``).
+    gate_note = _confirmation.gate_note()
+    if (
+        (cli.current_mode == PermissionMode.FULL_ACCESS or cli.allow_all_tools)
+        and not cli._plan_session.is_active
+        and gate_note is None
+    ):
         return True
 
     if cli.current_status:
@@ -152,6 +162,8 @@ def confirm_tool_execution(cli: AgentaoCLI, tool_name: str, tool_description: st
     try:
         console.print(f"\n[yellow]⚠️  Tool Confirmation Required[/yellow]")
         console.print(f"[info]Tool:[/info] [cyan]{_display(tool_name)}[/cyan]")
+        if gate_note is not None:
+            console.print(f"[info]Why:[/info] {_display(gate_note)}")
         console.print("[info]Arguments:[/info]")
 
         # Model-authored, and this is the prompt the operator answers — see
@@ -162,10 +174,17 @@ def confirm_tool_execution(cli: AgentaoCLI, tool_name: str, tool_description: st
             console.print(f"  • {_display(key)}: {_display(value)}")
 
         console.print("\n[bold]Choose an option:[/bold]")
-        console.print(" [green]1[/green]. Yes")
-        console.print(" [green]2[/green]. Yes, allow all tools during this session")
-        console.print(" [red]3[/red]. No")
-        console.print("\n[dim]Press 1, 2, or 3 (single key, no Enter needed) · Esc to cancel[/dim]", end=" ")
+        if gate_note is None:
+            console.print(" [green]1[/green]. Yes")
+            console.print(" [green]2[/green]. Yes, allow all tools during this session")
+            console.print(" [red]3[/red]. No")
+            console.print("\n[dim]Press 1, 2, or 3 (single key, no Enter needed) · Esc to cancel[/dim]", end=" ")
+        else:
+            # A gated confirmation answers this call only: no standing grant
+            # may come out of it (``transport/confirmation.py``).
+            console.print(" [green]1[/green]. Yes, this call only")
+            console.print(" [red]3[/red]. No")
+            console.print("\n[dim]Press 1 or 3 (single key, no Enter needed) · Esc to cancel[/dim]", end=" ")
 
         while True:
             try:
@@ -174,7 +193,7 @@ def confirm_tool_execution(cli: AgentaoCLI, tool_name: str, tool_description: st
                 if key == "1":
                     console.print("\n[green]✓ Executing tool[/green]")
                     return True
-                elif key == "2":
+                elif key == "2" and gate_note is None:
                     from ..permissions import PermissionMode
                     from ..runtime.permission_mode import apply_permission_mode
                     cli.allow_all_tools = True

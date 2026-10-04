@@ -1230,6 +1230,12 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         bg_notes = agent.bg_store.drain_notifications()
         if not bg_notes:
             return messages_with_system
+        # A finished task's result may carry MCP skill origins from the
+        # conversation that launched it: re-arm the gates here, or withhold.
+        # Per note, so withholding one task's result never blanks another's.
+        admit = getattr(agent, "_mcp_admit", None)
+        if callable(admit):
+            bg_notes = [admit(note) for note in bg_notes]
         note_content = "\n\n".join(bg_notes)
         agent.messages.append({
             "role": "user",

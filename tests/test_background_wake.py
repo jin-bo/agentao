@@ -140,7 +140,7 @@ def _wrapper(tmp_path, store, stream, *, drive):
             stream, parent_session_id_provider=lambda: "parent-s"
         ),
     )
-    wrapper._build_sub_agent = lambda suppress_output: (object(), {})
+    wrapper._build_sub_agent = lambda suppress_output, skill_manager=None: (object(), {})
     wrapper._drive_sub_agent = drive
     wrapper._roll_up_usage = lambda sub_agent: None
     wrapper._close_sub_agent = lambda sub_agent: None

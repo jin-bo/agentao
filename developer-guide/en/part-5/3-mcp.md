@@ -179,6 +179,26 @@ read = agent.mcp_manager.read_resource("docs", "report://q3")  # ResourceRead (t
 
 Each raises `agentao.mcp.resources.McpResourceError` (with a `kind`) instead of returning partial data. In the CLI, `/mcp resources [server]` lists them without spending a model turn.
 
+## MCP skills
+
+A server can also publish Agent Skills through the MCP Skills extension (`io.modelcontextprotocol/skills`). It is **off by default**: set `"skills": true` on the server in `mcp.json`. It needs mcp 2.x and a server on protocol 2026-07-28 or later.
+
+- **Catalogue.** At connect the server's skills are listed (no file is fetched). Each one is named `mcp:<server>:<SKILL.md URI>` — the identity spelled out, so two same-named skills never collide — and appears in the system prompt in its own section, labelled as written by that server.
+- **Activation.** `activate_skill("mcp:docs:skill://pdf-processing/SKILL.md")` asks the user once per session, then fetches `SKILL.md` and verifies its size, digest and frontmatter against the server's entry. The body reaches the model inside `<mcp-skill server="…" uri="…">`. A skill missing from the listing can still be loaded by that name.
+- **Files.** `read_skill_file(skill, path)` reads a file of an active MCP skill from that skill's own server, verified, and refuses a path that is not in the manifest. A `read_mcp_resource` inside a loaded skill's directory is verified the same way.
+- **Gates.** While any MCP skill is loaded (until `/clear`, not merely until deactivation), `run_shell_command`, spawning a sub-agent that can run shell commands, and `read_mcp_resource` on another server are asked, in every permission mode. They only tighten: a `deny` rule or read-only mode still denies.
+- **Sub-agents** share the session's loaded skills, so the gates hold inside them too.
+
+A host reads the same data from the manager:
+
+```python
+agent.mcp_manager.skill_servers()                 # servers that passed the gate
+entries, unavailable, problem = agent.mcp_manager.skill_listing("docs")
+entry = agent.mcp_manager.get_skill("docs", "skill://pdf-processing/SKILL.md")  # skills/get
+```
+
+`/skills` lists MCP skills per server, with the reason any of them cannot be loaded; `/mcp list` shows each opted-in server's skill count, or why it has none.
+
 ## Debugging
 
 ```python
