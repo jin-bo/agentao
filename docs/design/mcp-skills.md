@@ -389,7 +389,7 @@ forbids into one the user could approve. The hardline floor is upstream of all o
 unchanged.
 
 The gate keys on the held-entry map, not on how the tool reached the model, so it holds under the
-on-demand tool loading the [pi 1.0 lessons](pi-1.0-lessons-for-agentao.zh.md) §2 recommends: a
+on-demand tool loading the [pi 1.0 lessons](pi-1.0-lessons-for-agentao.zh.md) §2 discusses: a
 deferred `run_shell_command` loaded while acting on an MCP skill is still ASK. It lifts only when
 the map is emptied (`/clear`, a new session) — deactivation does not lift it (D7).
 

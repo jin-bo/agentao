@@ -217,7 +217,7 @@ them unchanged:
   (`direct`, then `codemode` or `deferred`; `docs/mcp.md:220`), so they are declared up front
   whenever any such server is. agentao declares every registered tool today
   (`ToolRegistry.to_openai_format`, `tools/base.py:370-390`). If the on-demand loading the
-  [pi 1.0 lessons](pi-1.0-lessons-for-agentao.zh.md) §2 recommends is built, these three are three
+  [pi 1.0 lessons](pi-1.0-lessons-for-agentao.zh.md) §2 discusses is built, these three are three
   small, server-independent definitions and should stay directly declared, as pi's are for a
   `direct` server — the catalogue they open is the resources, not more tools.
 - **Which servers.** Every configured server that passes §5.1's checks: allowed by config (no
