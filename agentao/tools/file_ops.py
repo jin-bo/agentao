@@ -224,10 +224,11 @@ class WriteFileTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Write content to a file. Creates the file if it doesn't exist. "
-            "Supports append mode. Best for new or small files; for surgical "
-            "changes to existing files, prefer `replace` to minimize token "
-            "usage and simplify review."
+            "Write content to a file. If the file does not exist, the tool "
+            "creates it. To add the content at the end of the file, set `append` "
+            "to true. Use this tool for new files and small files. To change part "
+            "of an existing file, use `replace`. A replace call sends less text, "
+            "is easier to review, and does not delete text by accident."
         )
 
     @property
@@ -280,10 +281,12 @@ class EditTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Edit a file by replacing old text with new text. The old text "
-            "must match exactly. Use replace_all to replace all occurrences. "
-            "Preferred for surgical edits to existing files: minimizes token "
-            "usage, simplifies review, and avoids accidental deletions."
+            "Edit a file: replace `old_text` with `new_text`. The `old_text` value "
+            "must match the file text exactly. By default, the tool replaces only "
+            "the first match. To replace all matches, set `replace_all` to true. "
+            "Use this tool for small changes to existing files. It sends less text "
+            "than write_file, is easier to review, and does not delete text by "
+            "accident."
         )
 
     @property

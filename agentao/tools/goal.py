@@ -36,13 +36,14 @@ class UpdateGoalTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Update the status of the current long-task goal. Call with "
-            "status='complete' ONLY when the objective is fully achieved, or "
-            "status='blocked' when you genuinely cannot make further progress "
-            "without the user (missing credentials, an ambiguous decision that is "
-            "the user's to make). Do NOT mark complete merely because a budget is "
-            "nearly exhausted. You cannot pause, resume, or re-budget the goal — "
-            "those are the user's controls."
+            "Set the status of the current long-task goal.\n"
+            "- status='complete': only when you achieved the full objective. A "
+            "budget that is almost used up is not a reason to set complete.\n"
+            "- status='blocked': only when you cannot make more progress without "
+            "the user. Examples are missing credentials, or a decision that "
+            "belongs to the user.\n\n"
+            "You cannot pause, resume, or change the budget of the goal. Only the "
+            "user can do these things."
         )
 
     @property
@@ -54,8 +55,8 @@ class UpdateGoalTool(Tool):
                     "type": "string",
                     "enum": ["complete", "blocked"],
                     "description": (
-                        "complete = objective fully achieved; "
-                        "blocked = cannot proceed without the user"
+                        "complete: you achieved the full objective. "
+                        "blocked: you cannot continue without the user."
                     ),
                 },
             },

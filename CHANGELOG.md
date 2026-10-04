@@ -167,6 +167,20 @@ _Targeting 0.5.10. Add entries under the relevant heading as work lands._
   100-line cap, and `todo_write` uses one name, "task list". The wording follows
   Simplified Technical English (ASD-STE100), as the system prompt does since
   #402. `tests/test_tool_description_facts.py` ties each claim to the code.
+- **`run_shell_command` no longer claims a background command is checked for
+  errors.** The description said the command "runs briefly to check for
+  immediate errors" before it detaches; `_run_background` returns as soon as
+  the process starts and discards its output, so a command that fails at once
+  is still reported as started. On Windows it also promised a PGID, which is
+  never returned there, and gave `taskkill /F /PID`, which leaves child
+  processes running — the tool's own result already says `taskkill /F /T
+  /PID`. On POSIX, a background start with no process group (`getpgid` lost
+  the race with a command that already exited, or a host executor reported
+  none) told the model to run `taskkill`; it now says `kill <pid>`. The rest of the tool descriptions (`update_goal`, `write_file`,
+  `replace`, `run_in_background`, `list_mcp_resources`, `read_mcp_resource`,
+  `plan_save`, …) are rewritten in Simplified Technical English: no
+  semicolons, active voice, and numbered steps for a sequence. A test now
+  refuses a semicolon in any built-in tool description.
 
 ---
 

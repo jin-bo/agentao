@@ -272,7 +272,7 @@ def test_schema_states_the_cap(tmp_path):
     store = BackgroundTaskStore(max_concurrent=4)
     wrapper = _wrapper(tmp_path, store, _Stream(), release)
     text = wrapper.parameters["properties"]["run_in_background"]["description"]
-    assert "At most 4 background agents run at once" in text
+    assert "At most 4 background agents run at the same time" in text
 
     store.max_concurrent = None
     text = wrapper.parameters["properties"]["run_in_background"]["description"]

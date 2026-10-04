@@ -214,20 +214,21 @@ class AgentToolWrapper(Tool):
             # after this tool was built.
             limit = getattr(self._bg_store, "max_concurrent", None)
             cap_note = (
-                f" At most {limit} background agents run at once; "
-                "a launch beyond that is refused."
+                f"\n\nAt most {limit} background agents run at the same time. "
+                "The tool refuses a launch above that limit."
                 if type(limit) is int else ""
             )
             properties["run_in_background"] = {
                 "type": "boolean",
                 "description": (
-                    "Run the agent asynchronously. "
-                    "Returns immediately with an agent_id. "
-                    "Continue other work; do not wait with sleep or repeated status "
-                    "checks. If there is nothing else to do, end this turn. "
-                    "A background agent update can be read when this session next runs. "
-                    "If this turn cannot continue without its result, call "
-                    "check_background_agent with wait_seconds once."
+                    "If true, run the agent asynchronously. The tool returns an "
+                    "agent_id at once.\n"
+                    "- Continue with other work. Do not wait with sleep or with "
+                    "repeated status checks.\n"
+                    "- If you have no other work, end this turn. You can read the "
+                    "update of a background agent the next time this session runs.\n"
+                    "- If this turn cannot continue without the result, call "
+                    "check_background_agent with wait_seconds one time."
                     + cap_note
                 ),
             }
