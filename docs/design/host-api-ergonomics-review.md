@@ -1,6 +1,6 @@
 # Host API ergonomics review: can embedding be simpler?
 
-**Status:** Review, 2026-10-06. **Decided 2026-10-06:** F1 takes route (a), docs only (§3 F1, *Decision*). Streaming text enters the stable contract (F2). New stable types are exported from `agentao.host` only (F3). F1(a) and F3 step 0 are **implemented in PR #423** (docs and example imports only). The code steps (string modes and exports, F4, `astream`) are not yet authorized. Nothing here is implemented yet. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered. **Second revision, after re-review:** F2's close order releases pending queue writes first, early exit requires `aclosing`, and the stream is bound to its own turn by token identity. **Third revision (2026-10-06), exports narrowed:** `PermissionMode` is not exported and `TurnFinished` is dropped; new exports are `CancellationToken`, `TextDelta`, `TurnOutcome`; `Agentao(permission_mode=...)` decided.
+**Status:** Review, 2026-10-06. **Decided 2026-10-06:** F1 takes route (a), docs only (§3 F1, *Decision*). Streaming text enters the stable contract (F2). New stable types are exported from `agentao.host` only (F3). F1(a) and F3 step 0 are **implemented in PR #423** (docs and example imports only). The code steps (string modes and exports, F4, `astream`) are not yet authorized. Nothing here is implemented yet. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered. **Second revision, after re-review:** F2's close order releases pending queue writes first, early exit requires `aclosing`, and the stream is bound to its own turn by token identity. **Third revision (2026-10-06), exports narrowed:** `PermissionMode` is not exported and `TurnFinished` is dropped; new exports are `CancellationToken`, `TextDelta`, `TurnOutcome`; `Agentao(permission_mode=...)` decided. F7 added: keep every export, tier the guides, add `__dir__`.
 **Audience:** agentao maintainers deciding what to change in the embedded-host surface, and reviewers of any follow-up PR.
 **Companions:**
 - `docs/design/host-api-ergonomics-review.zh.md`: Chinese version, same content
@@ -24,6 +24,7 @@ The question was whether the host-facing API could be simpler. This review compa
 | F4 | No `with` / `async with`; every host writes `try/finally close()` | `__enter__/__exit__`; `aclose()` = `asyncio.to_thread(close)`; host ends its turns first | Additive |
 | F5 | `chat()` returning a string does not mean the model answered | Covered by F2's final event; `chat()` unchanged | n/a |
 | F6 | Duplicate observer aliases; 32 constructor parameters | **Deferred**; leave the constructor alone | n/a |
+| F7 | Guides list `agentao.host` flat and incompletely; `dir()` hides the lazy tool types | Keep every export; tier how the guides present them; add `__dir__` | Additive |
 
 ## 3. Findings
 
@@ -194,6 +195,27 @@ So no design here may require or encourage replacing the transport.
   - grouping parameters into config objects would churn every doc, example and test without closing a defect;
   - the guide already leads with one form.
 
+### F7. A common task should touch few names
+
+Review conclusion (2026-10-06): **no existing export is worth removing or moving now.** The effective simplification is that a host doing a common task only meets a few names, not a shorter full list.
+
+**Today:**
+- The guides list `agentao.host` as one flat line (`embedding.md:728-731`), and that line is incomplete: it omits `Tool`, `AsyncToolBase`, `RegistrableTool`, `StreamSubscribeError` and `SubagentUsage`.
+- Neither embedding guide says when to use `Tool` or `AsyncToolBase`; that guidance is only in the developer guide's 5.1 (`developer-guide/en/part-5/1-custom-tools.md`).
+- `dir(agentao.host)` does not show the three lazily exported tool types. Measured: `Tool`, `AsyncToolBase` and `RegistrableTool` are all absent, because `agentao.host` defines `__getattr__` but no `__dir__`. Top-level `agentao` already has one (`agentao/__init__.py:85`).
+
+**Proposal: keep every export; tier how the guides present them.**
+
+| Export | Where hosts meet it |
+|---|---|
+| `Tool`, `AsyncToolBase`, `RegistrableTool` | The guides state the choice: a sync tool subclasses `Tool`, an async tool subclasses `AsyncToolBase`, and `RegistrableTool` is for type annotations (for example a list passed as `extra_tools=`). No new common base class. |
+| `EventStream` | Mainly the runtime's. Host guides show `agent.events()` and never ask a host to construct one. |
+| `RFC3339UTCString`, `SubagentUsage` | Full reference only; minimal integration examples do not import them. |
+| `export_host_event_json_schema`, `export_host_acp_json_schema` | In the schema-export section of the reference, not in the ordinary integration guide. |
+| The three events, `HostEvent`, `ActivePermissions`, `StreamSubscribeError` | Clear roles; unchanged. |
+
+**Implementation:** give `agentao.host` a `__dir__()` that includes the lazy exports, the same pattern as `agentao/__init__.py:85`, so interactive discovery sees them. It reuses the existing lazy-export mechanism and imports nothing when called.
+
 ## 4. Recommended order
 
 Revised after review. Each step is its own PR.
@@ -202,7 +224,7 @@ Revised after review. Each step is its own PR.
 2. **String permission modes, `Agentao(permission_mode=...)`, and `CancellationToken` exported from `agentao.host`** (F3 steps 1–3). Additive; `set_permission_mode`'s return value is unchanged.
 3. **A minimal `astream`** (F2): first move `TurnOutcome` to a lightweight module, then `TextDelta` + the final `TurnOutcome`, both exported from `agentao.host`, attached by subscription, with the lifecycle above. Then move the examples off `SdkTransport` / `EventType` and fix the `saas-assistant` swap (F3 step 3).
 
-F4 can join step 2 or stand alone; it is small and additive. F6 is deferred.
+F4 can join step 2 or stand alone; it is small and additive. F7's `__dir__` joins step 2; F7's guide tiering lands with the guide changes of step 3 (or earlier, as docs only). F6 is deferred.
 
 ## 5. Deliberately not proposed
 
@@ -218,4 +240,4 @@ F4 can join step 2 or stand alone; it is small and additive. F6 is deferred.
 3. ~~**F3:** should the re-exports live in `agentao.host` or in top-level `agentao`?~~ **Answered 2026-10-06: `agentao.host` only.**
 4. ~~**F3:** how does a host set a permission posture without importing `PermissionEngine`?~~ **Answered 2026-10-06: `Agentao(permission_mode=...)`**, default `None`. Open: confirm the proposed `ValueError` when both `permission_mode=` and `permission_engine=` are passed.
 
-**`agentao.host` after steps 2–3:** the 14 names exported today, unchanged, plus `CancellationToken`, `TextDelta` and `TurnOutcome`. None of the existing 14 is removed: each is on the typed stable surface, and removing one breaks hosts for no real simplification.
+**`agentao.host` after steps 2–3:** the 14 names exported today, unchanged, plus `CancellationToken`, `TextDelta` and `TurnOutcome`. None of the existing 14 is removed: each is on the typed stable surface, and removing one breaks hosts for no real simplification. The simplification is in how the guides present them (F7).

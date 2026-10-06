@@ -1,6 +1,6 @@
 # 宿主 API 易用性评审：嵌入能不能更简单？
 
-**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 和 F3 第 0 步**已在 PR #423 实施**（只改文档和示例导入）；代码部分（字符串模式与导出、F4、`astream`）的实施尚未获批。本文内容都还没有实现。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。**第三次修订（2026-10-06），收窄导出：** 不导出 `PermissionMode`，去掉 `TurnFinished`；新增导出为 `CancellationToken`、`TextDelta`、`TurnOutcome`；已决定 `Agentao(permission_mode=...)`。
+**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 和 F3 第 0 步**已在 PR #423 实施**（只改文档和示例导入）；代码部分（字符串模式与导出、F4、`astream`）的实施尚未获批。本文内容都还没有实现。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。**第三次修订（2026-10-06），收窄导出：** 不导出 `PermissionMode`，去掉 `TurnFinished`；新增导出为 `CancellationToken`、`TextDelta`、`TurnOutcome`；已决定 `Agentao(permission_mode=...)`。新增 F7：保留所有导出，指南分层介绍，加 `__dir__`。
 **读者：** 决定改动嵌入式宿主接口的 agentao 维护者，以及后续 PR 的评审者。
 **相关文档：**
 - `docs/design/host-api-ergonomics-review.md`：英文版，内容相同
@@ -24,6 +24,7 @@
 | F4 | 不支持 `with` / `async with`，每个宿主都写 `try/finally close()` | `__enter__/__exit__`；`aclose()` 即 `asyncio.to_thread(close)`；宿主先结束自己的轮次 | 纯新增 |
 | F5 | `chat()` 返回字符串不代表模型真的回答了 | 由 F2 的结束事件覆盖；`chat()` 不改 | 不适用 |
 | F6 | 观察者别名重复；构造函数 32 个参数 | **暂缓**；构造函数不动 | 不适用 |
+| F7 | 指南把 `agentao.host` 写成扁平且不完整的一行；`dir()` 看不到懒导出的工具类型 | 保留所有导出；指南按层次介绍；加 `__dir__` | 纯新增 |
 
 ## 3. 发现
 
@@ -194,6 +195,27 @@
   - 拆成配置对象会牵动所有文档、示例和测试，却不修复任何缺陷；
   - 指南已经以其中一种写法为主。
 
+### F7. 常见任务只应接触少量名字
+
+评审结论（2026-10-06）：**现有导出里没有值得现在删除或迁移的名字。** 最有效的简化，是让宿主完成常见任务时只需接触少量接口，而不是缩短完整导出清单。
+
+**现状：**
+- 指南把 `agentao.host` 写成扁平的一行（`embedding.md:728-731`），而且这一行不完整：漏了 `Tool`、`AsyncToolBase`、`RegistrableTool`、`StreamSubscribeError` 和 `SubagentUsage`。
+- 两份嵌入指南都没说什么时候用 `Tool`、什么时候用 `AsyncToolBase`；这个说明只在开发者指南的 5.1（`developer-guide/en/part-5/1-custom-tools.md`）。
+- `dir(agentao.host)` 看不到三个懒导出的工具类型。实测 `Tool`、`AsyncToolBase` 和 `RegistrableTool` 都不在其中，因为 `agentao.host` 定义了 `__getattr__`，却没有 `__dir__`。顶层 `agentao` 已经有 `__dir__`（`agentao/__init__.py:85`）。
+
+**提议：保留所有导出，指南按层次介绍。**
+
+| 导出 | 宿主在哪里接触它 |
+|---|---|
+| `Tool`、`AsyncToolBase`、`RegistrableTool` | 指南写明如何选择：同步工具继承 `Tool`，异步工具继承 `AsyncToolBase`，`RegistrableTool` 用于类型标注（例如传给 `extra_tools=` 的列表）。不新增统一基类。 |
+| `EventStream` | 主要给运行时用。宿主指南直接展示 `agent.events()`，不要求宿主自己构造它。 |
+| `RFC3339UTCString`、`SubagentUsage` | 只在完整参考里出现；最小接入示例不导入它们。 |
+| `export_host_event_json_schema`、`export_host_acp_json_schema` | 放在参考文档的 schema 导出说明里，普通宿主接入指南不展示。 |
+| 三种事件、`HostEvent`、`ActivePermissions`、`StreamSubscribeError` | 职责清楚，保持现状。 |
+
+**实现：** 给 `agentao.host` 加一个 `__dir__()`，把懒导出的名字也列进去，做法与 `agentao/__init__.py:85` 相同，让交互式发现能看到它们。沿用现有的懒导出机制，调用时不导入任何东西。
+
 ## 4. 建议顺序
 
 已按评审修订。每一步单独一个 PR。
@@ -202,7 +224,7 @@
 2. **字符串形式的权限模式、`Agentao(permission_mode=...)`，以及从 `agentao.host` 导出 `CancellationToken`**（F3 第 1–3 步）。纯新增；`set_permission_mode` 的返回值不变。
 3. **最小的 `astream`**（F2）：先把 `TurnOutcome` 移到轻量模块，再实现 `TextDelta` + 最后的 `TurnOutcome`（都从 `agentao.host` 导出），通过订阅接入，遵守上面的生命周期约束。然后把示例从 `SdkTransport` / `EventType` 上移走，并修好 `saas-assistant` 的替换写法（F3 第 3 步）。
 
-F4 可以并入第 2 步，也可以单独做；它很小，而且是纯新增。F6 暂缓。
+F4 可以并入第 2 步，也可以单独做；它很小，而且是纯新增。F7 的 `__dir__` 并入第 2 步；F7 的指南分层随第 3 步的指南修改一起做（也可以提前，只改文档）。F6 暂缓。
 
 ## 5. 有意不提议的
 
@@ -218,4 +240,4 @@ F4 可以并入第 2 步，也可以单独做；它很小，而且是纯新增�
 3. ~~**F3：** 懒导出放在 `agentao.host` 还是顶层 `agentao`？~~ **已于 2026-10-06 答复：只放在 `agentao.host`。**
 4. ~~**F3：** 宿主不导入 `PermissionEngine` 时怎样设定权限姿态？~~ **已于 2026-10-06 答复：`Agentao(permission_mode=...)`**，默认 `None`。待确认：同时传入 `permission_mode=` 和 `permission_engine=` 时是否按提议抛 `ValueError`。
 
-**第 2–3 步之后 `agentao.host` 的导出：** 现有 14 个名字不变，再加 `CancellationToken`、`TextDelta` 和 `TurnOutcome`。现有 14 个一个都不删：它们都在有类型门禁的稳定接口上，删掉任何一个都会破坏宿主，而换不来实际的简化。
+**第 2–3 步之后 `agentao.host` 的导出：** 现有 14 个名字不变，再加 `CancellationToken`、`TextDelta` 和 `TurnOutcome`。现有 14 个一个都不删：它们都在有类型门禁的稳定接口上，删掉任何一个都会破坏宿主，而换不来实际的简化。简化体现在指南怎样介绍它们（F7）。
