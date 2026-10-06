@@ -79,6 +79,115 @@ def test_blocks_ipv6_with_embedded_private_ipv4(url):
         validate_outbound_url(url)
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        # Each of these passed on CPython 3.12.0.
+        "http://168.63.129.16/",               # Azure WireServer, a public IP
+        "http://192.0.0.192/",                 # Oracle Classic metadata
+        "http://[64:ff9b:1::a9fe:a9fe]/",      # RFC 8215 local-use NAT64, /96
+        "http://[64:ff9b:1:a9fe:a9:fe00::]/",  # same prefix, /48 position
+        "http://[::5efe:a9fe:a9fe]/",          # ISATAP -> 169.254.169.254
+        "http://[fe80::200:5efe:7f00:1]/",     # ISATAP -> 127.0.0.1
+        "http://[::a9fe:a9fe]/",               # IPv4-compatible
+        "http://[::7f00:1]/",                  # IPv4-compatible loopback
+        "http://[fd00:ec2::254]/",             # AWS IMDS over IPv6
+        "http://[2001:0:4136:e378:8000:63bf:5601:5601]/",  # Teredo -> 169.254.169.254 client
+    ],
+)
+def test_blocks_metadata_and_more_ipv6_embeddings(url):
+    with pytest.raises(UrlPolicyError):
+        validate_outbound_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://[fc00::5efe:808:808]/",      # ISATAP, unique-local outer address
+        "http://[fe80::200:5efe:808:808]/",  # ISATAP, link-local outer address
+    ],
+)
+def test_isatap_with_public_ipv4_is_still_judged_as_ipv6(url):
+    with pytest.raises(UrlPolicyError):
+        validate_outbound_url(url)
+
+
+def test_isatap_with_public_outer_and_public_ipv4_is_allowed():
+    validate_outbound_url("http://[2600::5efe:808:808]/")  # no raise
+
+
+def test_local_use_nat64_padding_is_not_a_destination():
+    # /96 layout carrying 8.8.8.8. The shorter layouts do not fit (non-zero
+    # suffix), so their padding is not decoded as further destinations.
+    validate_outbound_url("http://[64:ff9b:1::808:808]/")  # no raise
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://[64:ff9b:1:808:8:800::]/",   # /48 layout, 8.8.8.8
+        "http://[64:ff9b:1:8:8:808::]/",     # /56 layout, 8.8.8.8
+    ],
+)
+def test_local_use_nat64_shorter_layouts_reach_public_targets(url):
+    validate_outbound_url(url)  # no raise
+
+
+def test_local_use_nat64_shorter_layout_metadata_obeys_exact_allowlist():
+    url = "http://[64:ff9b:1:a9fe:a9:fe00::]/"  # /48 layout, 169.254.169.254
+    with pytest.raises(UrlPolicyError):
+        validate_outbound_url(url)
+    net = (ipaddress.ip_network("169.254.169.254/32"),)
+    validate_outbound_url(url, allow_networks=net)  # no raise
+
+
+@pytest.mark.parametrize("ip", ["192.0.0.9", "192.0.0.10"])
+def test_public_anycast_inside_192_0_0_0_24_is_allowed(ip, fake_resolver):
+    validate_outbound_url(f"http://{ip}/")  # no raise
+    fake_resolver["anycast.example.com"] = [ip]
+    validate_outbound_url("http://anycast.example.com/")  # no raise
+
+
+def test_local_use_nat64_exact_metadata_allowlist_is_honoured():
+    net = (ipaddress.ip_network("169.254.169.254/32"),)
+    with pytest.raises(UrlPolicyError):
+        validate_outbound_url("http://[64:ff9b:1::a9fe:a9fe]/")
+    validate_outbound_url("http://[64:ff9b:1::a9fe:a9fe]/", allow_networks=net)  # no raise
+
+
+def test_non_public_table_does_not_depend_on_is_global(monkeypatch):
+    # Pin the verdict against an interpreter whose ``is_global`` says yes to
+    # everything: the explicit table still refuses each range.
+    monkeypatch.setattr(ipaddress.IPv4Address, "is_global", property(lambda self: True))
+    monkeypatch.setattr(ipaddress.IPv6Address, "is_global", property(lambda self: True))
+    for url in ("http://10.0.0.1/", "http://192.0.0.8/", "http://[fc00::1]/", "http://[2001:db8::1]/"):
+        with pytest.raises(UrlPolicyError):
+            validate_outbound_url(url)
+    validate_outbound_url("http://8.8.8.8/")  # no raise
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://169.254.169.254/",
+        "http://169.254.170.2/",
+        "http://[64:ff9b::169.254.169.254]/",
+    ],
+)
+def test_a_range_containing_metadata_does_not_open_it(url):
+    link_local = (ipaddress.ip_network("169.254.0.0/16"),)
+    with pytest.raises(UrlPolicyError):
+        validate_outbound_url(url, allow_networks=link_local)
+    # The rest of the range is still opened.
+    validate_outbound_url("http://169.254.1.1/", allow_networks=link_local)  # no raise
+
+
+def test_metadata_resolved_from_a_name_is_blocked(fake_resolver):
+    fake_resolver["wire.example.com"] = ["168.63.129.16"]
+    with pytest.raises(UrlPolicyError):
+        validate_outbound_url("http://wire.example.com/")
+
+
 def test_allows_ipv6_translation_embedding_public_ipv4():
     # NAT64/6to4 wrapping a *public* v4 is a legitimate public target.
     validate_outbound_url("http://[64:ff9b::8.8.8.8]/")  # no raise
@@ -324,9 +433,13 @@ def test_allowlist_is_scoped_metadata_still_blocked():
 
 
 def test_allowlist_can_permit_metadata_if_explicitly_listed():
-    # The operator's explicit choice is honored (host owns its endpoint).
+    # The operator's explicit choice is honored (host owns its endpoint):
+    # naming the address itself opens it, in any encoding.
     net = (ipaddress.ip_network("169.254.169.254/32"),)
     validate_outbound_url("http://169.254.169.254/", allow_networks=net)  # no raise
+    validate_outbound_url("http://[64:ff9b::169.254.169.254]/", allow_networks=net)  # no raise
+    azure = (ipaddress.ip_network("168.63.129.16"),)
+    validate_outbound_url("http://168.63.129.16/", allow_networks=azure)  # no raise
 
 
 def test_allowlist_applies_to_resolved_hostname(fake_resolver):

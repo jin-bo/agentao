@@ -51,17 +51,46 @@ from typing import Dict, List, Tuple
 # block isn't partially eaten by a later, looser pattern.
 SECRET_PATTERNS: List[Tuple[str, "re.Pattern[str]"]] = [
     (
+        # Two tails under one kind, tried in order. A terminated block is
+        # claimed by the first; the second is reached only when no END marker
+        # follows — a key pasted without its last line, the usual way one is
+        # cut off. That tail needs a line break after the header, so prose
+        # naming the header is left alone, and takes base64 lines only, so the
+        # text after the key survives. A literal ``\n`` counts as a line break
+        # because a key inside a JSON string (a service-account file) carries
+        # one. Armor headers (PGP ``Version:``, encrypted PEM ``Proc-Type:`` /
+        # ``DEK-Info:``) are skipped before the body, or only the first word
+        # of the first one was redacted and the key body was left in place.
+        # ``(?: BLOCK)?`` is for PGP, whose header ends ``KEY BLOCK-----``.
+        # The terminated tail stops at the next BEGIN: without that, each
+        # header with no END scanned to the end of the text, so a log of
+        # repeated headers cost time quadratic in its length.
         "private_key_block",
         re.compile(
-            r"-----BEGIN [A-Z ]+KEY-----[\s\S]+?-----END [A-Z ]+KEY-----"
+            r"-----BEGIN [A-Z ]+KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])+?"
+            r"-----END [A-Z ]+KEY(?: BLOCK)?-----"
+            r"|-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"
+            r"[ \t]*(?:\r?\n|\\n)"
+            r"(?:[A-Za-z][A-Za-z0-9-]*:[^\r\n\\]*(?:\r?\n|\\n))*"
+            r"(?:\s|\\n)*[A-Za-z0-9+/=]+(?:(?:\r?\n|\\n)[A-Za-z0-9+/=]+)*"
         ),
     ),
-    ("anthropic_api_key", re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{40,}")),
-    ("openai_api_key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}")),
+    ("anthropic_api_key", re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{20,}")),
+    # ``(?!ant-)`` so a short ``sk-ant-`` key is not labelled an OpenAI one.
+    ("openai_api_key", re.compile(r"\bsk-(?!ant-)(?:proj-)?[A-Za-z0-9_\-]{20,}")),
     ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
+    ("google_oauth_secret", re.compile(r"\bGOCSPX-[A-Za-z0-9_\-]{20,}")),
     ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
+    # Fine-grained personal access token: ``github_pat_`` + 82 characters
+    # with ``_`` inside, which the classic shape above does not allow.
+    ("github_token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}")),
     ("slack_token", re.compile(r"\bxox[baprs]-[0-9A-Za-z\-]{10,}\b")),
+    ("slack_token", re.compile(r"\bxapp-\d-[A-Za-z0-9\-]{10,}")),
+    # Secret and restricted keys, live and test, and webhook signing secrets.
+    # A test-mode key still authenticates to the account's test data.
+    ("stripe_key", re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}")),
+    ("stripe_key", re.compile(r"\bwhsec_[A-Za-z0-9]{20,}")),
     (
         "jwt",
         re.compile(

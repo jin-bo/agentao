@@ -490,6 +490,17 @@ _SHELL_READ_ONLY_ALLOW_RE = (
 # is ``.git/config``, and resolving a path does not fold its case.
 _PROTECTED_WRITE_PATH_RE = r"(?i)(?:^|/)\.(?:git|agentao)(?:/|$)"
 
+# Credential files that ask in ``workspace-write``, at any depth: ``.env`` and
+# its variants, and ``*.pem`` / ``*.key``. A write can replace a key or plant
+# a variable the next run loads. ``.env.example`` / ``.sample`` / ``.template``
+# / ``.dist`` are templates committed without secrets, so they stay allowed.
+# Either separator, because the raw ``file_path`` is matched too and on
+# Windows that may use ``\``.
+_CREDENTIAL_WRITE_PATH_RE = (
+    r"(?i)(?:^|[/\\])\.env(?:\.(?!(?:example|sample|template|dist)$)[^/\\]+)?$"
+    r"|\.(?:pem|key)$"
+)
+
 
 # Preset rule lists for each mode. Evaluated after project/user JSON rules.
 _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
@@ -504,6 +515,8 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
         # the raw path and its resolved forms — see ``_PATH_ARG_TOOLS``.
         {"tool": "write_file", "args": {"file_path": _PROTECTED_WRITE_PATH_RE}, "action": "ask"},
         {"tool": "replace", "args": {"file_path": _PROTECTED_WRITE_PATH_RE}, "action": "ask"},
+        {"tool": "write_file", "args": {"file_path": _CREDENTIAL_WRITE_PATH_RE}, "action": "ask"},
+        {"tool": "replace", "args": {"file_path": _CREDENTIAL_WRITE_PATH_RE}, "action": "ask"},
         {"tool": "write_file", "action": "allow"},
         {"tool": "replace", "action": "allow"},
         {"tool": "run_shell_command", "args": {"command": _SHELL_READ_ONLY_ALLOW_RE}, "action": "allow"},

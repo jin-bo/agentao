@@ -115,6 +115,52 @@ _PROTECTED = [
 _ORDINARY = ["src/a.py", ".github/workflows/ci.yml", ".gitignore", ".gitattributes", "agentao/x.py"]
 
 
+_CREDENTIAL_FILES = [
+    ".env",
+    ".env.local",
+    ".env.production",
+    "sub/.env",               # at any depth
+    "services/api/.env.dev",
+    ".ENV",                   # case-insensitive filesystems
+    "certs/server.pem",
+    "keys/id.key",
+    "TLS/Server.PEM",
+]
+
+# Templates committed without secrets, and names that only look similar.
+_NOT_CREDENTIAL_FILES = [
+    ".env.example",
+    "config/.env.sample",
+    ".env.template",
+    ".env.dist",
+    ".envrc",
+    "env.py",
+    "src/keyboard.py",
+    "docs/pem-format.md",
+    "a.keys",
+]
+
+
+@pytest.mark.parametrize("tool", ["write_file", "replace"])
+@pytest.mark.parametrize("path", _CREDENTIAL_FILES)
+def test_workspace_write_asks_for_credential_files(tmp_path, tool, path):
+    e = _engine(tmp_path)
+    assert e.decide(tool, {"file_path": path}) == ASK
+    assert e.decide(tool, {"file_path": str(tmp_path / path)}) == ASK
+
+
+@pytest.mark.parametrize("tool", ["write_file", "replace"])
+@pytest.mark.parametrize("path", _NOT_CREDENTIAL_FILES)
+def test_workspace_write_allows_lookalikes_of_credential_files(tmp_path, tool, path):
+    e = _engine(tmp_path)
+    assert e.decide(tool, {"file_path": path}) == ALLOW
+
+
+def test_credential_file_with_windows_separator_asks(tmp_path):
+    e = _engine(tmp_path)
+    assert e.decide("write_file", {"file_path": "sub\\.env"}) == ASK
+
+
 @pytest.mark.parametrize("tool", ["write_file", "replace"])
 @pytest.mark.parametrize("path", _PROTECTED)
 def test_workspace_write_asks_for_protected_paths(tmp_path, tool, path):

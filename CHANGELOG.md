@@ -25,8 +25,43 @@ _Targeting 0.5.11. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **Writes to credential files ask in `workspace-write`.** `write_file` and
+  `replace` on `.env`, `.env.*`, `*.pem` or `*.key`, at any depth and in any
+  case, now ask instead of being auto-allowed, the same way writes into
+  `.git` and `.agentao` already did. A write there can replace a key or plant
+  a variable the next run loads. `.env.example`, `.sample`, `.template` and
+  `.dist` are templates committed without secrets and are still allowed.
+  `full-access` is unchanged, and a project rule that allows the path still
+  wins.
+
 ### Fixed
 
+- **`web_fetch` no longer reaches cloud metadata endpoints in encodings the
+  URL policy missed.** On Python 3.12.0 these all passed:
+  Azure WireServer `168.63.129.16` (a public address), Oracle Classic
+  `192.0.0.192`, and `169.254.169.254` written as RFC 8215 local-use NAT64
+  (`64:ff9b:1::/48`), ISATAP (`::5efe:a.b.c.d`) or IPv4-compatible
+  (`::a.b.c.d`). The policy now decodes those IPv6 forms, refuses a fixed
+  table of non-public ranges so the verdict no longer depends on the
+  interpreter's `ipaddress.is_global`, and refuses a list of metadata
+  endpoints (AWS, ECS, EKS, Azure, GCP, Alibaba, Oracle, Scaleway; IPv4 and
+  IPv6) in every encoding. `AGENTAO_WEB_FETCH_ALLOW_CIDRS` opens a metadata
+  endpoint only when it names that exact address: a range that contains
+  one, such as `169.254.0.0/16`, no longer opens it.
+- **Credential redaction catches eight more shapes.** `agentao.log`,
+  `.agentao/tool-outputs/`, replay and `MemoryGuard` passed these through
+  unchanged: GitHub fine-grained tokens (`github_pat_`), Slack app tokens
+  (`xapp-`), Stripe secret, restricted and webhook keys (`sk_live_`,
+  `sk_test_`, `rk_live_`, `whsec_`; new kind `stripe_key`), Google OAuth
+  client secrets (`GOCSPX-`; new kind `google_oauth_secret`), PGP private key
+  blocks, and private keys pasted without their `END` line, including ones
+  with armor headers (`Version:`, `Proc-Type:`, `DEK-Info:`) and ones inside
+  a JSON string where the line breaks are a literal `\n`. A short `sk-ant-`
+  key is now labelled `anthropic_api_key` rather than `openai_api_key`.
+- **Scanning a log of repeated private-key headers is no longer quadratic.**
+  Each `BEGIN … KEY` header with no `END` scanned to the end of the text, so
+  160 KB of them took about 4 seconds on every log write. The scan now stops
+  at the next header.
 - **An MCP tool call is no longer sent twice when its connection drops.**
   `McpClient.call_tool` reconnected and re-sent a call after a dropped
   transport (`Connection closed`, a reset, `BrokenResourceError`, …) raised

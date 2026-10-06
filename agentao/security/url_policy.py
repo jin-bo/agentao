@@ -8,8 +8,12 @@ no I/O, so it cannot catch:
   DNS rebinding, or a public name pointed at ``127.0.0.1`` /
   ``169.254.169.254`` (cloud metadata);
 * alternate encodings of a blocked address (``2130706433`` and ``127.1``
-  both resolve to ``127.0.0.1``; v4-mapped / 6to4 / NAT64 IPv6 forms such as
-  ``[::ffff:127.0.0.1]`` and ``[64:ff9b::169.254.169.254]``);
+  both resolve to ``127.0.0.1``; v4-mapped / 6to4 / NAT64 / ISATAP /
+  IPv4-compatible IPv6 forms such as ``[::ffff:127.0.0.1]`` and
+  ``[64:ff9b::169.254.169.254]``);
+* cloud metadata endpoints at public addresses (Azure's ``168.63.129.16``),
+  which no private-range check refuses. Those are refused in every encoding,
+  even inside an operator's allowlisted ranges;
 * a **redirect hop** to an internal target after an allowed first URL.
 
 This module is the execute-phase complement. It normalizes the hostname,
@@ -92,6 +96,102 @@ _MAX_REDIRECTS = 20
 # 169.254.169.254 (cloud metadata) or 127.0.0.1.
 _NAT64_PREFIX = ipaddress.ip_network("64:ff9b::/96")
 
+# RFC 6052 §2.2: the bytes of the 16-byte address that carry the embedded IPv4,
+# per NAT64 prefix length. Byte 8 is the reserved "u" octet the shorter
+# prefixes skip.
+_NAT64_OFFSETS = {
+    32: (4, 5, 6, 7),
+    40: (5, 6, 7, 9),
+    48: (6, 7, 9, 10),
+    56: (7, 9, 10, 11),
+    64: (9, 10, 11, 12),
+    96: (12, 13, 14, 15),
+}
+
+# RFC 8215 local-use NAT64 prefix. An operator may use it as the /48 or carve
+# a /56, /64 or /96 out of it, and the IPv4 sits at a different place in each.
+# The address does not say which was chosen, so every layout RFC 6052 permits
+# for it is decoded (see :func:`_nat64_local_layouts`).
+_NAT64_LOCAL_PREFIX = ipaddress.ip_network("64:ff9b:1::/48")
+
+# RFC 6052 §2.2: bytes after the embedded IPv4 that must be zero (the suffix),
+# per prefix length shorter than /96. Byte 8, the "u" octet, must be zero too.
+_NAT64_SUFFIX_BYTES = {48: range(11, 16), 56: range(12, 16), 64: range(13, 16)}
+
+# ISATAP (RFC 5214) interface identifiers: bytes 8–11 are ``0:5efe`` or
+# ``200:5efe`` and bytes 12–15 are the IPv4.
+_ISATAP_IDS = (b"\x00\x00\x5e\xfe", b"\x02\x00\x5e\xfe")
+
+# Teredo (RFC 4380): the client IPv4 is the low 32 bits XOR all-ones.
+_TEREDO_PREFIX = ipaddress.ip_network("2001::/32")
+
+# Ranges that are not public, listed here so the verdict does not depend on
+# the interpreter. ``is_global`` changed between CPython patch releases (3.12.0
+# reports ``192.0.0.192`` as global; 3.13 does not), and ``requires-python``
+# spans them. An address is refused if ``is_global`` says no *or* it is in
+# this table.
+_NON_PUBLIC_NETWORKS: tuple[_IPNetwork, ...] = tuple(
+    ipaddress.ip_network(n)
+    for n in (
+        "0.0.0.0/8",        # "this" network
+        "10.0.0.0/8",       # private
+        "100.64.0.0/10",    # CGNAT (RFC 6598); Alibaba Cloud metadata is here
+        "127.0.0.0/8",      # loopback
+        "169.254.0.0/16",   # link-local; most cloud metadata is here
+        "172.16.0.0/12",    # private
+        "192.0.0.0/24",     # IETF protocol assignments; Oracle Classic metadata
+        "192.0.2.0/24",     # TEST-NET-1
+        "192.168.0.0/16",   # private
+        "198.18.0.0/15",    # benchmarking (and fake-IP proxies)
+        "198.51.100.0/24",  # TEST-NET-2
+        "203.0.113.0/24",   # TEST-NET-3
+        "224.0.0.0/4",      # multicast
+        "240.0.0.0/4",      # reserved, including 255.255.255.255
+        "::/128",           # unspecified
+        "::1/128",          # loopback
+        "100::/64",         # discard (RFC 6666)
+        "2001::/32",        # Teredo
+        "2001:db8::/32",    # documentation
+        "fc00::/7",         # unique local
+        "fe80::/10",        # link-local
+        "ff00::/8",         # multicast
+    )
+)
+
+# Globally reachable addresses inside a range listed above, per the IANA
+# special-purpose registry: PCP and TURN anycast in ``192.0.0.0/24``. The
+# Oracle metadata address in the same range is refused by the list below.
+_PUBLIC_EXCEPTIONS = frozenset(
+    ipaddress.IPv4Address(a) for a in ("192.0.0.9", "192.0.0.10")
+)
+
+# Cloud metadata and credential endpoints. Refused unless the operator's
+# ``allow_networks`` names the address itself (a ``/32`` or ``/128``): allowing
+# a range for a fake-IP proxy or an internal service — even all of
+# ``169.254.0.0/16`` — must not also open the instance's credentials.
+# ``168.63.129.16`` is a public address, so nothing else here refuses it.
+_CLOUD_METADATA_IPV4 = frozenset(
+    ipaddress.IPv4Address(a)
+    for a in (
+        "169.254.169.254",  # AWS, GCP, Azure IMDS, OCI, DigitalOcean, OpenStack, ...
+        "169.254.170.2",    # AWS ECS task credentials
+        "169.254.170.23",   # AWS EKS Pod Identity Agent
+        "168.63.129.16",    # Azure WireServer
+        "100.100.100.200",  # Alibaba Cloud
+        "192.0.0.192",      # Oracle Cloud Classic
+        "169.254.42.42",    # Scaleway
+    )
+)
+_CLOUD_METADATA_IPV6 = frozenset(
+    ipaddress.IPv6Address(a)
+    for a in (
+        "fd00:ec2::254",  # AWS IMDS
+        "fd00:ec2::23",   # AWS EKS Pod Identity Agent
+        "fd20:ce::254",   # GCP, IPv6-only instances
+        "fd00:42::42",    # Scaleway
+    )
+)
+
 
 class UrlPolicyError(ValueError):
     """Raised when an outbound URL is rejected by the SSRF policy."""
@@ -165,25 +265,118 @@ def _parse_ip_literal(value: str) -> Optional[_IPAddress]:
         return None
 
 
-def _embedded_ipv4(address: _IPAddress) -> Optional[ipaddress.IPv4Address]:
-    """Return an IPv4 embedded in an IPv6 address via a translation mechanism.
+def _ipv4_at(packed: bytes, offsets: tuple[int, int, int, int]) -> ipaddress.IPv4Address:
+    return ipaddress.IPv4Address(bytes(packed[i] for i in offsets))
 
-    Covers v4-mapped (``::ffff:a.b.c.d``), 6to4 (``2002::/16``) and NAT64
-    (``64:ff9b::/96``); returns ``None`` for a plain IPv4/IPv6 address.
+
+def _embedded_ipv4s(address: _IPAddress) -> tuple[ipaddress.IPv4Address, ...]:
+    """Return the IPv4s an IPv6 address carries via a translation mechanism.
+
+    Covers v4-mapped (``::ffff:a.b.c.d``), 6to4 (``2002::/16``), NAT64 (the
+    well-known ``64:ff9b::/96`` and the layouts of the RFC 8215 local-use
+    ``64:ff9b:1::/48`` that the address can be in), IPv4-compatible
+    (``::a.b.c.d``) and ISATAP (``…:[0|200]:5efe:a.b.c.d``); returns ``()``
+    for a plain IPv4 / IPv6 address. Only these recognised forms are decoded,
+    so a public IPv6 whose bytes happen to spell a private IPv4 is not refused.
 
     Without this, an IPv6 literal can smuggle a private/loopback IPv4 past an
     ``is_global`` check: the IPv6 form reports ``is_global=True`` while a
-    NAT64/6to4 gateway on the host network routes it to the embedded IPv4.
+    translating gateway on the host network routes it to the embedded IPv4.
     """
     if not isinstance(address, ipaddress.IPv6Address):
-        return None
+        return ()
     if address.ipv4_mapped is not None:
-        return address.ipv4_mapped
+        return (address.ipv4_mapped,)
     if address.sixtofour is not None:
-        return address.sixtofour
+        return (address.sixtofour,)
+    packed = address.packed
     if address in _NAT64_PREFIX:
-        return ipaddress.IPv4Address(int(address) & 0xFFFFFFFF)
-    return None
+        return (_ipv4_at(packed, _NAT64_OFFSETS[96]),)
+    if address in _NAT64_LOCAL_PREFIX:
+        return tuple(sorted({_ipv4_at(packed, _NAT64_OFFSETS[n]) for n in _nat64_local_layouts(packed)}))
+    if packed[8:12] in _ISATAP_IDS:
+        return (_ipv4_at(packed, _NAT64_OFFSETS[96]),)
+    if int(address) >> 32 == 0 and not (address.is_loopback or address.is_unspecified):
+        return (_ipv4_at(packed, _NAT64_OFFSETS[96]),)  # IPv4-compatible
+    return ()
+
+
+def _nat64_local_layouts(packed: bytes) -> tuple[int, ...]:
+    """The prefix lengths whose reading of ``64:ff9b:1::/48`` is judged.
+
+    /96 always fits: bytes 6–11 are then the operator's own prefix, with any
+    value. A shorter layout fits only if its "u" octet and its suffix are zero,
+    as RFC 6052 requires; otherwise its reading is padding — ``0.0.0.0`` for
+    ``64:ff9b:1::808:808`` — and refusing that refused a public target.
+
+    The shorter layouts nest: if /48 fits, /56 and /64 fit too, and their
+    readings take in the /48 suffix. So of those only the shortest that fits
+    is judged, beside /96. When it fits /56 or /48, the /96 reading is that
+    zero suffix and is dropped. The address alone cannot say which layout the
+    translator uses, so the one false refusal left is a /64-layout address
+    whose /96 reading — its last IPv4 byte, then three zero bytes — is
+    non-public, e.g. an IPv4 ending in ``.10``. The cloud metadata check does
+    not depend on this: it decodes every position.
+    """
+    if packed[8] != 0:
+        return (96,)
+    for n in (48, 56, 64):
+        if not any(packed[i] for i in _NAT64_SUFFIX_BYTES[n]):
+            return (n,) if n < 64 else (n, 96)
+    return (96,)
+
+
+def _outer_is_routable(address: _IPAddress) -> bool:
+    """Whether the IPv6 address itself is a destination, not only a wrapper.
+
+    ISATAP and IPv4-compatible addresses are ordinary IPv6 addresses that
+    native IPv6 routing delivers as they are, so the IPv6 address is judged as
+    well as the IPv4 inside it: ``fc00::5efe:808:808`` is a unique-local host
+    whatever ``8.8.8.8`` is.
+    """
+    if not isinstance(address, ipaddress.IPv6Address):
+        return False
+    packed = address.packed
+    return packed[8:12] in _ISATAP_IDS or (
+        int(address) >> 32 == 0 and not (address.is_loopback or address.is_unspecified)
+    )
+
+
+def _cloud_metadata_targets(address: _IPAddress) -> frozenset[_IPAddress]:
+    """The cloud metadata endpoints ``address`` is, or may route to.
+
+    For IPv6 every standard embedding position is decoded, plus the Teredo
+    client, whether or not the prefix is a recognised one: an operator's own
+    NAT64 prefix cannot be enumerated, and the target set is small enough that
+    a public address matching it by chance is not a practical concern.
+    """
+    if isinstance(address, ipaddress.IPv4Address):
+        return frozenset({address}) & _CLOUD_METADATA_IPV4
+    # A zone (``fd00:ec2::254%eth0``) takes part in equality; the kernel
+    # ignores it for a non-link-local destination.
+    address = ipaddress.IPv6Address(address.packed)
+    if address in _CLOUD_METADATA_IPV6:
+        return frozenset({address})
+    packed = address.packed
+    candidates = {_ipv4_at(packed, offsets) for offsets in _NAT64_OFFSETS.values()}
+    candidates.add(_ipv4_at(packed, (2, 3, 4, 5)))  # 6to4
+    if address in _TEREDO_PREFIX:
+        candidates.add(ipaddress.IPv4Address((int(address) & 0xFFFFFFFF) ^ 0xFFFFFFFF))
+    return frozenset(candidates) & _CLOUD_METADATA_IPV4
+
+
+def _names_exactly(address: _IPAddress, networks: tuple[_IPNetwork, ...]) -> bool:
+    return any(
+        net.num_addresses == 1 and net.network_address == address
+        for net in networks
+        if net.version == address.version
+    )
+
+
+def _is_non_public(address: _IPAddress) -> bool:
+    if address in _PUBLIC_EXCEPTIONS:
+        return False
+    return not address.is_global or _in_any_network(address, _NON_PUBLIC_NETWORKS)
 
 
 def _is_disallowed(
@@ -191,23 +384,37 @@ def _is_disallowed(
 ) -> bool:
     """True if ``address`` is not a globally routable public address.
 
-    An IPv6 address carrying an embedded IPv4 (v4-mapped / 6to4 / NAT64) is
+    A cloud metadata endpoint, in any encoding, is refused first unless
+    ``allow_networks`` names that endpoint's own address; a range that merely
+    contains it does not count (see :func:`_cloud_metadata_targets`).
+
+    An IPv6 address carrying an embedded IPv4 (see :func:`_embedded_ipv4s`) is
     judged by that embedded IPv4 — where a translator actually routes it — so a
-    loopback or metadata target can't be smuggled through the v6 form.
+    loopback target can't be smuggled through the v6 form. Where a form has
+    several possible positions, every candidate must pass. ISATAP and
+    IPv4-compatible addresses are judged as IPv6 destinations as well (see
+    :func:`_outer_is_routable`).
 
     ``allow_networks`` is the opt-in operator allowlist (see
-    :func:`read_allow_cidrs_setting`): a non-global address that falls inside an
+    :func:`read_allow_cidrs_setting`): a non-public address that falls inside an
     allowed range is permitted. The match is on the *effective* (embedded-IPv4)
-    address — the same one the ``is_global`` check judges — so the allowlist
+    address — the same one the public-address check judges — so the allowlist
     covers exactly what would otherwise be blocked, and a host allowlisting
     ``198.18.0.0/15`` (a fake-IP proxy range) cannot accidentally also permit a
     differently-encoded loopback.
     """
-    embedded = _embedded_ipv4(address)
-    effective = embedded if embedded is not None else address
-    if allow_networks and _in_any_network(effective, allow_networks):
-        return False
-    return not effective.is_global
+    targets = _cloud_metadata_targets(address)
+    if any(not _names_exactly(t, allow_networks) for t in targets):
+        return True
+    effective = _embedded_ipv4s(address) or (address,)
+    if _outer_is_routable(address):
+        effective = (*effective, address)
+    for candidate in effective:
+        if allow_networks and _in_any_network(candidate, allow_networks):
+            continue
+        if _is_non_public(candidate):
+            return True
+    return False
 
 
 def _normalized_hostname(hostname: str) -> str:
