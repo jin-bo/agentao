@@ -1,6 +1,6 @@
 # Host API ergonomics review: can embedding be simpler?
 
-**Status:** Review, 2026-10-06. **Decided 2026-10-06: F1 takes route (a), docs only** (§3 F1, *Decision*). Every other item is still a **proposal**; none is authorized or implemented. Evidence is cited at `main` @ `2750e16`.
+**Status:** Review, 2026-10-06. **Decided 2026-10-06:** F1 takes route (a), docs only (§3 F1, *Decision*). Streaming text enters the stable contract (F2). New stable types are exported from `agentao.host` only (F3). F1(a) is a docs change and may proceed on that decision. The code steps (string modes and exports, F4, `astream`) are not yet authorized. Nothing here is implemented yet. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered. **Second revision, after re-review:** F2's close order releases pending queue writes first, early exit requires `aclosing`, and the stream is bound to its own turn by token identity.
 **Audience:** agentao maintainers deciding what to change in the embedded-host surface, and reviewers of any follow-up PR.
 **Companions:**
 - `docs/design/host-api-ergonomics-review.zh.md`: Chinese version, same content
@@ -18,12 +18,12 @@ The question was whether the host-facing API could be simpler. This review compa
 
 | # | Finding | Proposal | Compatibility |
 |---|---|---|---|
-| F1 | A headless host approves every ASK, and the docs do not say so; an engine-less agent also cannot switch mode **Decided: (a) docs only.** (b) and (c) not adopted | None |
-| F2 | Streaming text is outside the contract, so every chat example imports internals | `Agentao.astream()` over a small public event union | Additive; schema snapshot grows |
-| F3 | Imports are spread over 8 modules; `set_permission_mode`'s argument type is not public | Accept string modes; publish `PermissionMode` / `CancellationToken` | Additive |
-| F4 | No `with` / `async with`; every host writes `try/finally close()` | `__enter__/__exit__`, `aclose()`, `__aenter__/__aexit__` | Additive |
+| F1 | A headless host approves every ASK, and the docs do not say so; an engine-less agent also cannot switch mode | **Decided: (a) docs only.** (b) and (c) not adopted | None |
+| F2 | Streaming text is outside the contract; every chat example imports internals, and `saas-assistant` swaps the transport per request in a way that misroutes events | Minimal `Agentao.astream()`: `TextDelta` + `TurnFinished` only, attached by subscription | Additive; audit schema unchanged |
+| F3 | Imports are spread over 8 modules; `set_permission_mode`'s argument type is not public; examples use wrong imports | Fix the examples' imports; accept string modes; publish `PermissionMode` / `CancellationToken` in `agentao.host` | Additive |
+| F4 | No `with` / `async with`; every host writes `try/finally close()` | `__enter__/__exit__`; `aclose()` = `asyncio.to_thread(close)`; host ends its turns first | Additive |
 | F5 | `chat()` returning a string does not mean the model answered | Covered by F2's final event; `chat()` unchanged | n/a |
-| F6 | Duplicate observer aliases; 32 constructor parameters | Deprecate the aliases; leave the constructor alone | Deprecation only |
+| F6 | Duplicate observer aliases; 32 constructor parameters | **Deferred**; leave the constructor alone | n/a |
 
 ## 3. Findings
 
@@ -56,7 +56,7 @@ What still stops a call:
 
 `build_from_environment` does create an engine (`embedding/factory.py:250-256`), but it also defaults to `NullTransport`. ASK is therefore approved on that path too.
 
-**Not a bug in the runtime.** Approving on ASK is a recorded decision: CLAUDE.md says "`NullTransport`'s approve-everything stays as the headless-host default", and background sub-agents already use a deny-on-ASK transport. The clear defect is in the docs. The default itself is the maintainer's call.
+**Not a bug in the runtime.** Approving on ASK is a recorded decision: CLAUDE.md says "`NullTransport`'s approve-everything stays as the headless-host default", and background sub-agents already use a deny-on-ASK transport. The clear defect is in the docs. The default itself is the maintainer's call, made below (*Decision*: route (a)).
 
 **Options. These are not mutually exclusive.**
 - **(a) Docs only.** Say plainly in `embed-for-agents.md` §1/§5 and `embedding.md` §2 that `NullTransport` answers yes to every ASK. Show the fail-closed form, `SdkTransport(confirm_tool=lambda *_: False)`. Fix §5 so it no longer promises an engine default to a skeleton that has none. No code change.
@@ -81,28 +81,58 @@ What (a) has to deliver:
 
 **Contract.** The `agentao.host` docstring and `host-api.md:27` say assistant text and reasoning are available only through the internal `Transport` / `AgentEvent` stream. The guide's §3 then lists `agentao.transport.AgentEvent` and `Transport.emit` under "DO NOT import".
 
-**Practice.** The chat-shaped examples all reach past that line:
-- `saas-assistant/app/main.py:33,140-143`, `data-workbench/src/workbench.py` and `batch-scheduler/src/daily_digest.py` import `SdkTransport`, and two of them import `EventType.LLM_TEXT` (`transport/events.py:23`).
-- `saas-assistant` assigns `agent.transport = SdkTransport(...)` on a pooled agent for each request (`main.py:143`).
-
-Each of them rebuilds the same plumbing:
+**Practice.** The chat-shaped examples all reach past that line. `saas-assistant/app/main.py`, `data-workbench/src/workbench.py` and `batch-scheduler/src/daily_digest.py` import `SdkTransport`, and the last two import `EventType.LLM_TEXT` (`transport/events.py:23`). Each of them rebuilds the same plumbing:
 1. a callback on the worker thread;
 2. `loop.call_soon_threadsafe`;
 3. an `asyncio.Queue`;
 4. a consumer;
 5. a disconnect watcher that trips `token.cancel`.
 
-**Proposal: `Agentao.astream(prompt, *, images=None, cancellation_token=None)`.** It returns an async iterator over a small, closed union published in `agentao.host`:
-- `TextDelta`;
-- optionally `ReasoningDelta`;
-- the existing `ToolLifecycleEvent` / `PermissionDecisionEvent`;
-- `TurnFinished(outcome: TurnOutcome)`.
+**`saas-assistant`'s per-request transport swap is wrong, not just internal.** It assigns `agent.transport = SdkTransport(...)` on a pooled agent for each request (`main.py:143`). This was found while checking review comment 1.
+- `agent.transport` is only one of the references. The tool runner keeps its own (`runtime/tool_runner.py:80`), and that is what emits `TOOL_CONFIRMATION`, calls `confirm_tool` (`:344-349`) and, through the executor, emits `TOOL_START` (`runtime/tool_executor.py:301`). Replay installs itself by replacing **both** (`replay/manager.py:104-107`). The example replaces only one. Its SSE stream therefore never sees tool events, and tool confirmations still go to the transport the agent was built with.
+- With replay on, the swap removes the `ReplayAdapter` from `agent.transport`. LLM events stop being recorded for that turn, while tool events still are.
+- The swap happens before `async with lock` (`main.py:143` vs `:151`). A second request on the same session key redirects the first turn's events into the second request's queue.
+- It runs `agent.chat` through `asyncio.to_thread`, i.e. the loop's default executor, which `arun()` deliberately avoids (`agent.py:64`, `_get_arun_pool`).
 
-It can be built on what already exists, `SdkTransport.subscribe` (`transport/sdk.py:99`) and `arun()`, without touching the runtime. Closing the iterator trips the turn's token, the same as cancelling an `arun()` task.
+So no design here may require or encourage replacing the transport.
 
-**Costs and open points:**
-- The new event types enter `docs/schema/host.events.v1.json` under the snapshot policy.
-- `host-api.md` left text out on purpose (payload size, raw tool I/O). The proposal carries text deltas only, never raw tool I/O, but whether assistant text belongs in the stable contract at all is a maintainer decision.
+**Proposal: a minimal `Agentao.astream(prompt, *, images=None, cancellation_token=None)`.** Narrowed after review.
+- **First-version events:** `TextDelta(text)` and `TurnFinished(outcome: TurnOutcome)`, nothing else. Tool and permission events stay on the existing `events()`. Reasoning is added only when a host asks for it.
+- **Outside the audit schema.** The two types live in `agentao.host`, but they are not members of the `HostEvent` union, are not projected into replay, and do not enter `docs/schema/host.events.v1.json`. Text already reaches replay through the internal stream; `astream` is a delivery API, not a new audit record.
+- **Attach by subscribing to the live transport; never replace it.** `Transport.subscribe` is optional: implementations "may omit this method; consumers should `getattr(transport, "subscribe", None)`" (`transport/base.py:40-49`). `NullTransport`, `SdkTransport`, ACP's transport and `ReplayAdapter` have it; the adapter forwards to its inner transport and returns a no-op when that has none (`replay/adapter.py:231-244`). Two consequences:
+  - A live transport with no `subscribe` makes `astream` raise `TypeError`, naming the transport class, **before** the turn starts. There is no fallback to swapping, since a swap changes who answers confirmations and what replay records.
+  - Checking for the attribute is not enough. A `ReplayAdapter` always has `subscribe`, but over a subscribe-less inner transport it returns a no-op unsubscribe, which looks like a real one, and no events will ever arrive. The check has to reach the inner transport: either `astream` unwraps the adapter, or the adapter reports whether it forwarded. Which one is decided at implementation; either way that case is refused like the first.
+- **Whose text arrives.** Sub-agents run on transports of their own (`agents/tools/_wrapper.py:614-636`), so a subscription on the parent's transport carries only the parent's text.
+- **Lifecycle contract:**
+  - *No overlap:* already enforced. `run_turn` takes `agent._turn_lock` without waiting and raises `TurnInProgressError` (`runtime/turn.py:72-100`). `astream` inherits this, but the refusal happens **when the worker starts running the turn**, not when `astream` is called. `arun()` goes through the `agentao-arun-*` pool, so with the pool busy, a second request may first wait for a worker and then fail.
+  - *Bound to its own turn:* the lock alone does not keep a refused request from seeing another turn's text. `astream` subscribes before its turn starts, so without a filter a second stream could receive the first turn's text and only then be refused. Events carry no turn id. Binding is therefore by token identity:
+    - `astream` always mints its own `CancellationToken` for the turn. A caller-supplied token is linked to it through `add_done_callback` (`cancellation.py:102`), with the link removed when the stream ends, and is never used as the turn's token directly. One caller token shared between two calls would otherwise match both.
+    - The listener forwards an event only while `agent._current_token is` that token. `run_turn` sets `_current_token` only after taking the turn lock (`runtime/turn.py:139`) and clears it at the end (`:341`). Listeners run inline on the producer thread (`SdkTransport.emit`, `transport/sdk.py:91-97`), so the check sees the turn that is emitting.
+    - A request refused with `TurnInProgressError` never had its token installed, so it delivers nothing from another turn.
+  - *Queue:* bounded, with the same capacity and full-queue rule as `events()` (`host/events.py:60`; a full queue makes the producer wait). A consumer that stops reading slows the turn; it does not grow memory. The cost is that a producer can be **blocked inside a queue write** when the stream closes, which the close order below has to handle.
+  - *Errors:* an exception from the turn is raised from the iterator after the events already queued have been delivered. `TurnFinished` is yielded only when the turn returned, including the `status="error"` / `"cancelled"` outcomes `chat()` returns normally.
+  - *Closing early* (`aclose()`, task cancellation), in this order:
+    1. **Mark the stream closed and release pending queue writes.** Under the stream's lock, set `closed` and cancel every pending put. From then on the listener drops events instead of writing. This is the mechanism `EventStream` already uses for exactly this wedge (`host/events.py:76-81`, `:296-320`): reuse its subscriber machinery, or the same pattern, with no new scheduling layer.
+    2. **Trip the turn's token.**
+    3. **Wait for the turn's cleanup**, bounded, the same way `arun` does (`_await_turn_cleanup`, `agent.py:101`).
+    4. **Unsubscribe in `finally`**, whatever happened.
+
+    The order matters. A producer blocked on a full queue sits in a queue write, not at a token check, so tripping the token first would leave the worker blocked while step 3 waits for it. Unsubscribing only removes the listener and does not release a write already in progress. Skipping step 4 leaks the subscription, because the transport holds listeners strongly (`transport/base.py:51-56`).
+  - *`break` is not a close.* Leaving an `async for` with `break` does not run an async generator's `finally`. A probe on CPython showed it ran only at event-loop teardown (`asyncio.run`'s shutdown of async generators). Until then the turn keeps running and the producer can block on the full queue. The API docs must therefore require explicit closing when a host leaves early:
+
+    ```python
+    from contextlib import aclosing  # Python 3.10+
+
+    async with aclosing(agent.astream(prompt)) as stream:
+        async for ev in stream:
+            if isinstance(ev, TextDelta):
+                send(ev.text)
+            if should_stop():
+                break  # aclosing runs aclose() on the way out
+    ```
+- **Where it lives:** above the runtime, as `arun()` plus a subscription. The chat loop does not change.
+
+**Decision (maintainer, 2026-10-06): streaming text enters the stable contract**, in the minimal form above: `TextDelta` + `TurnFinished` via `astream`, outside the audit schema. This reverses `host-api.md`'s earlier exclusion of assistant text, for text deltas only; raw tool I/O stays out. When `astream` lands, every statement that text is outside the contract is updated: `host-api.md` (its scope note at `:27`), the `agentao.host` docstring, and `docs/design/embedded-host-contract.md:28-31`.
 
 ### F3. Imports are spread out; a public method's argument type is not public
 
@@ -118,22 +148,24 @@ It can be built on what already exists, `SdkTransport.subscribe` (`transport/sdk
 **The gap:**
 - `Agentao.set_permission_mode(mode: PermissionMode)` is public, but `PermissionMode` is in neither the guide's §3 stable list nor `host-api.md` (grep finds no match). Three examples import it from `agentao.permissions`.
 - Two examples import `Tool` from `agentao.tools.base` instead of the published `agentao.host.Tool`.
-- Two import `agentao.transport.events.EventType`, which is on the "do not import" side.
+- Two import `agentao.transport.events.EventType`, which is on the "do not import" side. These two can only move once F2 exists.
 
 **Proposal:**
+0. Fix the examples' imports that already have a stable home now (`Tool` from `agentao.host`), together with F1's docs.
 1. `set_permission_mode` also accepts the mode's string value (`"read-only"`, `"workspace-write"`, `"full-access"`, `"plan"`), validated against `PermissionMode`. An unknown string raises.
 2. Publish `PermissionMode` and `CancellationToken` on the documented stable surface. Both modules are light (`permissions.py` imports only the stdlib and `permissions_hardline`; `cancellation.py` only the stdlib). Lazy re-exports through `agentao.host`'s PEP 562 `__getattr__` would still keep `test_import_agentao_host_stays_off_the_runtime_stack` (`tests/test_import_layering.py:477`) honest.
 3. Move the examples onto the stable imports once F2 exists.
 
-Open point: whether these names should live in `agentao.host`, which has the typing gate, or in the top-level `agentao`, which is shorter.
+**Decision (maintainer, 2026-10-06): new stable types are exported from `agentao.host` only**, which has the typing gate. There is no second top-level export.
 
 ### F4. No context-manager lifecycle
 
 `agent.py` has no `__enter__` / `__exit__` / `__aenter__` / `aclose` (grep finds no match). Every example writes `try/finally: agent.close()`. Async hosts write `await asyncio.to_thread(agent.close)`, as in `saas-assistant/app/main.py`, `embed-for-agents.md` §2 and `embedding.md`.
 
 **Proposal:** add `__enter__/__exit__` that calls `close()`, plus `aclose()` and `__aenter__/__aexit__`. These are purely additive.
-
-Open point: which thread `aclose()` runs `close()` on. `to_thread` matches what the guides already recommend. The `agentao-arun-*` pool would queue behind running turns.
+- `aclose()` is `await asyncio.to_thread(self.close)`, the form the guides already recommend. No new scheduling.
+- Precondition, documented rather than enforced: the host ends its active turns before closing.
+- Not the `agentao-arun-*` pool. An earlier draft said `close()` would "queue behind running turns" there. That was wrong: a shared multi-worker pool gives no such ordering, and with a free worker `close()` would run at once, beside the turn.
 
 ### F5. A returned string does not mean the model answered
 
@@ -143,7 +175,7 @@ Open point: which thread `aclose()` runs `close()` on. `to_thread` matches what 
 
 ### F6. Redundant aliases; constructor breadth
 
-- **Aliases.** `add_event_observer` / `remove_event_observer` (`agent.py:1010-1016`) are aliases of `add_host_event_observer` / `remove_host_event_observer`. One in-repo caller remains: `cli/run.py:743`. Proposal: move that caller over, add a `DeprecationWarning`, and remove them in a later minor release.
+- **Aliases.** `add_event_observer` / `remove_event_observer` (`agent.py:1010-1016`) are aliases of `add_host_event_observer` / `remove_host_event_observer`. One in-repo caller remains: `cli/run.py:743`. **Deferred.** The benefit is small, and deprecating then removing a public name is not additive, so it does not belong in an "additive" PR. If taken up later: move that caller, add a `DeprecationWarning`, then remove the aliases in a later minor release.
 - **Constructor.** `Agentao.__init__` takes 32 parameters: 5 positional and 27 keyword-only. The LLM can be configured two ways, through the raw-config family or through `llm_client=`; they are mutually exclusive (`_validate_construction_args`). **Not proposed for change:**
   - keyword-only already bounds the misuse risk;
   - grouping parameters into config objects would churn every doc, example and test without closing a defect;
@@ -151,17 +183,23 @@ Open point: which thread `aclose()` runs `close()` on. `to_thread` matches what 
 
 ## 4. Recommended order
 
-1. **One small PR:** F1(a) docs (decided), F3(1) string modes, F4 context managers, F6 alias deprecation. Additive apart from the docs. F3, F4 and F6 still need authorizing; F1(a) can land alone if they are not.
-2. **F2 `astream`:** settle the event union and the schema decision first, then implement, then move the examples and do F3(3).
+Revised after review. Each step is its own PR.
+
+1. **F1(a) docs, plus the examples' existing wrong imports** (F3 step 0). Docs and examples only.
+2. **String permission modes, plus stable exports of `PermissionMode` / `CancellationToken` from `agentao.host`** (F3 steps 1–2). Additive.
+3. **A minimal `astream`** (F2): `TextDelta` + `TurnFinished`, attached by subscription, with the lifecycle above. Then move the examples off `SdkTransport` / `EventType` and fix the `saas-assistant` swap (F3 step 3).
+
+F4 can join step 2 or stand alone; it is small and additive. F6 is deferred.
 
 ## 5. Deliberately not proposed
 
 - Splitting the constructor into config objects (F6).
 - Changing `chat()`'s return type (F5).
+- Deprecating the observer aliases for now (F6).
 - Moving goal / continuation loops into the harness. That stays the host's job (`embed-for-agents.md` §7b; `docs/design/codex-goal-mechanism-review.md` §11).
 
 ## 6. Questions for the maintainer
 
 1. ~~**F1:** is approve-on-ASK the intended long-term headless default? Is (b) wanted even if (c) is not?~~ **Answered 2026-10-06: route (a).** Approve-on-ASK stays the headless default, and there is no default engine.
-2. **F2:** should assistant text enter the stable contract, and under which schema version?
-3. **F3:** should the re-exports live in `agentao.host` or in top-level `agentao`?
+2. ~~**F2:** should assistant text enter the stable contract?~~ **Answered 2026-10-06: yes**, as `TextDelta` + `TurnFinished`, outside the audit schema.
+3. ~~**F3:** should the re-exports live in `agentao.host` or in top-level `agentao`?~~ **Answered 2026-10-06: `agentao.host` only.**
