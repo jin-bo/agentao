@@ -1,6 +1,6 @@
 # Host API ergonomics review: can embedding be simpler?
 
-**Status:** Review, 2026-10-06. Every item below is a **proposal**; none is authorized or implemented. Evidence is cited at `main` @ `2750e16`.
+**Status:** Review, 2026-10-06. **Decided 2026-10-06: F1 takes route (a), docs only** (§3 F1, *Decision*). Every other item is still a **proposal**; none is authorized or implemented. Evidence is cited at `main` @ `2750e16`.
 **Audience:** agentao maintainers deciding what to change in the embedded-host surface, and reviewers of any follow-up PR.
 **Companions:**
 - `docs/design/host-api-ergonomics-review.zh.md`: Chinese version, same content
@@ -18,7 +18,7 @@ The question was whether the host-facing API could be simpler. This review compa
 
 | # | Finding | Proposal | Compatibility |
 |---|---|---|---|
-| F1 | A headless host approves every ASK, and the docs do not say so; an engine-less agent also cannot switch mode | (a) docs; (b) default engine; (c) maintainer decision on the headless default | (a) none; (b) behaviour change; (c) breaking |
+| F1 | A headless host approves every ASK, and the docs do not say so; an engine-less agent also cannot switch mode **Decided: (a) docs only.** (b) and (c) not adopted | None |
 | F2 | Streaming text is outside the contract, so every chat example imports internals | `Agentao.astream()` over a small public event union | Additive; schema snapshot grows |
 | F3 | Imports are spread over 8 modules; `set_permission_mode`'s argument type is not public | Accept string modes; publish `PermissionMode` / `CancellationToken` | Additive |
 | F4 | No `with` / `async with`; every host writes `try/finally close()` | `__enter__/__exit__`, `aclose()`, `__aenter__/__aexit__` | Additive |
@@ -63,7 +63,19 @@ What still stops a call:
 - **(b) A default engine.** When `permission_engine=None`, construct `PermissionEngine(project_root=working_directory)`. The engine does no file I/O, so pure injection stays side-effect-free. Effects: the preset's DENY rules apply, `set_permission_mode` works, and `active_permissions()` reports real rules. This is a behaviour change: some calls that used to be allowed become denies, and the source label changes. It needs a CHANGELOG entry and both doc twins.
 - **(c) Change the headless default to deny-on-ASK.** This is breaking for every headless host that relies on today's behaviour. Only with an explicit maintainer decision and a migration note.
 
-**Recommendation:** (a) now, (b) as its own PR, and (c) only if decided.
+**Decision (maintainer, 2026-10-06): route (a).** Only the docs change. The runtime keeps today's behaviour:
+- `NullTransport` still approves every ASK;
+- an engine-less `Agentao(...)` gets no default engine;
+- `set_permission_mode()` still raises `ValueError` without one.
+
+What (a) has to deliver:
+- `embed-for-agents.md` §1 and §5, and `embedding.md` §2, say plainly that `NullTransport` answers yes to every ASK, and list what still stops a call (the bullets above).
+- Show the fail-closed form, `SdkTransport(confirm_tool=lambda *_: False)`, next to the skeleton.
+- §5 stops promising a `workspace-write` default and a working `set_permission_mode` to a skeleton with no engine. It says a host that wants modes or preset DENY rules passes `permission_engine=PermissionEngine(project_root=...)`, or uses `build_from_environment`.
+- `active_permissions()`'s `default:no-engine` source is explained as "no rule is evaluated".
+- Both doc twins wherever a twin exists, and a pass over the examples' READMEs for the same promise.
+
+(b) and (c) are not adopted. Revisiting either needs a new decision recorded here.
 
 ### F2. Streaming text is outside the contract
 
@@ -139,10 +151,8 @@ Open point: which thread `aclose()` runs `close()` on. `to_thread` matches what 
 
 ## 4. Recommended order
 
-1. **One small PR:** F1(a) docs, F3(1) string modes, F4 context managers, F6 alias deprecation. Additive apart from the docs.
-2. **F1(b) default engine:** its own PR, with CHANGELOG and both doc twins.
-3. **F2 `astream`:** settle the event union and the schema decision first, then implement, then move the examples and do F3(3).
-4. **F1(c):** only on an explicit maintainer decision.
+1. **One small PR:** F1(a) docs (decided), F3(1) string modes, F4 context managers, F6 alias deprecation. Additive apart from the docs. F3, F4 and F6 still need authorizing; F1(a) can land alone if they are not.
+2. **F2 `astream`:** settle the event union and the schema decision first, then implement, then move the examples and do F3(3).
 
 ## 5. Deliberately not proposed
 
@@ -152,6 +162,6 @@ Open point: which thread `aclose()` runs `close()` on. `to_thread` matches what 
 
 ## 6. Questions for the maintainer
 
-1. **F1:** is approve-on-ASK the intended long-term headless default? Is (b) wanted even if (c) is not?
+1. ~~**F1:** is approve-on-ASK the intended long-term headless default? Is (b) wanted even if (c) is not?~~ **Answered 2026-10-06: route (a).** Approve-on-ASK stays the headless default, and there is no default engine.
 2. **F2:** should assistant text enter the stable contract, and under which schema version?
 3. **F3:** should the re-exports live in `agentao.host` or in top-level `agentao`?

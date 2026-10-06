@@ -1,6 +1,6 @@
 # 宿主 API 易用性评审：嵌入能不能更简单？
 
-**状态：** 评审，2026-10-06。下面每一项都是**提议**，都未获批准，也未实施。证据引用自 `main` @ `2750e16`。
+**状态：** 评审，2026-10-06。**2026-10-06 已决定：F1 走 (a) 路线，只改文档**（见 §3 F1 的*决定*）。其余各项仍是**提议**，都未获批准，也未实施。证据引用自 `main` @ `2750e16`。
 **读者：** 决定改动嵌入式宿主接口的 agentao 维护者，以及后续 PR 的评审者。
 **相关文档：**
 - `docs/design/host-api-ergonomics-review.md`：英文版，内容相同
@@ -18,7 +18,7 @@
 
 | # | 发现 | 提议 | 兼容性 |
 |---|---|---|---|
-| F1 | 无界面宿主会批准所有 ASK，文档没说；没有 engine 的 agent 也切换不了模式 | (a) 改文档；(b) 默认建 engine；(c) 由维护者决定无界面默认 | (a) 无影响；(b) 行为变更；(c) 破坏性 |
+| F1 | 无界面宿主会批准所有 ASK，文档没说；没有 engine 的 agent 也切换不了模式 **已决定：(a) 只改文档。** 不采用 (b) 和 (c) | 无影响 |
 | F2 | 流式文本不在契约内，所有聊天类示例都导入了内部接口 | `Agentao.astream()`，产出一个小的公开事件联合 | 纯新增；schema 快照会变大 |
 | F3 | 导入分散在 8 个模块；`set_permission_mode` 的参数类型不公开 | 接受字符串模式；公开 `PermissionMode` / `CancellationToken` | 纯新增 |
 | F4 | 不支持 `with` / `async with`，每个宿主都写 `try/finally close()` | `__enter__/__exit__`、`aclose()`、`__aenter__/__aexit__` | 纯新增 |
@@ -63,7 +63,19 @@
 - **(b) 默认建 engine。** `permission_engine=None` 时构造 `PermissionEngine(project_root=working_directory)`。engine 不做文件 I/O，所以纯注入仍然没有副作用。效果：预设里的 DENY 规则生效，`set_permission_mode` 可以用，`active_permissions()` 报告的是真实规则。这是行为变更：一些原本允许的调用会被拒绝，来源标签也会变。需要写 CHANGELOG，并更新中英文两份文档。
 - **(c) 把无界面默认改成"ASK 即拒绝"。** 这对所有依赖现有行为的无界面宿主都是破坏性的。只有维护者明确决定才做，并且要写迁移说明。
 
-**建议：** 现在做 (a)；(b) 单独提一个 PR；(c) 等维护者决定。
+**决定（维护者，2026-10-06）：走 (a) 路线。** 只改文档，运行时保持现状：
+- `NullTransport` 仍然批准所有 ASK；
+- 没有 engine 的 `Agentao(...)` 不会自动建默认 engine；
+- 没有 engine 时 `set_permission_mode()` 仍然抛 `ValueError`。
+
+(a) 要交付的内容：
+- `embed-for-agents.md` §1、§5 和 `embedding.md` §2 写明：`NullTransport` 对所有 ASK 都回答"是"；并列出仍会拦下调用的机制（即上面那几条）。
+- 在骨架旁边给出默认拒绝的写法 `SdkTransport(confirm_tool=lambda *_: False)`。
+- §5 不再对没有 engine 的骨架承诺 `workspace-write` 默认值和能用的 `set_permission_mode`。改为说明：宿主如果需要权限模式或预设里的 DENY 规则，应传入 `permission_engine=PermissionEngine(project_root=...)`，或者使用 `build_from_environment`。
+- 说明 `active_permissions()` 的 `default:no-engine` 来源表示"没有任何规则在执行"。
+- 凡是有中英文双版本的文档都同步修改；同时检查各示例的 README 里有没有同样的承诺。
+
+不采用 (b) 和 (c)。如果以后要重新考虑其中任何一项，需要在这里记录新的决定。
 
 ### F2. 流式文本不在契约内
 
@@ -139,10 +151,8 @@
 
 ## 4. 建议顺序
 
-1. **一个小 PR：** F1(a) 文档、F3(1) 字符串模式、F4 上下文管理器、F6 别名废弃。除文档外都是纯新增。
-2. **F1(b) 默认 engine：** 单独一个 PR，含 CHANGELOG，并更新中英文文档。
-3. **F2 `astream`：** 先定事件联合和 schema 问题，再实现，然后改示例并完成 F3(3)。
-4. **F1(c)：** 只在维护者明确决定后做。
+1. **一个小 PR：** F1(a) 文档（已决定）、F3(1) 字符串模式、F4 上下文管理器、F6 别名废弃。除文档外都是纯新增。F3、F4、F6 仍待批准；如果它们没有获批，F1(a) 可以单独合入。
+2. **F2 `astream`：** 先定事件联合和 schema 问题，再实现，然后改示例并完成 F3(3)。
 
 ## 5. 有意不提议的
 
@@ -152,6 +162,6 @@
 
 ## 6. 请维护者决定的问题
 
-1. **F1：** "ASK 即批准"是不是长期的无界面默认？如果不做 (c)，还要不要做 (b)？
+1. ~~**F1：** "ASK 即批准"是不是长期的无界面默认？如果不做 (c)，还要不要做 (b)？~~ **已于 2026-10-06 答复：走 (a) 路线。** "ASK 即批准"继续作为无界面默认，也不加默认 engine。
 2. **F2：** assistant 文本要不要进稳定契约？用哪个 schema 版本？
 3. **F3：** 懒导出放在 `agentao.host` 还是顶层 `agentao`？
