@@ -246,7 +246,7 @@ The built-in `web_fetch` blocks `https://good.com` → 302 → `http://169.254.1
 
 ## TL;DR
 
-- **The default SSRF blocklist already covers** localhost, `127.0.0.1`, `169.254.169.254` (cloud metadata), RFC1918 private ranges. Don't disable it.
+- **The default SSRF blocklist already covers** localhost, `127.0.0.1`, `169.254.169.254` (cloud metadata), RFC1918 private ranges. Don't disable it. The execute-phase URL policy also refuses the other cloud metadata endpoints — including Azure's public `168.63.129.16` — in IPv6 encodings too (NAT64, ISATAP, IPv4-compatible), and an `AGENTAO_WEB_FETCH_ALLOW_CIDRS` range does not open them unless it names the exact address.
 - Layer 4 (rule engine) is **app-side**; Layer 7 (VPC / egress firewall) is **infra-side** — you need both. Apps can be tricked; infra is the hard wall.
 - **Always disable HTTP redirects** in production `web_fetch` overrides — `https://good.com` → 302 → cloud-metadata IP is the classic bypass.
 - For internal APIs the agent legitimately needs, write explicit allowlist domains; never widen the global blocklist.

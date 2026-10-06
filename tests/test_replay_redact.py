@@ -42,6 +42,8 @@ def test_pattern_kinds_cover_the_documented_set():
         "aws_access_key",
         "github_token",
         "slack_token",
+        "stripe_key",
+        "google_oauth_secret",
         "jwt",
         "bearer",
         "oauth_token",
@@ -108,6 +110,92 @@ def test_scan_redacts_private_key_block():
     assert "[REDACTED:private_key_block]" in cleaned
     assert "MIIBOgIBAAJBAKj" not in cleaned
     assert hits.get("private_key_block") == 1
+
+
+@pytest.mark.parametrize(
+    "secret, kind",
+    [
+        ("github_pat_11ABCDEFG0123456789_" + "a" * 59, "github_token"),
+        ("xapp-1-A0123456789-1234567890123-" + "f" * 64, "slack_token"),
+        ("sk_live_" + "a1B2c3D4e5" * 3, "stripe_key"),
+        ("sk_test_" + "a1B2c3D4e5" * 3, "stripe_key"),
+        ("rk_live_" + "a1B2c3D4e5" * 3, "stripe_key"),
+        ("whsec_" + "a1B2c3D4e5" * 3, "stripe_key"),
+        ("GOCSPX-" + "a1B2c3D4e5" * 3, "google_oauth_secret"),
+    ],
+)
+def test_scan_redacts_prefixed_vendor_secrets(secret, kind):
+    cleaned, hits = scan_and_redact(f"x {secret} y")
+    assert cleaned == f"x [REDACTED:{kind}] y"
+    assert hits == {kind: 1}
+
+
+def test_short_anthropic_key_is_labelled_anthropic():
+    cleaned, hits = scan_and_redact("key " + "sk-ant-" + "A" * 25)
+    assert hits == {"anthropic_api_key": 1}
+
+
+def test_scan_redacts_pgp_private_key_block():
+    block = (
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----\n"
+        "lQOYBF1234567890abcdef\n"
+        "-----END PGP PRIVATE KEY BLOCK-----"
+    )
+    cleaned, hits = scan_and_redact(f"before\n{block}\nafter")
+    assert cleaned == "before\n[REDACTED:private_key_block]\nafter"
+    assert hits == {"private_key_block": 1}
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\\n"])
+def test_scan_redacts_private_key_without_end_line(newline):
+    # A key pasted without its END line, with real newlines or with the
+    # literal ``\n`` a JSON string carries. The text after the key survives.
+    pem = newline.join(
+        ["-----BEGIN RSA PRIVATE KEY-----", "MIIEowIBAAKCAQEA1234567890", "abcdef+/=="]
+    )
+    cleaned, hits = scan_and_redact(f"{pem} -- please help")
+    assert cleaned == "[REDACTED:private_key_block] -- please help"
+    assert hits == {"private_key_block": 1}
+
+
+@pytest.mark.parametrize("newline", ["\n", "\\n"])
+@pytest.mark.parametrize(
+    "header, headers",
+    [
+        ("-----BEGIN PGP PRIVATE KEY BLOCK-----", ["Version: GnuPG v1"]),
+        (
+            "-----BEGIN RSA PRIVATE KEY-----",
+            ["Proc-Type: 4,ENCRYPTED", "DEK-Info: AES-128-CBC,0123ABCD"],
+        ),
+    ],
+)
+def test_unterminated_key_with_armor_headers_redacts_the_body(newline, header, headers):
+    # Armor headers before the body: only ``Version`` / ``Proc`` was redacted
+    # and the key body was left in the text.
+    pem = newline.join([header, *headers, "", "lQOYBF1234567890abcdef", "abcdef+/=="])
+    cleaned, hits = scan_and_redact(f"{pem} -- please help")
+    assert cleaned == "[REDACTED:private_key_block] -- please help"
+    assert hits == {"private_key_block": 1}
+
+
+def test_unterminated_header_without_body_is_left_alone():
+    text = "The file starts with -----BEGIN RSA PRIVATE KEY----- and then base64."
+    assert scan_and_redact(text) == (text, {})
+
+
+def test_private_key_patterns_stay_linear():
+    # Many headers with no END. The terminated tail must stop at the next
+    # header rather than scan to the end of the text from each one.
+    import time
+
+    for text in (
+        "-----BEGIN RSA PRIVATE KEY----- " * 5000,
+        "-----BEGIN RSA PRIVATE KEY-----\nAAAA\\" * 5000,
+    ):
+        start = time.perf_counter()
+        scan_and_redact(text)
+        # Quadratic before the tempered tail: about 4 s for the second input.
+        assert time.perf_counter() - start < 1.0
 
 
 def test_scan_redacts_bearer_header():
