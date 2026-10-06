@@ -1,6 +1,6 @@
 # 宿主 API 易用性评审：嵌入能不能更简单？
 
-**状态：** 评审，2026-10-06。**2026-10-06 已决定：F1 走 (a) 路线，只改文档**（见 §3 F1 的*决定*）。其余各项仍是**提议**，都未获批准，也未实施。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。
+**状态：** 评审，2026-10-06。**2026-10-06 已决定：F1 走 (a) 路线，只改文档**（见 §3 F1 的*决定*）。其余各项仍是**提议**，都未获批准，也未实施。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。
 **读者：** 决定改动嵌入式宿主接口的 agentao 维护者，以及后续 PR 的评审者。
 **相关文档：**
 - `docs/design/host-api-ergonomics-review.md`：英文版，内容相同
@@ -104,10 +104,32 @@
   - 只检查属性是否存在还不够。`ReplayAdapter` 总是有 `subscribe`，但内层没有时它返回的空操作看起来和真的取消订阅函数一样，事件却永远不会到达。检查必须落到内层 transport 上：要么 `astream` 拆开 adapter 去看，要么 adapter 报告自己是否转发了。具体选哪种在实现时决定；无论哪种，这种情况都按上一条同样拒绝。
 - **收到谁的文本。** 子代理用的是各自的 transport（`agents/tools/_wrapper.py:614-636`），所以在父 agent 的 transport 上订阅，只会收到父 agent 自己的文本。
 - **生命周期约束：**
-  - *不重叠运行：* 已经强制执行。`run_turn` 以不等待的方式获取 `agent._turn_lock`，拿不到就抛 `TurnInProgressError`（`runtime/turn.py:72-100`）。`astream` 直接继承：agent 正忙时，第二个 `astream` 或 `arun` 立即失败，不排队。
-  - *队列：* 有界，容量和满队列规则都与 `events()` 相同（`host/events.py:60`；队列满时生产者等待）。消费者停止读取会拖慢本轮，而不是让内存增长。
+  - *不重叠运行：* 已经强制执行。`run_turn` 以不等待的方式获取 `agent._turn_lock`，拿不到就抛 `TurnInProgressError`（`runtime/turn.py:72-100`）。`astream` 继承这一点，但拒绝发生在**工作线程开始执行本轮时**，而不是调用 `astream` 时。`arun()` 要经过 `agentao-arun-*` 线程池，池子忙时，第二个请求可能先等一个空闲线程，然后才失败。
+  - *只绑定本轮：* 光靠轮次锁，不能保证被拒绝的请求看不到其他轮次的文本。`astream` 在本轮开始前就已订阅，如果不加过滤，第二个流可能先收到第一轮的文本，之后才被拒绝。事件本身不带轮次 id，所以按 token 身份绑定：
+    - `astream` 总是为本轮新建自己的 `CancellationToken`。调用方传入的 token 通过 `add_done_callback`（`cancellation.py:102`）关联到它，流结束时解除关联；调用方的 token 从不直接用作本轮的 token。否则同一个 token 被两次调用共用时，会同时匹配两轮。
+    - 监听器只在 `agent._current_token is` 这个 token 时才转发事件。`run_turn` 在拿到轮次锁之后才设置 `_current_token`（`runtime/turn.py:139`），结束时清空（`:341`）。监听器在生产者线程上被同步调用（`SdkTransport.emit`，`transport/sdk.py:91-97`），所以检查时看到的正是正在发事件的那一轮。
+    - 被 `TurnInProgressError` 拒绝的请求，它的 token 从未被设置为当前 token，所以不会交付任何其他轮次的数据。
+  - *队列：* 有界，容量和满队列规则都与 `events()` 相同（`host/events.py:60`；队列满时生产者等待）。消费者停止读取会拖慢本轮，而不是让内存增长。代价是：流关闭时，生产者可能正**阻塞在队列写入里**，下面的关闭顺序必须处理这种情况。
   - *异常：* 本轮抛出的异常，在已经入队的事件交付完之后，由迭代器抛出。只有本轮正常返回时才产出 `TurnFinished`，包括 `chat()` 正常返回的 `status="error"` / `"cancelled"` 结果。
-  - *提前关闭*（`break`、`aclose()`、任务被取消）：(1) 触发本轮的 token；(2) 像 `arun` 一样有时限地等待工作线程结束（`_await_turn_cleanup`，`agent.py:101`）；(3) 无论发生什么，都在 `finally` 里取消订阅。只触发 token 不够：工作线程会继续往一个没人读的监听器里发事件，而 transport 强引用监听器，订阅就会泄漏（`transport/base.py:51-56`）。
+  - *提前关闭*（`aclose()`、任务被取消），按以下顺序：
+    1. **标记流已关闭，并解除待处理的队列写入。** 在流的锁内设置 `closed`，并取消所有待处理的写入。此后监听器直接丢弃事件，不再写入。`EventStream` 已经用这套机制解决了同样的卡死问题（`host/events.py:76-81`、`:296-320`）：复用它的订阅者机制或沿用同样的模式即可，不新增调度层。
+    2. **触发本轮的 token。**
+    3. **有时限地等待本轮清理完成**，做法与 `arun` 相同（`_await_turn_cleanup`，`agent.py:101`）。
+    4. **无论发生什么，都在 `finally` 里取消订阅。**
+
+    顺序很重要。在满队列上阻塞的生产者卡在队列写入里，而不是在 token 检查点上；如果先触发 token，工作线程仍会卡住，第 3 步就会一直等它。取消订阅只是移除监听器，解除不了已经在进行的写入。漏掉第 4 步则订阅会泄漏，因为 transport 强引用监听器（`transport/base.py:51-56`）。
+  - *`break` 不等于关闭。* 用 `break` 跳出 `async for` 不会执行异步生成器的 `finally`。在 CPython 上实测，它直到事件循环关闭时（`asyncio.run` 关闭异步生成器那一步）才执行。在此之前本轮会继续运行，生产者也可能卡在满队列上。所以 API 文档必须要求：宿主提前退出时显式关闭流：
+
+    ```python
+    from contextlib import aclosing  # Python 3.10+
+
+    async with aclosing(agent.astream(prompt)) as stream:
+        async for ev in stream:
+            if isinstance(ev, TextDelta):
+                send(ev.text)
+            if should_stop():
+                break  # 退出时 aclosing 会调用 aclose()
+    ```
 - **实现位置：** 在运行时之上，即 `arun()` 加一个订阅，chat 循环不改。
 
 **待定点：** `host-api.md` 当初是有意不放文本的（载荷大小、工具原始 I/O）。本提议只带文本增量，不带工具原始 I/O，也不动审计 schema。assistant 文本该不该进稳定契约，仍要由维护者决定。

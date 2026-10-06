@@ -1,6 +1,6 @@
 # Host API ergonomics review: can embedding be simpler?
 
-**Status:** Review, 2026-10-06. **Decided 2026-10-06: F1 takes route (a), docs only** (§3 F1, *Decision*). Every other item is still a **proposal**; none is authorized or implemented. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered.
+**Status:** Review, 2026-10-06. **Decided 2026-10-06: F1 takes route (a), docs only** (§3 F1, *Decision*). Every other item is still a **proposal**; none is authorized or implemented. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered. **Second revision, after re-review:** F2's close order releases pending queue writes first, early exit requires `aclosing`, and the stream is bound to its own turn by token identity.
 **Audience:** agentao maintainers deciding what to change in the embedded-host surface, and reviewers of any follow-up PR.
 **Companions:**
 - `docs/design/host-api-ergonomics-review.zh.md`: Chinese version, same content
@@ -104,10 +104,32 @@ So no design here may require or encourage replacing the transport.
   - Checking for the attribute is not enough. A `ReplayAdapter` always has `subscribe`, but over a subscribe-less inner transport it returns a no-op unsubscribe, which looks like a real one, and no events will ever arrive. The check has to reach the inner transport: either `astream` unwraps the adapter, or the adapter reports whether it forwarded. Which one is decided at implementation; either way that case is refused like the first.
 - **Whose text arrives.** Sub-agents run on transports of their own (`agents/tools/_wrapper.py:614-636`), so a subscription on the parent's transport carries only the parent's text.
 - **Lifecycle contract:**
-  - *No overlap:* already enforced. `run_turn` takes `agent._turn_lock` without waiting and raises `TurnInProgressError` (`runtime/turn.py:72-100`). `astream` inherits it: a second `astream` or `arun` on a busy agent fails at once instead of queueing.
-  - *Queue:* bounded, with the same capacity and full-queue rule as `events()` (`host/events.py:60`; a full queue makes the producer wait). A consumer that stops reading slows the turn; it does not grow memory.
+  - *No overlap:* already enforced. `run_turn` takes `agent._turn_lock` without waiting and raises `TurnInProgressError` (`runtime/turn.py:72-100`). `astream` inherits this, but the refusal happens **when the worker starts running the turn**, not when `astream` is called. `arun()` goes through the `agentao-arun-*` pool, so with the pool busy, a second request may first wait for a worker and then fail.
+  - *Bound to its own turn:* the lock alone does not keep a refused request from seeing another turn's text. `astream` subscribes before its turn starts, so without a filter a second stream could receive the first turn's text and only then be refused. Events carry no turn id. Binding is therefore by token identity:
+    - `astream` always mints its own `CancellationToken` for the turn. A caller-supplied token is linked to it through `add_done_callback` (`cancellation.py:102`), with the link removed when the stream ends, and is never used as the turn's token directly. One caller token shared between two calls would otherwise match both.
+    - The listener forwards an event only while `agent._current_token is` that token. `run_turn` sets `_current_token` only after taking the turn lock (`runtime/turn.py:139`) and clears it at the end (`:341`). Listeners run inline on the producer thread (`SdkTransport.emit`, `transport/sdk.py:91-97`), so the check sees the turn that is emitting.
+    - A request refused with `TurnInProgressError` never had its token installed, so it delivers nothing from another turn.
+  - *Queue:* bounded, with the same capacity and full-queue rule as `events()` (`host/events.py:60`; a full queue makes the producer wait). A consumer that stops reading slows the turn; it does not grow memory. The cost is that a producer can be **blocked inside a queue write** when the stream closes, which the close order below has to handle.
   - *Errors:* an exception from the turn is raised from the iterator after the events already queued have been delivered. `TurnFinished` is yielded only when the turn returned, including the `status="error"` / `"cancelled"` outcomes `chat()` returns normally.
-  - *Closing early* (`break`, `aclose()`, task cancellation): (1) trip the turn's token; (2) wait for the worker, bounded, the same way `arun` does (`_await_turn_cleanup`, `agent.py:101`); (3) unsubscribe in `finally`, whatever happened. Tripping the token alone is not enough. The worker would keep emitting into a listener nobody reads, and the transport holds listeners strongly, so the subscription would leak (`transport/base.py:51-56`).
+  - *Closing early* (`aclose()`, task cancellation), in this order:
+    1. **Mark the stream closed and release pending queue writes.** Under the stream's lock, set `closed` and cancel every pending put. From then on the listener drops events instead of writing. This is the mechanism `EventStream` already uses for exactly this wedge (`host/events.py:76-81`, `:296-320`): reuse its subscriber machinery, or the same pattern, with no new scheduling layer.
+    2. **Trip the turn's token.**
+    3. **Wait for the turn's cleanup**, bounded, the same way `arun` does (`_await_turn_cleanup`, `agent.py:101`).
+    4. **Unsubscribe in `finally`**, whatever happened.
+
+    The order matters. A producer blocked on a full queue sits in a queue write, not at a token check, so tripping the token first would leave the worker blocked while step 3 waits for it. Unsubscribing only removes the listener and does not release a write already in progress. Skipping step 4 leaks the subscription, because the transport holds listeners strongly (`transport/base.py:51-56`).
+  - *`break` is not a close.* Leaving an `async for` with `break` does not run an async generator's `finally`. A probe on CPython showed it ran only at event-loop teardown (`asyncio.run`'s shutdown of async generators). Until then the turn keeps running and the producer can block on the full queue. The API docs must therefore require explicit closing when a host leaves early:
+
+    ```python
+    from contextlib import aclosing  # Python 3.10+
+
+    async with aclosing(agent.astream(prompt)) as stream:
+        async for ev in stream:
+            if isinstance(ev, TextDelta):
+                send(ev.text)
+            if should_stop():
+                break  # aclosing runs aclose() on the way out
+    ```
 - **Where it lives:** above the runtime, as `arun()` plus a subscription. The chat loop does not change.
 
 **Open point:** `host-api.md` left text out on purpose (payload size, raw tool I/O). The proposal carries text deltas only, never raw tool I/O, and adds nothing to the audit schema. Whether assistant text belongs in the stable contract at all is still a maintainer decision.
