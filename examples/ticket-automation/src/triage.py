@@ -22,7 +22,7 @@ from agentao.permissions import (
     PermissionEngine,
     PermissionMode,
 )
-from agentao.tools.base import Tool
+from agentao.host import Tool
 
 
 # ──────────────────────────────────────────────────────────────────────────

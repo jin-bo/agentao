@@ -619,7 +619,7 @@ snap = agent.active_permissions()
 
 `loaded_sources` 是稳定的字符串标签：`preset:<mode>`、`user:<path>`、`injected:<name>`。（`project:<path>` 已不再发出 —— 项目级权限不会被加载，见 [5.4](/zh/part-5/4-permissions)。）MVP **不** 暴露逐规则 provenance —— 需要细到规则级的宿主请把 `loaded_sources` 与自己注入的策略元数据组合。
 
-未配置 `permission_engine` 时，运行时返回宽松回退：`mode="workspace-write"`、空 `rules`、`loaded_sources=["default:no-engine"]`。该标签明确告诉宿主："看到的是无引擎回退而非配置策略"。
+未配置 `permission_engine` 时，运行时返回宽松回退：`mode="workspace-write"`、空 `rules`、`loaded_sources=["default:no-engine"]`。该标签明确告诉宿主："看到的是无引擎回退而非配置策略"：**不执行任何规则**，连 `workspace-write` 预设的规则也不执行，所有"问"都交给 transport（`NullTransport` 会一律批准）。
 
 叠加策略的宿主调 `agent.permission_engine.add_loaded_source("injected:<name>")` 让快照反映其 provenance。`set_mode()` 与 `add_loaded_source()` 都会让缓存失效。
 

@@ -62,6 +62,11 @@ matches existing user expectations (`.env`, `~/.agentao/`,
 sandboxes, multi-tenant deployments, or strict audit trails should
 prefer — every byte of context is explicit.
 
+Neither form asks anyone anything. Both use `NullTransport`, which
+**approves every tool call the permission layer would ask about**, and the
+second form has no permission engine at all. See [§2 *Permissions and the
+transport*](#permissions-and-the-transport) before shipping either.
+
 ---
 
 ## When to use which form
@@ -187,10 +192,38 @@ when the host is done with the session.
 |---|---|---|
 | `working_directory` | **Yes** (since 0.3.0) | Absolute or expandable path. Frozen at construction; an `os.chdir` in the host has no effect on the agent. |
 | `llm_client` *or* `api_key`+`base_url`+`model` | **Yes** | The constructor raises `ValueError` if both are missing. |
-| `permission_engine` | No | Defaults to a permissive engine. |
+| `permission_engine` | No | Defaults to **no engine** (`None`): no rule is evaluated, and `set_permission_mode` raises `ValueError`. Pass `PermissionEngine(project_root=...)` (no file I/O) for modes and the preset's `deny` rules. `build_from_environment` always builds one. |
 | `memory_manager` | No | Defaults to a project-scoped `:memory:`-fallback store. |
 | `mcp_registry` | No | Defaults to no MCP servers (the file-backed registry is only wired by the factory). |
-| `transport` | No | Defaults to `NullTransport()`. |
+| `transport` | No | Defaults to `NullTransport()`, which approves every ask (below). |
+
+### Permissions and the transport
+
+Every tool call is decided in order: read-only mode, then the engine's
+rules (`allow` / `deny` are final), then — for an engine `ask` or no
+match — the tool's own `requires_confirmation`. **Whatever is left as an
+ask goes to `transport.confirm_tool`, and `NullTransport` answers yes** to
+everything except a confirmation the MCP Skills gate raises. Headless,
+"ask" therefore means "allow": shell commands outside the read-only
+allowlist, `web_fetch` to an unlisted domain, `web_search`, and writes into
+`.git/`, `.agentao/` or credential-shaped paths all run.
+
+What still stops a call: read-only mode, an engine `deny` rule (including
+the `workspace-write` preset's own — only when there *is* an engine), the
+hardline command floor, the MCP Skills gate, and `web_fetch`'s URL policy.
+
+A host with nobody to ask that should refuse instead passes a transport
+that says no:
+
+```python
+from agentao.transport import SdkTransport
+
+transport = SdkTransport(confirm_tool=lambda *_: False)  # every ask → refused
+```
+
+`agent.active_permissions()` on an agent with no engine reports
+`mode="workspace-write"` with `loaded_sources=["default:no-engine"]`. That
+label means no rule is evaluated, not that the preset applies.
 
 ### Optional: provider-specific request params (`extra_body`)
 

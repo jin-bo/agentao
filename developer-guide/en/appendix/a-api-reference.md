@@ -622,7 +622,7 @@ snap = agent.active_permissions()
 
 `loaded_sources` carries stable string labels: `preset:<mode>`, `user:<path>`, `injected:<name>`. (`project:<path>` is no longer emitted — project-scope permissions are not loaded; see [5.4](/en/part-5/4-permissions).) The MVP does **not** expose per-rule provenance — hosts that need it combine `loaded_sources` with their own injected policy metadata.
 
-If no `permission_engine` is configured, the runtime returns a permissive fallback: `mode="workspace-write"`, empty `rules`, `loaded_sources=["default:no-engine"]`. The label tells hosts they're seeing the engine-less fallback rather than a configured policy.
+If no `permission_engine` is configured, the runtime returns a permissive fallback: `mode="workspace-write"`, empty `rules`, `loaded_sources=["default:no-engine"]`. The label tells hosts they're seeing the engine-less fallback rather than a configured policy: **no rule is evaluated**, not even the `workspace-write` preset's, and every ask goes to the transport (which `NullTransport` approves).
 
 Hosts that layer policy on top of the engine call `agent.permission_engine.add_loaded_source("injected:<name>")` so the snapshot reflects their provenance. The cache is invalidated on `set_mode()` and `add_loaded_source()`.
 
