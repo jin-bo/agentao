@@ -1,6 +1,6 @@
 # Host API ergonomics review: can embedding be simpler?
 
-**Status:** Review, 2026-10-06. **Decided 2026-10-06: F1 takes route (a), docs only** (§3 F1, *Decision*). Every other item is still a **proposal**; none is authorized or implemented. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered. **Second revision, after re-review:** F2's close order releases pending queue writes first, early exit requires `aclosing`, and the stream is bound to its own turn by token identity.
+**Status:** Review, 2026-10-06. **Decided 2026-10-06:** F1 takes route (a), docs only (§3 F1, *Decision*). Streaming text enters the stable contract (F2). New stable types are exported from `agentao.host` only (F3). Implementation is not yet authorized; nothing here is implemented. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered. **Second revision, after re-review:** F2's close order releases pending queue writes first, early exit requires `aclosing`, and the stream is bound to its own turn by token identity.
 **Audience:** agentao maintainers deciding what to change in the embedded-host surface, and reviewers of any follow-up PR.
 **Companions:**
 - `docs/design/host-api-ergonomics-review.zh.md`: Chinese version, same content
@@ -132,7 +132,7 @@ So no design here may require or encourage replacing the transport.
     ```
 - **Where it lives:** above the runtime, as `arun()` plus a subscription. The chat loop does not change.
 
-**Open point:** `host-api.md` left text out on purpose (payload size, raw tool I/O). The proposal carries text deltas only, never raw tool I/O, and adds nothing to the audit schema. Whether assistant text belongs in the stable contract at all is still a maintainer decision.
+**Decision (maintainer, 2026-10-06): streaming text enters the stable contract**, in the minimal form above: `TextDelta` + `TurnFinished` via `astream`, outside the audit schema. This reverses `host-api.md`'s earlier exclusion of assistant text, for text deltas only; raw tool I/O stays out. When `astream` lands, `host-api.md` (and its scope note at `:27`) and the `agentao.host` docstring are updated to say so.
 
 ### F3. Imports are spread out; a public method's argument type is not public
 
@@ -156,7 +156,7 @@ So no design here may require or encourage replacing the transport.
 2. Publish `PermissionMode` and `CancellationToken` on the documented stable surface. Both modules are light (`permissions.py` imports only the stdlib and `permissions_hardline`; `cancellation.py` only the stdlib). Lazy re-exports through `agentao.host`'s PEP 562 `__getattr__` would still keep `test_import_agentao_host_stays_off_the_runtime_stack` (`tests/test_import_layering.py:477`) honest.
 3. Move the examples onto the stable imports once F2 exists.
 
-Home: `agentao.host` only, which has the typing gate (review recommendation). No second top-level export.
+**Decision (maintainer, 2026-10-06): new stable types are exported from `agentao.host` only**, which has the typing gate. There is no second top-level export.
 
 ### F4. No context-manager lifecycle
 
@@ -201,5 +201,5 @@ F4 can join step 2 or stand alone; it is small and additive. F6 is deferred.
 ## 6. Questions for the maintainer
 
 1. ~~**F1:** is approve-on-ASK the intended long-term headless default? Is (b) wanted even if (c) is not?~~ **Answered 2026-10-06: route (a).** Approve-on-ASK stays the headless default, and there is no default engine.
-2. **F2:** should assistant text enter the stable contract? (After revision it would not touch the audit schema.)
-3. **F3:** the review recommends `agentao.host` only, with no top-level export. This doc adopts that as its recommendation; it is not yet a recorded decision.
+2. ~~**F2:** should assistant text enter the stable contract?~~ **Answered 2026-10-06: yes**, as `TextDelta` + `TurnFinished`, outside the audit schema.
+3. ~~**F3:** should the re-exports live in `agentao.host` or in top-level `agentao`?~~ **Answered 2026-10-06: `agentao.host` only.**
