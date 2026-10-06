@@ -1,6 +1,6 @@
 # 宿主 API 易用性评审：嵌入能不能更简单？
 
-**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 和 F3 第 0 步**已在 PR #423 实施**（只改文档和示例导入）；代码部分（字符串模式与导出、F4、`astream`）的实施尚未获批。本文内容都还没有实现。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。
+**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 和 F3 第 0 步**已在 PR #423 实施**（只改文档和示例导入）；代码部分（字符串模式与导出、F4、`astream`）的实施尚未获批。本文内容都还没有实现。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。**第三次修订（2026-10-06），收窄导出：** 不导出 `PermissionMode`，去掉 `TurnFinished`；新增导出为 `CancellationToken`、`TextDelta`、`TurnOutcome`；已决定 `Agentao(permission_mode=...)`。
 **读者：** 决定改动嵌入式宿主接口的 agentao 维护者，以及后续 PR 的评审者。
 **相关文档：**
 - `docs/design/host-api-ergonomics-review.md`：英文版，内容相同
@@ -19,8 +19,8 @@
 | # | 发现 | 提议 | 兼容性 |
 |---|---|---|---|
 | F1 | 无界面宿主会批准所有 ASK，文档没说；没有 engine 的 agent 也切换不了模式 | **已决定：(a) 只改文档。** 不采用 (b) 和 (c) | 无影响 |
-| F2 | 流式文本不在契约内；所有聊天类示例都导入了内部接口，`saas-assistant` 每次请求替换 transport，会把事件送错地方 | 最小的 `Agentao.astream()`：只有 `TextDelta` + `TurnFinished`，通过订阅接入 | 纯新增；审计 schema 不变 |
-| F3 | 导入分散在 8 个模块；`set_permission_mode` 的参数类型不公开；示例里有错误导入 | 修正示例导入；接受字符串模式；在 `agentao.host` 公开 `PermissionMode` / `CancellationToken` | 纯新增 |
+| F2 | 流式文本不在契约内；所有聊天类示例都导入了内部接口，`saas-assistant` 每次请求替换 transport，会把事件送错地方 | 最小的 `Agentao.astream()`：先产出 `TextDelta`，最后产出 `TurnOutcome`；通过订阅接入 | 纯新增；审计 schema 不变 |
+| F3 | 导入分散在 8 个模块；`set_permission_mode` 的参数类型不公开；示例里有错误导入 | 修正示例导入；字符串模式（不导出枚举）；`Agentao(permission_mode=...)`；从 `agentao.host` 导出 `CancellationToken` | 纯新增 |
 | F4 | 不支持 `with` / `async with`，每个宿主都写 `try/finally close()` | `__enter__/__exit__`；`aclose()` 即 `asyncio.to_thread(close)`；宿主先结束自己的轮次 | 纯新增 |
 | F5 | `chat()` 返回字符串不代表模型真的回答了 | 由 F2 的结束事件覆盖；`chat()` 不改 | 不适用 |
 | F6 | 观察者别名重复；构造函数 32 个参数 | **暂缓**；构造函数不动 | 不适用 |
@@ -99,8 +99,10 @@
 所以这里的任何设计都不能要求、也不能鼓励替换 transport。
 
 **提议：最小的 `Agentao.astream(prompt, *, images=None, cancellation_token=None)`。** 已按评审收缩范围。
-- **首版事件：** 只有 `TextDelta(text)` 和 `TurnFinished(outcome: TurnOutcome)`。工具和权限事件继续用现有的 `events()`。推理内容等有宿主提出需求再加。
-- **不进审计 schema。** 这两个类型放在 `agentao.host`，但不属于 `HostEvent` 联合，不投影进 replay，也不进 `docs/schema/host.events.v1.json`。文本已经通过内部事件流进入 replay；`astream` 是一个投递接口，不是新的审计记录。
+- **首版产出项：** 先是 `TextDelta(text)`，最后是本轮的 `TurnOutcome`，没有别的。工具和权限事件继续用现有的 `events()`。推理内容等有宿主提出需求再加。
+- **最后一项直接是 `TurnOutcome`**（2026-10-06 修订；原来是只有一个字段的 `TurnFinished(outcome)` 包装）。迭代器产出 `TextDelta | TurnOutcome`；用 `isinstance` 就能区分，不需要事件基类，也不需要另一套 schema。
+- **前提：`TurnOutcome` 必须能轻量导入。** 实测 `from agentao import TurnOutcome` 会加载 `agentao.runtime.chat_loop` 和 `agentao.llm.client`。这个类本身（`runtime/outcome.py`）只导入 `dataclasses` 和 `typing`；开销来自 `agentao/runtime/__init__.py`，它会立即导入 `chat_loop`、`llm_call`、`tool_runner` 和 `turn`。懒导出避不开这一点，因为导入 `agentao.runtime.outcome` 总会先执行包的 `__init__`。所以要把定义移到一个轻量模块，`agentao.runtime.outcome` 和顶层 `agentao` 继续重新导出**同一个类**，身份比较和现有导入都不受影响。这样 `agentao/__init__.py` 注释里说的"不用加载 LLM 栈就能导入"才真正成立；目前并不成立。
+- **不进审计 schema。** `TextDelta` 和 `TurnOutcome` 从 `agentao.host` 导出，但不属于 `HostEvent` 联合，不投影进 replay，也不进 `docs/schema/host.events.v1.json`。文本已经通过内部事件流进入 replay；`astream` 是一个投递接口，不是新的审计记录。
 - **通过订阅现有 transport 接入，绝不替换它。** `Transport.subscribe` 是可选的：实现"可以省略这个方法；使用方应先 `getattr(transport, "subscribe", None)`"（`transport/base.py:40-49`）。`NullTransport`、`SdkTransport`、ACP 的 transport 和 `ReplayAdapter` 都实现了它；`ReplayAdapter` 会转发给内层 transport，内层没有时返回一个空操作（`replay/adapter.py:231-244`）。由此有两点：
   - 如果当前 transport 没有 `subscribe`，`astream` 在本轮**开始之前**抛 `TypeError`，并写明 transport 的类名。不退回到替换 transport 的做法，因为替换会改变由谁回答确认、replay 记录什么。
   - 只检查属性是否存在还不够。`ReplayAdapter` 总是有 `subscribe`，但内层没有时它返回的空操作看起来和真的取消订阅函数一样，事件却永远不会到达。检查必须落到内层 transport 上：要么 `astream` 拆开 adapter 去看，要么 adapter 报告自己是否转发了。具体选哪种在实现时决定；无论哪种，这种情况都按上一条同样拒绝。
@@ -112,7 +114,7 @@
     - 监听器只在 `agent._current_token is` 这个 token 时才转发事件。`run_turn` 在拿到轮次锁之后才设置 `_current_token`（`runtime/turn.py:139`），结束时清空（`:341`）。监听器在生产者线程上被同步调用（`SdkTransport.emit`，`transport/sdk.py:91-97`），所以检查时看到的正是正在发事件的那一轮。
     - 被 `TurnInProgressError` 拒绝的请求，它的 token 从未被设置为当前 token，所以不会交付任何其他轮次的数据。
   - *队列：* 有界，容量和满队列规则都与 `events()` 相同（`host/events.py:60`；队列满时生产者等待）。消费者停止读取会拖慢本轮，而不是让内存增长。代价是：流关闭时，生产者可能正**阻塞在队列写入里**，下面的关闭顺序必须处理这种情况。
-  - *异常：* 本轮抛出的异常，在已经入队的事件交付完之后，由迭代器抛出。只有本轮正常返回时才产出 `TurnFinished`，包括 `chat()` 正常返回的 `status="error"` / `"cancelled"` 结果。
+  - *异常：* 本轮抛出的异常，在已经入队的事件交付完之后，由迭代器抛出。只有本轮正常返回时才产出 `TurnOutcome`，作为最后一项，包括 `chat()` 正常返回的 `status="error"` / `"cancelled"` 结果。
   - *提前关闭*（`aclose()`、任务被取消），按以下顺序：
     1. **标记流已关闭，并解除待处理的队列写入。** 在流的锁内设置 `closed`，并取消所有待处理的写入。此后监听器直接丢弃事件，不再写入。`EventStream` 已经用这套机制解决了同样的卡死问题（`host/events.py:76-81`、`:296-320`）：复用它的订阅者机制或沿用同样的模式即可，不新增调度层。
     2. **触发本轮的 token。**
@@ -134,7 +136,7 @@
     ```
 - **实现位置：** 在运行时之上，即 `arun()` 加一个订阅，chat 循环不改。
 
-**决定（维护者，2026-10-06）：流式文本进入稳定契约**，形式就是上面的最小版本：通过 `astream` 提供 `TextDelta` + `TurnFinished`，不进审计 schema。这改变了 `host-api.md` 原先不放 assistant 文本的做法，但只限文本增量；工具原始 I/O 仍不放。`astream` 落地时，凡是说文本不在契约内的地方都要同步更新：`host-api.md`（`:27` 的范围说明）、`agentao.host` 的 docstring，以及 `docs/design/embedded-host-contract.md:28-31`。
+**决定（维护者，2026-10-06）：流式文本进入稳定契约**，形式就是上面的最小版本：`astream` 先产出 `TextDelta`，最后产出 `TurnOutcome`，不进审计 schema。这改变了 `host-api.md` 原先不放 assistant 文本的做法，但只限文本增量；工具原始 I/O 仍不放。`astream` 落地时，凡是说文本不在契约内的地方都要同步更新：`host-api.md`（`:27` 的范围说明）、`agentao.host` 的 docstring，以及 `docs/design/embedded-host-contract.md:28-31`。
 
 ### F3. 导入分散；公开方法的参数类型不公开
 
@@ -154,9 +156,18 @@
 
 **提议：**
 0. 已经有稳定出处的导入现在就改（`Tool` 改从 `agentao.host` 导入），与 F1 的文档修改一起做。
-1. `set_permission_mode` 同时接受模式的字符串值（`"read-only"`、`"workspace-write"`、`"full-access"`、`"plan"`），按 `PermissionMode` 校验，未知字符串抛异常。
-2. 把 `PermissionMode` 和 `CancellationToken` 列入文档里的稳定接口。两个模块都很轻：`permissions.py` 只导入标准库和 `permissions_hardline`，`cancellation.py` 只导入标准库。通过 `agentao.host` 的 PEP 562 `__getattr__` 懒导出，`test_import_agentao_host_stays_off_the_runtime_stack`（`tests/test_import_layering.py:477`）仍然能守住分层。
-3. F2 落地后，把示例都改成用稳定导入。
+1. **公开入口统一用字符串表示模式。** `set_permission_mode` 同时接受 `"read-only"`、`"workspace-write"`、`"full-access"`、`"plan"`，与 `ActivePermissions.mode` 和 `PermissionDecisionEvent.mode` 的取值相同（都是 `Literal[...]`，`host/models.py:58`、`:167`）。入口先校验字符串，再转换成内部枚举；未知字符串抛异常。原来传枚举的写法照样能用。**不导出 `PermissionMode`**（2026-10-06 修订）：导出它会让公开契约里同一个值有两种写法。
+   - **返回值不变，文档必须如实说明：** `set_permission_mode()` 仍然返回切换前的模式，类型是内部枚举 `PermissionMode`（`Optional[PermissionMode]`），不是字符串。文档要写明这一点，不能声称"统一用字符串"；改返回值本身就是一项兼容性变更，这里不做。
+2. **`Agentao(permission_mode=...)`**——2026-10-06 已决定（见下面的*构造时设定权限姿态*）。只需要模式的宿主不必导入任何权限相关的东西。
+3. **从 `agentao.host` 导出 `CancellationToken`。** `cancellation.py` 只导入标准库，所以通过 `agentao.host` 的 PEP 562 `__getattr__` 懒导出，`test_import_agentao_host_stays_off_the_runtime_stack`（`tests/test_import_layering.py:477`）仍然能守住分层。为什么需要它：简单的异步调用可以通过取消任务来结束本轮，`arun()` 已经会转发这个取消；其他场景（独立的停止按钮、跨任务取消、多个调用共用一个取消信号、同步宿主从别的线程取消 `chat()`）需要显式传 token。
+4. F2 落地后，把示例都改成用稳定导入。
+
+**构造时设定权限姿态——2026-10-06 已决定：`Agentao(permission_mode=...)`。** 这不是 F1 里被否决的 (b)：宿主不传这个参数时，什么都不变。
+- **默认 `permission_mode=None`：** 不创建引擎，与现在完全相同（F1 的决定不变）。
+- **显式传入模式时：** 先校验字符串（取值同上），再创建引擎 `PermissionEngine(project_root=working_directory, rules=[])`。不隐式加载任何权限文件；需要 `~/.agentao/permissions.json` 的宿主用 `build_from_environment`，或者自己构造引擎。
+- **初始模式通过现有的切换函数 `runtime/permission_mode.py::apply_permission_mode` 应用**，保证引擎的预设和工具执行器的只读标志从第一次调用起就一致。这个函数需要工具执行器，所以要在 `_wire_tooling`（`agent.py:392`）之后执行。它只在模式真的变化时发出 `PERMISSION_MODE_CHANGED` / `READONLY_MODE_CHANGED`（以 `"workspace-write"` 开始时什么都不发）；这个入口的 `cause` 标签在实现时命名。
+- *提议，待确认：* 同时传入 `permission_mode=` 和 `permission_engine=` 时抛 `ValueError`，与 `llm_client=` 和原始 LLM 配置互斥的规则一致。自带引擎的宿主在引擎上设好模式，或者构造后再调 `set_permission_mode`。
+- `PermissionEngine` 仍然不进 `agentao.host`（`host/__init__.py:23-24`、`host-api.md:10-11`）。需要 `rules=` 的宿主仍从 `agentao.permissions` 构造它，见 `embed-for-agents.md` §1。
 
 **决定（维护者，2026-10-06）：新增的稳定类型只从 `agentao.host` 导出**，因为它有类型门禁。不另加顶层出口。
 
@@ -173,7 +184,7 @@
 
 `chat()` / `arun()` 返回 `str`。模型是否真的回答了，要看 `agent.last_turn` 上的 `TurnOutcome.status` / `incomplete_reason`（`runtime/outcome.py:22-37`）。指南 §6.1 专门为此提醒。
 
-**提议：** `chat()` 不改。改返回类型是破坏性的，而且指南已经说明了这一点。F2 的 `TurnFinished` 会把结果和文本一起带回来。
+**提议：** `chat()` 不改。改返回类型是破坏性的，而且指南已经说明了这一点。F2 的 `astream` 最后一项就是 `TurnOutcome`，结果会和文本一起带回来。
 
 ### F6. 别名重复；构造函数参数多
 
@@ -188,8 +199,8 @@
 已按评审修订。每一步单独一个 PR。
 
 1. ~~**F1(a) 文档，加上示例里现有的错误导入**（F3 第 0 步）。只改文档和示例。~~ **已在 PR #423 完成。**
-2. **字符串形式的权限模式，加上从 `agentao.host` 稳定导出 `PermissionMode` / `CancellationToken`**（F3 第 1–2 步）。纯新增。
-3. **最小的 `astream`**（F2）：`TextDelta` + `TurnFinished`，通过订阅接入，遵守上面的生命周期约束。然后把示例从 `SdkTransport` / `EventType` 上移走，并修好 `saas-assistant` 的替换写法（F3 第 3 步）。
+2. **字符串形式的权限模式、`Agentao(permission_mode=...)`，以及从 `agentao.host` 导出 `CancellationToken`**（F3 第 1–3 步）。纯新增；`set_permission_mode` 的返回值不变。
+3. **最小的 `astream`**（F2）：先把 `TurnOutcome` 移到轻量模块，再实现 `TextDelta` + 最后的 `TurnOutcome`（都从 `agentao.host` 导出），通过订阅接入，遵守上面的生命周期约束。然后把示例从 `SdkTransport` / `EventType` 上移走，并修好 `saas-assistant` 的替换写法（F3 第 3 步）。
 
 F4 可以并入第 2 步，也可以单独做；它很小，而且是纯新增。F6 暂缓。
 
@@ -203,5 +214,8 @@ F4 可以并入第 2 步，也可以单独做；它很小，而且是纯新增�
 ## 6. 请维护者决定的问题
 
 1. ~~**F1：** "ASK 即批准"是不是长期的无界面默认？如果不做 (c)，还要不要做 (b)？~~ **已于 2026-10-06 答复：走 (a) 路线。** "ASK 即批准"继续作为无界面默认，也不加默认 engine。
-2. ~~**F2：** assistant 文本要不要进稳定契约？~~ **已于 2026-10-06 答复：进**，形式为 `TextDelta` + `TurnFinished`，不进审计 schema。
+2. ~~**F2：** assistant 文本要不要进稳定契约？~~ **已于 2026-10-06 答复：进**，形式为先 `TextDelta`、后 `TurnOutcome`，不进审计 schema。
 3. ~~**F3：** 懒导出放在 `agentao.host` 还是顶层 `agentao`？~~ **已于 2026-10-06 答复：只放在 `agentao.host`。**
+4. ~~**F3：** 宿主不导入 `PermissionEngine` 时怎样设定权限姿态？~~ **已于 2026-10-06 答复：`Agentao(permission_mode=...)`**，默认 `None`。待确认：同时传入 `permission_mode=` 和 `permission_engine=` 时是否按提议抛 `ValueError`。
+
+**第 2–3 步之后 `agentao.host` 的导出：** 现有 14 个名字不变，再加 `CancellationToken`、`TextDelta` 和 `TurnOutcome`。现有 14 个一个都不删：它们都在有类型门禁的稳定接口上，删掉任何一个都会破坏宿主，而换不来实际的简化。
