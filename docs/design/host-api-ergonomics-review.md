@@ -1,6 +1,6 @@
 # Host API ergonomics review: can embedding be simpler?
 
-**Status:** Review, 2026-10-06. **Decided 2026-10-06:** F1 takes route (a), docs only (§3 F1, *Decision*). Streaming text enters the stable contract (F2). New stable types are exported from `agentao.host` only (F3). Implementation is not yet authorized; nothing here is implemented. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered. **Second revision, after re-review:** F2's close order releases pending queue writes first, early exit requires `aclosing`, and the stream is bound to its own turn by token identity.
+**Status:** Review, 2026-10-06. **Decided 2026-10-06:** F1 takes route (a), docs only (§3 F1, *Decision*). Streaming text enters the stable contract (F2). New stable types are exported from `agentao.host` only (F3). F1(a) is a docs change and may proceed on that decision. The code steps (string modes and exports, F4, `astream`) are not yet authorized. Nothing here is implemented yet. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered. **Second revision, after re-review:** F2's close order releases pending queue writes first, early exit requires `aclosing`, and the stream is bound to its own turn by token identity.
 **Audience:** agentao maintainers deciding what to change in the embedded-host surface, and reviewers of any follow-up PR.
 **Companions:**
 - `docs/design/host-api-ergonomics-review.zh.md`: Chinese version, same content
@@ -56,7 +56,7 @@ What still stops a call:
 
 `build_from_environment` does create an engine (`embedding/factory.py:250-256`), but it also defaults to `NullTransport`. ASK is therefore approved on that path too.
 
-**Not a bug in the runtime.** Approving on ASK is a recorded decision: CLAUDE.md says "`NullTransport`'s approve-everything stays as the headless-host default", and background sub-agents already use a deny-on-ASK transport. The clear defect is in the docs. The default itself is the maintainer's call.
+**Not a bug in the runtime.** Approving on ASK is a recorded decision: CLAUDE.md says "`NullTransport`'s approve-everything stays as the headless-host default", and background sub-agents already use a deny-on-ASK transport. The clear defect is in the docs. The default itself is the maintainer's call, made below (*Decision*: route (a)).
 
 **Options. These are not mutually exclusive.**
 - **(a) Docs only.** Say plainly in `embed-for-agents.md` §1/§5 and `embedding.md` §2 that `NullTransport` answers yes to every ASK. Show the fail-closed form, `SdkTransport(confirm_tool=lambda *_: False)`. Fix §5 so it no longer promises an engine default to a skeleton that has none. No code change.
@@ -132,7 +132,7 @@ So no design here may require or encourage replacing the transport.
     ```
 - **Where it lives:** above the runtime, as `arun()` plus a subscription. The chat loop does not change.
 
-**Decision (maintainer, 2026-10-06): streaming text enters the stable contract**, in the minimal form above: `TextDelta` + `TurnFinished` via `astream`, outside the audit schema. This reverses `host-api.md`'s earlier exclusion of assistant text, for text deltas only; raw tool I/O stays out. When `astream` lands, `host-api.md` (and its scope note at `:27`) and the `agentao.host` docstring are updated to say so.
+**Decision (maintainer, 2026-10-06): streaming text enters the stable contract**, in the minimal form above: `TextDelta` + `TurnFinished` via `astream`, outside the audit schema. This reverses `host-api.md`'s earlier exclusion of assistant text, for text deltas only; raw tool I/O stays out. When `astream` lands, every statement that text is outside the contract is updated: `host-api.md` (its scope note at `:27`), the `agentao.host` docstring, and `docs/design/embedded-host-contract.md:28-31`.
 
 ### F3. Imports are spread out; a public method's argument type is not public
 

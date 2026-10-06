@@ -1,6 +1,6 @@
 # 宿主 API 易用性评审：嵌入能不能更简单？
 
-**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。实施尚未获批，本文内容都还没有实现。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。
+**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 是文档修改，可以按该决定推进；代码部分（字符串模式与导出、F4、`astream`）的实施尚未获批。本文内容都还没有实现。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。
 **读者：** 决定改动嵌入式宿主接口的 agentao 维护者，以及后续 PR 的评审者。
 **相关文档：**
 - `docs/design/host-api-ergonomics-review.md`：英文版，内容相同
@@ -56,7 +56,7 @@
 
 `build_from_environment` 会建 engine（`embedding/factory.py:250-256`），但默认 transport 同样是 `NullTransport`，所以这条路径上 ASK 也会被批准。
 
-**这不是运行时的 bug。** ASK 即批准是有记录的决定：CLAUDE.md 写着 "`NullTransport`'s approve-everything stays as the headless-host default"；后台子代理已经在用"ASK 即拒绝"的 transport。确定的缺陷在文档。默认值本身怎么定，由维护者决定。
+**这不是运行时的 bug。** ASK 即批准是有记录的决定：CLAUDE.md 写着 "`NullTransport`'s approve-everything stays as the headless-host default"；后台子代理已经在用"ASK 即拒绝"的 transport。确定的缺陷在文档。默认值本身怎么定，由维护者决定，决定见下文（*决定*：走 (a) 路线）。
 
 **可选做法，不互斥：**
 - **(a) 只改文档。** 在 `embed-for-agents.md` §1/§5 和 `embedding.md` §2 写明：`NullTransport` 对所有 ASK 都回答"是"。给出默认拒绝的写法 `SdkTransport(confirm_tool=lambda *_: False)`。修改 §5，不再对没有 engine 的骨架承诺 engine 的默认值。不改代码。
@@ -132,7 +132,7 @@
     ```
 - **实现位置：** 在运行时之上，即 `arun()` 加一个订阅，chat 循环不改。
 
-**决定（维护者，2026-10-06）：流式文本进入稳定契约**，形式就是上面的最小版本：通过 `astream` 提供 `TextDelta` + `TurnFinished`，不进审计 schema。这改变了 `host-api.md` 原先不放 assistant 文本的做法，但只限文本增量；工具原始 I/O 仍不放。`astream` 落地时，同步更新 `host-api.md`（包括 `:27` 的范围说明）和 `agentao.host` 的 docstring。
+**决定（维护者，2026-10-06）：流式文本进入稳定契约**，形式就是上面的最小版本：通过 `astream` 提供 `TextDelta` + `TurnFinished`，不进审计 schema。这改变了 `host-api.md` 原先不放 assistant 文本的做法，但只限文本增量；工具原始 I/O 仍不放。`astream` 落地时，凡是说文本不在契约内的地方都要同步更新：`host-api.md`（`:27` 的范围说明）、`agentao.host` 的 docstring，以及 `docs/design/embedded-host-contract.md:28-31`。
 
 ### F3. 导入分散；公开方法的参数类型不公开
 
