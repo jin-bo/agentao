@@ -167,7 +167,7 @@
 - **默认 `permission_mode=None`：** 不创建引擎，与现在完全相同（F1 的决定不变）。
 - **显式传入模式时：** 先校验字符串（取值同上），再创建引擎 `PermissionEngine(project_root=working_directory, rules=[])`。不隐式加载任何权限文件；需要 `~/.agentao/permissions.json` 的宿主用 `build_from_environment`，或者自己构造引擎。
 - **初始模式通过现有的切换函数 `runtime/permission_mode.py::apply_permission_mode` 应用**，保证引擎的预设和工具执行器的只读标志从第一次调用起就一致。这个函数需要工具执行器，所以要在 `_wire_tooling`（`agent.py:392`）之后执行。它只在模式真的变化时发出 `PERMISSION_MODE_CHANGED` / `READONLY_MODE_CHANGED`（以 `"workspace-write"` 开始时什么都不发）；这个入口的 `cause` 标签在实现时命名。
-- *提议，待确认：* 同时传入 `permission_mode=` 和 `permission_engine=` 时抛 `ValueError`，与 `llm_client=` 和原始 LLM 配置互斥的规则一致。自带引擎的宿主在引擎上设好模式，或者构造后再调 `set_permission_mode`。
+- **2026-10-06 已决定：同时传入 `permission_mode=` 和 `permission_engine=` 时抛 `ValueError`**，这样两者之间就没有需要定义和说明的优先级规则。与 `llm_client=` 和原始 LLM 配置互斥的规则一致。自带引擎的宿主在引擎上设好模式，或者构造后再调 `set_permission_mode`。
 - `PermissionEngine` 仍然不进 `agentao.host`（`host/__init__.py:23-24`、`host-api.md:10-11`）。需要 `rules=` 的宿主仍从 `agentao.permissions` 构造它，见 `embed-for-agents.md` §1。
 
 **决定（维护者，2026-10-06）：新增的稳定类型只从 `agentao.host` 导出**，因为它有类型门禁。不另加顶层出口。
@@ -238,6 +238,6 @@ F4 可以并入第 2 步，也可以单独做；它很小，而且是纯新增�
 1. ~~**F1：** "ASK 即批准"是不是长期的无界面默认？如果不做 (c)，还要不要做 (b)？~~ **已于 2026-10-06 答复：走 (a) 路线。** "ASK 即批准"继续作为无界面默认，也不加默认 engine。
 2. ~~**F2：** assistant 文本要不要进稳定契约？~~ **已于 2026-10-06 答复：进**，形式为先 `TextDelta`、后 `TurnOutcome`，不进审计 schema。
 3. ~~**F3：** 懒导出放在 `agentao.host` 还是顶层 `agentao`？~~ **已于 2026-10-06 答复：只放在 `agentao.host`。**
-4. ~~**F3：** 宿主不导入 `PermissionEngine` 时怎样设定权限姿态？~~ **已于 2026-10-06 答复：`Agentao(permission_mode=...)`**，默认 `None`。待确认：同时传入 `permission_mode=` 和 `permission_engine=` 时是否按提议抛 `ValueError`。
+4. ~~**F3：** 宿主不导入 `PermissionEngine` 时怎样设定权限姿态？~~ **已于 2026-10-06 答复：`Agentao(permission_mode=...)`**，默认 `None`。同时传入 `permission_mode=` 和 `permission_engine=` 时抛 `ValueError`（2026-10-06 已决定）。
 
 **第 2–3 步之后 `agentao.host` 的导出：** 现有 14 个名字不变，再加 `CancellationToken`、`TextDelta` 和 `TurnOutcome`。现有 14 个一个都不删：它们都在有类型门禁的稳定接口上，删掉任何一个都会破坏宿主，而换不来实际的简化。简化体现在指南怎样介绍它们（F7）。
