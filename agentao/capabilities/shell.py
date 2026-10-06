@@ -15,6 +15,7 @@ dropped and ``ShellResult.*_omitted_bytes`` / ``*_omitted_at`` saying so.
 
 from __future__ import annotations
 
+import codecs
 import os
 import shutil
 import subprocess
@@ -111,6 +112,10 @@ class ShellRequest:
     launch: LaunchRequest
     timeout: float = 120.0
     on_chunk: Optional[Callable[[str], None]] = None
+    # The turn's ``CancellationToken``, or ``None``. A cancelled turn kills the
+    # command rather than waiting out its timeout; an executor that ignores it
+    # just keeps the old behaviour.
+    cancellation_token: Optional[Any] = None
 
     @property
     def command(self) -> str:
@@ -147,6 +152,9 @@ class ShellResult:
     stderr_omitted_bytes: int = 0
     stdout_omitted_at: int = 0
     stderr_omitted_at: int = 0
+    # Killed because the turn was cancelled (``ShellRequest.cancellation_token``).
+    # Last, so a host executor building a ``ShellResult`` positionally is unaffected.
+    cancelled: bool = False
 
 
 @dataclass
@@ -367,14 +375,39 @@ class LocalShellExecutor:
         on_chunk = request.on_chunk
 
         def _read(stream, buf: _HeadTailBuffer) -> None:
-            for chunk in iter(lambda: stream.read(4096), b""):
+            # ``read1``, not ``read``: on the buffered pipe ``read(4096)`` blocks until it
+            # has all 4096 bytes or EOF, so a command printing a line every few seconds
+            # reached neither the inactivity clock nor ``on_chunk`` until 4 KB had piled
+            # up — it was killed as idle while it was talking. ``read1`` returns whatever
+            # one read of the pipe gives. The decoder is incremental for the same
+            # reason: a chunk can now end inside a multi-byte character.
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            # ``read`` only for a stream with no ``read1`` (an unbuffered pipe, a
+            # host's or test's stand-in), as ``acp_client/process.py`` does.
+            read = getattr(stream, "read1", None) or stream.read
+            for chunk in iter(lambda: read(4096), b""):
                 buf.append(chunk)
                 last_activity[0] = time.monotonic()
-                if on_chunk and not _is_binary(chunk):
-                    try:
-                        on_chunk(chunk.decode("utf-8", errors="replace"))
-                    except Exception:
-                        pass
+                if not on_chunk:
+                    continue
+                if _is_binary(chunk):
+                    # Not shown; drop any half-character it interrupted.
+                    decoder.reset()
+                    continue
+                try:
+                    text = decoder.decode(chunk)
+                    if text:
+                        on_chunk(text)
+                except Exception:
+                    pass
+            if on_chunk:
+                # A stream that ended inside a multi-byte character.
+                try:
+                    tail = decoder.decode(b"", final=True)
+                    if tail:
+                        on_chunk(tail)
+                except Exception:
+                    pass
 
         t_out = threading.Thread(target=_read, args=(proc.stdout, stdout_buf), daemon=True)
         t_err = threading.Thread(target=_read, args=(proc.stderr, stderr_buf), daemon=True)
@@ -382,16 +415,33 @@ class LocalShellExecutor:
         t_err.start()
 
         timeout = request.timeout
-        while proc.poll() is None:
-            if time.monotonic() - last_activity[0] > timeout:
-                timed_out[0] = True
-                # Shared teardown: kills the whole tree (taskkill /T or
-                # killpg) via the child's pid, so a grandchild holding the
-                # captured pipe can't survive the kill — and sidesteps the
-                # getpgid-on-a-zombie ProcessLookupError this used to hit.
+        token = request.cancellation_token
+        cancelled = False
+        try:
+            while proc.poll() is None:
+                # Re-polled: a command that exited on its own just as the turn was
+                # cancelled finished, and its result is not a cancellation.
+                if token is not None and token.is_cancelled and proc.poll() is None:
+                    cancelled = True
+                    kill_process_tree(proc)
+                    break
+                if time.monotonic() - last_activity[0] > timeout:
+                    timed_out[0] = True
+                    # Shared teardown: kills the whole tree (taskkill /T or
+                    # killpg) via the child's pid, so a grandchild holding the
+                    # captured pipe can't survive the kill — and sidesteps the
+                    # getpgid-on-a-zombie ProcessLookupError this used to hit.
+                    kill_process_tree(proc)
+                    break
+                time.sleep(0.05)
+        except BaseException:
+            # A Ctrl+C raised into this wait (the interactive CLI runs a lone
+            # tool call on the main thread, so the turn's token is cancelled
+            # only after this frame unwinds). The child leads its own session
+            # and never saw the SIGINT: without this it runs on, orphaned.
+            if proc.poll() is None:
                 kill_process_tree(proc)
-                break
-            time.sleep(0.05)
+            raise
 
         t_out.join(timeout=2)
         t_err.join(timeout=2)
@@ -403,6 +453,7 @@ class LocalShellExecutor:
             stdout=stdout,
             stderr=stderr,
             timed_out=timed_out[0],
+            cancelled=cancelled,
             stdout_omitted_bytes=stdout_omitted,
             stderr_omitted_bytes=stderr_omitted,
             stdout_omitted_at=stdout_at,

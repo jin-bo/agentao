@@ -669,6 +669,41 @@ async def _in_worker(fn: Any, *args: Any) -> Any:
         raise
 
 
+# Bodies returned as they arrived instead of parsed as HTML. ``html.parser`` reads
+# ``<stdio.h>`` as a tag and ``a<b && c>d`` as one too, so a C file, a JSON API or
+# a raw README came back with parts deleted. An absent header still parses: a
+# server that omits it is most often serving a page. XML is left to the parser,
+# whose text extraction reads a feed the way it reads a page.
+_RAW_TEXT_TYPES = frozenset({
+    "application/json",
+    "application/javascript",
+    "application/x-javascript",
+    "application/ecmascript",
+    "application/x-ndjson",
+    "application/yaml",
+    "application/x-yaml",
+    "application/toml",
+})
+
+
+def _is_raw_text(content_type: Optional[str]) -> bool:
+    """Whether a ``Content-Type`` names text that is not markup."""
+    if not content_type:
+        return False
+    media = content_type.split(";", 1)[0].strip().lower()
+    if media in ("text/html", "text/xml"):
+        return False
+    return (
+        media.startswith("text/")
+        or media in _RAW_TEXT_TYPES
+        or media.endswith("+json")
+    )
+
+
+def _decode_body(response: Any) -> str:
+    return response.text
+
+
 def _parse_page(response: Any) -> tuple[str, "_BeautifulSoup_t", bool]:
     """Decode, parse, and JS-sniff a response. Returns ``(html, soup, needs_js)``.
 
@@ -868,6 +903,15 @@ class WebFetchTool(AsyncToolBase):
                     timeout=_FETCH_TOTAL_TIMEOUT_S,
                 )
                 response.raise_for_status()
+
+            # Not markup: returned as it arrived (see `_RAW_TEXT_TYPES`); the
+            # decode still runs off the loop, for the reason given below.
+            if _is_raw_text(response.headers.get("content-type")):
+                text = await _in_worker(_decode_body, response)
+                return (
+                    f"URL: {url}\nStatus: {response.status_code}\n\n"
+                    f"{_truncate(text, 10000)}"
+                )
 
             # Off the loop thread. The body is remote input of up to
             # `_MAX_BODY_BYTES`, already in memory, and decoding it,

@@ -329,7 +329,7 @@ MCP 工具默认**也需要确认**（等同 `requires_confirmation=True`），�
 
 ::: warning 上线前先确认这几条
 - ❌ **Server 启动失败但 Agent 静默继续** —— `agent.chat()` 不会暴露 MCP init 失败
-- ❌ **工具名超长** —— provider 会截断，function calling 直接断
+- ❌ **工具名超长** —— Agentao 会截断并加哈希，权限规则要写注册后的名字
 - ❌ **`trust: true` 用得太宽** —— 绕过所有安全确认
 
 下面每一条都附完整修法。
@@ -348,7 +348,7 @@ MCP: 12 tools from 2 server(s)       ← 有些 Server 没起来
 
 ### ❌ 工具名超长
 
-有些 MCP Server 工具名很长。拼上前缀后可能超过 OpenAI function calling 的名字长度限制（64 字符）。如果发现 LLM 不认某工具，检查名字长度。
+有些 MCP Server 工具名很长。拼上前缀后可能超过 OpenAI function calling 的名字长度限制（64 字符）。Agentao 会截断这样的名字，并加上一个由原始服务器名和工具名算出的 8 位哈希（每次连接都相同），工具照常可用——但权限规则或子代理的 `tools:` 列表要写注册后的名字，`agentao.log` 里有记录（`Registered MCP tool: …`）。
 
 ### ❌ `trust: true` 用得太宽
 
@@ -359,7 +359,7 @@ MCP: 12 tools from 2 server(s)       ← 有些 Server 没起来
 - **MCP** 用来消费第三方工具生态（GitHub / 文件系统 / Postgres / Slack …）；**自定义 Tool** 用来封装你自己的业务逻辑。
 - 三种 transport：**stdio** 子进程、**Streamable HTTP** URL（裸 `url` 的默认）、或旧版 **SSE** URL（`"type":"sse"`）。
 - 多租户 token：构造时传 `extra_mcp_servers`（`{name: {command, args, env}}`），同名会覆盖 `.agentao/mcp.json`。项目级 `.agentao/mcp.json` 是**仅可新增**的 —— 不能覆盖用户级同名条目。
-- 工具命名：`mcp_{server}_{tool}` ——自动加前缀避免不同服务器的同名冲突。
+- 工具命名：`mcp_{server}_{tool}` ——自动加前缀避免不同服务器的同名冲突。含非 ASCII 字符的服务器名或工具名，也会像超长名字一样加上 8 位哈希后缀（否则 `查询` 和 `搜索` 都会变成 `__`），所以升级后注册名会变。仍然映射到同一名字的两个工具（`my-srv` 与 `my_srv`）不会都注册：先列出的保留这个名字，另一个不注册，并在 `agentao.log` 记一条错误。
 - 写操作能力的 Server **绝对不要**设 `trust: true`，会绕过所有确认。
 - server 的 **resources** 会变成三个只读工具（`"resources": false` 可隐去）。它的 **skills** 默认关闭，要设 `"skills": true`；加载了 MCP skill 期间，shell 和跨 server 读取在任何模式下都会询问。
 

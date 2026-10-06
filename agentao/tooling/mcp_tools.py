@@ -149,6 +149,13 @@ def register_mcp_tools(agent: "Agentao", manager: "McpClientManager") -> None:
         client = manager.get_client(server_name)
         return client is not None and client.supports_resources
 
+    # Two MCP tools can map to one name (``my-srv`` and ``my_srv``, ``a.b`` and
+    # ``a-b``). The registry would let the second overwrite the first, and the
+    # model would then call a different tool than the one it was described.
+    # The first keeps the name; a later one is refused, by name, in the log.
+    # Per pass, not against the registry: a re-init (a plugin adding servers)
+    # registers the same tools again over a new manager and must replace them.
+    claimed: dict = {}
     for server_name, mcp_tool_def in manager.get_all_tools():
         client = manager.get_client(server_name)
         trusted = client.is_trusted if client else False
@@ -160,12 +167,22 @@ def register_mcp_tools(agent: "Agentao", manager: "McpClientManager") -> None:
             result_fn=manager.call_tool_result if real else None,
             read_hint_fn=read_hint if real else None,
         )
+        first = claimed.get(tool.name)
+        if first is not None:
+            agent.llm.logger.error(
+                "MCP: tool %r from server %r maps to %s, already taken by %r "
+                "from server %r; not registered. Rename one of them.",
+                mcp_tool_def.name, server_name, tool.name, first[1], first[0],
+            )
+            continue
+        claimed[tool.name] = (server_name, mcp_tool_def.name)
         # Bound like a built-in, so an embedded blob in its result is saved
         # under this session's working directory (docs/design/mcp-resources.md §6).
         _bind_and_register(agent, tool, origin="mcp")
         agent.llm.logger.info(f"Registered MCP tool: {tool.name}")
 
-    count = sum(1 for _ in manager.get_all_tools())
+    # The tools registered, not the tools listed: a collision left some out.
+    count = len(claimed)
     if count:
         agent.llm.logger.info(
             f"MCP: {count} tools from {len(manager.clients)} server(s)"

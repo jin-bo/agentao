@@ -279,3 +279,87 @@ def test_no_hints_falls_back_to_trust_default():
     assert t_trusted.requires_confirmation is False
     assert t_untrusted.is_read_only is False
     assert t_trusted.is_read_only is False
+
+
+# ---------------------------------------------------------------------------
+# Length cap, non-ASCII names, and collisions
+# ---------------------------------------------------------------------------
+
+def test_a_name_that_fits_is_unchanged():
+    # Existing permission rules name these; they must keep matching.
+    assert make_mcp_tool_name("my-server", "get.item") == "mcp_my_server_get_item"
+
+
+def test_a_long_name_is_capped_with_a_stable_hash():
+    server, tool = "github_enterprise", "list_repository_collaborators_with_permissions"
+    name = make_mcp_tool_name(server, tool)
+    assert len(name) == 64
+    assert name.startswith("mcp_github_enterprise_list_repository_")
+    # Same inputs, same name — never dependent on discovery order.
+    assert make_mcp_tool_name(server, tool) == name
+    # A different tool sharing the 55-character prefix gets a different name.
+    assert make_mcp_tool_name(server, tool + "_v2") != name
+
+
+def test_non_ascii_names_do_not_collapse_together():
+    a = make_mcp_tool_name("cn", "查询")
+    b = make_mcp_tool_name("cn", "搜索")
+    assert a != b
+    assert a.startswith("mcp_cn___") and len(a) <= 64
+    assert all(c.isascii() for c in a)
+
+
+class _Manager:
+    """Duck-typed manager: ``register_mcp_tools`` takes the plain path."""
+
+    clients: dict = {}
+
+    def __init__(self, tools):
+        self._tools = tools
+
+    def get_all_tools(self):
+        from mcp.types import Tool as McpToolDef
+
+        return [
+            (server, McpToolDef(name=name, inputSchema={"type": "object"}))
+            for server, name in self._tools
+        ]
+
+    def get_client(self, name):
+        return None
+
+    def call_tool(self, server, tool, args):
+        return f"{server}/{tool}"
+
+
+def _agent():
+    import logging
+    from types import SimpleNamespace
+
+    from agentao.tools.base import ToolRegistry
+
+    return SimpleNamespace(
+        tools=ToolRegistry(), _working_directory=None, filesystem=None, shell=None,
+        _disable_tools=frozenset(), llm=SimpleNamespace(logger=logging.getLogger("t")),
+    )
+
+
+def test_a_colliding_tool_is_refused_and_the_first_keeps_the_name(caplog):
+    from agentao.tooling.mcp_tools import register_mcp_tools
+
+    agent = _agent()
+    with caplog.at_level("ERROR", logger="t"):
+        register_mcp_tools(agent, _Manager([("my-srv", "x"), ("my_srv", "x")]))
+    tool = agent.tools.tools["mcp_my_srv_x"]
+    assert tool.execute() == "my-srv/x"
+    assert "already taken" in caplog.text and "'my_srv'" in caplog.text
+
+
+def test_registering_the_same_tools_again_replaces_them():
+    # A re-init over a new manager (a plugin adding servers) is not a collision.
+    from agentao.tooling.mcp_tools import register_mcp_tools
+
+    agent = _agent()
+    register_mcp_tools(agent, _Manager([("s", "x")]))
+    register_mcp_tools(agent, _Manager([("s", "x")]))
+    assert list(agent.tools.tools) == ["mcp_s_x"]

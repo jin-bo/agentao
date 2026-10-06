@@ -245,9 +245,9 @@ class ShellExecutor(Protocol):
     def run_background(self, request: ShellRequest) -> BackgroundHandle: ...
 ```
 
-冻结的 dataclass：`FileEntry(name, is_dir, is_file, size)`、`FileStat(size, mtime, is_dir, is_file)`、`ShellRequest(launch, timeout, on_chunk)`、`ShellResult(returncode, stdout, stderr, timed_out, stdout_omitted_bytes, stderr_omitted_bytes, stdout_omitted_at, stderr_omitted_at)`、`BackgroundHandle(pid, pgid, command, cwd)`。
+冻结的 dataclass：`FileEntry(name, is_dir, is_file, size)`、`FileStat(size, mtime, is_dir, is_file)`、`ShellRequest(launch, timeout, on_chunk, cancellation_token)`、`ShellResult(returncode, stdout, stderr, timed_out, stdout_omitted_bytes, stderr_omitted_bytes, stdout_omitted_at, stderr_omitted_at, cancelled)`、`BackgroundHandle(pid, pgid, command, cwd)`。
 
-`ShellResult.stdout_omitted_bytes` / `stderr_omitted_bytes`（默认 `0`）记录某个流没有保留的字节数，`stdout_omitted_at` / `stderr_omitted_at`（默认 `0`）给出它们在 `stdout` / `stderr` 中的字节偏移——`0` 表示在最前面，所以只保留尾部的执行器只需设置字节数。`LocalShellExecutor` 每个流保留开头和末尾各 512 KiB；完整保留输出的自定义执行器让这四个字段都保持 `0`。
+`ShellResult.stdout_omitted_bytes` / `stderr_omitted_bytes`（默认 `0`）记录某个流没有保留的字节数，`stdout_omitted_at` / `stderr_omitted_at`（默认 `0`）给出它们在 `stdout` / `stderr` 中的字节偏移——`0` 表示在最前面，所以只保留尾部的执行器只需设置字节数。`LocalShellExecutor` 每个流保留开头和末尾各 512 KiB；完整保留输出的自定义执行器让这四个字段都保持 `0`。`ShellRequest.cancellation_token`（默认 `None`）是这一轮的 `CancellationToken`：它触发时，`LocalShellExecutor` 终止整个进程树，并返回 `ShellResult.cancelled=True`（默认 `False`）；忽略它的执行器照旧把命令运行到结束或超时。
 
 **`ShellRequest` 带的是一个 launch，不是一条命令**（0.4.22 改动；以前 `command`、`cwd`、`env` 直接挂在它上面）。`request.launch` 是两种形状之一，执行器用 `isinstance` 分开：
 

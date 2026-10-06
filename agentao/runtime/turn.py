@@ -140,6 +140,15 @@ def _run_turn(
     # Public lifecycle events read this via ``agent._current_turn_id``;
     # cleared in ``finally`` so events between turns carry ``turn_id=None``.
     agent._current_turn_id = new_turn_id()
+    # The exit paths below answer any call they leave open, so history this
+    # runtime wrote is already whole. A host that wrote ``agent.messages``
+    # itself (its own store, an older session file) may not have: one unanswered
+    # ``tool_calls`` entry and a strict API refuses every later request. A no-op
+    # on whole history. Before the delta baseline below, which counts it.
+    # A fill inserts mid-history, so the token anchor's message count no longer
+    # names the prefix it was measured on.
+    if backfill_orphaned_tool_calls(agent.messages):
+        agent.context_manager.invalidate_token_anchor()
     # Reset the per-turn LLM-call counters so ``attempt`` numbers in
     # LLM_CALL_* events restart at 1 and ``delta_start_index`` tracks
     # only messages added in the current chat() invocation.

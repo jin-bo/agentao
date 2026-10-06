@@ -710,6 +710,39 @@ class TestLogin:
                 manager.login("svr", FakeLoginUI(origin))
             manager.disconnect_all()
 
+    def test_login_refused_before_the_browser_for_an_unset_client_secret(self, runtime, origin):
+        from agentao.mcp.config import UNSET_CREDENTIAL_VARS_KEY, McpEnvVarError
+
+        config = {**CONFIG, UNSET_CREDENTIAL_VARS_KEY: ("SECRET",)}
+        ui = FakeLoginUI(origin)
+        manager = self._manager(runtime, config)
+        with patched(origin):
+            with pytest.raises(McpEnvVarError, match="SECRET"):
+                manager.login("svr", ui)
+            manager.disconnect_all()
+        assert ui.opened == [] and runtime.store.load(MCP_URL) is None
+
+    def test_login_names_the_variable_when_the_secret_expanded_empty(
+        self, runtime, origin, monkeypatch
+    ):
+        # The real shape: the loader expands ``${SECRET}`` to ``""``, which
+        # ``resolve_oauth`` refuses on its own terms — the variable must still
+        # be the error, so the check has to run first.
+        from agentao.mcp.config import McpEnvVarError, _expand_config_env
+
+        monkeypatch.delenv("AGENTAO_TEST_UNSET_SECRET", raising=False)
+        config = _expand_config_env(
+            {**CONFIG, "oauth": {"client_id": "id", "client_secret": "${AGENTAO_TEST_UNSET_SECRET}"}},
+            "svr",
+        )
+        ui = FakeLoginUI(origin)
+        manager = self._manager(runtime, config)
+        with patched(origin):
+            with pytest.raises(McpEnvVarError, match="AGENTAO_TEST_UNSET_SECRET"):
+                manager.login("svr", ui)
+            manager.disconnect_all()
+        assert ui.opened == []
+
     def test_logout_deletes_and_disconnects(self, runtime, origin):
         seed(runtime, origin)
         manager = self._manager(runtime)

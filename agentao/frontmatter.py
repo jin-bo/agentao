@@ -9,18 +9,35 @@ coercion, body stripping, malformed-YAML fallback, and non-mapping handling.
 
 For the *stripping-only* variant used by AGENTAO.md — free-form prose, where a
 stray ``---`` horizontal rule must never be mistaken for a fence — see
-:func:`agentao.prompts.helpers.strip_frontmatter`, which deliberately uses a
-stricter, line-anchored fence match instead of this lenient ``split``.
+:func:`agentao.prompts.helpers.strip_frontmatter`, which additionally
+leaves the content untouched unless the block parses to a mapping. Both match
+the closing fence as a whole line.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+import re
+from typing import Any, Optional
 
 import yaml
 
 logger = logging.getLogger(__name__)
+
+# The closing fence is a line of its own. ``content.split("---", 2)`` took the
+# first ``---`` anywhere, so ``description: handles a---b markers`` ended the
+# block mid-value: the description became ``handles a`` and the rest of the
+# block leaked into the body, with no warning. ``meta`` may be empty
+# (``---\n---``), and a ``----`` rule is not a fence.
+_FRONTMATTER_RE = re.compile(
+    r"\A---[ \t]*\r?\n(?P<meta>.*?)^---[ \t]*\r?$\n?(?P<body>.*)\Z",
+    re.DOTALL | re.MULTILINE,
+)
+
+
+def match_frontmatter(content: str) -> Optional["re.Match[str]"]:
+    """The leading ``---`` block of ``content`` (groups ``meta``, ``body``), or ``None``."""
+    return _FRONTMATTER_RE.match(content)
 
 
 def parse_frontmatter(
@@ -55,17 +72,14 @@ def parse_frontmatter(
     offending file in that warning. A genuinely empty fence (``---\\n---``)
     stays silent.
     """
-    if not content.startswith("---"):
+    match = match_frontmatter(content)
+    if match is None:
         return {}, content
 
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return {}, content
-
-    body = parts[2].strip()
+    body = match.group("body").strip()
     where = source or "<unknown source>"
     try:
-        meta = yaml.safe_load(parts[1])
+        meta = yaml.safe_load(match.group("meta"))
     except yaml.YAMLError as exc:
         logger.warning(
             "Ignoring malformed YAML frontmatter in %s (treated as absent): %s",

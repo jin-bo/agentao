@@ -133,3 +133,37 @@ def test_empty_fence_does_not_warn(caplog):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# --- the closing fence is a whole line --------------------------------------
+
+
+def test_a_dashes_run_inside_a_value_does_not_close_the_block():
+    meta, body = parse_frontmatter(
+        "---\nname: x\ndescription: handles a---b markers\n---\nbody\n", coerce_str=True
+    )
+    assert meta == {"name": "x", "description": "handles a---b markers"}
+    assert body == "body"
+
+
+def test_a_longer_rule_is_not_a_fence():
+    content = "---\nname: x\n----\nstill: meta\n---\nbody\n"
+    # ``----`` is not the closing fence, so the block runs to the ``---`` line.
+    _, body = parse_frontmatter(content, coerce_str=True)
+    assert body == "body"
+
+
+def test_crlf_and_trailing_spaces_on_fences():
+    meta, body = parse_frontmatter("---  \r\nname: x\r\n--- \r\nbody\r\n", coerce_str=True)
+    assert meta == {"name": "x"} and body == "body"
+
+
+def test_installer_rename_keeps_a_value_with_dashes(tmp_path):
+    from agentao.skills.installer import SkillInstaller
+
+    skill = tmp_path / "SKILL.md"
+    skill.write_text("---\nname: Old Name\ndescription: a---b\n---\nbody\n", encoding="utf-8")
+    SkillInstaller._normalize_skill_md_name(skill, "old-name")
+    assert skill.read_text(encoding="utf-8") == (
+        "---\nname: old-name\ndescription: a---b\n---\nbody\n"
+    )

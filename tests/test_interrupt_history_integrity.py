@@ -259,6 +259,34 @@ class TestTurnEndingPathsLeaveHistoryValid:
 
         assert _orphans(sent["messages"]) == []
 
+    def test_history_a_host_wrote_is_repaired_when_the_turn_starts(self):
+        """Every exit path backfills; a host's own ``agent.messages`` need not have."""
+        agent = _make_agent()
+        agent.messages = [
+            {"role": "user", "content": "do it"},
+            {"role": "assistant", "content": "", "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": {"name": "boom", "arguments": "{}"},
+            }]},
+        ]
+        sent = {}
+
+        def capture(messages, tools, token):
+            sent["messages"] = list(messages)
+            message = SimpleNamespace(content="ok", tool_calls=None, reasoning_content=None)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message, finish_reason="stop")],
+                usage=None,
+                model="test-model",
+            )
+
+        agent._llm_call = capture
+        agent.chat("continue")
+
+        assert _orphans(sent["messages"]) == []
+        roles = [m["role"] for m in agent.messages[:3]]
+        assert roles == ["user", "assistant", "tool"]
+
     def test_multi_call_batch_interrupted_answers_every_call(self):
         agent = _make_agent()
         agent.add_tool(_RaisingTool(KeyboardInterrupt()))

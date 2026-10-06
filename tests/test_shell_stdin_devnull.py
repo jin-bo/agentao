@@ -44,6 +44,9 @@ class _DummyStream:
     def read(self, n=-1):
         return b""
 
+    def read1(self, n=-1):
+        return b""
+
     def close(self):
         pass
 
