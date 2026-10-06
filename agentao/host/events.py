@@ -234,17 +234,21 @@ class EventStream:
         same_loop = running_loop is loop
         for sub in targets:
             if same_loop:
-                # Hot path: try synchronous ``put_nowait`` first. When
-                # the queue has space (the common case for a healthy
-                # consumer) the event is delivered without scheduling
-                # a task, so on-loop publish is as cheap as off-loop
-                # ``run_coroutine_threadsafe`` — and we never drop.
-                try:
-                    sub.queue.put_nowait(event)
-                    continue
-                except asyncio.QueueFull:
-                    pass
-                # Queue is genuinely full. Schedule the put as a loop
+                # A newly freed slot still belongs to any older pending put.
+                # Taking it synchronously would let this event overtake a
+                # queued delivery before that task resumes on the loop.
+                with self._lock:
+                    sub.pending_puts[:] = [
+                        put for put in sub.pending_puts if not put.done()
+                    ]
+                    pending = bool(sub.pending_puts)
+                if not pending:
+                    try:
+                        sub.queue.put_nowait(event)
+                        continue
+                    except asyncio.QueueFull:
+                        pass
+                # Queue is full or older deliveries await it. Schedule a loop
                 # task that awaits capacity in submission order. Cap
                 # the outstanding-task list at ``max_queue_size`` so
                 # an on-loop producer that never yields cannot grow
