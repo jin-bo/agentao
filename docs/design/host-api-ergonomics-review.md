@@ -1,6 +1,6 @@
 # Host API ergonomics review: can embedding be simpler?
 
-**Status:** Review, 2026-10-06. **Decided 2026-10-06:** F1 takes route (a), docs only (§3 F1, *Decision*). Streaming text enters the stable contract (F2). New stable types are exported from `agentao.host` only (F3). F1(a) is a docs change and may proceed on that decision. The code steps (string modes and exports, F4, `astream`) are not yet authorized. Nothing here is implemented yet. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered. **Second revision, after re-review:** F2's close order releases pending queue writes first, early exit requires `aclosing`, and the stream is bound to its own turn by token identity.
+**Status:** Review, 2026-10-06. **Decided 2026-10-06:** F1 takes route (a), docs only (§3 F1, *Decision*). Streaming text enters the stable contract (F2). New stable types are exported from `agentao.host` only (F3). F1(a) and F3 step 0 are **implemented in PR #423** (docs and example imports only). The code steps (string modes and exports, F4, `astream`) are not yet authorized. Nothing here is implemented yet. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered. **Second revision, after re-review:** F2's close order releases pending queue writes first, early exit requires `aclosing`, and the stream is bound to its own turn by token identity.
 **Audience:** agentao maintainers deciding what to change in the embedded-host surface, and reviewers of any follow-up PR.
 **Companions:**
 - `docs/design/host-api-ergonomics-review.zh.md`: Chinese version, same content
@@ -76,6 +76,8 @@ What (a) has to deliver:
 - Both doc twins wherever a twin exists, and a pass over the examples' READMEs for the same promise.
 
 (b) and (c) are not adopted. Revisiting either needs a new decision recorded here.
+
+**Implemented in PR #423.** Besides the items above, it fixed two statements this review had not listed: `embedding.md` §2 said `permission_engine` "Defaults to a permissive engine" (the default is `None`), and the developer guide's constructor reference (en/zh) gave the factory's engine as `Agentao(...)`'s default. The developer guide already said `NullTransport` auto-approves; the gap was in `docs/guides/`. The *What the docs say* bullets above describe the docs before that PR.
 
 ### F2. Streaming text is outside the contract
 
@@ -185,7 +187,7 @@ So no design here may require or encourage replacing the transport.
 
 Revised after review. Each step is its own PR.
 
-1. **F1(a) docs, plus the examples' existing wrong imports** (F3 step 0). Docs and examples only.
+1. ~~**F1(a) docs, plus the examples' existing wrong imports** (F3 step 0). Docs and examples only.~~ **Done in PR #423.**
 2. **String permission modes, plus stable exports of `PermissionMode` / `CancellationToken` from `agentao.host`** (F3 steps 1–2). Additive.
 3. **A minimal `astream`** (F2): `TextDelta` + `TurnFinished`, attached by subscription, with the lifecycle above. Then move the examples off `SdkTransport` / `EventType` and fix the `saas-assistant` swap (F3 step 3).
 
