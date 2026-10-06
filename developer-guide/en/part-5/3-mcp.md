@@ -330,7 +330,7 @@ This is a **security-positive** wiring: hints can *add* friction (a trusted serv
 
 ::: warning Don't ship without these
 - ❌ **Server fails but the agent keeps going silently** — no surfaced error in `agent.chat()` if MCP init fails
-- ❌ **Tool name too long** — provider truncation breaks function calling
+- ❌ **Tool name too long** — Agentao cuts it and adds a hash; permission rules must use the registered name
 - ❌ **`trust: true` set too permissively** — bypasses every safety prompt
 
 Each pitfall below has the full fix.
@@ -349,7 +349,7 @@ Verify the expected number of servers are up before shipping.
 
 ### ❌ Tool name too long
 
-Some MCP servers have long tool names. With the `mcp_{server}_` prefix, they may exceed OpenAI's function-call name length (64 chars). If the LLM refuses a tool, check the length.
+Some MCP servers have long tool names. With the `mcp_{server}_` prefix, they may exceed OpenAI's function-call name length (64 chars). Agentao cuts such a name and appends an 8-character hash of the original server and tool names (the same on every connect), so the tool still works — but a permission rule or sub-agent `tools:` entry must use the registered name, which `agentao.log` records (`Registered MCP tool: …`).
 
 ### ❌ `trust: true` too permissive
 
@@ -360,7 +360,7 @@ Don't lightly set `trust: true` on servers that can write/delete — you bypass 
 - Use **MCP** to consume an existing third-party tool ecosystem (GitHub, filesystem, Postgres, Slack…); use **custom Tool** for your own business logic.
 - Three transports: **stdio** subprocess, **Streamable HTTP** URL (default for a bare `url`), or legacy **SSE** URL (`"type":"sse"`).
 - Per-tenant tokens: pass `extra_mcp_servers` at construction (`{name: {command, args, env}}`); merges over `.agentao/mcp.json`. Project `.agentao/mcp.json` is **add-only** — it cannot override a user-scope name.
-- Tool naming: `mcp_{server}_{tool}` — auto-prefixed to avoid name collisions across servers.
+- Tool naming: `mcp_{server}_{tool}` — auto-prefixed to avoid name collisions across servers. A server or tool name with non-ASCII characters gets the same 8-character hash suffix as an over-long one (`查询` and `搜索` would otherwise both become `__`), so its registered name changes on upgrade. Two tools that still map to one name (`my-srv` and `my_srv`) are not both registered: the first keeps it, the other is left out with an error in `agentao.log`.
 - Never set `trust: true` on write-capable servers — it bypasses confirmation entirely.
 - A server's **resources** become three read-only tools (`"resources": false` hides them). Its **skills** are off until `"skills": true`, and while one is loaded, shell and cross-server reads ask in every mode.
 

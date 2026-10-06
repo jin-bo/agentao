@@ -33,9 +33,72 @@ _Targeting 0.5.11. Add entries under the relevant heading as work lands._
   `.dist` are templates committed without secrets and are still allowed.
   `full-access` is unchanged, and a project rule that allows the path still
   wins.
+- **An unset or empty variable in an MCP server's `headers` or
+  `oauth.client_secret` keeps that server from connecting.** It used to
+  expand to an empty string: `"Authorization": "Bearer ${TOKEN}"` with
+  `TOKEN` unset (or exported as `TOKEN=`) sent `Bearer `, and since an
+  `Authorization` header turns OAuth off, the 401 that followed said nothing
+  about the variable. The server, and `/mcp login`, now report an error
+  naming it. An unset variable in `env` or `args` still expands to an empty
+  string, now with a warning naming it.
+- **Long and non-ASCII MCP tool names get a stable hash suffix, and a
+  collision is refused.** A name over 64 characters, such as
+  `mcp_github_enterprise_list_repository_collaborators_with_permissions`,
+  failed every request on Chat Completions, which caps function names at 64.
+  It is now cut and ends in an 8-character hash of the original server and
+  tool names. A server or tool name with non-ASCII characters gets the same
+  suffix, since `查询` and `搜索` both used to become `__`. Every other name is
+  unchanged, so permission rules keep matching. Two tools that still map to
+  one name (`my-srv` and `my_srv`) used to leave the second registered in
+  place of the first; now the first keeps the name and the second is left out
+  with an error in `agentao.log`.
 
 ### Fixed
 
+- **A shell command that prints a line now and then is no longer killed as
+  idle.** The foreground shell read each pipe in 4 KiB blocks and waited for a
+  block to fill, so output shorter than that reset neither the inactivity
+  timeout nor the live output stream: a command printing a line every few
+  seconds was killed after `timeout` seconds while it was still talking, and
+  its output appeared only then. Output is now read as it arrives, and a
+  multi-byte character split across two reads is no longer shown as `�` in
+  the live stream.
+- **Cancelling a turn stops a running shell command or MCP call.** The
+  turn's cancel (Ctrl+C, ACP `session/cancel`, `CancellationToken.cancel`)
+  reached the LLM stream, async tools and sub-agents, but a foreground shell
+  command ran on to its end or timeout, and an MCP call waited for the server
+  — with no `timeout.request`, indefinitely. The command's process tree is
+  now killed and the MCP call abandoned (mcp 2.x then sends the server
+  `notifications/cancelled`; 1.x does not), and both are reported as
+  cancelled — a shell command with what it had printed before the kill. `ShellRequest.cancellation_token` and `ShellResult.cancelled`
+  carry this to a host's `ShellExecutor`; one that ignores them behaves as
+  before.
+- **A context overflow worded the way vLLM, Bedrock Mantle or Anthropic word
+  it now triggers compaction.** `exceeds the max_model_len`,
+  `prompt tokens (N) exceed model maximum (M)`,
+  `exceed customer model maximum`, `too many total text bytes`,
+  `Input length exceeds context window` and
+  `input and output tokens exceed your context limit` were not recognised,
+  so the turn ended as an LLM error, uncompacted, and so did every turn after
+  it.
+- **A fetched page can no longer write a sub-agent a second task.** The
+  parent conversation excerpt given to a sub-agent kept each message's line
+  breaks, so text in a `web_fetch` or file result could open a line with
+  `[user]:` or `[Your Task]`. Continuation lines are now indented.
+- **`web_fetch` returns plain text, JSON and source files as they are.**
+  Every body was parsed as HTML, so `#include <stdio.h>` lost its header name
+  and `if (a<b && c>d)` became `if (ad)`. A `text/*` body other than HTML or
+  XML, JSON (including `+json` types), JavaScript, YAML or TOML is now
+  returned unparsed. A body with no `Content-Type` is still parsed.
+- **A `---` inside a frontmatter value no longer ends the block.** In
+  `SKILL.md`, agent definitions and plugin files, `description: a---b` was
+  read as `a`, and the rest of the block became part of the body, with no
+  warning. The closing `---` must now be a line of its own.
+- **A tool call left unanswered in history no longer breaks every later
+  request.** agentao answers such calls when a turn ends, but history a host
+  wrote into `agent.messages` itself could still carry one, and a strict API
+  then rejected every request. Unanswered calls are now also answered when a
+  turn starts.
 - **A session on Claude Fable 5.1, Opus 5.5 or Sonnet 5.5 no longer ends when
   the system prompt or tool list changes.** These models bind each thinking
   block to the `system` text and tools it was produced under, and on accounts

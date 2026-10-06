@@ -91,6 +91,21 @@ def _without_read_hint(tool: Any) -> Any:
     return tool.without_read_hint() if isinstance(tool, McpTool) else tool
 
 
+def _indent_continuation(text: str) -> str:
+    """Indent every line after the first, so quoted text cannot start a line.
+
+    The parent context is one block in the child's ``user`` message, one
+    ``[role]: …`` line per message, followed by ``[Your Task]``. An excerpt
+    keeping its own line breaks could open a line with ``[user]:`` or
+    ``[Your Task]`` — a ``web_fetch`` result could write the child a second
+    task. Indented, it reads as a continuation of the message it came from.
+    The origin marker is appended after this, so it stays a whole line.
+    ``splitlines``, not ``split("\\n")``: ``\\r``, U+2028 and the other
+    separators it knows break a line for a reader too.
+    """
+    return "\n    ".join(text.splitlines())
+
+
 class AgentToolWrapper(Tool):
     """Wraps an agent definition as a callable Tool for the parent LLM."""
 
@@ -454,9 +469,12 @@ class AgentToolWrapper(Tool):
             content = strip_markers(str(content)) if content else ""
             if role == "tool":
                 name = m.get("name", "tool")
-                lines.append(f"[tool/{name}]: {content[:300]}{mark}")
+                lines.append(
+                    f"[tool/{_indent_continuation(str(name))}]: "
+                    f"{_indent_continuation(content[:300])}{mark}"
+                )
             elif role in ("user", "assistant") and (content or mark):
-                lines.append(f"[{role}]: {(content or '')[:400]}{mark}")
+                lines.append(f"[{role}]: {_indent_continuation((content or '')[:400])}{mark}")
             elif role == "assistant" and m.get("tool_calls"):
                 tc_names = []
                 for tc in m["tool_calls"]:
@@ -464,7 +482,9 @@ class AgentToolWrapper(Tool):
                         tc_names.append(tc.get("function", {}).get("name", "?"))
                     else:
                         tc_names.append(getattr(getattr(tc, "function", None), "name", "?"))
-                lines.append(f"[assistant called: {', '.join(tc_names)}]")
+                lines.append(
+                    f"[assistant called: {_indent_continuation(', '.join(map(str, tc_names)))}]"
+                )
 
         if not lines:
             return ""

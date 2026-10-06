@@ -28,6 +28,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING, Tuple
 
 from ..agents import TaskComplete
+from ..cancellation import (
+    AgentCancelledError,
+    bind_cancellation_token,
+    cancelled_result_header,
+)
 from ..sandbox import SandboxMisconfiguredError, SandboxPolicy
 from ..tools.base import AsyncToolBase
 from ..transport import AgentEvent, EventType
@@ -382,17 +387,8 @@ class ToolExecutor:
         # Pre-execution cancellation check (e.g. Ctrl+C fired while other
         # parallel tools were executing).
         if cancellation_token and cancellation_token.is_cancelled:
-            result_text = f"[Operation Cancelled] {cancellation_token.reason}"
-            duration_ms = round((time.monotonic() - t0) * 1000)
-            self._emit_complete(fn, call_id, "cancelled", duration_ms, "cancelled by user")
-            self._emit_host_terminal_cancelled(
-                fn, call_id,
-                started_at=host_started_at,
-                summary="cancelled by user",
-            )
-            return call_id, ToolExecutionResult(
-                fn_name=fn, result=result_text, status="cancelled",
-                duration_ms=duration_ms, error="cancelled by user",
+            return call_id, self._cancelled_result(
+                fn, call_id, t0, host_started_at, cancellation_token.reason,
             )
 
         # Inject macOS sandbox profile for run_shell_command when policy is
@@ -421,6 +417,8 @@ class ToolExecutor:
         # ``_emit_complete`` has already fired inside ``_run_async_tool``
         # when this is set; the success/error tail below must short-circuit.
         async_cancel_outcome: Optional[ToolExecutionResult] = None
+        cancelled_reason: Optional[str] = None
+        cancelled_output = ""
         error_type_name: Optional[str] = None
         with tool_locks[id(tool)]:
             if hasattr(tool, "output_callback"):
@@ -448,9 +446,25 @@ class ToolExecutor:
                     else:
                         result_text = async_outcome.result_text
                 else:
-                    result_text = tool.execute(**call_args)
+                    with bind_cancellation_token(cancellation_token):
+                        result_text = tool.execute(**call_args)
             except TaskComplete as tc_exc:
                 result_text = tc_exc.result
+            except AgentCancelledError as cancel_exc:
+                # A blocking call the turn's cancel reached (a shell command,
+                # an MCP call): reported like the pre-execution cancel above,
+                # not as a tool error. Only when it is *this turn's* cancel: a
+                # tool raising one from a token of its own is a failure of that
+                # tool, and labelling it "cancelled by user" would say the user
+                # stopped something they never touched — that one falls through
+                # to the generic error branch below.
+                if cancellation_token is None or not cancellation_token.is_cancelled:
+                    errored, error_msg, error_type_name, result_text = (
+                        self._error_fields(fn, cancel_exc)
+                    )
+                else:
+                    cancelled_reason = cancel_exc.reason
+                    cancelled_output = getattr(cancel_exc, "partial_output", "") or ""
             except SandboxMisconfiguredError as sbe:
                 errored = True
                 error_msg = "sandbox misconfigured"
@@ -463,13 +477,20 @@ class ToolExecutor:
                     f"refusing to run them."
                 )
             except Exception as exc:
-                errored = True
-                error_msg = str(exc)[:200]
-                error_type_name = type(exc).__name__
-                result_text = f"Error executing {fn}: {str(exc)}"
+                errored, error_msg, error_type_name, result_text = (
+                    self._error_fields(fn, exc)
+                )
             finally:
                 if hasattr(tool, "output_callback"):
                     tool.output_callback = None
+
+        # A sync tool the turn's cancel reached mid-call: reported like the
+        # pre-execution cancel, no post-tool hook.
+        if cancelled_reason is not None:
+            return call_id, self._cancelled_result(
+                fn, call_id, t0, host_started_at, cancelled_reason,
+                detail=cancelled_output,
+            )
 
         # AsyncTool token-cancel short-circuit: TOOL_COMPLETE already
         # emitted inside _run_async_tool; bypass the success/error tail
@@ -666,6 +687,41 @@ class ToolExecutor:
             "tool": fn, "call_id": call_id, "status": status,
             "duration_ms": duration_ms, "error": error,
         }))
+
+    @staticmethod
+    def _error_fields(fn: str, exc: BaseException) -> Tuple[bool, str, str, str]:
+        """``(errored, error_msg, error_type_name, result_text)`` for a tool that raised."""
+        return True, str(exc)[:200], type(exc).__name__, f"Error executing {fn}: {exc}"
+
+    def _cancelled_result(
+        self,
+        fn: str,
+        call_id: str,
+        t0: float,
+        host_started_at: Optional[str],
+        reason: str,
+        *,
+        detail: str = "",
+    ) -> "ToolExecutionResult":
+        """Emit both terminal events for a call the turn's cancel reached, and its result.
+
+        Shared by the pre-execution check and a blocking call that raised
+        ``AgentCancelledError``: no post-tool hook, like DENY.
+        """
+        duration_ms = round((time.monotonic() - t0) * 1000)
+        self._emit_complete(fn, call_id, "cancelled", duration_ms, "cancelled by user")
+        self._emit_host_terminal_cancelled(
+            fn, call_id,
+            started_at=host_started_at,
+            summary="cancelled by user",
+        )
+        result = cancelled_result_header(reason)
+        if detail:
+            result += f"\n{detail}"
+        return ToolExecutionResult(
+            fn_name=fn, result=result, status="cancelled",
+            duration_ms=duration_ms, error="cancelled by user",
+        )
 
     def _emit_host_terminal_cancelled(
         self,

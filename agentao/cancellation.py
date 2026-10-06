@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
-from typing import Callable, List, Optional
+from contextlib import contextmanager
+from typing import Callable, Iterator, List, Optional
 
 
 _logger = logging.getLogger(__name__)
@@ -13,8 +15,11 @@ _logger = logging.getLogger(__name__)
 class AgentCancelledError(Exception):
     """Raised when a CancellationToken has been cancelled."""
 
-    def __init__(self, reason: str = "user-cancel"):
+    def __init__(self, reason: str = "user-cancel", *, partial_output: str = ""):
         self.reason = reason
+        # What a blocking call had produced when the cancel reached it (a shell
+        # command's output so far); the tool executor puts it in the result.
+        self.partial_output = partial_output
         super().__init__(f"[Cancelled] {reason}")
 
 
@@ -140,3 +145,34 @@ class CancellationToken:
                     pass
 
         return _unregister
+
+
+def cancelled_result_header(reason: str) -> str:
+    """The first line of a tool result the turn's cancel reached."""
+    return f"[Operation Cancelled] {reason}"
+
+
+# The token of the turn whose tool call is running on this thread. Set by the
+# tool executor around a sync ``Tool.execute`` and read by the code that blocks
+# inside it (the shell's wait loop, ``McpClientManager``), so a cancelled turn
+# reaches a running command or MCP call instead of waiting for it to finish.
+# A context variable rather than an attribute on the tool: MCP tool instances
+# are shared between a parent and its sub-agents, whose calls run concurrently.
+_CURRENT_TOKEN: "contextvars.ContextVar[Optional[CancellationToken]]" = (
+    contextvars.ContextVar("agentao_cancellation_token", default=None)
+)
+
+
+def current_cancellation_token() -> Optional[CancellationToken]:
+    """The token bound by :func:`bind_cancellation_token` on this thread, if any."""
+    return _CURRENT_TOKEN.get()
+
+
+@contextmanager
+def bind_cancellation_token(token: Optional[CancellationToken]) -> Iterator[None]:
+    """Make ``token`` the :func:`current_cancellation_token` for the block."""
+    reset = _CURRENT_TOKEN.set(token)
+    try:
+        yield
+    finally:
+        _CURRENT_TOKEN.reset(reset)

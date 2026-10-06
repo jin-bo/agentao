@@ -311,37 +311,103 @@ def resolve_oauth(config: McpServerConfig) -> Optional[Dict[str, Any]]:
     return settings
 
 
-def expand_env_vars(value: str) -> str:
-    """Replace $VAR and ${VAR} references with environment values."""
+def expand_env_vars(
+    value: str, missing: Optional[List[str]] = None, *, empty_is_missing: bool = False,
+) -> str:
+    """Replace $VAR and ${VAR} references with environment values.
+
+    An unset variable expands to ``""``; its name is appended to ``missing``
+    when a list is given, so the caller can say which one it was. With
+    ``empty_is_missing`` a variable set to ``""`` is reported too — a CI job
+    that exports an unpopulated secret as ``TOKEN=`` fails the same way.
+    """
     def _replace(m: re.Match) -> str:
         var_name = m.group(1) or m.group(2)
-        return os.environ.get(var_name, "")
+        found = os.environ.get(var_name)
+        if missing is not None and (found is None or (empty_is_missing and found == "")):
+            missing.append(var_name)
+        return found or ""
     return _ENV_VAR_RE.sub(_replace, value)
 
 
-def _expand_config_env(config: McpServerConfig) -> McpServerConfig:
-    """Expand env vars in a server config's string fields."""
+#: Set by :func:`_expand_config_env` on a server whose ``headers`` or
+#: ``oauth.client_secret`` named an unset variable; the client refuses to
+#: connect it (:class:`McpEnvVarError`). Underscored: a loaded config is never
+#: written back (``/mcp add`` and ``remove`` save the raw file).
+UNSET_CREDENTIAL_VARS_KEY = "_unset_credential_vars"
+
+
+class McpEnvVarError(ValueError):
+    """A credential field of an MCP server config names an unset variable."""
+
+
+def _expand_config_env(config: McpServerConfig, name: str = "?") -> McpServerConfig:
+    """Expand env vars in a server config's string fields.
+
+    An unset variable used to expand to ``""`` silently. In a header that is
+    worse than a failed connect: ``"Authorization": "Bearer ${TOKEN}"`` with
+    ``TOKEN`` unset sends ``Bearer `` — and because an ``Authorization``
+    header turns OAuth off (:func:`resolve_oauth`), the 401 that follows is an
+    ordinary error with nothing pointing at the variable. So an unset variable
+    in ``headers`` or ``oauth.client_secret`` — or one set to ``""`` there —
+    keeps the server from connecting, naming the variable; in ``env`` and
+    ``args``, where an empty value can be intended, an unset one is a warning.
+    """
     result = dict(config)
+    credential_missing: List[str] = []
+    other_missing: List[str] = []
 
     # Expand env dict values
     if "env" in result and isinstance(result["env"], dict):
-        result["env"] = {k: expand_env_vars(v) for k, v in result["env"].items()}
+        result["env"] = {
+            k: expand_env_vars(v, other_missing) for k, v in result["env"].items()
+        }
 
     # Expand header values
     if "headers" in result and isinstance(result["headers"], dict):
-        result["headers"] = {k: expand_env_vars(v) for k, v in result["headers"].items()}
+        result["headers"] = {
+            k: expand_env_vars(v, credential_missing, empty_is_missing=True)
+            for k, v in result["headers"].items()
+        }
 
     # Expand command args
     if "args" in result and isinstance(result["args"], list):
-        result["args"] = [expand_env_vars(a) for a in result["args"]]
+        result["args"] = [expand_env_vars(a, other_missing) for a in result["args"]]
 
     # Expand a pre-registered OAuth client secret (the only oauth value that
     # is a credential; the rest are identifiers and ports).
     oauth = result.get("oauth")
     if isinstance(oauth, dict) and isinstance(oauth.get("client_secret"), str):
-        result["oauth"] = {**oauth, "client_secret": expand_env_vars(oauth["client_secret"])}
+        result["oauth"] = {
+            **oauth,
+            "client_secret": expand_env_vars(
+                oauth["client_secret"], credential_missing, empty_is_missing=True
+            ),
+        }
 
+    if other_missing:
+        _logger.warning(
+            "MCP server %r: environment variable(s) %s not set; expanded to an "
+            "empty string.", name, ", ".join(sorted(set(other_missing))),
+        )
+    if credential_missing:
+        result[UNSET_CREDENTIAL_VARS_KEY] = tuple(sorted(set(credential_missing)))
     return result
+
+
+def check_credential_vars(config: McpServerConfig) -> None:
+    """Raise :class:`McpEnvVarError` for a server :func:`_expand_config_env` flagged.
+
+    Not narrowed to servers that use OAuth: an empty ``oauth.client_secret``
+    is refused by :func:`resolve_oauth` whatever the headers say, so this only
+    names the variable behind that refusal.
+    """
+    names = config.get(UNSET_CREDENTIAL_VARS_KEY)
+    if names:
+        raise McpEnvVarError(
+            f"environment variable(s) {', '.join(names)} not set or empty, but used in "
+            "'headers' or 'oauth.client_secret'. Set them, or remove the reference."
+        )
 
 
 def _load_json_file(path: Path) -> Dict[str, Any]:
@@ -441,7 +507,7 @@ def load_mcp_config(
         servers[name] = cfg
 
     # Expand env vars in each server config
-    return {name: _expand_config_env(conf) for name, conf in servers.items()}
+    return {name: _expand_config_env(conf, name) for name, conf in servers.items()}
 
 
 def save_mcp_config(

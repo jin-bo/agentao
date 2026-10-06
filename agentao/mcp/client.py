@@ -2,6 +2,7 @@
 
 import asyncio
 import concurrent.futures
+import contextvars
 import json
 import logging
 import os
@@ -28,6 +29,7 @@ try:
     _BaseExceptionGroup = BaseExceptionGroup  # Python 3.11+
 except NameError:  # pragma: no cover - 3.10: anyio depends on the backport there
     from exceptiongroup import BaseExceptionGroup as _BaseExceptionGroup
+from ..cancellation import AgentCancelledError, current_cancellation_token
 from ..capabilities.process import build_child_env
 from ._compat import (
     SUPPORTS_INPUT_REQUIRED,
@@ -42,9 +44,11 @@ from ._compat import (
     read_timeout as _sdk_read_timeout,
 )
 from .config import (
+    McpEnvVarError,
     McpServerConfig,
     McpOAuthConfigError,
     McpTransportConfigError,
+    check_credential_vars,
     resolve_oauth,
     resolve_timeouts,
     resolve_transport,
@@ -610,6 +614,10 @@ class McpClient:
         self._needs_auth = None
         try:
             transport, source = resolve_transport(self.config, return_source=True)
+            if transport != "stdio":
+                # ``headers`` and ``oauth`` are URL-transport fields; a stdio
+                # server never sends them, so an unset variable there is inert.
+                check_credential_vars(self.config)
             # Every OAuth-eligible URL server gets the auth object, record or
             # not: without one it only observes, and it is the only place a
             # Bearer challenge is still visible (docs/design/mcp-oauth.md §5.4).
@@ -760,8 +768,9 @@ class McpClient:
         # Nor for a redirect the SDK would not follow: its message already
         # names the URL to configure, and the SDK's SSE client applies the
         # same origin rule (2.2 and 1.30 release notes), so "try SSE" cannot fix it.
-        # Nor for a malformed ``oauth`` block (a config error, not a handshake
-        # failure) or a failed OAuth refresh (the transport is not at fault).
+        # Nor for a malformed ``oauth`` block or an unset credential variable
+        # (config errors, not handshake failures) or a failed OAuth refresh
+        # (the transport is not at fault).
         if (
             transport == "http"
             and source == "inferred"
@@ -773,6 +782,7 @@ class McpClient:
                     McpProtocolEraError,
                     McpCatalogError,
                     McpOAuthConfigError,
+                    McpEnvVarError,
                 ),
             )
             and classify_mcp_error(e) is not McpErrorKind.AUTH
@@ -2012,10 +2022,21 @@ class McpClientManager:
                     "McpClientManager was called from its own event loop "
                     "thread, which would wait on itself forever"
                 )
-            future = asyncio.run_coroutine_threadsafe(
-                self._tracked(coro), self._start_loop()
+            # Scheduled from an empty context: ``call_soon_threadsafe`` copies
+            # the caller's, and the task (and any connection owner task it
+            # starts) would otherwise hold the turn's ``CancellationToken`` —
+            # and the host loop it references — for as long as it lives.
+            future = contextvars.Context().run(
+                asyncio.run_coroutine_threadsafe,
+                self._tracked(coro), self._start_loop(),
             )
             thread = self._thread
+        # A cancelled turn cancels the call, as a raise into the waiter does:
+        # the task on the loop is cancelled, and mcp 2.x then sends the server
+        # ``notifications/cancelled`` (1.x does not). Without this a turn's
+        # cancel waited for the tool — forever, with no ``timeout.request``.
+        token = current_cancellation_token()
+        unregister = token.add_done_callback(future.cancel) if token is not None else None
         try:
             settled = self._wait(future, thread)
         except BaseException:
@@ -2024,10 +2045,15 @@ class McpClientManager:
             # the loop.
             future.cancel()
             raise
+        finally:
+            if unregister is not None:
+                unregister()
         if not settled:
             raise McpManagerClosedError(
                 "MCP client manager closed before the call finished"
             )
+        if future.cancelled() and token is not None and token.is_cancelled:
+            raise AgentCancelledError(token.reason)
         return future.result()
 
     @staticmethod
@@ -2266,6 +2292,14 @@ class McpClientManager:
     async def _login_async(self, server_name: str, ui: Any) -> ServerStatus:
         from .oauth import login as _login
 
+        # Before the browser flow, not only at the reconnect after it — and
+        # before ``_oauth_client``, whose ``resolve_oauth`` refuses the empty
+        # secret an unset ``oauth.client_secret`` variable expands to with a
+        # message that does not name the variable.
+        known = self._clients.get(server_name)
+        config = known.config if known is not None else self._configs.get(server_name)
+        if config is not None:
+            check_credential_vars(config)
         client = self._oauth_client(server_name)
         settings = resolve_oauth(client.config)
         assert settings is not None  # checked by _oauth_client

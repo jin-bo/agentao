@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from agentao.frontmatter import parse_frontmatter
+from agentao.frontmatter import match_frontmatter, parse_frontmatter
 
 from .registry import (
     InstalledSkillRecord,
@@ -399,26 +399,35 @@ class SkillInstaller:
         except (OSError, UnicodeDecodeError):
             return
 
-        if not content.startswith("---"):
-            return
-
-        parts = content.split("---", 2)
-        if len(parts) < 3:
+        match = match_frontmatter(content)
+        if match is None:
             return
 
         # Replace the name line in the frontmatter section.
-        fm_lines = parts[1].splitlines(keepends=True)
+        fm_lines = match.group("meta").splitlines(keepends=True)
+        # The top-level key only: a ``name:`` nested under another key
+        # (``author:\n  name: Jane``) is not the skill's name. Top level is the
+        # indentation of the first key line.
+        top_indent = next(
+            (
+                line[: len(line) - len(line.lstrip())]
+                for line in fm_lines
+                if line.strip() and not line.lstrip().startswith("#")
+            ),
+            "",
+        )
         rewritten = []
         for line in fm_lines:
             stripped = line.lstrip()
-            if stripped.startswith("name:"):
+            if stripped.startswith("name:") and line[: len(line) - len(stripped)] == top_indent:
                 # Preserve original indentation
                 indent = line[: len(line) - len(stripped)]
                 rewritten.append(f"{indent}name: {normalized_name}\n")
             else:
                 rewritten.append(line)
 
-        new_content = "---" + "".join(rewritten) + "---" + parts[2]
+        start, end = match.span("meta")
+        new_content = content[:start] + "".join(rewritten) + content[end:]
         try:
             skill_md.write_text(new_content, encoding="utf-8")
         except OSError:

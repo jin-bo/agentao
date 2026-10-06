@@ -286,7 +286,7 @@ from agentao.host.protocols import (
 | `MCPRegistry` | 运行时使用的 MCP 服务器/工具发现协议。 |
 | `MemoryStore` | 持久化记忆存储后端的协议。 |
 | `FileEntry`、`FileStat` | `FileSystem` 实现返回的值类型。 |
-| `ShellRequest`、`ShellResult`、`BackgroundHandle` | `ShellExecutor` 实现的值类型。`ShellResult.stdout_omitted_bytes` / `stderr_omitted_bytes`（默认 `0`）表示某个流有多少字节没有保留，`stdout_omitted_at` / `stderr_omitted_at`（默认 `0`）表示它们在 `stdout` / `stderr` 中的字节偏移——`0` 表示在最前面，所以只保留尾部的执行器只需设置字节数。本地执行器每个流保留开头和末尾各 512 KiB，工具会在缺口所在的位置标出。 |
+| `ShellRequest`、`ShellResult`、`BackgroundHandle` | `ShellExecutor` 实现的值类型。`ShellResult.stdout_omitted_bytes` / `stderr_omitted_bytes`（默认 `0`）表示某个流有多少字节没有保留，`stdout_omitted_at` / `stderr_omitted_at`（默认 `0`）表示它们在 `stdout` / `stderr` 中的字节偏移——`0` 表示在最前面，所以只保留尾部的执行器只需设置字节数。本地执行器每个流保留开头和末尾各 512 KiB，工具会在缺口所在的位置标出。`ShellRequest.cancellation_token`（默认 `None`）是这一轮的 `CancellationToken`：它触发时，本地执行器终止整个进程树，并返回 `ShellResult.cancelled=True`（默认 `False`）；忽略它的执行器照旧把命令运行到结束或超时。 |
 | `LaunchRequest` 及其成员 `LegacyLaunch` / `WindowsLaunch` | `ShellRequest.launch` 携带的内容——见下文。 |
 | `ShellSpec`、`Exhausted`、`ShellSpecProvider` | 执行器可选声明的解释器——见下文。 |
 | `ShellBlock`、`ShellDialect` | 用户级 shell 配置与语法词汇，供自行解析 spec 的宿主使用。 |

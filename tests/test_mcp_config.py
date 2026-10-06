@@ -338,3 +338,77 @@ def test_save_mcp_config_requires_config_dir():
     """``save_mcp_config()`` rejects missing ``config_dir``."""
     with pytest.raises(TypeError):
         save_mcp_config({"x": {}})
+
+
+# ---------------------------------------------------------------------------
+# Unset variables in credential fields
+# ---------------------------------------------------------------------------
+
+def test_an_unset_header_variable_keeps_the_server_from_connecting(tmp_path, monkeypatch):
+    # ``Bearer ${TOKEN}`` with TOKEN unset used to send ``Bearer `` — and the
+    # Authorization header turned OAuth off, so the 401 named nothing.
+    import json
+
+    from agentao.mcp.client import McpClientManager
+
+    monkeypatch.delenv("AGENTAO_TEST_UNSET_TOKEN", raising=False)
+    (tmp_path / ".agentao").mkdir()
+    (tmp_path / ".agentao" / "mcp.json").write_text(json.dumps({"mcpServers": {"svc": {
+        "url": "https://mcp.example.invalid/mcp",
+        "headers": {"Authorization": "Bearer ${AGENTAO_TEST_UNSET_TOKEN}"},
+    }}}))
+    configs = load_mcp_config(project_root=tmp_path)
+    manager = McpClientManager(configs)
+    try:
+        manager.connect_all()
+        client = manager.get_client("svc")
+        assert "AGENTAO_TEST_UNSET_TOKEN" in (client.error_message or "")
+        assert "type: sse" not in (client.error_message or "").replace('"', "")
+    finally:
+        manager.disconnect_all()
+
+
+def test_an_unset_client_secret_variable_is_refused(monkeypatch):
+    from agentao.mcp.config import McpEnvVarError, _expand_config_env, check_credential_vars
+
+    monkeypatch.delenv("AGENTAO_TEST_UNSET_SECRET", raising=False)
+    cfg = _expand_config_env({
+        "url": "https://x.invalid/mcp",
+        "oauth": {"client_id": "id", "client_secret": "$AGENTAO_TEST_UNSET_SECRET"},
+    })
+    with pytest.raises(McpEnvVarError, match="AGENTAO_TEST_UNSET_SECRET"):
+        check_credential_vars(cfg)
+
+
+def test_set_variables_and_unset_env_or_args_still_connect(monkeypatch, caplog):
+    from agentao.mcp.config import _expand_config_env, check_credential_vars
+
+    monkeypatch.setenv("AGENTAO_TEST_SET_TOKEN", "abc")
+    monkeypatch.delenv("AGENTAO_TEST_UNSET_ARG", raising=False)
+    with caplog.at_level("WARNING", logger="agentao.mcp.config"):
+        cfg = _expand_config_env({
+            "command": "srv",
+            "args": ["--opt=$AGENTAO_TEST_UNSET_ARG"],
+            "headers": {"Authorization": "Bearer $AGENTAO_TEST_SET_TOKEN"},
+        }, "svc")
+    check_credential_vars(cfg)  # does not raise
+    assert cfg["args"] == ["--opt="]
+    assert cfg["headers"]["Authorization"] == "Bearer abc"
+    assert "AGENTAO_TEST_UNSET_ARG" in caplog.text and "'svc'" in caplog.text
+
+
+
+def test_an_empty_variable_in_a_header_counts_as_missing(monkeypatch):
+    # ``TOKEN=`` exported by a CI job sends ``Bearer `` just as an unset one did.
+    from agentao.mcp.config import McpEnvVarError, _expand_config_env, check_credential_vars
+
+    monkeypatch.setenv("AGENTAO_TEST_EMPTY_TOKEN", "")
+    monkeypatch.setenv("AGENTAO_TEST_EMPTY_ARG", "")
+    cfg = _expand_config_env({
+        "url": "https://x.invalid/mcp",
+        "args": ["--x=$AGENTAO_TEST_EMPTY_ARG"],
+        "headers": {"Authorization": "Bearer ${AGENTAO_TEST_EMPTY_TOKEN}"},
+    })
+    with pytest.raises(McpEnvVarError, match="AGENTAO_TEST_EMPTY_TOKEN"):
+        check_credential_vars(cfg)
+    assert "AGENTAO_TEST_EMPTY_ARG" not in str(cfg.get("_unset_credential_vars"))

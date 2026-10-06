@@ -2418,12 +2418,17 @@ _OVERFLOW_PATTERNS = [
     re.compile(p, re.IGNORECASE)
     for p in (
         r"prompt is too long",  # Anthropic: "prompt is too long: 213462 tokens > 200000 maximum"
-        r"exceed context limit",  # Anthropic: "input length and `max_tokens` exceed context limit: 188240 + 21333 > 200000"
+        r"exceed (?:your )?context limit",  # Anthropic: "input length and `max_tokens` exceed context limit: 188240 + 21333 > 200000"; "input and output tokens exceed your context limit"
         r"request_too_large",  # Anthropic 413 byte-size overflow
         r"exceeds the context window",  # OpenAI (Completions & Responses)
+        r"input length exceeds context window",  # Anthropic (the whole phrase: a bare "exceeds context window" could be an output-limit error)
         r"maximum context length",  # OpenAI/LiteLLM/OpenRouter: "...of N tokens", "...is N tokens", "(N)" — broad; guard below filters throttling
         r"context[_ ]length[_ ]exceeded",  # generic OpenAI-compatible code
-        r"input is too long for requested model",  # Amazon Bedrock
+        r"input is too long for requested model",  # Amazon Bedrock (not the bare phrase: a single oversized field says it too, and a false overflow compacts history for nothing)
+        r"exceed(?:s|ed)? customer model maximum",  # OpenAI
+        r"(?:prompt|input)\b(?:(?!max_tokens)[^.\n]){0,40}\bexceed(?:s|ed)? model maximum",  # Bedrock Mantle "prompt tokens (N) exceed model maximum (M)" — not "max_tokens (N) exceeds model maximum", an output-limit error, even after "Malformed input request: "
+        r"exceeds the max_model_len",  # vLLM: "the engine prompt length exceeds the max_model_len"
+        r"too many total text bytes",  # OpenAI-compatible byte-size overflow
         r"input token count.*exceeds the maximum",  # Google (Gemini)
         r"maximum prompt length is \d+",  # xAI (Grok)
         r"reduce the length",  # Groq: "reduce the length of the messages or completion" (broad; guard filters rate limits)

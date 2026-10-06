@@ -2,6 +2,7 @@
 
 from typing import Any, Dict
 
+from ..cancellation import AgentCancelledError
 from .base import Tool
 
 
@@ -79,6 +80,10 @@ class ActivateSkillTool(Tool):
                 # it has no MCP skills to load.
                 result = activate(skill_name, task_description)
             return result
+        except AgentCancelledError:
+            # A turn cancel that reached an MCP skill fetch: the executor
+            # reports it as cancelled, not as a failed activation.
+            raise
         except Exception as e:
             return f"Error activating skill: {str(e)}"
 

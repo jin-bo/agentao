@@ -1,6 +1,7 @@
 """MCP tool wrapper that adapts MCP-discovered tools to the Agentao Tool interface."""
 
 import copy
+import hashlib
 import re
 from typing import Any, Dict, Optional
 
@@ -19,16 +20,47 @@ def _sanitize_name(name: str) -> str:
     return _INVALID_CHARS_RE.sub("_", name)
 
 
+# OpenAI's Chat Completions refuses a function name longer than 64 characters,
+# and the tools array goes out on every request — one long name fails every turn.
+MAX_TOOL_NAME_LEN = 64
+_HASH_LEN = 8
+
+
+def _name_hash(server_name: str, tool_name: str) -> str:
+    # From the *original* names, so the suffix is the same on every connect and
+    # in every process — never from discovery order, or a permission rule
+    # naming the tool would match a different tool after a reconnect.
+    digest = hashlib.sha256(f"{server_name}\0{tool_name}".encode("utf-8"))
+    return digest.hexdigest()[:_HASH_LEN]
+
+
 def make_mcp_tool_name(server_name: str, tool_name: str) -> str:
-    """Create a fully qualified MCP tool name: mcp_{server}_{tool}."""
-    return f"mcp_{_sanitize_name(server_name)}_{_sanitize_name(tool_name)}"
+    """Create a fully qualified MCP tool name: mcp_{server}_{tool}.
+
+    A name that fits and is ASCII comes back exactly as it always did, so
+    existing permission rules keep matching. Two cases get a stable hash of
+    the original names appended instead:
+
+    * the name is longer than :data:`MAX_TOOL_NAME_LEN` — it is cut to make
+      room for the suffix;
+    * a non-ASCII character was replaced — ``查询`` and ``搜索`` would
+      otherwise both become ``__`` and collide.
+    """
+    name = f"mcp_{_sanitize_name(server_name)}_{_sanitize_name(tool_name)}"
+    lossy = not (server_name.isascii() and tool_name.isascii())
+    if len(name) <= MAX_TOOL_NAME_LEN and not lossy:
+        return name
+    suffix = f"_{_name_hash(server_name, tool_name)}"
+    return name[: MAX_TOOL_NAME_LEN - len(suffix)] + suffix
 
 
 def parse_mcp_tool_name(fqn: str) -> tuple:
     """Parse 'mcp_{server}_{tool}' back to (server_name, tool_name).
 
     Uses the first underscore after 'mcp_' as the separator between
-    server name and tool name.
+    server name and tool name. Best effort only: a hashed name from
+    :func:`make_mcp_tool_name` does not round-trip, and calls never rely on
+    this — :class:`McpTool` keeps the original names.
     """
     if not fqn.startswith("mcp_"):
         raise ValueError(f"Not an MCP tool name: {fqn}")

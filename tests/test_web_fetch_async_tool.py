@@ -53,6 +53,7 @@ class _FakeResponse:
     def __init__(self, text=_JS_SHELL, status_code=200):
         self.text = text
         self.status_code = status_code
+        self.headers = {"content-type": "text/html; charset=utf-8"}
 
     def raise_for_status(self):
         return None

@@ -67,9 +67,20 @@ def login(
     ui_factory: Optional[Callable[..., Any]] = None,
 ) -> LoginOutcome:
     """Run one server's login through the CLI UI, then report its status."""
+    from ..mcp.config import McpEnvVarError, check_credential_vars
     from ..mcp.oauth import OAuthLoginError
     from .mcp_login_ui import CliLoginUI
 
+    # Before ``_settings``: an unset ``oauth.client_secret`` variable expands to
+    # ``""``, which ``resolve_oauth`` refuses as "must be a non-empty string"
+    # without naming the variable. Login only — logout must still work.
+    config = manager.server_configs.get(name)
+    if isinstance(config, dict):
+        try:
+            check_credential_vars(config)
+        except McpEnvVarError as e:
+            write(f"MCP server '{name}': {e}")
+            return LoginOutcome.FAILED
     settings = _settings(manager, name, write)
     if settings is None:
         return LoginOutcome.FAILED

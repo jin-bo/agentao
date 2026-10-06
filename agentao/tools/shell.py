@@ -35,6 +35,11 @@ from ..capabilities.shell import (
     resolve_shell_executable,
     shell_display_name,
 )
+from ..cancellation import (
+    AgentCancelledError,
+    cancelled_result_header,
+    current_cancellation_token,
+)
 from ..sandbox import SandboxProfile
 from ..security import PathPolicy, PathPolicyError
 
@@ -749,55 +754,69 @@ class ShellTool(Tool):
         ``reserve`` is room left out of ``_MAX_OUTPUT_CHARS`` for what the caller
         appends afterwards.
         """
+        token = current_cancellation_token()
         try:
             result: ShellResult = self._get_shell().run(
                 ShellRequest(
                     launch=self._launch(command, cwd, spec),
                     timeout=timeout,
                     on_chunk=self.output_callback,
+                    cancellation_token=token,
                 )
             )
         except LaunchRefused as refusal:
             # Same as the background face: a launch-stage refusal surfaces in the
             # floor's vocabulary, never as "Error starting command: …".
             return f"Error: {refusal.deny.reason}"
+        except AgentCancelledError:
+            # A host executor that honoured the token by raising: still a
+            # cancel, not "Error starting command: [Cancelled] …".
+            raise
         except Exception as e:
             return f"Error starting command: {e}"
 
-        if result.timed_out:
-            # The two streams are decoded apart and only then joined: a CLIXML wrapper appears
-            # on whichever one it appears on, and merging first would leave the extraction
-            # looking for a structure that no longer starts where it starts. Partial output is
-            # exactly where the wrapper is unterminated, so this usually reports the truncation
-            # rather than unwrapping — which is the honest answer and better than raw XML.
-            powershell = self._is_powershell(spec)
-            streams = [
-                _stream_of(
-                    getattr(result, name), _omitted(result, name), _omitted_at(result, name),
-                    powershell,
-                )
-                for name in ("stdout", "stderr")
-            ]
-            # Capped like every other output path. A command that emits megabytes and then
-            # stalls is the ordinary shape of a timeout, and this branch used to be the one
-            # place the tool handed all of it straight to the model. The cap covers the whole
-            # message, command echo included; the echo is cut first, since the model wrote it.
-            # Each stream is fitted on its own, so each notice sits inside the stream it
-            # belongs to.
-            msg = (
-                f"Command timed out after {timeout:.0f}s of inactivity.\n"
-                f"Command: {_clip_command(command)}"
+        if getattr(result, "cancelled", False) is True and (
+            token is None or not token.is_cancelled
+        ):
+            # A host executor that stopped the command on its own: no turn
+            # cancel to report, and a raise would reach the tool executor as a
+            # generic error with the output dropped. Reported like a timeout.
+            return self._partial_report(
+                result,
+                "Command was cancelled by the shell executor.\n"
+                f"Command: {_clip_command(command)}",
+                "\n\nOutput before it was cancelled:\n", spec, reserve,
             )
-            needs = [_stream_need(st) for st in streams]
-            if any(needs):
-                prefix = "\n\nPartial output before timeout:\n"
-                whole = [_fit_stream(st, n) for st, n in zip(streams, needs)]
-                separator = "\n" if all(whole) and not whole[0].endswith("\n") else ""
-                available = _MAX_OUTPUT_CHARS - reserve - len(msg) - len(prefix) - len(separator)
-                budgets = _split_budget(needs[0], needs[1], available)
-                fitted = [_fit_stream(st, bud) for st, bud in zip(streams, budgets)]
-                msg += prefix + separator.join(f for f in fitted if f)
-            return msg
+
+        if getattr(result, "cancelled", False) is True:
+            # Raised, not returned: the executor reports a cancelled call as
+            # cancelled, the way it reports one cancelled before it started.
+            # What the command printed rides along: without it the next turn
+            # cannot tell how far a migration or a deploy step got, and may
+            # run it again.
+            reason = token.reason
+            # The executor puts ``[Operation Cancelled] <reason>\n`` in front
+            # (``ToolExecutor._cancelled_result``) and this path skips
+            # ``_cap_result``, so that header's room comes out of the budget:
+            # past ``_MAX_OUTPUT_CHARS`` the result would be spilled to disk.
+            # Not ``reserve``: the sandbox hint it sets aside is appended by the
+            # caller, which this raise never returns to.
+            header = len(cancelled_result_header(reason)) + 1  # + the "\n" before the output
+            raise AgentCancelledError(
+                reason,
+                partial_output=self._partial_report(
+                    result, f"Command: {_clip_command(command)}",
+                    "\n\nOutput before it was cancelled:\n", spec, header,
+                ),
+            )
+
+        if result.timed_out:
+            return self._partial_report(
+                result,
+                f"Command timed out after {timeout:.0f}s of inactivity.\n"
+                f"Command: {_clip_command(command)}",
+                "\n\nPartial output before timeout:\n", spec, reserve,
+            )
 
         return self._format_result(
             result.returncode, result.stdout, result.stderr, powershell=self._is_powershell(spec),
@@ -807,6 +826,40 @@ class ShellTool(Tool):
             stderr_omitted_at=_omitted_at(result, "stderr"),
             reserve=reserve,
         )
+
+    def _partial_report(
+        self, result: ShellResult, msg: str, prefix: str,
+        spec: "ShellSpec | Exhausted | None", reserve: int,
+    ) -> str:
+        """``msg``, then what a command stopped early (timed out, cancelled) printed."""
+        # The two streams are decoded apart and only then joined: a CLIXML wrapper appears
+        # on whichever one it appears on, and merging first would leave the extraction
+        # looking for a structure that no longer starts where it starts. Partial output is
+        # exactly where the wrapper is unterminated, so this usually reports the truncation
+        # rather than unwrapping — which is the honest answer and better than raw XML.
+        powershell = self._is_powershell(spec)
+        streams = [
+            _stream_of(
+                getattr(result, name), _omitted(result, name), _omitted_at(result, name),
+                powershell,
+            )
+            for name in ("stdout", "stderr")
+        ]
+        # Capped like every other output path. A command that emits megabytes and then
+        # stalls is the ordinary shape of a timeout, and this branch used to be the one
+        # place the tool handed all of it straight to the model. The cap covers the whole
+        # message, command echo included; the echo is cut first, since the model wrote it.
+        # Each stream is fitted on its own, so each notice sits inside the stream it
+        # belongs to.
+        needs = [_stream_need(st) for st in streams]
+        if any(needs):
+            whole = [_fit_stream(st, n) for st, n in zip(streams, needs)]
+            separator = "\n" if all(whole) and not whole[0].endswith("\n") else ""
+            available = _MAX_OUTPUT_CHARS - reserve - len(msg) - len(prefix) - len(separator)
+            budgets = _split_budget(needs[0], needs[1], available)
+            fitted = [_fit_stream(st, bud) for st, bud in zip(streams, budgets)]
+            msg += prefix + separator.join(f for f in fitted if f)
+        return msg
 
     # ------------------------------------------------------------------
     # Output formatting

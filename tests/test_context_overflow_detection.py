@@ -37,6 +37,14 @@ OVERFLOW_CASES = [
     # Broad forms the old substring matcher caught — must not regress to stricter regex.
     ("reduce_length_prompt", "Please reduce the length of the prompt and try again"),
     ("maxlen_no_digits", "Your request exceeds the maximum context length for this model"),
+    # Strings Strands classifies (models/_openai_errors.py, models/anthropic.py) that
+    # this table missed — a missed overflow ends the turn as llm_error, uncompacted.
+    ("bedrock_mantle", "prompt tokens (1200008) exceed model maximum (1050000) for openai.gpt-5.6-terra"),
+    ("openai_customer_max", "exceed customer model maximum"),
+    ("vllm_max_model_len", "the engine prompt length exceeds the max_model_len"),
+    ("text_bytes", "too many total text bytes"),
+    ("anthropic_window", "Input length exceeds context window"),
+    ("anthropic_in_out", "input and output tokens exceed your context limit"),
 ]
 
 # (label, error_message) — transient/non-overflow errors that must classify False.
@@ -46,6 +54,12 @@ NON_OVERFLOW_CASES = [
     ("too_many_requests", "Too Many Requests"),
     ("service_unavailable", "Service unavailable: please retry later"),
     ("unrelated", "Invalid API key provided"),
+    # Strands' negative cases: "model maximum" without "exceed" is not an overflow.
+    ("max_output_positive", "model maximum output tokens must be a positive integer"),
+    ("model_unavailable", "requested model openai.gpt-5.6-terra is not available in this region"),
+    # An output-limit setting, which compaction cannot fix.
+    ("max_tokens_over_model_max", "max_tokens (100000) exceeds model maximum (64000)"),
+    ("bedrock_max_tokens_after_input", "Malformed input request: max_tokens (200000) exceeds model maximum (64000)"),
 ]
 
 

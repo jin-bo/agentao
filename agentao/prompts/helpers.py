@@ -16,16 +16,9 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from ..frontmatter import match_frontmatter
 
 _PATH_RE = re.compile(r'[\w./\\-]+\.\w{2,6}')
-
-# A YAML frontmatter block: an opening ``---`` fence on its own line, a body,
-# and a closing ``---`` fence on its own line. Both fences must be line-anchored
-# so a lone ``---`` thematic break in the middle of the document never matches.
-_FRONTMATTER_RE = re.compile(
-    r"^---[ \t]*\r?\n(?P<meta>.*?)\r?\n---[ \t]*(?:\r?\n|$)(?P<body>.*)$",
-    re.DOTALL,
-)
 
 
 def strip_frontmatter(content: str) -> str:
@@ -38,7 +31,7 @@ def strip_frontmatter(content: str) -> str:
     the content is returned untouched so real instructions are never silently
     dropped.
     """
-    match = _FRONTMATTER_RE.match(content)
+    match = match_frontmatter(content)
     if match is None:
         return content
     try:
