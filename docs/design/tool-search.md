@@ -6,6 +6,11 @@ a second reference implementation — it does *not* change the decision, and its
 driver is provider-led rather than tool-list bloat, so it is not a second
 instance of the trigger. **Measured 2026-10-03** (see *Measurement* below): the
 cost is now known for a six-server setup; no trigger has been observed.
+**Corrected 2026-10-05:** activation model (c) was described as unavailable on
+"agentao's single chat-completions path". That stopped being true in 0.5.3,
+which added the `anthropic-messages` and `openai-responses` wires; §4 and *A
+third activation model* now say where (c) applies. A compaction question was
+added to *Open questions*. Neither changes the decision.
 **Audience:** agentao maintainers considering tool-list-budget pressure from
 MCP / plugin growth.
 **Companion:** `tool-search.zh.md`.
@@ -151,8 +156,12 @@ therefore *not* a second instance of this document's trigger conditions.
 The draft's (a) says history "naturally carries the spec forward in the prior
 `tool` message". (c) is the strict form of that claim: definitions rather than
 description, with an explicit load point. It is the better design **wherever
-the provider supports it**, and unavailable where it does not — which, for
-agentao's single chat-completions path today, is everywhere.
+the provider supports it**, and unavailable where it does not. Of agentao's
+three wires, two have a provider-native load point — `anthropic-messages`
+(`defer_loading` + `tool_reference`) and `openai-responses` (tool search with
+`tool_search_output`); pydantic-ai drives both
+(`pydantic_ai_slim/pydantic_ai/models/anthropic.py`, `models/openai.py`). The
+default wire, `openai-completions`, has none.
 
 ## Decision
 
@@ -238,7 +247,7 @@ insufficient. Rebuild the index per turn — at 100s of tools it is microseconds
 ### 4. Activation model
 
 Three candidates — (c) was added 2026-08-03 from pi-mono; see that section for
-why it is unavailable to agentao today:
+which of agentao's wires can carry it:
 
 - **(a) Stateless.** `tool_search` returns matched specs in its tool result.
   The model issues the call by name on the next turn; dispatch already works
@@ -251,14 +260,18 @@ why it is unavailable to agentao today:
 - **(c) Transcript-carried** (pi-mono). The tool result declares which names
   became loadable; the provider adapter injects real tool definitions at that
   transcript position, keeping the tool prefix byte-stable. Requires a
-  provider-native load point (`tool_search_output` / `tool_reference`), which
-  agentao's chat-completions path does not have.
+  provider-native load point (`tool_search_output` / `tool_reference`). The
+  `anthropic-messages` and `openai-responses` wires have one; the default
+  `openai-completions` wire does not.
 
 **Recommendation: (a) Stateless.** Simpler. No session-state divergence. No
 replay / compaction interaction to design. Matches codex's behavior — codex
 re-injects via search results, not via persistent state. (c) is strictly better
-where a provider supports it, and is the shape to revisit if agentao ever grows
-a Responses-API or Anthropic-native path.
+where a provider supports it. agentao has had those paths since 0.5.3, so if
+the trigger fires the choice is per wire: (c) on `anthropic-messages` and
+`openai-responses`, (a) on `openai-completions`. The adapter boundary already
+fits this: history stays OpenAI-shaped and each adapter translates an outbound
+copy, so the load point is an adapter concern.
 
 ### 5. Default decision rule for MCP
 
@@ -369,6 +382,14 @@ rather than weeks when triggered.
   than it saves.
 - **Index lifecycle.** Rebuild per turn (cheap, simple) vs cached +
   invalidated on registry change (faster, more code). Start with per-turn.
+- **Discovered tools after compaction.** Under (a) the specs live in a `tool`
+  message, which compaction summarises away; under (c) the load point is a
+  transcript position, which compaction removes. Either way the model can lose
+  a tool it found earlier. pydantic-ai derives the discovered set from history
+  and resets it at each compaction boundary
+  (`pydantic_ai_slim/pydantic_ai/toolsets/_tool_search.py`), so the model
+  searches again. Decide whether agentao does the same or carries the set
+  across the summary.
 - **Interaction with a future `Hidden` axis.** Is `Hidden` an exposure value
   or an orthogonal flag? Lean orthogonal: `exposure=DIRECT, hidden=True` is
   semantically distinct from `exposure=DEFERRED`. Decide alongside the Hidden

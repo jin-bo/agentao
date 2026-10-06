@@ -62,6 +62,11 @@ _Targeting 0.5.11. Add entries under the relevant heading as work lands._
   Each `BEGIN … KEY` header with no `END` scanned to the end of the text, so
   160 KB of them took about 4 seconds on every log write. The scan now stops
   at the next header.
+- **Thinking text is kept from Ollama, newer vLLM and OpenRouter.** On the
+  `openai-completions` wire only `delta.reasoning_content` was read; these
+  servers stream the same text as `delta.reasoning`, so it was dropped. Both
+  are now read and kept as `reasoning_content`. A server that sends both with
+  the same text (some vLLM versions) is counted once.
 - **An MCP tool call is no longer sent twice when its connection drops.**
   `McpClient.call_tool` reconnected and re-sent a call after a dropped
   transport (`Connection closed`, a reset, `BrokenResourceError`, …) raised

@@ -3,7 +3,10 @@
 **状态：** 设计草案。决策时间 2026-05-24。实现推迟，直到触发条件（见下文）满足。
 **2026-08-03 更新**：补入 pi-mono 作为第二个参考实现 —— 它**不改变决策**，且其驱动力
 是 provider 主导而非工具列表膨胀，因此不构成触发条件的第二个实例。**2026-10-03 已测量**（见下文“测量”）：六个服务器
-配置下的开销已有数字；尚未观察到任何触发条件。
+配置下的开销已有数字；尚未观察到任何触发条件。**2026-10-05 更正**：激活模型 (c) 原文写作在
+「agentao 的 chat-completions 单路径」上不可用。0.5.3 新增 `anthropic-messages` 与
+`openai-responses` 两条线路后，这一说法已不成立；§4 与「第三种激活模型」现已写明 (c)
+适用于哪些线路。「待定问题」新增一条压缩相关问题。两处都不改变决策。
 **读者：** 关注 MCP / 插件工具数膨胀带来的工具列表预算压力的 agentao 维护者。
 **配套：** `tool-search.md`（英文版）。
 
@@ -130,8 +133,11 @@ OpenAI 与 Anthropic 上线了原生 deferred-tool 能力，pi 去适配 —— 
   打掉 prompt 缓存。
 
 草案的 (a) 说历史「自然带着规格」。(c) 是这句话的严格形式：是定义而非描述，且有明确
-的加载点。**在 provider 支持的地方**它是更好的设计，不支持的地方则不可用 —— 而对
-agentao 今天这条 chat-completions 单路径而言，处处不可用。
+的加载点。**在 provider 支持的地方**它是更好的设计，不支持的地方则不可用。agentao 的三条线路中，
+两条有 provider 原生的加载点 —— `anthropic-messages`（`defer_loading` + `tool_reference`）
+与 `openai-responses`（工具搜索加 `tool_search_output`）；pydantic-ai 两条都在用
+（`pydantic_ai_slim/pydantic_ai/models/anthropic.py`、`models/openai.py`）。默认线路
+`openai-completions` 没有。
 
 ## 决策
 
@@ -209,7 +215,7 @@ class ToolSearchTool(Tool):
 
 ### 4. 激活模型
 
-三个候选 ——(c) 于 2026-08-03 从 pi-mono 补入，为何 agentao 今天用不上见该节：
+三个候选 ——(c) 于 2026-08-03 从 pi-mono 补入，agentao 哪些线路能承载它见该节：
 
 - **(a) 无状态**：`tool_search` 在返回结果里携带匹配的工具规格。模型下一轮直接
   按名调用，dispatcher 本来就能跑（工具一直注册着）。历史里上一条 `tool` 消息
@@ -219,13 +225,14 @@ class ToolSearchTool(Tool):
 
 - **(c) transcript 携带**（pi-mono）：tool result 声明哪些名字变得可加载；provider
   适配层在该 transcript 位置注入真正的工具定义，工具前缀保持逐字节不变。需要
-  provider 原生的加载点（`tool_search_output` / `tool_reference`），而 agentao 的
-  chat-completions 路径没有。
+  provider 原生的加载点（`tool_search_output` / `tool_reference`）。`anthropic-messages`
+  与 `openai-responses` 线路有，默认的 `openai-completions` 线路没有。
 
 **推荐 (a) 无状态**。更简单。没有 session 状态分歧。不需要设计 replay /
 compaction 的交互。与 codex 行为一致——codex 也是通过搜索结果重新注入，不是
-持久状态。(c) 在 provider 支持处严格更优，若 agentao 将来长出 Responses-API 或
-Anthropic 原生路径，应回头重估这个形态。
+持久状态。(c) 在 provider 支持处严格更优。agentao 自 0.5.3 起已有这两条路径，所以触发条件一旦满足，
+应按线路选择：`anthropic-messages` 与 `openai-responses` 用 (c)，`openai-completions` 用 (a)。
+适配层边界本来就合适：历史保持 OpenAI 形状，各适配器只翻译发出的副本，加载点属于适配器的职责。
 
 ### 5. MCP 默认决策规则
 
@@ -322,6 +329,11 @@ agent = Agentao(
   如果成本大于收益再回退。
 - **索引生命周期**。每轮重建（便宜简单）vs 缓存 + registry 变更时失效
   （更快、更多代码）。起步用每轮重建。
+- **压缩后已发现的工具**。在 (a) 下，规格在一条 `tool` 消息里，会被压缩摘要掉；在 (c) 下，
+  加载点是 transcript 中的一个位置，也会被压缩移除。两种情况下模型都可能丢失先前找到的工具。
+  pydantic-ai 从历史推导已发现的集合，并在每个压缩边界重置
+  （`pydantic_ai_slim/pydantic_ai/toolsets/_tool_search.py`），模型需要重新搜索。需决定 agentao
+  是同样处理，还是把该集合带过摘要。
 - **与未来 `Hidden` 维度的交互**。`Hidden` 是 exposure 的一个值，还是正交标志？
   倾向正交：`exposure=DIRECT, hidden=True` 与 `exposure=DEFERRED` 语义不同。
   与 Hidden 提案（来自 codex 反向评审的 Worth-Considering 项）一起定。
