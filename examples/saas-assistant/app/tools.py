@@ -10,7 +10,7 @@ import json
 import uuid
 from typing import Any, Dict
 
-from agentao.tools.base import Tool
+from agentao.host import Tool
 
 
 # In-memory "database" keyed by tenant.

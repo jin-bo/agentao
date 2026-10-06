@@ -80,7 +80,7 @@ agent = Agentao(
 | `extra_body` | `Dict[str,Any]` | `None` | 原样转发给 LLM `.create()` 的 SDK `extra_body` —— 封闭请求构建够不到的参数的逃生舱（`reasoning_effort` / `top_p` / `seed` / `response_format` / provider 专有字段）。**仅关键字。** 子 agent 继承;日志中凭据键脱敏。**与 `llm_client` 互斥**。详见下文 |
 | `api_format` | `str` | `"openai-completions"` | 对 `base_url` 说哪种线路协议（0.5.0）：`"openai-completions"`、`"anthropic-messages"`（Anthropic 的 Messages API，走官方 SDK）或 `"openai-responses"`（OpenAI 的 Responses API，0.5.3）。**仅关键字**；显式配置，从不根据 URL 或模型名推断；之后只能由 `set_provider(..., api_format=)` 改变；子代理继承；**与 `llm_client=` 互斥**。未知值抛 `ValueError`。在 `anthropic-messages` 上，`base_url` 是 API 根，不发送 `temperature`，扩展思考走 `extra_body`。环境变量等价物：`{PROVIDER}_API_FORMAT` —— 见[附录 B](/zh/appendix/b-config-keys) |
 | `transport` | `Transport` | `NullTransport()` | UI 桥：事件流 + 工具确认 + ask_user + 最大迭代回调，详见 [第 4 部分](/zh/part-4/) |
-| `permission_engine` | `PermissionEngine` | 工厂自动建一个根在 `working_directory` | 规则级权限引擎，详见 [5.4](/zh/part-5/4-permissions) |
+| `permission_engine` | `PermissionEngine` | `None`——没有引擎，不执行任何规则（`build_from_environment` 会建一个根在 `working_directory` 的） | 规则级权限引擎；权限模式和 `set_permission_mode` 都需要它，详见 [5.4](/zh/part-5/4-permissions) |
 | `max_context_tokens` | `int` | `200_000` | 超过即触发对话压缩 |
 | `extra_mcp_servers` | `Dict[str,Dict]` | `None` | 给单个会话注入 MCP 服务器，不动 `.agentao/mcp.json`；同名会覆盖。适合按租户切换 token |
 | `extra_tools` | `Sequence[Tool]` | `None` | 注入 / 替换工具（实例；最后注册，同名覆盖内置）。见 [5.1](/zh/part-5/1-custom-tools) |

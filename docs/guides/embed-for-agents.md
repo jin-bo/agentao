@@ -94,8 +94,41 @@ Required args (pure injection):
 - `llm_client` **or** the trio `api_key` + `base_url` + `model`.
   Missing both → `ValueError`.
 
-Everything else (`permission_engine`, `memory_manager`, `mcp_registry`,
-`transport`) has a safe default. See the table in
+Everything else has a default. Two of them decide what the agent may do
+without asking, so read this before you ship the skeleton:
+
+> **Headless, "ask" means "allow".** `NullTransport` — the default when
+> you pass no `transport=`, and what the skeleton passes — answers yes to
+> every confirmation except one the MCP Skills gate raises. So every call
+> the permission layer would *ask* about runs: shell commands outside the
+> read-only allowlist, `web_fetch` to an unlisted domain, `web_search`,
+> writes into `.git/`, `.agentao/` or credential-shaped paths. What still
+> stops a call: read-only mode, an engine `deny` rule (including the
+> `workspace-write` preset's own — only when there *is* an engine), the
+> hardline command floor, the MCP Skills gate, and `web_fetch`'s URL
+> policy.
+>
+> **No engine by default.** The skeleton passes no `permission_engine`,
+> so no rule is evaluated and `agent.set_permission_mode(...)` raises
+> `ValueError` (§5).
+
+For an unattended host that should refuse anything that would ask, pass an
+engine and a transport that says no:
+
+```python
+from agentao.permissions import PermissionEngine
+from agentao.transport import SdkTransport
+
+wd = Path("/srv/myapp/run-1")
+agent = Agentao(
+    working_directory=wd,
+    llm_client=LLMClient(...),
+    permission_engine=PermissionEngine(project_root=wd),   # modes + preset deny rules; no file I/O
+    transport=SdkTransport(confirm_tool=lambda *_: False),  # ASK → refused
+)
+```
+
+The other defaults (`memory_manager`, `mcp_registry`) are in the table in
 [`EMBEDDING.md` §2](embedding.md#2-pure-injection-construction).
 
 > **MCP transports.** The default `mcp_registry` reads `.agentao/mcp.json` and
@@ -342,12 +375,21 @@ capability, not `FileSystem`).
 
 ## 5. Permissions (do not bypass — gate instead)
 
-Tools with `requires_confirmation=True` (shell, web, writes, deletes)
-are gated by `PermissionEngine`. From a host you set the posture, you
-do not disable the engine.
+Every tool call is decided in order: read-only mode first, then the
+engine's rules (`allow` / `deny` are final), then — for an engine `ask` or
+no match — the tool's own `requires_confirmation`, and an ask goes to
+`transport.confirm_tool`. **Your transport answers every ask.**
+`NullTransport` answers yes (§1), so a headless host that wants asks
+refused passes `SdkTransport(confirm_tool=lambda *_: False)`. From a host
+you set the posture; you do not disable the engine.
 
 - Modes (`agentao.permissions.PermissionMode`): `read-only`,
-  `workspace-write` (default), `full-access`, `plan`. Set with
+  `workspace-write`, `full-access`, `plan`. **Modes live on the engine, so
+  they need one.** A `PermissionEngine` starts in `workspace-write`, and
+  `build_from_environment` always builds one. A bare `Agentao(...)` — the
+  §1 skeleton — has none: no rule is evaluated, and `set_permission_mode`
+  raises `ValueError`. Pass `permission_engine=PermissionEngine(project_root=...)`
+  to get modes and the preset's `deny` rules. Set with
   `agent.set_permission_mode(PermissionMode.WORKSPACE_WRITE)` — **not**
   `agent.permission_engine.set_mode(...)`, which is half the switch:
   read-only has two (the engine's preset and `ToolRunner.readonly_mode`),
@@ -391,7 +433,10 @@ do not disable the engine.
   existed, a `pattern`-for-`args` typo silently dropped the rule's
   condition and widened it to the whole tool.
 - Inspect what *will* apply: `agent.active_permissions()` →
-  `{mode, rules, loaded_sources}` (JSON-safe snapshot).
+  `{mode, rules, loaded_sources}` (JSON-safe snapshot). With no engine it
+  reports `mode="workspace-write"`, empty `rules` and
+  `loaded_sources=["default:no-engine"]`: that label means **no rule is
+  evaluated**, not that the `workspace-write` preset applies.
 - Layering host policy? Tag provenance with
   `agent.permission_engine.add_loaded_source("injected:<name>")`.
 
@@ -560,8 +605,8 @@ must pass `logger=`. ([`EMBEDDING.md` §2](embedding.md#2-pure-injection-constru
 - [ ] Async host uses `arun()`, not `chat()` on the loop thread.
 - [ ] A turn that produced no answer is not presented as one (§6.1) — the reply string alone does not tell you.
 - [ ] If the host forwards images: `data`/`mimeType` validated, size/count capped host-side, and consumers of `agent.messages` tolerate the `<attachment …/>` degradation rewrite (§2).
-- [ ] Imports come from `agentao`, `agentao.embedding`, `agentao.host`, `agentao.host.protocols` only — no `agentao.runtime.*` / `AgentEvent` / `agentao.harness`.
-- [ ] Permission posture set explicitly; untrusted input → `sandbox_policy`.
+- [ ] Imports come from the §3 list (plus `agentao.permissions` for `PermissionEngine` / `PermissionMode`) — no `agentao.runtime.*` / `AgentEvent` / `agentao.harness`.
+- [ ] Permission posture set explicitly: an engine is passed (or the factory built one), and the transport answers asks the way you intend — `NullTransport` approves every ask (§1). Untrusted input → `sandbox_policy`.
 - [ ] Secrets come from the host (env/secret manager), not hard-coded.
 - [ ] Logging handled (`logger=` if the host owns logging).
 - [ ] Pin/declare dependency on a compatible Agentao version; note `pydantic>=2` is required.

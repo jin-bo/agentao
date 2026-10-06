@@ -53,6 +53,10 @@ agent.set_permission_mode(PermissionMode.READ_ONLY)
 
 Switchable at runtime — takes effect on the next tool call.
 
+**Modes need an engine.** A `PermissionEngine` starts in `WORKSPACE_WRITE`, and `build_from_environment` always builds one. A bare `Agentao(...)` without `permission_engine=` has none: no rule is evaluated, and `set_permission_mode` raises `ValueError`. Pass `permission_engine=PermissionEngine(project_root=...)` (no file I/O) to get modes and the preset's `deny` rules.
+
+**"Ask" is answered by the transport.** Every "Ask" in the table above goes to `transport.confirm_tool`. The default `NullTransport` answers yes to all of them except a confirmation the MCP Skills gate raises, so in a headless host "Ask" means "Allow". A host with nobody to ask that should refuse passes `SdkTransport(confirm_tool=lambda *_: False)`.
+
 Prefer this over `agent.permission_engine.set_mode(...)`, which is only
 half the switch. `read-only` has **two** of them — the engine's preset and
 `ToolRunner.readonly_mode` — and the engine holds no transport, so a bare

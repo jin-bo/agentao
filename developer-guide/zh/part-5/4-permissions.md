@@ -53,6 +53,10 @@ agent.set_permission_mode(PermissionMode.READ_ONLY)
 
 运行时可随时切换——下一次工具调用就生效。
 
+**权限模式需要引擎。** `PermissionEngine` 初始是 `WORKSPACE_WRITE`，`build_from_environment` 总会建一个。没传 `permission_engine=` 的裸 `Agentao(...)` 没有引擎：不执行任何规则，调用 `set_permission_mode` 会抛 `ValueError`。传入 `permission_engine=PermissionEngine(project_root=...)`（不做文件 I/O）才有权限模式和预设里的 `deny` 规则。
+
+**"问"由 transport 回答。** 上表里所有的"问"都交给 `transport.confirm_tool`。默认的 `NullTransport` 对它们一律回答"是"，只有 MCP Skills 闸门发起的确认除外；所以在无界面宿主里，"问"就等于"允"。没人可问、又希望拒绝的宿主，应传入 `SdkTransport(confirm_tool=lambda *_: False)`。
+
 优先用它，而不是 `agent.permission_engine.set_mode(...)`——后者只切了一半。
 `read-only` 有**两个**开关：引擎的预设和 `ToolRunner.readonly_mode`；而引擎按设计
 不持有 transport，所以裸调 `set_mode` 既不发 `READONLY_MODE_CHANGED` 也不发
