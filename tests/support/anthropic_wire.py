@@ -141,6 +141,7 @@ class Wire:
         self._responses = list(responses)
         self._models = models or {}
         self.requests: List[Dict[str, Any]] = []
+        self.headers: List[Dict[str, str]] = []
         self.urls: List[str] = []
         self.model_lookups: List[str] = []
 
@@ -158,6 +159,7 @@ class Wire:
                 })
             return httpx2.Response(200, json=body)
         self.urls.append(str(request.url))
+        self.headers.append(dict(request.headers))
         self.requests.append(json.loads(request.content))
         scripted = self._responses.pop(0)
         if isinstance(scripted, bytes):
