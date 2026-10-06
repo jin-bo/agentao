@@ -196,6 +196,24 @@ claude-sonnet-5`，修复采用了 128000 并重发成功 —— 而默认的 65
 清洗豁免的依据改为协议的「原样回传」规则。thinking 落在 **turn 中间**（`[text, thinking, text,
 tool_use]` 后接 `tool_result`，即同角色合并可能产生的形状）同样被接受，所以合并不需要加防护。
 
+**真实端点实测（2026-10-05，`api.anthropic.com`，`claude-sonnet-5-5`）：thinking 块与前缀绑定。**
+Claude Fable 5.1、Opus 5.5、Sonnet 5.5 会把 thinking 块绑定到产生它时的 `system` 文本与 `tools`
+数组；Anthropic 对 2026-08-31 及之后创建的账号强制执行，更早的账号除非请求要求，否则不检查。本次
+所用账号属于后者：改动 `system` 文本或新增一个工具后，回传的签名块默认仍被接受。显式设置
+`thinking.block_binding.prefix_mismatch_behavior: "error"` 时，同一请求返回 400，报错原文为
+`messages.1.content.0: Invalid signature in thinking block. The block is bound to a different
+conversation. Remove the block, or set thinking.block_binding.prefix_mismatch_behavior to
+"drop_block". The system prompt differs from the one this block was created with.`；设为
+`"drop_block"` 时返回 200，并报告 `input_transformations: [{"type": "thinking_dropped", "reason":
+"prefix_binding_mismatch", …}]`。不带 `anthropic-beta: thinking-binding-controls-2026-08-01`
+请求头时，`block_binding` 会被拒绝（"Extra inputs are not permitted"）。agentao 会在会话中途改动
+前缀的两部分（安装技能、编辑 `AGENTAO.md`、`/goal` 加入 `update_goal`），所以在强制执行的账号上，
+会话会停在这个 400 上。适配器现在识别这条报错，带 `drop_block` 与 beta 请求头重发一次，并在本会话
+余下时间持续要求丢弃（切换模型时与其他闩锁一起清除）。宿主自己设置的 `block_binding`，或
+`adaptive` 以外的 thinking 类型，保持不动。由 `LLMClient` 构造、带丢弃要求且改动了 `system` 文本的
+同一请求已实际发出，返回 200。此问题由阅读 pydantic-ai 发现，它的做法相同
+（`pydantic_ai_slim/pydantic_ai/models/anthropic.py`）。
+
 **三组缓存对比（同一天，同一端点与模型）。** 同一段脚本化会话 —— 7 个用户轮次、13 个请求、
 对三个预置文件做真实工具调用，prompt 从约 9.6k 增长到约 17.9k tokens —— 跑三遍，每组在第一个
 工具定义里放一个随机标记，与其他组的缓存隔离。

@@ -36,6 +36,19 @@ _Targeting 0.5.11. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A session on Claude Fable 5.1, Opus 5.5 or Sonnet 5.5 no longer ends when
+  the system prompt or tool list changes.** These models bind each thinking
+  block to the `system` text and tools it was produced under, and on accounts
+  created on or after 2026-08-31 a replayed block is rejected with a 400
+  ("The block is bound to a different conversation") once either changes —
+  which agentao does mid-session (a skill install, an `AGENTAO.md` edit,
+  `/goal` adding `update_goal`). The `anthropic-messages` wire now re-sends
+  once with `thinking.block_binding.prefix_mismatch_behavior: "drop_block"`
+  and the `thinking-binding-controls-2026-08-01` beta header, and keeps asking
+  for the drop until the model changes. A `block_binding` set in
+  `LLM_EXTRA_BODY`, or a thinking type other than `adaptive`, is left alone.
+  The error text, the drop and the header requirement were observed on
+  `api.anthropic.com` (`docs/design/llm-api-adapters.md`, *Live results*).
 - **`web_fetch` no longer reaches cloud metadata endpoints in encodings the
   URL policy missed.** On Python 3.12.0 these all passed:
   Azure WireServer `168.63.129.16` (a public address), Oracle Classic

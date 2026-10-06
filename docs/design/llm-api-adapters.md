@@ -277,6 +277,32 @@ protocol's as-it-arrived rule instead. Thinking **mid-turn** (`[text, thinking,
 text, tool_use]` answered by a `tool_result`, the shape same-role merging can
 produce) was accepted as well, so merging needs no guard.
 
+**Live results (2026-10-05, `api.anthropic.com`, `claude-sonnet-5-5`): thinking
+blocks are bound to their prefix.** Claude Fable 5.1, Opus 5.5 and Sonnet 5.5
+bind a thinking block to the `system` text and `tools` array it was produced
+under; Anthropic enforces this for accounts created on or after 2026-08-31 and
+leaves older ones alone unless asked. The account used here is older: with
+the `system` text changed, or a tool added, a replayed signed block was
+accepted by default. Under an explicit
+`thinking.block_binding.prefix_mismatch_behavior: "error"` the same request was
+a 400 reading `messages.1.content.0: Invalid signature in thinking block. The
+block is bound to a different conversation. Remove the block, or set
+thinking.block_binding.prefix_mismatch_behavior to "drop_block". The system
+prompt differs from the one this block was created with.`; under `"drop_block"`
+it was a 200 reporting `input_transformations: [{"type": "thinking_dropped",
+"reason": "prefix_binding_mismatch", …}]`. `block_binding` is refused without
+the `anthropic-beta: thinking-binding-controls-2026-08-01` header ("Extra
+inputs are not permitted"). agentao changes both halves of the prefix
+mid-session (a skill install, an `AGENTAO.md` edit, `/goal` adding
+`update_goal`), so on an enforcing account a session would end on that 400.
+The adapter now recognises the message, re-sends once with `drop_block` and the
+beta header, and keeps asking for the drop for the rest of the session (cleared
+with the other latches on a model switch). A host's own `block_binding`, or a
+thinking type other than `adaptive`, is left alone. The same request built by
+`LLMClient` was sent with the drop and a changed `system` text and returned
+200. Found by reading pydantic-ai, which does the same
+(`pydantic_ai_slim/pydantic_ai/models/anthropic.py`).
+
 **The three-arm cache comparison (same day, same endpoint and model).** One
 scripted session — 7 user turns, 13 requests, real tool calls over three seeded
 files, prompt growing from ~9.6k to ~17.9k tokens — run three times, each arm

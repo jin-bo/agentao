@@ -109,6 +109,21 @@ _MAX_TOKENS_CAP = re.compile(r"max_tokens:\s*(\d+)\s*>\s*(\d+)")
 _MODEL_INFO_TIMEOUT_S = 5.0
 _MODEL_INFO_ATTEMPTS = 2
 
+#: Claude Fable 5.1, Opus 5.5 and Sonnet 5.5 bind each thinking block to the
+#: conversation prefix that produced it: once the ``system`` text or the
+#: ``tools`` array differs, a replayed block is rejected with a 400 whose
+#: message contains this text. agentao changes both mid-session on purpose
+#: (a skill install, an ``AGENTAO.md`` edit, ``/goal`` adding ``update_goal``).
+#: Anthropic enforces the check for accounts created on or after 2026-08-31;
+#: older ones get it only when asked. Observed on ``claude-sonnet-5-5``
+#: (2026-10-05) under an explicit ``prefix_mismatch_behavior: "error"``.
+_STALE_THINKING_MARKER = "the block is bound to a different conversation"
+
+#: ``block_binding`` is refused without this beta header ("Extra inputs are
+#: not permitted"), observed on the same date.
+_THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
+_DROP_STALE_THINKING = {"prefix_mismatch_behavior": "drop_block"}
+
 
 def _positive_int(value: Any) -> Optional[int]:
     if isinstance(value, int) and not isinstance(value, bool) and value > 0:
@@ -442,6 +457,37 @@ def _merge_usage(fields: Dict[str, int], usage: Any) -> None:
             fields[name] = value
 
 
+def _ask_to_drop_stale_thinking(kwargs: Dict[str, Any]) -> bool:
+    """Add ``drop_block`` to a request's ``thinking``. False if it cannot.
+
+    agentao sends no ``thinking`` of its own (the binding models think
+    adaptively when none is given), so the object usually comes from nowhere
+    or from the host's ``extra_body``. A host that set a ``block_binding`` of
+    its own is honoured, and one that chose a thinking type other than
+    ``adaptive`` is left alone: the API accepts ``block_binding`` only with
+    adaptive thinking. The ``extra_body`` dict is the client's own, so it is
+    copied, never edited.
+    """
+    extra_body = kwargs.get("extra_body")
+    body = dict(extra_body) if isinstance(extra_body, dict) else {}
+    thinking = body.get("thinking")
+    if thinking is None:
+        thinking = {}
+    if not isinstance(thinking, dict) or "block_binding" in thinking:
+        return False
+    if thinking.get("type", "adaptive") != "adaptive":
+        return False
+    body["thinking"] = {"type": "adaptive", **thinking, "block_binding": dict(_DROP_STALE_THINKING)}
+    kwargs["extra_body"] = body
+    headers = dict(kwargs.get("extra_headers") or {})
+    betas = [b.strip() for b in str(headers.get("anthropic-beta", "")).split(",") if b.strip()]
+    if _THINKING_BINDING_BETA not in betas:
+        betas.append(_THINKING_BINDING_BETA)
+    headers["anthropic-beta"] = ",".join(betas)
+    kwargs["extra_headers"] = headers
+    return True
+
+
 class AnthropicMessagesAdapter:
     """The Messages API over the official ``anthropic`` SDK."""
 
@@ -466,6 +512,10 @@ class AnthropicMessagesAdapter:
         # timeout) spends one, so a blip on the first turn does not cost the
         # session its limits and a stalling endpoint is not asked for ever.
         self._model_info_attempts = _MODEL_INFO_ATTEMPTS
+        # Set once the API has rejected a replayed thinking block as bound to
+        # a different prefix. Every later request then asks for the drop, as
+        # Anthropic requires for a history that has had one dropped.
+        self._drop_stale_thinking = False
 
     def create_client(self) -> Any:
         try:
@@ -499,6 +549,7 @@ class AnthropicMessagesAdapter:
     def reset_latches(self) -> None:
         self._max_output_tokens = None
         self._model_info_attempts = _MODEL_INFO_ATTEMPTS
+        self._drop_stale_thinking = False
 
     def prepare(self) -> None:
         """Ask ``GET /v1/models/{id}`` and adopt what it states.
@@ -592,6 +643,8 @@ class AnthropicMessagesAdapter:
             kwargs["tools"] = translate_tools(tools)
         if owner.extra_body:
             kwargs["extra_body"] = owner.extra_body
+        if self._drop_stale_thinking:
+            _ask_to_drop_stale_thinking(kwargs)
         return kwargs
 
     def log_view(
@@ -620,6 +673,21 @@ class AnthropicMessagesAdapter:
     def repair_request(self, err_text: str, kwargs: Dict[str, Any], *, stream: bool) -> bool:
         """One-shot fix-up of a rejected request. True → re-send now."""
         owner = self._owner
+        if (
+            not self._drop_stale_thinking
+            and _STALE_THINKING_MARKER in err_text.lower()
+            and _ask_to_drop_stale_thinking(kwargs)
+        ):
+            self._drop_stale_thinking = True
+            owner.logger.warning(
+                "%s rejected a replayed thinking block because the system prompt "
+                "or the tool list changed since it was produced. Retrying with "
+                "thinking.block_binding.prefix_mismatch_behavior='drop_block'; that "
+                "turn's reasoning is dropped and later requests keep asking for the "
+                "drop. The same change also invalidated the prompt cache.",
+                owner.model,
+            )
+            return True
         match = _MAX_TOKENS_CAP.search(err_text)
         if match is not None:
             limit = int(match.group(2))
