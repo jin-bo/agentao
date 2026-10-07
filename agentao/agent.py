@@ -14,7 +14,7 @@ from .llm.client import KEEP_BASE_URL as _KEEP_BASE_URL
 from .permissions import (
     PermissionEngine,
     PermissionMode,
-    parse_construction_permission_mode,
+    _parse_construction_permission_mode,
 )
 from .runtime import ChatLoopRunner, ToolRunner, run_llm_call, run_turn
 from .runtime import model as _runtime_model
@@ -339,7 +339,7 @@ class Agentao:
         # Parsed before anything is built, so a bad mode fails at the call
         # site rather than after half the runtime exists.
         initial_mode: Optional[PermissionMode] = (
-            parse_construction_permission_mode(permission_mode)
+            _parse_construction_permission_mode(permission_mode)
             if permission_mode is not None else None
         )
 
@@ -442,7 +442,7 @@ class Agentao:
             # switch, and an event here would reach the host's transport
             # before this constructor has returned. Needs ``tool_runner``,
             # hence after wiring.
-            _runtime_permission_mode.set_initial_permission_mode(
+            _runtime_permission_mode._set_initial_permission_mode(
                 self, initial_mode,
             )
 

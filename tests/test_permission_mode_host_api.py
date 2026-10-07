@@ -23,7 +23,7 @@ import sys
 import pytest
 
 from agentao import Agentao
-from agentao.permissions import PermissionEngine, PermissionMode, parse_permission_mode
+from agentao.permissions import PermissionEngine, PermissionMode, _parse_permission_mode
 from agentao.transport import EventType, SdkTransport
 
 _LOGGER = logging.getLogger("test.permission_mode_host_api")
@@ -44,24 +44,24 @@ def _mode_events(events):
     ]
 
 
-# ── parse_permission_mode ────────────────────────────────────────────────
+# ── _parse_permission_mode ────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("mode", list(PermissionMode))
 def test_every_mode_parses_from_its_string_value(mode):
-    assert parse_permission_mode(mode.value) is mode
-    assert parse_permission_mode(mode) is mode
+    assert _parse_permission_mode(mode.value) is mode
+    assert _parse_permission_mode(mode) is mode
 
 
 def test_an_unknown_string_is_refused():
     with pytest.raises(ValueError, match="unknown permission mode 'readonly'"):
-        parse_permission_mode("readonly")
+        _parse_permission_mode("readonly")
 
 
 @pytest.mark.parametrize("value", [None, 1, True, ["read-only"]])
 def test_a_non_string_is_a_type_error(value):
     with pytest.raises(TypeError):
-        parse_permission_mode(value)
+        _parse_permission_mode(value)
 
 
 # ── Agentao(permission_mode=) ────────────────────────────────────────────
@@ -319,12 +319,12 @@ def test_set_initial_permission_mode_refuses_plan_itself(tmp_path):
     # Not only via its two callers' pre-filtering: the helper enforces the
     # construction vocabulary, so a future caller cannot reach PLAN without
     # a PlanSession through it.
-    from agentao.runtime.permission_mode import set_initial_permission_mode
+    from agentao.runtime.permission_mode import _set_initial_permission_mode
 
     agent = _make(tmp_path, permission_mode="workspace-write")
     try:
         with pytest.raises(ValueError, match="not accepted at construction"):
-            set_initial_permission_mode(agent, PermissionMode.PLAN)
+            _set_initial_permission_mode(agent, PermissionMode.PLAN)
         assert agent.permission_engine.active_mode is PermissionMode.WORKSPACE_WRITE
     finally:
         agent.close()

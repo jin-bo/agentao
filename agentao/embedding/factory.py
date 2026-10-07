@@ -211,7 +211,7 @@ def build_from_environment(
     from ..mcp import FileBackedMCPRegistry
     from ..memory import MemoryManager, SQLiteMemoryStore
     from ..paths import user_root
-    from ..permissions import PermissionEngine, parse_construction_permission_mode
+    from ..permissions import PermissionEngine, _parse_construction_permission_mode
     from ..replay import ReplayManager, load_replay_config
     from ..sandbox import SandboxPolicy
     from .permission_loader import load_permission_config
@@ -238,7 +238,7 @@ def build_from_environment(
                 "permission_mode=, not both. Set the mode on your engine, or "
                 "call set_permission_mode() after construction."
             )
-        initial_mode = parse_construction_permission_mode(requested_mode)
+        initial_mode = _parse_construction_permission_mode(requested_mode)
 
     settings = _load_settings(wd)
 
@@ -359,7 +359,7 @@ def build_from_environment(
     if initial_mode is not None:
         # Same silent start as ``Agentao(permission_mode=)``; the engine is
         # the file-loaded one, so the user's rules stay.
-        from ..runtime.permission_mode import set_initial_permission_mode
+        from ..runtime.permission_mode import _set_initial_permission_mode
 
-        set_initial_permission_mode(agent, initial_mode)
+        _set_initial_permission_mode(agent, initial_mode)
     return agent
