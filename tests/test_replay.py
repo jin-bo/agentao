@@ -777,3 +777,28 @@ def test_replay_commands_answer_without_a_manager(tmp_path):
     finally:
         agent.end_replay()
         agent.close()
+
+
+def test_reader_skips_truncated_utf8_tail(tmp_path):
+    rec = ReplayRecorder.create("sess", tmp_path)
+    rec.record("user_message", payload={"content": "ok"})
+    rec.close()
+    expected = ReplayReader(rec.path).events()
+    with rec.path.open("ab") as fp:
+        fp.write(b'{"kind":"user_message","payload":{"content":"\xe4\xb8')
+    assert ReplayReader(rec.path).events() == expected
+    metas = list_replays(tmp_path)
+    assert len(metas) == 1
+    assert metas[0].event_count == len(expected)
+
+
+def test_reader_skips_invalid_utf8_record_and_keeps_later_events(tmp_path):
+    rec = ReplayRecorder.create("sess", tmp_path)
+    rec.record("user_message", payload={"content": "ok"})
+    rec.close()
+    expected = ReplayReader(rec.path).events()
+    lines = rec.path.read_bytes().splitlines(keepends=True)
+    lines.insert(1, b'{"kind":"user_message","payload":{"content":"\xff"}}\n')
+    rec.path.write_bytes(b"".join(lines))
+    assert ReplayReader(rec.path).events() == expected
+    assert list_replays(tmp_path)[0].event_count == len(expected)

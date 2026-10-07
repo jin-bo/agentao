@@ -154,7 +154,7 @@ class ReplayReader:
         if not self.path.exists():
             return
         try:
-            raw_lines = self.path.read_text(encoding="utf-8").splitlines()
+            raw_lines = self.path.read_bytes().splitlines()
         except OSError as exc:
             logger.warning("replay: could not read %s: %s", self.path, exc)
             return
@@ -164,7 +164,7 @@ class ReplayReader:
                 continue
             try:
                 event = json.loads(line)
-            except json.JSONDecodeError as exc:
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 # Tolerate ONE malformed tail line (crash-during-write).
                 # Any malformed line in the middle is still skipped but
                 # logged — one bad line never aborts the read.
@@ -223,7 +223,7 @@ def _summarize(path: Path) -> Optional[ReplayMeta]:
     except OSError:
         return None
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = path.read_bytes()
     except OSError:
         return None
     session_id = ""
@@ -241,7 +241,7 @@ def _summarize(path: Path) -> Optional[ReplayMeta]:
             continue
         try:
             event = json.loads(line)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             # Trailing partial line is normal after a crash; only count
             # middle-of-file malformation as "real" corruption.
             if idx != total - 1:
