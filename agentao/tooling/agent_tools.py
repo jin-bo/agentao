@@ -9,13 +9,28 @@ same way as top-level tool calls.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from ..agents.tools import AgentToolWrapper
 from ..transport import AgentEvent, EventType
+from ..transport.sdk import invoke_ask_user_callback
 
 if TYPE_CHECKING:
     from ..agent import Agentao
+
+
+def transport_ask_user(agent: "Agentao") -> Callable[..., str]:
+    """An ``ask_user`` callback that reaches ``agent.transport.ask_user``.
+
+    The transport is read per call (replay may splice an adapter in later),
+    and the signature check runs against the transport method itself: a
+    ``lambda *a, **kw`` here would hide that signature from
+    ``invoke_ask_user_callback`` and forward every hint, so a transport
+    whose ``ask_user`` takes only the question would raise ``TypeError``.
+    """
+    def _ask(question: str, **hints: Any) -> str:
+        return invoke_ask_user_callback(agent.transport.ask_user, question, hints)
+    return _ask
 
 
 def _add_usage(
@@ -111,7 +126,7 @@ def register_agent_tools(agent: "Agentao") -> None:
         step_callback=_agent_step_cb,
         output_callback=_agent_output_cb,
         tool_complete_callback=_agent_tool_complete_cb,
-        ask_user_callback=lambda *a, **kw: agent.transport.ask_user(*a, **kw),
+        ask_user_callback=transport_ask_user(agent),
         max_context_tokens=agent.context_manager.max_tokens,
         parent_messages_getter=lambda: agent.messages,
         cancellation_token_getter=lambda: agent._current_token,

@@ -11,25 +11,37 @@ Transport 是 Agent 运行时与宿主 UI/业务逻辑之间的**唯一接口**�
 
 ```python
 @runtime_checkable
-class Transport(Protocol):
+class CoreTransport(Protocol):
     # 单向事件（fire-and-forget）
     def emit(self, event: AgentEvent) -> None: ...
 
     # 阻塞式请求-响应
     def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool: ...
-    def ask_user(self, question: str) -> str: ...
+    def ask_user(
+        self,
+        question: str,
+        *,
+        header: Optional[str] = None,
+        options: Optional[List[str]] = None,
+        multiple: bool = False,
+        allow_custom: bool = True,
+    ) -> str: ...
     def on_max_iterations(self, count: int, messages: list) -> dict: ...
 
-    # 可选 fan-out（基类声明；并非所有实现都暴露）
+
+@runtime_checkable
+class Transport(CoreTransport, Protocol):
+    # fan-out；省略它的 transport 只是 CoreTransport
     def subscribe(self, listener: Callable[[AgentEvent], None]) -> Callable[[], None]: ...
 ```
 
 **关键设计**：
 
-- `Transport` 是一个 `Protocol`（PEP 544）——**你不必继承任何基类**，实现这 4 个必填方法就算 Transport
-- `@runtime_checkable` 让 `isinstance(x, Transport)` 可用（但不保证方法类型正确；类型检查应依赖静态工具）
+- 两者都是 `Protocol`（PEP 544）——**你不必继承任何基类**，实现这 4 个必填方法就能传给 `Agentao(transport=...)`
+- `@runtime_checkable` 让 `isinstance(x, CoreTransport)` 和 `isinstance(x, Transport)` 可用（但不保证方法类型正确；类型检查应依赖静态工具）
 - 四个必填方法一分为二：**1 个单向推送事件** + **3 个同步问答**
-- `subscribe(listener)` 是**可选**的——Protocol 里有声明；`NullTransport` 和 `SdkTransport` 通过组合 `EventBroadcaster` helper 提供；自定义实现可以不实现。访问前用 `getattr(transport, "subscribe", None)` 探测。
+- `subscribe(listener)` 是**可选**的——`Transport` 里有声明，`CoreTransport` 里没有；`NullTransport` 和 `SdkTransport` 通过组合 `EventBroadcaster` helper 提供；自定义实现可以不实现。访问前用 `getattr(transport, "subscribe", None)` 探测——但方法存在不等于它真能用（见下一条）。
+- 对静态类型检查器来说，四个必需方法单独构成一个协议 `CoreTransport`（`agentao.transport`），`Transport` 在它之上加了 `subscribe`。`Agentao(transport=...)` 的类型是 `CoreTransport`，所以没有 `subscribe()` 的 transport 在这里也能通过类型检查。运行时同理：对这样的 transport，`isinstance(x, Transport)` 为 `False`（`runtime_checkable` 检查要求每个成员都在，包括 `subscribe`），应改用 `isinstance(x, CoreTransport)`。反过来不成立：一个显式继承 `Transport`、却没有定义 `subscribe()` 的类能通过 `isinstance(x, Transport)`，但继承的是协议里的桩方法，它什么也不注册，返回 `None`——要可用的 `subscribe()`，继承 `NullTransport`（或组合 `EventBroadcaster`）。只有 `Agentao.astream()` 需要 `subscribe()`，缺了它会抛 `TypeError`。
 
 ## 方法一：`emit(event)` — 推事件
 
@@ -79,9 +91,19 @@ def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
 ## 方法三：`ask_user(question)` — 向用户反问
 
 ```python
-def ask_user(self, question: str) -> str:
+def ask_user(
+    self,
+    question: str,
+    *,
+    header: Optional[str] = None,
+    options: Optional[List[str]] = None,
+    multiple: bool = False,
+    allow_custom: bool = True,
+) -> str:
     """让 Agent 向用户反问一个开放问题，返回用户的回答。"""
 ```
+
+`question` 始终是自由文本。仅限关键字的 `header`、`options`、`multiple`、`allow_custom` 是建议性提示，transport 可以渲染成选择题，也可以忽略。运行时，只接受 `question` 的方法照样能用：内置工具会检查 transport 方法本身的签名，只在它接受某个关键字参数时才转交对应的提示（`transport/sdk.py::invoke_ask_user_callback`），子代理提出的问题也一样。类型检查器拿一个类和 `CoreTransport` 比对时要求完整签名，所以新代码请声明这四个关键字参数（或写 `**hints`）。
 
 **何时被调用**：
 - Agent 主动调用内置工具 `ask_user` 时
@@ -233,8 +255,8 @@ class MyCustomTransport:
         # 发请求给客户端，同步等响应
         return self.send({"type": "confirm", ...}, wait=True)
 
-    def ask_user(self, q):
-        return self.send({"type": "ask", "question": q}, wait=True)
+    def ask_user(self, q, **hints):
+        return self.send({"type": "ask", "question": q, **hints}, wait=True)
 
     def on_max_iterations(self, count, msgs):
         return {"action": "stop"}

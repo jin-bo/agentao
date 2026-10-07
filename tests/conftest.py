@@ -1,5 +1,6 @@
 """Shared pytest fixtures for the agentao test suite."""
 
+import functools
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,6 +38,9 @@ def _agentao_env_default_credentials(monkeypatch, _stub_llm_credentials):
 
     _orig_init = Agentao.__init__
 
+    # ``wraps`` keeps ``inspect.signature(Agentao.__init__)`` reading the
+    # real signature, which tests inspect.
+    @functools.wraps(_orig_init)
     def _patched_init(self, *args, **kwargs):
         if kwargs.get("llm_client") is None:
             for key, value in discover_llm_kwargs().items():

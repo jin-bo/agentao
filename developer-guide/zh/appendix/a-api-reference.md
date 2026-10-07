@@ -6,7 +6,7 @@
 
 - `from agentao import ...` → `Agentao`、`SkillManager`
 - `from agentao.embedding import ...` → `build_from_environment`
-- `from agentao.transport import ...` → `AgentEvent`、`EventType`、`Transport`、`NullTransport`、`SdkTransport`、`build_compat_transport`、`gate_note`
+- `from agentao.transport import ...` → `AgentEvent`、`EventType`、`CoreTransport`、`Transport`、`NullTransport`、`SdkTransport`、`build_compat_transport`、`gate_note`
 - `from agentao.capabilities import ...` → `FileSystem`、`LocalFileSystem`、`FileEntry`、`FileStat`、`ShellExecutor`、`LocalShellExecutor`、`ShellRequest`、`ShellResult`、`BackgroundHandle`、`MemoryStore`、`SQLiteMemoryStore`、`MCPRegistry`、`FileBackedMCPRegistry`、`InMemoryMCPRegistry`
 - `from agentao.tools.base import ...` → `Tool`、`ToolRegistry`
 - `from agentao.permissions import ...` → `PermissionEngine`、`PermissionMode`、`PermissionDecision`
@@ -31,7 +31,7 @@ Agentao(
     temperature: float | None = None,
     max_tokens: int | None = None,
     *,                                           # 以下全部仅限关键字（0.5.0）
-    transport: Transport | None = None,
+    transport: CoreTransport | None = None,
     working_directory: Path,                     # 0.3.0 起必传
     extra_body: dict | None = None,              # 仅关键字；LLM .create() 请求体直通
     api_format: str | None = None,               # 仅关键字；"openai-completions"（默认）| "anthropic-messages" | "openai-responses"
@@ -104,7 +104,7 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 | `close` | `close() -> None` | 关 MCP 子进程与 DB handle；请放 `finally:` |
 | `set_provider` | `set_provider(api_key, base_url=None, model=None, *, api_format=None) -> None` | 运行时换 LLM。`api_format`（0.5.0）指明新 provider 的线路协议；`None` 保持当前线路 |
 | `set_model` | `set_model(model: str) -> str` | 只换模型；返回旧 id |
-| `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncIterator[HostEvent]` | 订阅公共 harness 事件（工具/子 Agent/权限决定生命周期）。无 replay；有界背压。详见 [A.10](#a-10-嵌入-harness-合约) |
+| `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncGenerator[HostEvent, None]` | 订阅公共 harness 事件（工具/子 Agent/权限决定生命周期）。无 replay；有界背压。详见 [A.10](#a-10-嵌入-harness-合约) |
 | `active_permissions` (0.3.1+) | `active_permissions() -> ActivePermissions` | 当前权限策略快照（`mode`、`rules`、`loaded_sources`），JSON-safe。详见 [A.10](#a-10-嵌入-harness-合约) |
 | `add_tool` | `add_tool(tool: RegistrableTool, *, replace: bool = False) -> None` | 构造后注册工具；与 `extra_tools=` 同样的校验 + 能力绑定。名字冲突且未传 `replace=True` 时抛异常（比 `tools.register` 更严）。保留名（`mcp_`、plan 工具）拒绝。下一次 `chat()`/`arun()` 可见。见 [5.1](/zh/part-5/1-custom-tools) |
 | `remove_tool` | `remove_tool(name: str) -> bool` | 构造后移除工具；返回是否存在过（缺失 → `False`，不抛）。`mcp_` / plan 工具会抛异常。下一次 `chat()`/`arun()` 消失 |
@@ -131,7 +131,7 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 | `messages` | `list[dict]` | OpenAI chat 格式的历史；可读，修改风险自担 |
 | `tools` | `ToolRegistry` | 活的注册表。优先用契约 API——`Agentao(extra_tools=[...])` 或 `agent.add_tool(...)`（会绑定能力并校验）；`agent.tools.register(...)` 是绕过两者的底层路径。见 [5.1](/zh/part-5/1-custom-tools) |
 | `skill_manager` | `SkillManager` | `agent.skill_manager.activate_skill(name, task_description)` 激活技能 |
-| `transport` | `Transport` | 当前传输层；可重新赋值 |
+| `transport` | `CoreTransport` | 当前传输层；可重新赋值。开启 replay 时，它是包着你传入的 transport 的 `ReplayAdapter`。要订阅，就在你自己构造的 transport 上调用 `subscribe()`，不要通过这个属性：`isinstance(t, Transport)` 对包装的 transport 没有 `subscribe()` 的 `ReplayAdapter` 也成立，对显式继承 `Transport` 的类继承来的空桩方法也成立，这两种情况都什么也不注册（见 [4.1](/zh/part-4/1-transport-protocol)） |
 | `_current_token` | `CancellationToken | None` | 按约定公开；其他线程可读到它并 `.cancel()` |
 
 ## A.2 传输层

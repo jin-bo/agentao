@@ -25,6 +25,7 @@ from .types import (
     CompactionOutcome,
     CompactionReason,
     CompactionTrigger,
+    ManualCompactionReason,
 )
 
 __all__ = [
@@ -35,4 +36,5 @@ __all__ = [
     "CompactionOutcome",
     "CompactionReason",
     "CompactionTrigger",
+    "ManualCompactionReason",
 ]

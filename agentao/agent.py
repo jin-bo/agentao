@@ -7,7 +7,7 @@ import concurrent.futures
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional, Sequence, Set, Union, TYPE_CHECKING
+from typing import Any, AsyncGenerator, Callable, Dict, Iterable, List, Optional, Sequence, Set, TypeVar, Union, TYPE_CHECKING
 
 from .llm import LLMClient
 from .llm.client import KEEP_BASE_URL as _KEEP_BASE_URL
@@ -43,18 +43,24 @@ from .sandbox import SandboxPolicy
 from .transport import NullTransport
 
 if TYPE_CHECKING:
-    from .compaction.types import CompactionController, CompactionOutcome
+    from .compaction.coordinator import CompactionCoordinator
+    from .compaction.types import CompactionController, CompactionOutcome, ManualCompactionReason
     from .agents.bg_store import BackgroundTaskStore  # noqa: F401
     from .capabilities import FileSystem, MCPRegistry, ShellExecutor
     from .mcp import McpClientManager  # type-only; MCP SDK is heavy
-    from .memory import MemoryManager  # noqa: F401
+    from .memory import MemoryManager
     from .replay import ReplayConfig, ReplayManager  # type-only — replay no longer in core surface
+    from .host.models import ActivePermissions, HostEvent
     from .host.stream import TextDelta  # noqa: F401
     from .outcome import TurnOutcome  # noqa: F401
     from .tools.base import RegistrableTool  # noqa: F401
+    from .transport.base import CoreTransport
 
 
 _logger = logging.getLogger(__name__)
+
+# The observer methods hand back the callback they were given, with its own type.
+_ObserverT = TypeVar("_ObserverT", bound="Callable[[HostEvent], object]")
 
 
 #: Workers for the ``arun`` bridge pool. Deliberately the same capacity
@@ -171,7 +177,7 @@ class Agentao:
         # ``"workspace-write"`` / ``"full-access"``; ``"plan"`` is refused).
         # ``None`` builds none. Mutually exclusive with ``permission_engine=``.
         permission_mode: Optional[Union[str, PermissionMode]] = None,
-        transport=None,                   # Transport protocol instance
+        transport: Optional["CoreTransport"] = None,  # CoreTransport protocol instance
         plan_session: Optional[PlanSession] = None,
         working_directory: Path,
         # Host LLM request-body passthrough. Same raw-config family as
@@ -212,7 +218,7 @@ class Agentao:
         sandbox_policy: Optional[SandboxPolicy] = None,
         replay_config: Optional["ReplayConfig"] = None,
         enable_builtin_agents: bool = False,
-    ):
+    ) -> None:
         """Initialize Agentao agent.
 
         Args:
@@ -242,8 +248,9 @@ class Agentao:
                 ``llm_client=`` (a host injecting its own client passes
                 ``extra_body=`` to that client directly). See
                 ``docs/design/host-llm-extra-params.md``.
-            transport: A Transport instance that receives all runtime events and
+            transport: A CoreTransport instance that receives all runtime events and
                        handles interactive requests (confirm_tool, ask_user, etc.).
+                       ``subscribe()`` is optional; only ``astream()`` needs it.
                        If omitted, a NullTransport is used (silent /
                        headless mode: every confirmation is approved).
             max_context_tokens: Maximum context window tokens (default 200K).
@@ -401,7 +408,9 @@ class Agentao:
         self.permission_engine = permission_engine
 
         # An explicit transport, or the silent headless default.
-        self.transport = transport if transport is not None else NullTransport()
+        self.transport: "CoreTransport" = (
+            transport if transport is not None else NullTransport()
+        )
 
         # Initialize context manager
         self.context_manager = ContextManager(
@@ -413,7 +422,7 @@ class Agentao:
         # Built on first use — see :attr:`compaction_coordinator`. Held
         # rather than rebuilt per call because it is where per-turn
         # compaction state lives.
-        self._compaction_coordinator = None
+        self._compaction_coordinator: Optional["CompactionCoordinator"] = None
         self.compaction_controller = compaction_controller
 
         # Session-scoped state (session id, host event stream, conversation
@@ -1043,30 +1052,31 @@ class Agentao:
             "logger": self.llm.logger,
         }
 
-    def add_host_event_observer(self, callback):
+    def add_host_event_observer(self, callback: _ObserverT) -> _ObserverT:
         """Register a synchronous observer on the public host event stream.
 
         Pass-through to :meth:`EventStream.add_observer` for sync
         consumers that cannot drive the async ``events()`` iterator.
         The callback fires inline on the producer thread; it must be
         cheap and non-blocking. Raised exceptions are logged and
-        discarded by :class:`EventStream`.
+        discarded by :class:`EventStream`. Returns ``callback`` itself.
         """
-        return self._host_events.add_observer(callback)
+        self._host_events.add_observer(callback)
+        return callback
 
-    def remove_host_event_observer(self, callback) -> bool:
+    def remove_host_event_observer(self, callback: Callable[["HostEvent"], object]) -> bool:
         """Detach a previously registered observer. Idempotent."""
         return self._host_events.remove_observer(callback)
 
-    def add_event_observer(self, callback):
+    def add_event_observer(self, callback: _ObserverT) -> _ObserverT:
         """Backward-compatible alias for :meth:`add_host_event_observer`."""
         return self.add_host_event_observer(callback)
 
-    def remove_event_observer(self, callback) -> bool:
+    def remove_event_observer(self, callback: Callable[["HostEvent"], object]) -> bool:
         """Backward-compatible alias for :meth:`remove_host_event_observer`."""
         return self.remove_host_event_observer(callback)
 
-    def events(self, session_id: Optional[str] = None):
+    def events(self, session_id: Optional[str] = None) -> AsyncGenerator["HostEvent", None]:
         """Return an async iterator over public host events.
 
         Delivery semantics (see ``docs/reference/host-api.md`` for the full
@@ -1084,7 +1094,7 @@ class Agentao:
         """
         return self._host_events.subscribe(session_id=session_id)
 
-    def active_permissions(self):
+    def active_permissions(self) -> "ActivePermissions":
         """Return a host-facing :class:`ActivePermissions` snapshot.
 
         The runtime delegates to :meth:`PermissionEngine.active_permissions`
@@ -1177,11 +1187,11 @@ class Agentao:
         return self._working_directory
 
     @property
-    def memory_manager(self):
+    def memory_manager(self) -> "MemoryManager":
         return self._memory_manager
 
     @memory_manager.setter
-    def memory_manager(self, manager):
+    def memory_manager(self, manager: "MemoryManager") -> None:
         """Replace the memory manager and keep all dependent helpers in sync."""
         self._memory_manager = manager
         self.memory_tool.memory_manager = manager
@@ -1315,7 +1325,7 @@ class Agentao:
         return extract_context_hints(self.messages)
 
     @property
-    def compaction_coordinator(self):
+    def compaction_coordinator(self) -> "CompactionCoordinator":
         """The single orchestrator every compaction entry point goes through.
 
         Lazily built and then held: the coordinator is where compaction state
@@ -1335,7 +1345,7 @@ class Agentao:
             self._compaction_coordinator = CompactionCoordinator(self)
         return self._compaction_coordinator
 
-    def compact(self, *, reason: str = "manual_cli") -> "CompactionOutcome":
+    def compact(self, *, reason: "ManualCompactionReason" = "manual_cli") -> "CompactionOutcome":
         """Compact conversation history now, and say what happened.
 
         The public compaction entry. Before it existed every caller reached
@@ -1370,7 +1380,7 @@ class Agentao:
         # ``agent._llm_call(...)`` and external tests patch it by name.
         return run_llm_call(self, messages, tools, cancellation_token)
 
-    def add_message(self, role: str, content: Union[str, List[Dict[str, Any]]]):
+    def add_message(self, role: str, content: Union[str, List[Dict[str, Any]]]) -> None:
         """Add a message to conversation history.
 
         Args:
@@ -1380,7 +1390,7 @@ class Agentao:
         """
         self.messages.append({"role": role, "content": content})
 
-    def clear_history(self):
+    def clear_history(self) -> None:
         """Clear conversation history, deactivate all skills, and reset todos.
 
         Background sub-agents keep running, but stop reporting here: their

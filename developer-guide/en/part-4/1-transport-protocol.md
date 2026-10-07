@@ -11,25 +11,37 @@ Transport is the **only interface** between the agent runtime and your host UI /
 
 ```python
 @runtime_checkable
-class Transport(Protocol):
+class CoreTransport(Protocol):
     # One-way events (fire-and-forget)
     def emit(self, event: AgentEvent) -> None: ...
 
     # Blocking request-response
     def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool: ...
-    def ask_user(self, question: str) -> str: ...
+    def ask_user(
+        self,
+        question: str,
+        *,
+        header: Optional[str] = None,
+        options: Optional[List[str]] = None,
+        multiple: bool = False,
+        allow_custom: bool = True,
+    ) -> str: ...
     def on_max_iterations(self, count: int, messages: list) -> dict: ...
 
-    # Optional fan-out (declared on the base; not all implementations expose it)
+
+@runtime_checkable
+class Transport(CoreTransport, Protocol):
+    # Fan-out; a transport that omits it is a CoreTransport only
     def subscribe(self, listener: Callable[[AgentEvent], None]) -> Callable[[], None]: ...
 ```
 
 **Key design**:
 
-- `Transport` is a `Protocol` (PEP 544) — **you do not inherit any base class**; implementing the four required methods is enough
-- `@runtime_checkable` makes `isinstance(x, Transport)` available (but it doesn't verify method signatures — use a static type checker for that)
+- Both are `Protocol`s (PEP 544) — **you do not inherit any base class**; implementing the four required methods is enough for `Agentao(transport=...)`
+- `@runtime_checkable` makes `isinstance(x, CoreTransport)` and `isinstance(x, Transport)` available (but it doesn't verify method signatures — use a static type checker for that)
 - The four required methods split 1 + 3: **one-way event push** + **three synchronous Q&A**
-- `subscribe(listener)` is **optional** — the Protocol declares it; `NullTransport` and `SdkTransport` provide it by composing the `EventBroadcaster` helper; bespoke implementations may omit it. Probe with `getattr(transport, "subscribe", None)`.
+- `subscribe(listener)` is **optional** — `Transport` declares it and `CoreTransport` does not; `NullTransport` and `SdkTransport` provide it by composing the `EventBroadcaster` helper; bespoke implementations may omit it. Probe with `getattr(transport, "subscribe", None)` — though a present `subscribe` does not prove a working one (see the next bullet).
+- For a static type checker, the four required methods are their own protocol, `CoreTransport` (`agentao.transport`); `Transport` extends it with `subscribe`. `Agentao(transport=...)` is typed as `CoreTransport`, so a transport without `subscribe()` type-checks there. At runtime, too, `isinstance(x, Transport)` is `False` for such a transport (a `runtime_checkable` check requires every member, `subscribe` included); check `isinstance(x, CoreTransport)` instead. The reverse does not hold: a class that subclasses `Transport` explicitly without defining `subscribe()` passes `isinstance(x, Transport)` but inherits the protocol's stub, which registers nothing and returns `None` — subclass `NullTransport` (or compose `EventBroadcaster`) for a working one. Only `Agentao.astream()` needs `subscribe()`, and it raises `TypeError` without it.
 
 ## Method 1: `emit(event)` — push events
 
@@ -82,9 +94,19 @@ def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
 ## Method 3: `ask_user(question)` — ask the user
 
 ```python
-def ask_user(self, question: str) -> str:
+def ask_user(
+    self,
+    question: str,
+    *,
+    header: Optional[str] = None,
+    options: Optional[List[str]] = None,
+    multiple: bool = False,
+    allow_custom: bool = True,
+) -> str:
     """Agent asks the user an open question and gets a text answer."""
 ```
+
+`question` is always free text. The keyword-only `header`, `options`, `multiple` and `allow_custom` are advisory hints a transport may render as a choice prompt or ignore. At runtime a method that takes only `question` still works: the built-in tool checks the transport method's own signature and forwards a hint only when it accepts that keyword (`transport/sdk.py::invoke_ask_user_callback`), for a sub-agent's questions too. A type checker comparing a class against `CoreTransport` wants the full signature, so declare the four keywords (or `**hints`) in new code.
 
 **When called**:
 
@@ -236,8 +258,8 @@ class MyCustomTransport:
     def confirm_tool(self, name, desc, args):
         return self.send({"type": "confirm", ...}, wait=True)
 
-    def ask_user(self, q):
-        return self.send({"type": "ask", "question": q}, wait=True)
+    def ask_user(self, q, **hints):
+        return self.send({"type": "ask", "question": q, **hints}, wait=True)
 
     def on_max_iterations(self, count, msgs):
         return {"action": "stop"}

@@ -319,7 +319,9 @@ fields exclude the system prompt and are `None` where no estimate exists.
 
 `reason` selects which policy applies, not just a label. `manual_cli` (the
 default) and `api_overflow` are allowed through an open circuit breaker as
-half-open probes; `compression_threshold` is paused by it.
+half-open probes; `compression_threshold` is paused by it. These three are
+the only values `compact()` is typed to accept (`ManualCompactionReason` in
+`agentao.compaction.types`); it does not check `reason` at runtime.
 
 **`ContextManager.compress_messages()` is an internal transform, not this.**
 It keeps its signature and its return type, but it hands back a bare list —
@@ -591,6 +593,13 @@ CI's `Typing gate` job enforces this on every PR. Downstream projects
 running `mypy --strict` against their own code paths inherit clean
 types from this surface — `tests/test_host_typing.py` includes a
 downstream-shaped consumer that exercises every public name.
+
+`Agentao`'s own public methods and properties are annotated as well,
+`events()` and `active_permissions()` included, so a strict host gets
+the contract's types from its first call rather than `Any`. A second
+consumer in the same test calls them under
+`mypy --strict --follow-imports=silent`; `agentao.agent` itself is not
+held to `--strict`.
 
 ## Schema snapshot policy
 

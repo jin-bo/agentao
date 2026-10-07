@@ -36,6 +36,11 @@ CompactionReason = Literal[
     "manual_cli",
 ]
 
+#: The reasons ``Agentao.compact()`` accepts: the entry points that run a
+#: ``full`` compaction. A subset of :data:`CompactionReason`, which also names
+#: the microcompact and minimal-history rungs.
+ManualCompactionReason = Literal["manual_cli", "api_overflow", "compression_threshold"]
+
 __all__ = [
     "CompactionController",
     "CompactionDecision",
@@ -44,6 +49,7 @@ __all__ = [
     "CompactionOutcome",
     "CompactionReason",
     "CompactionTrigger",
+    "ManualCompactionReason",
 ]
 
 
