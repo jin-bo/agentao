@@ -27,6 +27,9 @@ _Targeting 0.5.12. Add entries under the relevant heading as work lands._
 
 - **A transport whose `ask_user` takes only the question works again with the built-in `ask_user` tool.** The tool reached the transport through `lambda *a, **kw: agent.transport.ask_user(*a, **kw)`, so the signature check that keeps a one-argument callback working (`invoke_ask_user_callback`) saw the lambda's `**kw` and forwarded all four structured hints, and such a transport raised `TypeError: ... unexpected keyword argument 'header'` the first time the model asked. The check now runs against the transport method itself, for the parent's tool and for a sub-agent's questions. `AskUserTool(ask_user_callback=...)`, `SdkTransport` and `ReplayAdapter` already worked this way. A sub-agent's questions also keep their hints now: `build_compat_transport`'s `ask_user` took only the question, so `header` / `options` / `multiple` / `allow_custom` were dropped before reaching the parent; it now forwards them through the same check. The same holds for a host's own `build_compat_transport(ask_user_callback=...)`: a callback that accepts the hint keywords (or `**kwargs`) now receives them, where it used to get the question alone; a one-argument callback is unaffected.
 
+- Preserve host event order when an on-loop publisher resumes while an older
+  delivery is waiting for queue capacity.
+
 ---
 
 ## [0.5.11] — 2026-10-05
