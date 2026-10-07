@@ -34,6 +34,7 @@ Four concrete items shouldn't be in agentao's core, ranked by ROI. Three further
    - `runtime/llm_call.py:59` reads `capture_flags` via `agent.replay_manager.config.capture_flags` (returns `{}` when no manager attached).
    - `runtime/chat_loop.py` 5 `agent._emit_*` calls unchanged — they go through the agent's deprecation shims, which lazily import from `replay/observability.py`. Doc's "unified event emit" intent is satisfied (the shims `transport.emit(...)` already).
    - `embedding/factory.py` pops `replay_config` from `overrides` (no longer flows through ctor kwarg), then attaches `agent.replay_manager = ReplayManager(agent, config=replay_config)` post-construction.
+     *Follow-up (2026-10-07):* 0.5.0 kept the `replay_config=` constructor kwarg, so the factory now passes its config through it and `Agentao._init_replay` is the only place a manager is built from a config; the post-construction attach is gone. An explicit `replay_config=None` disables replay (#435).
    - CLI callers (`cli/session.py`, `cli/replay_commands.py`, `cli/commands.py:635-637`) and 4 test files unchanged — back-compat shims/properties carry them through. Migration to direct manager calls is opportunistic, not required.
 
    **Tests:** 2549 passed, 2 skipped. No regressions.

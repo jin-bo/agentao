@@ -700,10 +700,11 @@ class Agentao:
     def _init_replay(self, replay_config: Optional["ReplayConfig"]) -> None:
         """Attach a ReplayManager when a replay config was supplied.
 
-        Replay state lives on a separate ``ReplayManager``; the host
-        factory (``embedding/factory.py``) attaches it. Hosts that
-        construct ``Agentao`` directly leave ``replay_manager`` as ``None``
-        (no recording).
+        Replay state lives on a separate ``ReplayManager``. This is the one
+        place a manager is built from a config: ``build_from_environment``
+        passes its ``replay_config`` here rather than attaching one itself.
+        With ``None`` (the default) ``replay_manager`` stays ``None`` until
+        ``start_replay()`` / ``reload_replay_config()`` creates one.
         """
         self.replay_manager: Optional["ReplayManager"] = None
         if replay_config is not None:

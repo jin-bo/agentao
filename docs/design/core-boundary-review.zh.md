@@ -34,6 +34,7 @@
    - `runtime/llm_call.py:59` 通过 `agent.replay_manager.config.capture_flags` 读取 `capture_flags`（无 manager 时返回 `{}`）。
    - `runtime/chat_loop.py` 5 处 `agent._emit_*` 调用未改 —— 它们走 agent 的 deprecation shim，shim 内部 lazy import `replay/observability.py`。文档"统一事件 emit"的意图已达成（shim 已经在 `transport.emit(...)`）。
    - `embedding/factory.py` 把 `replay_config` 从 `overrides` 里 pop 出来（不再走 ctor kwarg），然后构造完 agent 后 `agent.replay_manager = ReplayManager(agent, config=replay_config)`。
+     *后续（2026-10-07）：* 0.5.0 保留了构造参数 `replay_config=`，所以工厂函数改为经由它传入配置，`Agentao._init_replay` 成为根据配置创建管理器的唯一位置，构造后再挂载的做法已删除。显式传 `replay_config=None` 会关闭 replay（#435）。
    - CLI 调用方（`cli/session.py`、`cli/replay_commands.py`、`cli/commands.py:635-637`）和 4 个测试文件不需改 —— 走 back-compat shim/property。迁移到直接调 manager 的方法是机会主义清理，不是必须。
 
    **测试：** 2549 通过、2 跳过，无回归。
