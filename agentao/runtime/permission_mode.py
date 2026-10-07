@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..permissions import (
     PermissionMode,
-    parse_construction_permission_mode,
-    parse_permission_mode,
+    _parse_construction_permission_mode,
+    _parse_permission_mode,
 )
 from ..transport import AgentEvent, EventType
 
@@ -61,7 +61,7 @@ def apply_permission_mode(
     payload's only free-form field.
 
     ``mode`` may be the string value (``"read-only"`` …) or the enum; it is
-    normalised by :func:`~agentao.permissions.parse_permission_mode` before
+    normalised by :func:`~agentao.permissions._parse_permission_mode` before
     anything moves, so an unknown string raises ``ValueError`` and changes
     nothing.
 
@@ -73,7 +73,7 @@ def apply_permission_mode(
     answering "done" is the fail-open reading. ACP checks for the engine
     first so it can answer with a JSON-RPC error naming the session.
     """
-    mode = parse_permission_mode(mode)
+    mode = _parse_permission_mode(mode)
     engine = getattr(agent, "permission_engine", None)
     if engine is None:
         raise ValueError(
@@ -100,7 +100,7 @@ def apply_permission_mode(
     return previous
 
 
-def set_initial_permission_mode(agent: "Agentao", mode: PermissionMode) -> None:
+def _set_initial_permission_mode(agent: "Agentao", mode: PermissionMode) -> None:
     """Put a just-built ``agent`` in ``mode``, recording nothing.
 
     The starting posture is a state, not a switch: emitting
@@ -120,9 +120,9 @@ def set_initial_permission_mode(agent: "Agentao", mode: PermissionMode) -> None:
     pre-filter: ``PLAN`` raises ``ValueError``, since the PLAN preset without
     a ``PlanSession`` is the state the construction vocabulary excludes.
     """
-    mode = parse_construction_permission_mode(mode)
+    mode = _parse_construction_permission_mode(mode)
     engine = agent.permission_engine
     if engine is None:  # pragma: no cover - callers build or hold one
-        raise ValueError("set_initial_permission_mode needs a permission engine")
+        raise ValueError("_set_initial_permission_mode needs a permission engine")
     engine.set_mode(mode)
     agent.tool_runner.readonly_mode = mode == PermissionMode.READ_ONLY

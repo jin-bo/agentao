@@ -355,7 +355,7 @@ class PermissionMode(Enum):
     PLAN = "plan"  # Internal: read-only writes, safe shell commands allowed
 
 
-def parse_permission_mode(value: Any) -> PermissionMode:
+def _parse_permission_mode(value: Any) -> PermissionMode:
     """Return the :class:`PermissionMode` a host-facing argument names.
 
     The public contract spells a mode as its string value — the same
@@ -386,24 +386,24 @@ def parse_permission_mode(value: Any) -> PermissionMode:
 #: out on purpose: the PLAN preset and a ``PlanSession`` are two separate
 #: states, and a constructor that set only the preset would leave the model
 #: denied without the plan prompt that tells it it is planning.
-CONSTRUCTION_PERMISSION_MODES = (
+_CONSTRUCTION_PERMISSION_MODES = (
     PermissionMode.READ_ONLY,
     PermissionMode.WORKSPACE_WRITE,
     PermissionMode.FULL_ACCESS,
 )
 
 
-def parse_construction_permission_mode(value: Any) -> PermissionMode:
-    """:func:`parse_permission_mode`, restricted to the construction modes.
+def _parse_construction_permission_mode(value: Any) -> PermissionMode:
+    """:func:`_parse_permission_mode`, restricted to the construction modes.
 
     Used by ``Agentao(permission_mode=)`` and
     ``build_from_environment(permission_mode=)``. ``"plan"`` (or
     ``PermissionMode.PLAN``) raises ``ValueError``: plan mode is entered
     through the plan session, not by setting a posture.
     """
-    mode = parse_permission_mode(value)
-    if mode not in CONSTRUCTION_PERMISSION_MODES:
-        valid = ", ".join(repr(m.value) for m in CONSTRUCTION_PERMISSION_MODES)
+    mode = _parse_permission_mode(value)
+    if mode not in _CONSTRUCTION_PERMISSION_MODES:
+        valid = ", ".join(repr(m.value) for m in _CONSTRUCTION_PERMISSION_MODES)
         raise ValueError(
             f"permission_mode={mode.value!r} is not accepted at construction; "
             f"expected one of {valid}. Plan mode is entered through the plan "
