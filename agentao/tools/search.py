@@ -273,7 +273,9 @@ class SearchTextTool(Tool):
             cmd = ["git", "grep", "-n", "--no-color"]
             if not case_sensitive:
                 cmd.append("-i")
-            if not regex:
+            if regex:
+                cmd.append("-E")  # grouping, alternation and +/? match rg/Python
+            else:
                 cmd.append("-F")  # fixed string (literal) mode
 
             # Pattern: use -e to safely accept patterns starting with '-'.
