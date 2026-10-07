@@ -802,3 +802,14 @@ def test_reader_skips_invalid_utf8_record_and_keeps_later_events(tmp_path):
     rec.path.write_bytes(b"".join(lines))
     assert ReplayReader(rec.path).events() == expected
     assert list_replays(tmp_path)[0].event_count == len(expected)
+
+
+def test_reader_does_not_accept_non_utf8_encoded_records(tmp_path):
+    rec = ReplayRecorder.create("sess", tmp_path)
+    rec.record("user_message", payload={"content": "ok"})
+    rec.close()
+    expected = ReplayReader(rec.path).events()
+    with rec.path.open("ab") as fp:
+        fp.write(json.dumps({"kind": "user_message", "payload": {"content": "wrong encoding"}}).encode("utf-16") + b"\n")
+    assert ReplayReader(rec.path).events() == expected
+    assert list_replays(tmp_path)[0].event_count == len(expected)
