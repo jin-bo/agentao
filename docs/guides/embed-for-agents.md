@@ -108,22 +108,20 @@ without asking, so read this before you ship the skeleton:
 > hardline command floor, the MCP Skills gate, and `web_fetch`'s URL
 > policy.
 >
-> **No engine by default.** The skeleton passes no `permission_engine`,
-> so no rule is evaluated and `agent.set_permission_mode(...)` raises
-> `ValueError` (§5).
+> **No engine by default.** The skeleton passes neither `permission_mode=`
+> nor `permission_engine=`, so no rule is evaluated and
+> `agent.set_permission_mode(...)` raises `ValueError` (§5).
 
-For an unattended host that should refuse anything that would ask, pass an
-engine and a transport that says no:
+For an unattended host that should refuse anything that would ask, pick a
+mode and pass a transport that says no:
 
 ```python
-from agentao.permissions import PermissionEngine
 from agentao.transport import SdkTransport
 
-wd = Path("/srv/myapp/run-1")
 agent = Agentao(
-    working_directory=wd,
+    working_directory=Path("/srv/myapp/run-1"),
     llm_client=LLMClient(...),
-    permission_engine=PermissionEngine(project_root=wd),   # modes + preset deny rules; no file I/O
+    permission_mode="workspace-write",                      # builds an engine; reads no rule file
     transport=SdkTransport(confirm_tool=lambda *_: False),  # ASK → refused
 )
 ```
@@ -190,7 +188,7 @@ hostname connect). So `loop.set_default_executor(...)` does not size
 agentao's turn concurrency.
 
 ```python
-from agentao.cancellation import CancellationToken
+from agentao.host import CancellationToken
 
 token = CancellationToken()
 task = asyncio.create_task(agent.arun(req.prompt, cancellation_token=token))
@@ -228,6 +226,7 @@ from agentao.transport import NullTransport
 from agentao.host import (                      # observability contract
     ActivePermissions, HostEvent,
     ToolLifecycleEvent, SubagentLifecycleEvent, PermissionDecisionEvent,
+    CancellationToken,                          # cancellation_token= for chat()/arun()
 )
 from agentao.host.protocols import (            # capability injection
     FileSystem, ShellExecutor, MemoryStore, MCPRegistry,
@@ -383,21 +382,29 @@ no match — the tool's own `requires_confirmation`, and an ask goes to
 refused passes `SdkTransport(confirm_tool=lambda *_: False)`. From a host
 you set the posture; you do not disable the engine.
 
-- Modes (`agentao.permissions.PermissionMode`): `read-only`,
-  `workspace-write`, `full-access`, `plan`. **Modes live on the engine, so
-  they need one.** A `PermissionEngine` starts in `workspace-write`, and
-  `build_from_environment` always builds one. A bare `Agentao(...)` — the
-  §1 skeleton — has none: no rule is evaluated, and `set_permission_mode`
-  raises `ValueError`. Pass `permission_engine=PermissionEngine(project_root=...)`
-  to get modes and the preset's `deny` rules. Set with
-  `agent.set_permission_mode(PermissionMode.WORKSPACE_WRITE)` — **not**
+- Modes are strings: `"read-only"`, `"workspace-write"`, `"full-access"`,
+  `"plan"` — the vocabulary of `ActivePermissions.mode`. **Modes live on the
+  engine, so they need one.** `build_from_environment` always builds one
+  (starting in `workspace-write` unless `permission_mode=` says otherwise). A
+  bare `Agentao(...)` — the §1 skeleton — has none: no rule is evaluated,
+  and `set_permission_mode` raises `ValueError`. Get one with
+  `Agentao(permission_mode="workspace-write")` — `"read-only"` and
+  `"full-access"` work too, `"plan"` is refused — which builds
+  `PermissionEngine(project_root=working_directory, rules=[])`, reads no
+  rule file, and starts the agent in that mode without emitting an event.
+  Or pass your own `permission_engine=` when you need `rules=` — not both,
+  which raises `ValueError`. (`build_from_environment(permission_mode=)`
+  applies the mode to the engine it loads from the permission files, so the
+  user's rules stay.) Switch with
+  `agent.set_permission_mode("read-only")` — **not**
   `agent.permission_engine.set_mode(...)`, which is half the switch:
   read-only has two (the engine's preset and `ToolRunner.readonly_mode`),
   and the engine holds no transport, so a bare `set_mode` also emits
   neither `READONLY_MODE_CHANGED` nor `PERMISSION_MODE_CHANGED` and a
   replay file ends up with the denials and no record of the switch.
   `set_permission_mode` moves both, emits both (`cause="host"`), and
-  returns the previously active mode.
+  returns the previously active mode — **as the internal `PermissionMode`
+  enum**, not a string (`.value` gives the string).
 - **`read-only` is not a rule set — it is a gate, and it covers your tools
   too.** Its preset rule list is empty; enforcement is
   `ToolRunner.readonly_active()`, which denies **every** tool whose
@@ -416,9 +423,10 @@ you set the posture; you do not disable the engine.
 - Rules come from `~/.agentao/permissions.json` (user scope only — a
   project-scope file is ignored with a warning, because a checked-in
   `{"tool": "*", "action": "allow"}` would defeat the user's policy on
-  the first match). The engine does no file I/O;
-  `agentao.embedding.permission_loader.load_permission_rules()` reads
-  them.
+  the first match). The engine does no file I/O when it is given
+  `rules=` (which is what `permission_mode=` does); built with `rules=None`
+  it calls `agentao.embedding.permission_loader.load_permission_rules()`,
+  which reads them.
 - **That loader fails closed.** A policy file that exists but cannot be
   honored — unreadable, not valid UTF-8, malformed JSON, or carrying a
   rule that fails validation — raises `PermissionConfigError` instead of
@@ -605,8 +613,8 @@ must pass `logger=`. ([`EMBEDDING.md` §2](embedding.md#2-pure-injection-constru
 - [ ] Async host uses `arun()`, not `chat()` on the loop thread.
 - [ ] A turn that produced no answer is not presented as one (§6.1) — the reply string alone does not tell you.
 - [ ] If the host forwards images: `data`/`mimeType` validated, size/count capped host-side, and consumers of `agent.messages` tolerate the `<attachment …/>` degradation rewrite (§2).
-- [ ] Imports come from the §3 list (plus `agentao.permissions` for `PermissionEngine` / `PermissionMode`) — no `agentao.runtime.*` / `AgentEvent` / `agentao.harness`.
-- [ ] Permission posture set explicitly: an engine is passed (or the factory built one), and the transport answers asks the way you intend — `NullTransport` approves every ask (§1). Untrusted input → `sandbox_policy`.
+- [ ] Imports come from the §3 list (plus `agentao.permissions` only if you build your own `PermissionEngine`) — no `agentao.runtime.*` / `AgentEvent` / `agentao.harness`.
+- [ ] Permission posture set explicitly: an engine exists (`permission_mode=` built one, `permission_engine=` was passed, or the factory built one), and the transport answers asks the way you intend — `NullTransport` approves every ask (§1). Untrusted input → `sandbox_policy`.
 - [ ] Secrets come from the host (env/secret manager), not hard-coded.
 - [ ] Logging handled (`logger=` if the host owns logging).
 - [ ] Pin/declare dependency on a compatible Agentao version; note `pydantic>=2` is required.

@@ -355,6 +355,63 @@ class PermissionMode(Enum):
     PLAN = "plan"  # Internal: read-only writes, safe shell commands allowed
 
 
+def parse_permission_mode(value: Any) -> PermissionMode:
+    """Return the :class:`PermissionMode` a host-facing argument names.
+
+    The public contract spells a mode as its string value — the same
+    ``Literal`` that ``ActivePermissions.mode`` and
+    ``PermissionDecisionEvent.mode`` carry — so a host never needs the enum.
+    The enum itself is still accepted, for callers that already pass it.
+
+    Raises ``ValueError`` for an unknown string and ``TypeError`` for any
+    other type, rather than treating either as "no change".
+    """
+    if isinstance(value, PermissionMode):
+        return value
+    if isinstance(value, str):
+        try:
+            return PermissionMode(value)
+        except ValueError:
+            valid = ", ".join(repr(m.value) for m in PermissionMode)
+            raise ValueError(
+                f"unknown permission mode {value!r}; expected one of {valid}"
+            ) from None
+    raise TypeError(
+        "permission mode must be a str or PermissionMode, "
+        f"not {type(value).__name__}"
+    )
+
+
+#: The modes ``permission_mode=`` accepts at construction. ``plan`` is left
+#: out on purpose: the PLAN preset and a ``PlanSession`` are two separate
+#: states, and a constructor that set only the preset would leave the model
+#: denied without the plan prompt that tells it it is planning.
+CONSTRUCTION_PERMISSION_MODES = (
+    PermissionMode.READ_ONLY,
+    PermissionMode.WORKSPACE_WRITE,
+    PermissionMode.FULL_ACCESS,
+)
+
+
+def parse_construction_permission_mode(value: Any) -> PermissionMode:
+    """:func:`parse_permission_mode`, restricted to the construction modes.
+
+    Used by ``Agentao(permission_mode=)`` and
+    ``build_from_environment(permission_mode=)``. ``"plan"`` (or
+    ``PermissionMode.PLAN``) raises ``ValueError``: plan mode is entered
+    through the plan session, not by setting a posture.
+    """
+    mode = parse_permission_mode(value)
+    if mode not in CONSTRUCTION_PERMISSION_MODES:
+        valid = ", ".join(repr(m.value) for m in CONSTRUCTION_PERMISSION_MODES)
+        raise ValueError(
+            f"permission_mode={mode.value!r} is not accepted at construction; "
+            f"expected one of {valid}. Plan mode is entered through the plan "
+            "session, not by setting a permission posture."
+        )
+    return mode
+
+
 def _extract_domain(url: str) -> Optional[str]:
     """Extract and normalize the hostname from a URL for domain matching.
 

@@ -152,7 +152,7 @@
 - **路径。**
   1. `~/.agentao/permissions.json`（用户级）—— 唯一基于文件的规则来源。
   2. `<cwd>/.agentao/permissions.json`（项目级）—— **被忽略**并打 warning。原因见下方"为何不再支持项目级？"。
-- **Loader。** `embedding/permission_loader.py::load_permission_rules`。引擎自身不做任何文件 I/O。
+- **Loader。** `embedding/permission_loader.py::load_permission_rules`。引擎在传入 `rules=` 时不做任何文件 I/O（`Agentao(permission_mode=)` 就是这样）；以 `rules=None` 构造时，它会调用这个加载器。
 - **失败行为 —— 这份文件 fail closed**（0.4.20 变更；此前是降级为空规则列表、不报错）。文件缺失 → 静默返回空规则列表。其余任何情况 —— 不可读、不是合法 UTF-8、JSON 损坏、顶层不是 object、出现未知的顶层键（`rules` 是唯一合法键，因此 `{"rule": [...]}` 会被拒绝，而不是静默加载出零条规则）、或某条规则校验不通过 —— 都会抛出带路径的 `PermissionConfigError`，并中止会话构造。与其他配置文件的这种不对称是刻意的：丢掉一条 shell/web 工具的 `deny` 会降级成 *ask*，而丢掉一条 `mcp_*` 工具的 `deny` 会降级成**什么都不剩**（引擎返回无决策，runtime 落到工具自身的 `requires_confirmation`，于是 `trust: true` server 的工具直接无提示执行）。`agentao doctor` 会报告同样的失败但不会中止。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。
 - **来源标记。** 成功加载的文件会贡献 `loaded_sources` 标签（`user:<path>`），由 `PermissionEngine.active_permissions()` 与 `Agentao.active_permissions()` 暴露 —— 详见 [`docs/reference/host-api.md`](host-api.md)。
 - **公共 getter。** `PermissionEngine.active_permissions()` 返回一个缓存的、JSON 安全的 `ActivePermissions` 快照（`mode`、`rules`、`loaded_sources`）。叠加策略的宿主可调用 `add_loaded_source("injected:<name>")` 让快照反映其 provenance。`set_mode()` 与 `add_loaded_source()` 会使缓存失效。

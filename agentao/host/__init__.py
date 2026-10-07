@@ -14,6 +14,10 @@ embedding Agentao. It covers three pillars:
 * **Permission state** — :class:`ActivePermissions` snapshot getter
   (``Agentao.active_permissions()``).
 
+It also re-exports :class:`CancellationToken` (the same class as
+``agentao.cancellation.CancellationToken``) for ``chat()`` / ``arun()``'s
+``cancellation_token=``, and the tool base classes, lazily.
+
 It is **not** a complete chat runtime. To drive a turn, use
 ``Agentao.arun()``. To render streaming chat UI, use the internal
 ``Transport``/``AgentEvent`` stream or the ACP protocol — those carry
@@ -32,6 +36,7 @@ symbol names (``HarnessEvent``, ``HarnessReplaySink``,
 ``export_harness_*``) — was removed in 0.5.0 after warning since 0.4.2.
 """
 
+from ..cancellation import CancellationToken
 from .events import EventStream, StreamSubscribeError
 from .models import (
     ActivePermissions,
@@ -70,9 +75,17 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+def __dir__() -> list[str]:
+    # Without this, ``dir(agentao.host)`` omits every lazy export — the
+    # module-level ``__getattr__`` is invisible to ``dir``. Listing names
+    # imports nothing. Same pattern as ``agentao/__init__.py``.
+    return sorted(set(globals()) | set(__all__))
+
+
 __all__ = [
     "ActivePermissions",
     "AsyncToolBase",
+    "CancellationToken",
     "EventStream",
     "HostEvent",
     "PermissionDecisionEvent",

@@ -11,6 +11,11 @@ _Targeting 0.5.12. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`Agentao(permission_mode=...)`** — `"read-only"`, `"workspace-write"` or `"full-access"` builds `PermissionEngine(project_root=working_directory, rules=[])` in that mode, so a host that only wants a posture imports nothing permission-related. It reads no permission file (`rules=None` would run the loader). The agent starts in that mode with both read-only switches set and **no event emitted**: a starting state is not a switch. Later `set_permission_mode()` calls are recorded as before. `"plan"` is refused (`ValueError`): the plan preset without a plan session would deny without telling the model it is planning. Default `None` builds no engine, as before. Passing it together with an explicit `permission_engine=` raises `ValueError`. `build_from_environment(permission_mode=...)` applies the mode to the engine the factory loads from the permission files, so the user's rules stay, and starts the agent in it just as silently. Both refuse a bad mode before opening any store.
+- **`Agentao.set_permission_mode()` accepts the mode's string value**, the vocabulary `ActivePermissions.mode` already uses. An unknown string raises `ValueError`, another type `TypeError`. The enum is still accepted, and the return value is unchanged: the previous mode as `PermissionMode`.
+- **`CancellationToken` is exported from `agentao.host`** — the same class as `agentao.cancellation.CancellationToken`, now on the stable surface. `PermissionMode` is deliberately not exported; strings are the public spelling.
+- **`dir(agentao.host)` lists its lazy exports** (`Tool`, `AsyncToolBase`, `RegistrableTool`). It imports nothing to do so.
+
 ### Changed
 
 ### Fixed

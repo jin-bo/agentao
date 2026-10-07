@@ -192,7 +192,8 @@ when the host is done with the session.
 |---|---|---|
 | `working_directory` | **Yes** (since 0.3.0) | Absolute or expandable path. Frozen at construction; an `os.chdir` in the host has no effect on the agent. |
 | `llm_client` *or* `api_key`+`base_url`+`model` | **Yes** | The constructor raises `ValueError` if both are missing. |
-| `permission_engine` | No | Defaults to **no engine** (`None`): no rule is evaluated, and `set_permission_mode` raises `ValueError`. Pass `PermissionEngine(project_root=...)` (no file I/O) for modes and the preset's `deny` rules. `build_from_environment` always builds one. |
+| `permission_engine` | No | Defaults to **no engine** (`None`): no rule is evaluated, and `set_permission_mode` raises `ValueError`. Pass your own `PermissionEngine(project_root=..., rules=[...])` when you need rules. `build_from_environment` always builds one. |
+| `permission_mode` | No | `"read-only"` / `"workspace-write"` / `"full-access"` (`"plan"` is refused). Builds `PermissionEngine(project_root=working_directory, rules=[])` in that mode, reading no rule file; the agent starts in it without emitting an event. Default `None`: no engine. Passing it with `permission_engine=` raises `ValueError`. |
 | `memory_manager` | No | Defaults to a project-scoped `:memory:`-fallback store. |
 | `mcp_registry` | No | Defaults to no MCP servers (the file-backed registry is only wired by the factory). |
 | `transport` | No | Defaults to `NullTransport()`, which approves every ask (below). |
@@ -211,6 +212,11 @@ allowlist, `web_fetch` to an unlisted domain, `web_search`, and writes into
 What still stops a call: read-only mode, an engine `deny` rule (including
 the `workspace-write` preset's own — only when there *is* an engine), the
 hardline command floor, the MCP Skills gate, and `web_fetch`'s URL policy.
+
+For modes and the preset's `deny` rules, pass
+`permission_mode="workspace-write"` (or another mode) at construction; switch
+later with `agent.set_permission_mode("read-only")`, which returns the
+previous mode as the internal `PermissionMode` enum.
 
 A host with nobody to ask that should refuse instead passes a transport
 that says no:
@@ -418,7 +424,7 @@ would have given (`min(32, cpu_count + 4)`) and is created on first
 `arun()`, so sync-only hosts never pay for the threads.
 
 ```python
-from agentao.cancellation import CancellationToken
+from agentao.host import CancellationToken
 
 token = CancellationToken()
 task = asyncio.create_task(agent.arun(req.prompt, cancellation_token=token))

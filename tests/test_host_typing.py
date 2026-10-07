@@ -62,6 +62,7 @@ def test_mypy_strict_on_downstream_consumer(tmp_path: Path) -> None:
 
             from agentao.host import (
                 ActivePermissions,
+                CancellationToken,
                 EventStream,
                 HostEvent,
                 PermissionDecisionEvent,
@@ -98,6 +99,11 @@ def test_mypy_strict_on_downstream_consumer(tmp_path: Path) -> None:
 
             def use_perms(ap: ActivePermissions) -> int:
                 return len(ap.loaded_sources)
+
+
+            def stop(token: CancellationToken) -> bool:
+                token.cancel("host-stop")
+                return token.is_cancelled
 
 
             def stream_handle(s: EventStream) -> None:
@@ -201,6 +207,7 @@ def test_host_all_matches_documented_set() -> None:
     documented = {
         "ActivePermissions",
         "AsyncToolBase",
+        "CancellationToken",
         "EventStream",
         "HostEvent",
         "PermissionDecisionEvent",

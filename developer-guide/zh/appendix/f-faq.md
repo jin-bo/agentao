@@ -38,7 +38,7 @@ uv add 'agentao[all]'
 
 你设了 `PermissionMode.READ_ONLY`（显式或默认）。两条路：
 
-- 构造后显式切模式：`e = PermissionEngine(project_root=workdir); e.set_mode(PermissionMode.WORKSPACE_WRITE); agent = Agentao(working_directory=workdir, permission_engine=e, ...)` —— 0.2.16 起 `project_root=` 必传
+- 以可写模式启动：`agent = Agentao(working_directory=workdir, permission_mode="workspace-write", ...)`；或对运行中的 agent 调 `agent.set_permission_mode("workspace-write")`（它同时拨动只读的两个开关；裸调 `permission_engine.set_mode(...)` 只拨一个）。用自己的引擎时改传 `permission_engine=`，不要和 `permission_mode=` 同时传。见 [5.4](/zh/part-5/4-permissions)
 - 或在 transport 上实现 `confirm_tool`，让用户交互确认
 
 ### `chat()` 永不返回
