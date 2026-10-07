@@ -31,7 +31,7 @@ FastAPI backend
         ├─ working_directory = /data/tenants/{tenant_id}/{session_id}
         ├─ Custom tools: list_projects, create_task, assign_user
         ├─ PermissionEngine: WORKSPACE_WRITE, deny rules for the built-in writers
-        └─ SdkTransport → SSE bridge
+        └─ agent.astream() → SSE bridge
 ```
 
 ## Key code
@@ -101,13 +101,12 @@ class CreateTaskTool(Tool):
 
 ```python
 # app.py
+from contextlib import aclosing
 from fastapi import FastAPI, Depends
 from fastapi.responses import StreamingResponse
-from agentao import Agentao
-from agentao.transport import SdkTransport
-from agentao.transport.events import AgentEvent, EventType
+from agentao.host import TextDelta
 from pathlib import Path
-import asyncio, httpx, json
+import httpx, json
 
 from .tools.project_tools import ListProjectsTool, CreateTaskTool
 from .auth import current_user
@@ -123,33 +122,24 @@ async def chat(payload: dict, user=Depends(current_user)):
     workdir = Path(f"/data/tenants/{user.tenant_id}/{session_id}")
     workdir.mkdir(parents=True, exist_ok=True)
 
-    queue: asyncio.Queue = asyncio.Queue()
-    loop = asyncio.get_running_loop()
-
-    def on_event(ev: AgentEvent):
-        loop.call_soon_threadsafe(queue.put_nowait, ev)
-
-    transport = SdkTransport(on_event=on_event)
-    agent = await get_or_create_agent(
+    agent, lock = await get_or_create_agent(
         session_id=f"{user.tenant_id}:{session_id}",
         workdir=workdir,
         tenant_id=user.tenant_id,
-        transport=transport,
     )
 
-    async def run():
-        reply = await asyncio.to_thread(agent.chat, message)
-        await queue.put({"type": "done", "text": reply})
-
-    asyncio.create_task(run())
-
     async def sse():
-        while True:
-            ev = await queue.get()
-            if isinstance(ev, dict) and ev.get("type") == "done":
-                yield f"event: done\ndata: {json.dumps(ev)}\n\n"
-                return
-            yield f"data: {json.dumps({'type': ev.type.value, **ev.data})}\n\n"
+        async with lock:  # one turn per session; without it a second request gets TurnInProgressError
+            # astream() subscribes to the agent's transport; never swap agent.transport per request.
+            # aclosing cancels the turn if the client goes away.
+            async with aclosing(agent.astream(message)) as stream:
+                async for item in stream:
+                    if isinstance(item, TextDelta):
+                        frame = {"type": "llm_text", "chunk": item.text}
+                        yield f"data: {json.dumps(frame)}\n\n"
+                    else:  # TurnOutcome: the answer (the chunks also carry narration before tool calls)
+                        done = {"text": item.text, "is_answer": item.is_answer}
+                        yield f"event: done\ndata: {json.dumps(done)}\n\n"
 
     return StreamingResponse(sse(), media_type="text/event-stream")
 ```
@@ -158,15 +148,17 @@ async def chat(payload: dict, user=Depends(current_user)):
 
 ```python
 # pool.py
+import asyncio
 from agentao import Agentao
 from agentao.permissions import PermissionEngine, PermissionMode
 from .tools.project_tools import ListProjectsTool, CreateTaskTool
 
-async def get_or_create_agent(session_id, workdir, tenant_id, transport):
+_pool: dict[str, tuple[Agentao, asyncio.Lock]] = {}
+
+async def get_or_create_agent(session_id, workdir, tenant_id):
     existing = _pool.get(session_id)
     if existing:
-        existing.transport = transport
-        return existing
+        return existing  # same agent and transport across requests
     # Deny the built-in writers by rule; read-only mode would deny
     # CreateTaskTool too. create_task keeps asking via requires_confirmation.
     engine = PermissionEngine(project_root=workdir, rules=[
@@ -178,13 +170,12 @@ async def get_or_create_agent(session_id, workdir, tenant_id, transport):
     engine.set_mode(PermissionMode.WORKSPACE_WRITE)
     agent = Agentao(
         working_directory=workdir,
-        transport=transport,
         permission_engine=engine,
     )
     agent.tools.register(ListProjectsTool(tenant_id, api_client))
     agent.tools.register(CreateTaskTool(tenant_id, api_client))
-    _pool[session_id] = agent
-    return agent
+    _pool[session_id] = (agent, asyncio.Lock())
+    return _pool[session_id]
 ```
 
 Use the full `AgentPool` from [6.7](/en/part-6/7-resource-concurrency#pattern-b-session-pool-ttl-eviction) for TTL + LRU eviction.
@@ -196,10 +187,16 @@ const es = new EventSource(`/chat`, { method: "POST", body: JSON.stringify({sess
 es.onmessage = (e) => {
   const ev = JSON.parse(e.data);
   if (ev.type === "llm_text") append(ev.chunk);
-  if (ev.type === "tool_start") showSpinner(ev.tool);
-  if (ev.type === "tool_confirmation") showConfirmModal(ev);  // see 4.5
+  // Tool activity is not in this stream: relay agent.events() (ToolLifecycleEvent)
+  // on a second channel. Confirmations are answered by the transport the agent was
+  // built with, e.g. SdkTransport(confirm_tool=...) — see 4.5.
 };
-es.addEventListener("done", (e) => { finalize(JSON.parse(e.data).text); es.close(); });
+es.addEventListener("done", (e) => {
+  const done = JSON.parse(e.data);
+  if (done.is_answer) finalize(done.text);   // the answer
+  else showError(done.text);                 // e.g. an [LLM API error: …] text
+  es.close();
+});
 ```
 
 ## ⚠️ Pitfalls

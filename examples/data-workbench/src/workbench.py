@@ -10,22 +10,24 @@ workdir, then prints `[CHART] <path>` when a matplotlib PNG is produced.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import re
+from contextlib import aclosing
 from pathlib import Path
 
 from dotenv import load_dotenv
 
+from agentao import Agentao
 from agentao.embedding import build_from_environment
-from agentao.transport import SdkTransport
-from agentao.transport.events import EventType
+from agentao.host import TextDelta
 
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 WORKDIR = ROOT / "workspaces" / "demo"
 
-CHART_RE = re.compile(r"\[CHART\]\s+(\S+)")
+CHART_RE = re.compile(r"\[CHART\]\s+(\S+?\.png)")  # ends at .png: joined deltas from two LLM calls have no separator
 
 
 def seed_fake_data() -> None:
@@ -72,16 +74,7 @@ def run(question: str) -> None:
     seed_fake_data()
     workdir = prepare_workspace()
 
-    charts: list[str] = []
-
-    def on_event(ev):
-        if ev.type is EventType.LLM_TEXT:
-            chunk = ev.data.get("chunk", "")
-            for m in CHART_RE.finditer(chunk):
-                charts.append(m.group(1))
-
-    transport = SdkTransport(on_event=on_event)
-    agent = build_from_environment(working_directory=workdir, transport=transport)
+    agent = build_from_environment(working_directory=workdir)
 
     agent.skill_manager.activate_skill(
         "duckdb-analyst",
@@ -95,7 +88,7 @@ def run(question: str) -> None:
     )
 
     try:
-        reply = agent.chat(question, max_iterations=30)
+        reply, charts = asyncio.run(stream_turn(agent, question))
         print(reply)
         if charts:
             print("\nGenerated charts:")
@@ -104,6 +97,24 @@ def run(question: str) -> None:
                 print(f"  - {resolved}")
     finally:
         agent.close()
+
+
+async def stream_turn(agent: Agentao, question: str) -> tuple[str, list[str]]:
+    """Run the turn; return its final text and the chart paths it announced.
+
+    Charts are read from everything the model streamed, because a ``[CHART]``
+    line can come in narration before a later tool call, which is not part of
+    the final text. The deltas are joined first: one line can span chunks.
+    """
+    streamed: list[str] = []
+    async with aclosing(agent.astream(question, max_iterations=30)) as stream:
+        async for item in stream:
+            if isinstance(item, TextDelta):
+                streamed.append(item.text)
+            else:
+                charts = [m.group(1) for m in CHART_RE.finditer("".join(streamed))]
+                return item.text, charts
+    raise RuntimeError("the stream ended without a TurnOutcome")
 
 
 def main() -> None:

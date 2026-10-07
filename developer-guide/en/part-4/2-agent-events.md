@@ -8,7 +8,7 @@
 The agent pushes structured events through `transport.emit(event)`. This section is the **complete event catalog** — triggers, `data` payloads, typical use.
 
 ::: warning Building a production audit pipeline? Use `HostEvent` instead.
-The events on **this page** are the **internal transport events** — they drive the CLI, replay, and debug tooling, and their fields/enum values may change between releases. They're the right pick for **streaming UI** (LLM_TEXT chunks, THINKING bubbles, in-flight tool views).
+The events on **this page** are the **internal transport events** — they drive the CLI, replay, and debug tooling, and their fields/enum values may change between releases. They're the right pick for a **streaming UI** that needs rich detail (THINKING bubbles, in-flight tool views). For the assistant's text alone, `agent.astream()` is the stable path ([4.7](./7-host-contract#streaming-text-agent-astream)).
 
 For **production audit / observability / SIEM pipelines**, use the **stable host contract** in **[4.7 Embedded Harness Contract](./7-host-contract)** instead. Quick comparison:
 
@@ -16,6 +16,7 @@ For **production audit / observability / SIEM pipelines**, use the **stable host
 |---|---|---|---|
 | `agentao.transport.AgentEvent` (this page) | `Transport.emit()` push callback | Internal — may change per release | CLI / streaming UI that needs rich detail |
 | `agentao.host.HostEvent` ([4.7](./7-host-contract)) | `agent.events()` async pull iterator | **Stable**, schema-snapshotted, CI-enforced | Production audit, billing, multi-tenant compliance |
+| `agentao.host.TextDelta` / `TurnOutcome` ([4.7](./7-host-contract#streaming-text-agent-astream)) | `agent.astream()` async generator | **Stable** (not `HostEvent` members) | Streaming the assistant's text to a UI |
 
 The two surfaces are **complementary, not alternatives** — most production deployments use both: Transport for UI, `events()` for audit. They share zero code paths.
 :::
@@ -137,6 +138,8 @@ if event.type == EventType.LLM_TEXT:
 ```
 
 ⚠️ A `chunk` can be a few letters, half a word, or an entire paragraph — only ordering is guaranteed, not granularity.
+
+For the same text through the stable contract, use `agent.astream()`'s `TextDelta` items ([4.7](./7-host-contract#streaming-text-agent-astream)).
 
 ### `TOOL_START`
 

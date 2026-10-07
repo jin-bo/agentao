@@ -7,6 +7,10 @@
 
 `SdkTransport` is Agentao's official **general-purpose Transport implementation** — four callbacks that cover 90% of embeddings.
 
+::: tip Only need the assistant's text?
+Use `agent.astream()` ([4.7](./7-host-contract#streaming-text-agent-astream)) — it is part of the stable host contract, while the `AgentEvent`s `on_event` receives (`LLM_TEXT`, `THINKING`, …) are internal and may change between releases. The two combine: `astream()` *subscribes* to the agent's `SdkTransport`, so keep `SdkTransport` for confirmations, `ask_user`, and the events the contract doesn't carry (reasoning, raw tool I/O). Never swap `agent.transport` per request to capture text.
+:::
+
 ## Constructor
 
 ```python
@@ -301,5 +305,6 @@ agent.close()
 - Group callbacks in a class when they share UI state or session id — closures + per-session `self` is the cleanest pattern.
 - Fan out events with a small dispatcher when multiple consumers (DB log + WebSocket + UI) need them.
 - **Never raise inside `on_event`** — wrap each branch in try/except, or `SdkTransport.emit` will swallow it for you (but downstream side-effects may be half-done).
+- For streamed assistant text alone, prefer the stable `agent.astream()`; it subscribes to this transport rather than replacing it.
 
 → Next: [4.4 Streaming UI](./4-streaming-ui)

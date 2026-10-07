@@ -47,28 +47,30 @@ Python entrypoint
 
 ```python
 # jobs/daily_digest.py
-import os, sys, json, traceback
+import asyncio, os, sys, json, traceback
+from contextlib import aclosing
 from pathlib import Path
 from datetime import date
 from agentao import Agentao
-from agentao.transport import SdkTransport
-from agentao.transport.events import EventType
+from agentao.host import TextDelta
+
+async def stream_turn(agent: Agentao, prompt: str) -> tuple[str, int]:
+    tokens_used = 0
+    async with aclosing(agent.astream(prompt, max_iterations=40)) as stream:
+        async for item in stream:
+            if isinstance(item, TextDelta):
+                tokens_used += len(item.text) // 4   # rough estimate, narration included
+            else:
+                return item.text, tokens_used        # TurnOutcome: parse its text
+    raise RuntimeError("no TurnOutcome")
 
 def run():
     today = date.today().isoformat()
     workdir = Path(f"/var/jobs/digest/{today}")
     workdir.mkdir(parents=True, exist_ok=True)
 
-    tokens_used = 0
-    def on_event(ev):
-        nonlocal tokens_used
-        if ev.type is EventType.LLM_TEXT:
-            tokens_used += len(ev.data.get("chunk", "")) // 4
-
-    transport = SdkTransport(on_event=on_event)
     agent = Agentao(
         working_directory=workdir,
-        transport=transport,
         max_context_tokens=64_000,
     )
     agent.skill_manager.activate_skill(
@@ -77,12 +79,12 @@ def run():
     )
 
     try:
-        reply = agent.chat(
+        reply, tokens_used = asyncio.run(stream_turn(
+            agent,
             "Produce today's digest. End with a line "
             "`RESULT: {\"path\": \"...\", \"items\": N}` "
             "so the scheduler can consume it.",
-            max_iterations=40,
-        )
+        ))
         parsed = parse_result(reply)
         print(json.dumps({
             "status": "ok",

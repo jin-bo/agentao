@@ -21,11 +21,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Dict, List, Optional
 
-from ..cancellation import AgentCancelledError, CancellationToken
+from ..cancellation import AgentCancelledError, CancellationToken, bind_turn
 from ..replay.observability import latest_session_summary_id
 from ..transport import AgentEvent, EventType
 from .identity import new_turn_id
-from .outcome import TurnOutcome
+from ..outcome import TurnOutcome
 from .sanitize import backfill_orphaned_tool_calls, sanitize_text_field
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
@@ -99,8 +99,13 @@ def run_turn(
             "a turn is already running on this agent; wait for it to end"
         )
     try:
-        return _run_turn(agent, user_message, max_iterations,
-                         cancellation_token, images)
+        # Minted here rather than in ``_run_turn`` so it can be bound for
+        # the whole turn: a transport listener reads it to know which turn
+        # emitted an event (``Agentao.astream``).
+        token = cancellation_token or CancellationToken()
+        with bind_turn(agent, token):
+            return _run_turn(agent, user_message, max_iterations,
+                             token, images)
     finally:
         lock.release()
 
@@ -108,17 +113,17 @@ def run_turn(
 def _run_turn(
     agent: "Agentao",
     user_message: str,
-    max_iterations: int = 100,
-    cancellation_token: Optional[CancellationToken] = None,
+    max_iterations: int,
+    token: CancellationToken,
     images: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     """Run one full ``chat()`` turn and return the assistant's reply.
 
     Behavior preserved verbatim from the prior inline implementation:
 
-    - A fresh ``CancellationToken`` is minted when the caller didn't
-      supply one, stored on ``agent._current_token`` for the duration
-      of the turn, and cleared in the ``finally`` block.
+    - The turn's ``CancellationToken`` (minted by :func:`run_turn` when
+      the caller didn't supply one) is stored on ``agent._current_token``
+      for the duration of the turn, and cleared in the ``finally`` block.
     - ``_llm_call_seq`` is reset to 0 so LLM_CALL_* event ``attempt``
       numbers restart at 1 for every turn. ``_llm_call_last_msg_count``
       is seeded to ``1 + len(agent.messages)`` so the first delta
@@ -135,7 +140,6 @@ def _run_turn(
       ``status="cancelled"``.
     - All other exceptions are re-raised after recording ``status="error"``.
     """
-    token = cancellation_token or CancellationToken()
     agent._current_token = token
     # Public lifecycle events read this via ``agent._current_turn_id``;
     # cleared in ``finally`` so events between turns carry ``turn_id=None``.

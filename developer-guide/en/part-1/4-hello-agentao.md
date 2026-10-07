@@ -80,6 +80,8 @@ agent.chat("List the 3 largest files under the current directory.")
 agent.close()
 ```
 
+`LLM_TEXT` is an internal event whose fields may change between releases. In async code, the stable way to stream the text is `agent.astream(...)` — see [4.4](/en/part-4/4-streaming-ui).
+
 That's the whole pattern. Tool confirmations, custom tools, permissions, memory — every other feature extends from these two calls (`Agentao(...)` + `chat(...)`).
 
 ## Troubleshooting

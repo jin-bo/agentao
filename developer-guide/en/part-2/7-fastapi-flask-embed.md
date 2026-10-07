@@ -19,7 +19,7 @@ For the full production blueprint with SSE streaming + session pool + auth, see 
 
 ### What you get
 
-- `POST /chat/{session_id}` — streams tokens to the client via Server-Sent Events
+- `POST /chat/{session_id}` — streams the assistant's text to the client via Server-Sent Events (`agent.astream()`)
 - `POST /chat/{session_id}/cancel` — stops an in-flight turn
 - `DELETE /session/{session_id}` — releases MCP subprocesses for one session
 - Per-session lock (no two concurrent turns on the same agent)
@@ -37,17 +37,15 @@ import asyncio
 import json
 import os
 from asyncio import Lock, to_thread
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager  # aclosing: Python 3.10+
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Set, Tuple
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from agentao import Agentao
-from agentao.cancellation import CancellationToken
-from agentao.transport import SdkTransport
-from agentao.transport.events import AgentEvent, EventType
+from agentao.host import CancellationToken, TextDelta
 
 
 # --------------------------------------------------------------------------
@@ -92,7 +90,7 @@ class SessionPool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.pool = SessionPool(Path(os.environ.get("AGENTAO_ROOT", "/app/tenants")))
-    app.state.active_tokens: Dict[str, CancellationToken] = {}
+    app.state.active_tokens: Dict[str, Set[CancellationToken]] = {}
     yield
     await app.state.pool.close_all()
 
@@ -125,49 +123,52 @@ async def chat_endpoint(
     message = body["message"]
 
     pool: SessionPool = request.app.state.pool
-    tokens: Dict[str, CancellationToken] = request.app.state.active_tokens
+    tokens: Dict[str, Set[CancellationToken]] = request.app.state.active_tokens
 
     agent, lock = await pool.get(session_id, tenant)
     token = CancellationToken()
-    tokens[session_id] = token
-
-    # Transport collects events into an asyncio queue for SSE relay.
-    queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
-    loop = asyncio.get_running_loop()
-
-    def on_event(event: AgentEvent) -> None:
-        loop.call_soon_threadsafe(queue.put_nowait, event)
-
-    transport = SdkTransport(on_event=on_event)
-    agent.transport = transport  # hot-swap is safe between turns
 
     async def watch_disconnect():
         while not await request.is_disconnected():
             await asyncio.sleep(0.5)
         token.cancel("client-disconnected")
 
-    async def run_chat():
-        async with lock:
-            try:
-                return await to_thread(agent.chat, message, cancellation_token=token)
-            finally:
-                await queue.put(None)  # sentinel → close stream
-
     async def sse_stream():
+        # Registered here, not in the endpoint: a response whose body never
+        # starts never runs this generator's ``finally``. A set per session:
+        # the stop button cancels the running turn and any request still
+        # waiting for the session lock.
+        tokens.setdefault(session_id, set()).add(token)
         watcher = asyncio.create_task(watch_disconnect())
-        chat_task = asyncio.create_task(run_chat())
         try:
-            while True:
-                ev = await queue.get()
-                if ev is None:
-                    break
-                data = {"type": ev.type.value, "data": ev.data}
-                yield f"data: {json.dumps(data)}\n\n"
-            reply = await chat_task
-            yield f"data: {json.dumps({'type': 'done', 'reply': reply})}\n\n"
+            async with lock:
+                if token.is_cancelled:
+                    # Stopped while waiting for the lock. Starting the turn
+                    # anyway would still write this prompt and a
+                    # "[Cancelled: …]" reply into the session's history.
+                    data = {"type": "done", "status": "cancelled",
+                            "is_answer": False, "reply": ""}
+                    yield f"data: {json.dumps(data)}\n\n"
+                    return
+                # astream() subscribes to the agent's transport; never swap
+                # agent.transport per request to capture text.
+                async with aclosing(
+                    agent.astream(message, cancellation_token=token)
+                ) as stream:
+                    async for item in stream:
+                        if isinstance(item, TextDelta):   # for display
+                            data = {"type": "text", "text": item.text}
+                        else:                             # TurnOutcome, always last: the answer
+                            data = {"type": "done", "status": item.status,
+                                    "is_answer": item.is_answer, "reply": item.text}
+                        yield f"data: {json.dumps(data)}\n\n"
         finally:
             watcher.cancel()
-            tokens.pop(session_id, None)
+            live = tokens.get(session_id)
+            if live is not None:
+                live.discard(token)
+                if not live:
+                    del tokens[session_id]
 
     return StreamingResponse(sse_stream(), media_type="text/event-stream")
 
@@ -178,8 +179,7 @@ async def chat_endpoint(
 
 @app.post("/chat/{session_id}/cancel")
 async def cancel_endpoint(session_id: str, tenant: str = Depends(auth)):
-    token = app.state.active_tokens.get(session_id)
-    if token:
+    for token in list(app.state.active_tokens.get(session_id, ())):
         token.cancel("user-stop-button")
     return {"ok": True}
 
@@ -219,13 +219,15 @@ curl -N -X POST http://localhost:8000/chat/s-1 \
 | `SessionPool` | Caches `(agent, lock)` per session, creates per-tenant workdir |
 | `lifespan` | Closes all agents on graceful shutdown — **critical** for MCP cleanup |
 | `auth` dep | Returns tenant id from a Bearer token; use JWT/OAuth in production |
-| `SdkTransport(on_event=…)` | Bridges agent events into an asyncio queue via `call_soon_threadsafe` |
+| `agent.astream(…)` | Runs the turn and yields `TextDelta`s, then the `TurnOutcome` — no thread bridge, no transport swap |
 | `watch_disconnect` | Cancels the turn if the client closes the connection |
-| `sse_stream` | Pumps events as SSE frames, then sends a final `{type:"done", reply: …}` |
+| `sse_stream` | Pumps each delta as an SSE frame, then sends a final `{type:"done", status, is_answer, reply}` from the `TurnOutcome` |
 
 ### Notes
 
-- `on_event` runs in the **agent's thread**, not the event loop. Always use `loop.call_soon_threadsafe` to hand off.
+- **Deltas are for display; the `done` frame is the answer.** Joined deltas are not `reply`: narration from LLM calls that ended in tool calls streams too, and `reply` can be a placeholder or error string that never streamed. Store `reply` only when `is_answer` is true. See [4.7](/en/part-4/7-host-contract#streaming-text-agent-astream).
+- `aclosing(...)` matters: if the response generator is closed early, it closes the stream, which cancels the turn. A bare `break` would leave the turn running.
+- **Never swap `agent.transport` per request.** The tool runner keeps its own reference, so tool events and confirmations would still go to the old transport, and replay would lose its adapter. `astream()` subscribes instead. Tool and permission activity is on `agent.events()` ([4.7](/en/part-4/7-host-contract)); reasoning text only on the internal transport ([4.3](/en/part-4/3-sdk-transport)).
 - `SessionPool` uses simple dict + asyncio.Lock. For production, add TTL eviction and a per-tenant session cap; see [Part 7](/en/part-7/).
 - This template doesn't persist messages. For crash recovery, plug in the `save_session` / `load_session` from [2.4](./4-session-state).
 
@@ -253,6 +255,7 @@ from agentao.transport import SdkTransport
 
 # One pool per worker process — each Gunicorn worker has its own.
 _sessions: dict[str, tuple[Agentao, threading.Lock]] = {}
+_sinks: dict[str, Queue] = {}   # session_id -> queue of the request running a turn
 _active_tokens: dict[str, CancellationToken] = {}
 
 app = Flask(__name__)
@@ -262,7 +265,14 @@ def _get_agent(session_id: str, tenant: str) -> tuple[Agentao, threading.Lock]:
     if session_id not in _sessions:
         workdir = Path(f"/app/tenants/{tenant}")
         workdir.mkdir(parents=True, exist_ok=True)
-        agent = Agentao(working_directory=workdir)
+        # One transport for the agent's lifetime, set at construction —
+        # never swapped per request. It forwards to whichever request holds the lock.
+        def on_event(ev, sid=session_id):
+            q = _sinks.get(sid)
+            if q is not None:
+                q.put(ev)
+
+        agent = Agentao(working_directory=workdir, transport=SdkTransport(on_event=on_event))
         _sessions[session_id] = (agent, threading.Lock())
     return _sessions[session_id]
 
@@ -286,13 +296,15 @@ def chat(session_id: str):
     _active_tokens[session_id] = token
 
     queue: Queue = Queue()
-    transport = SdkTransport(on_event=lambda ev: queue.put(ev))
-    agent.transport = transport
 
     def worker():
         try:
             with lock:
-                reply = agent.chat(message, cancellation_token=token)
+                _sinks[session_id] = queue      # this request owns the session's events
+                try:
+                    reply = agent.chat(message, cancellation_token=token)
+                finally:
+                    _sinks.pop(session_id, None)
                 queue.put(("__DONE__", reply))
         except Exception as e:
             queue.put(("__ERROR__", str(e)))
@@ -354,6 +366,7 @@ Default Gunicorn `sync` workers handle one request per worker — unsuitable for
 
 ### Notes vs. FastAPI version
 
+- **Internal events, not `astream()`**: `astream()` is async, so this WSGI template relays the internal `AgentEvent` stream (fields may change between releases), through a transport set once at construction. Don't assign `agent.transport` per request — tool events and confirmations would stay on the old one.
 - **No disconnect detection**: WSGI doesn't give you a clean "client gone" hook. Rely on user-triggered cancel + a hard timeout
 - **Worker-local pool**: each Gunicorn worker has its own `_sessions` dict. For multi-worker deployments, route the same `session_id` to the same worker (nginx `ip_hash`, cookie-based routing, or a reverse proxy with sticky sessions)
 - **Cross-worker message persistence**: if you need multi-worker session survival, plug in the DB-backed restore from [2.4.3](./4-session-state#2-4-3-persist-restore-recipe)

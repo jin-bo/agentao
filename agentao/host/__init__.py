@@ -4,7 +4,7 @@
 design doc consistently uses "harness" for *Agentao itself running
 inside the host*, so the contract package now reads as the surface a
 host application talks to) is the stability boundary for hosts
-embedding Agentao. It covers three pillars:
+embedding Agentao. It covers four pillars:
 
 * **Observability events** — :class:`ToolLifecycleEvent`,
   :class:`SubagentLifecycleEvent`, :class:`PermissionDecisionEvent`,
@@ -13,16 +13,19 @@ embedding Agentao. It covers three pillars:
   payloads, exported via :func:`export_host_acp_json_schema`.
 * **Permission state** — :class:`ActivePermissions` snapshot getter
   (``Agentao.active_permissions()``).
+* **Streaming text** — :class:`TextDelta` and :class:`TurnOutcome`, the
+  items of ``Agentao.astream()``. They are a delivery API, not events:
+  they are not ``HostEvent`` members and are not projected into replay.
 
 It also re-exports :class:`CancellationToken` (the same class as
-``agentao.cancellation.CancellationToken``) for ``chat()`` / ``arun()``'s
-``cancellation_token=``, and the tool base classes, lazily.
+``agentao.cancellation.CancellationToken``) for ``chat()`` / ``arun()`` /
+``astream()``'s ``cancellation_token=``, and the tool base classes, lazily.
+``TurnOutcome`` is the same class as ``agentao.TurnOutcome``.
 
 It is **not** a complete chat runtime. To drive a turn, use
-``Agentao.arun()``. To render streaming chat UI, use the internal
-``Transport``/``AgentEvent`` stream or the ACP protocol — those carry
-the full assistant text, reasoning, and raw tool I/O that this stable
-contract intentionally omits.
+``Agentao.arun()`` or ``Agentao.astream()``. Reasoning text and raw tool
+I/O stay outside this contract; a host that needs them uses the internal
+``Transport``/``AgentEvent`` stream or the ACP protocol.
 
 Internal runtime types (``AgentEvent``, ``ToolExecutionResult``,
 ``PermissionEngine``) are intentionally not re-exported. See
@@ -37,6 +40,7 @@ symbol names (``HarnessEvent``, ``HarnessReplaySink``,
 """
 
 from ..cancellation import CancellationToken
+from ..outcome import TurnOutcome
 from .events import EventStream, StreamSubscribeError
 from .models import (
     ActivePermissions,
@@ -49,6 +53,7 @@ from .models import (
 )
 from typing import Any, TYPE_CHECKING
 
+from .stream import TextDelta
 from .schema import (
     export_host_acp_json_schema,
     export_host_event_json_schema,
@@ -94,8 +99,10 @@ __all__ = [
     "StreamSubscribeError",
     "SubagentLifecycleEvent",
     "SubagentUsage",
+    "TextDelta",
     "Tool",
     "ToolLifecycleEvent",
+    "TurnOutcome",
     "export_host_acp_json_schema",
     "export_host_event_json_schema",
 ]

@@ -4,6 +4,7 @@
 > - **为什么** `agentao.host` 要和 Transport / AgentEvent 并存
 > - 它暴露的**三个表面**（事件、策略快照、能力协议）以及各自解决的问题
 > - **`agent.events()` vs `Transport(on_event=…)`** —— 何时用哪个（或都用）
+> - **`agent.astream()`** —— 流式输出一轮 assistant 文本的稳定方式
 > - **端到端**：~30 行写出一条租户审计流水线，跨 Agentao 版本升级也不会断
 
 如果你看完 [4.2 AgentEvent](./2-agent-events) 顶部的 `:::warning` 知道"生产环境用 `HostEvent`"，本章就是这条建议背后的**怎么做**。
@@ -23,10 +24,10 @@
 - **是内部事件的红线投影** —— 比如用户 prompt 文本不会出现在审计 body 里
 - **有版本号** —— 加可选字段向后兼容；删字段或改名要 schema 版本号升级
 
-只要你的代码只触到 `agentao.host`（加上有文档保证的 `Agentao(...)` 构造器和 `chat()` / `events()` / `active_permissions()` 方法），你就能保持向前兼容。
+只要你的代码只触到 `agentao.host`（加上有文档保证的 `Agentao(...)` 构造器和 `chat()` / `arun()` / `astream()` / `events()` / `active_permissions()` 方法），你就能保持向前兼容。
 
 ::: tip Harness 是运行时的*边界*，不是运行时本身。
-合约把 **观测**、**策略**、**wire schema** 三个表面，*围绕*一次 Agentao session 类型化。它**不是**一个 turnkey 聊天 runtime：驱动一轮还是用 `agent.arun()`（或 `agent.chat()`），流式 assistant 文本 / reasoning / 原始工具 I/O 还是要从 `Transport` 或 ACP 选一个面。把 harness 想成发动机外面的"整车厂连接器"，不是发动机本身。
+合约把 **观测**、**策略**、**wire schema** 三个表面，*围绕*一次 Agentao session 类型化。它**不是**一个 turnkey 聊天 runtime：驱动一轮还是用 `agent.arun()`（或 `agent.chat()`），或者用 `agent.astream()` 驱动并流式拿到 assistant 文本（[见下文](#streaming-text-agent-astream)）。reasoning 文本和原始工具 I/O 仍不在合约内：要它们得从内部 `Transport` 或 ACP 选一个面。把 harness 想成发动机外面的"整车厂连接器"，不是发动机本身。
 :::
 
 ## 4.7.2 三个表面
@@ -38,6 +39,8 @@
 | **事件** | `agent.events()` 异步迭代器 | 一串 `HostEvent`（工具 / 子 agent / 权限三种生命周期） | 审计、可观测、实时 UI |
 | **策略快照** | `agent.active_permissions()` | JSON 安全的 `ActivePermissions`（mode + rules + sources） | 设置 UI、审计富化、合规报告 |
 | **能力协议** | `from agentao.host.protocols import FileSystem, ShellExecutor, MCPRegistry, MemoryStore` | 可注入 Docker / 虚拟 FS / 审计代理 / 程序化 MCP / 远程记忆后端的运行时 Protocol | 见 [2.2 第 3 档 · 能力协议](/zh/part-2/2-constructor-reference#第-3-档-高级注入) 与 [6.4](/zh/part-6/4-multi-tenant-fs)；端到端示例 [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection) |
+
+流式输出一轮的 assistant 文本也有稳定路径：`agent.astream()`——见 4.7.4 里的[流式文本](#streaming-text-agent-astream)。
 
 本章聚焦**事件**和**策略快照**——大多数读者最先用到的两块。能力协议在它们的构造时上下文里已经讲过；想看一次性替换全部四个槽位的可运行端到端形态，见 [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection)。
 
@@ -94,13 +97,38 @@ async for ev in agent.events():
 | 问题 | 用 `agent.events()`（harness） | 用 `Transport(on_event=…)` |
 |------|-------------------------------|-----------------------------|
 | 是给**生产宿主**用的，要前向兼容？ | ✅ | ❌ —— 字段会漂移 |
-| 需要**流式文本块**给 UI（`LLM_TEXT` / `THINKING`）？ | ❌ —— 投影时被剔掉了 | ✅ —— 它就是为这个设计的 |
+| 需要把 **assistant 文本**流式推给 UI？ | ❌ —— 投影时被剔掉了；用 `agent.astream()`（见下） | ⚠️ 能用（`LLM_TEXT`），但属内部接口 —— 优先 `astream()` |
+| 需要 **reasoning 文本**（`THINKING`）或原始工具 I/O？ | ❌ —— 投影时被剔掉了 | ✅ —— 只有这里有 |
 | 在做**审计流水线** / SIEM 摄入 / 计费打表？ | ✅ | ❌ |
 | 在做需要内部细节的 **CLI / 调试工具**？ | ❌ —— 投影太瘦 | ✅ |
 | 需要**异步 pull** + 背压语义？ | ✅ —— `async for` + 有界队列 | ❌ —— 推送回调 |
 | 需要**多个并发消费者**？ | ⚠️ MVP 一个 `Agentao` 一个流 | ✅ —— 自己加分发器扇出 |
 
-大多数生产部署**两者都用**：Transport 驱动流式 UI；`events()` 驱动审计 / 可观测流水线。它们零代码路径共享，互不干扰。
+大多数生产部署**两者都用**：`events()` 驱动审计 / 可观测流水线；UI 通过 `astream()` 流式显示回答，只有合约不带的东西（reasoning、原始工具 I/O）才额外挂 Transport 回调。它们零代码路径共享，互不干扰。
+
+### 流式文本：`agent.astream()` {#streaming-text-agent-astream}
+
+`agent.astream(user_message, *, max_iterations=100, images=None, cancellation_token=None)` 运行一轮，运行中产出 `TextDelta`，**最后一项**是本轮的 `TurnOutcome`：
+
+```python
+from contextlib import aclosing  # Python 3.10+
+from agentao.host import TextDelta, TurnOutcome
+
+async with aclosing(agent.astream(prompt)) as stream:
+    async for item in stream:
+        if isinstance(item, TextDelta):
+            send_to_ui(item.text)
+        else:                         # TurnOutcome，总是最后一项
+            store(item.text) if item.is_answer else report(item)
+```
+
+- **增量用于显示，结果以 outcome 为准。** 所有增量拼起来不等于 `TurnOutcome.text`：本轮里每一次 LLM 调用都会流出文本，包括以工具调用结束的那次，所以"我先看一下文件"这类说明文字会流出来，却不在最终文本里。最终文本也可能是没有任何增量带过的字符串——`[No response]` 占位、中止说明或 `[LLM API error: …]`。增量拿来显示；要保存或据以行动的取 `TurnOutcome.text`，并先用 `.is_answer` 检查。
+- **提前离开时要关闭它。** 单用 `break` 不会关闭异步生成器：它要等被垃圾回收或事件循环关闭时才关闭，只要还有引用持有它，本轮就不会结束：它一直流到队列满（64 个增量），然后停在那里等待，同时一直占着 agent，之后的轮次会抛 `TurnInProgressError`。`aclosing(...)` 会关闭它。关闭流，或取消消费它的任务，都会取消本轮，并像被取消的 `arun()` 一样有界地等待清理。
+- **结果属于本次调用。** 只有本轮返回时才产出 `TurnOutcome`：有答案的、没有答案的（`is_answer` 为假），或被取消的（`status="cancelled"`）。抛出异常的一轮不产出结果：异常在已流出的文本之后从迭代器抛出，`agent.last_turn` 以 `status="error"` 记下它。`agent.last_turn` 是*最近*一轮的结果，可能属于另一个调用方。
+- **一次只跑一轮。** 同一个 agent 上并发的第二轮在 worker 开始执行时从迭代器抛出 `TurnInProgressError`；被拒绝的流不会收到正在运行那一轮的任何内容；它没有开始任何一轮，所以 `agent.last_turn` 不会为它更新。
+- `cancellation_token=` 会关联到流自己的 token——取消它就结束本轮。关联是单向的：关闭流而取消的一轮不会取消你的 token，所以要看结果的 `status`。队列和 `events()` 一样有界：消费方慢，本轮就变慢，内存不会增长。
+- **不要为了抓文本而替换 `agent.transport`。** `astream()` 通过*订阅* agent 的 transport 接入，从不替换它（`NullTransport` 和 `SdkTransport` 都支持 `subscribe()`；没有它的 transport 会让 `astream()` 在本轮开始前抛 `TypeError`）。按请求替换 transport 行不通：工具执行器持有自己的 transport 引用，工具事件和确认仍会发到旧 transport，replay 也会丢掉它的适配器。
+- **流里没有的：** reasoning 文本、工具和权限事件（仍在 `agent.events()` 上），以及子 agent 的文本（子 agent 运行在自己的 transport 上）。`TextDelta` 和 `TurnOutcome` **不是** `HostEvent` 成员，不投影进 replay，也不在 `host.events.v1.json` 里。
 
 ## 4.7.5 端到端：租户级审计流水线
 
@@ -252,8 +280,11 @@ Q: 我要消费 Agent 事件，用哪个表面？
 ├─ 驱动一轮 / 拿最终回答？
 │      → agent.arun() 或 agent.chat()  (Part 2)
 │
-├─ 流式 UI（文本块、thinking、in-flight 工具视图）？
-│      → Transport(on_event=…)         (Part 4.3)
+├─ 把 assistant 文本流式推给 UI？
+│      → agent.astream()               (§ 4.7.4)
+│
+├─ reasoning 文本、原始工具输出、LLM 调用细节？
+│      → Transport(on_event=…)         (Part 4.3，内部接口)
 │
 ├─ 审计 / SIEM / 计费 / 合规？
 │      → agent.events()                (本章)
@@ -275,8 +306,8 @@ Q: 我要消费 Agent 事件，用哪个表面？
 ## TL;DR
 
 - **`agentao.host` 是稳定的、schema 快照的、前向兼容的宿主表面。** 生产代码就 pin 这个。
-- **三个表面**：`events()` 接事件流、`active_permissions()` 取策略快照、`agentao.host.protocols` 注入能力。
-- **`events()` 不是 Transport 的替代** —— 它们互补。UI 流式用 Transport，审计 / 可观测用 `events()`。
+- **三个表面**：`events()` 接事件流、`active_permissions()` 取策略快照、`agentao.host.protocols` 注入能力——另有 `astream()` 流式输出一轮的文本。
+- **回答文本用 `astream()`，审计 / 可观测用 `events()`，Transport 只用于两者都不带的东西**（reasoning、原始工具 I/O）。增量用于显示，结果以最后的 `TurnOutcome` 为准。
 - **`isinstance` 分派 `HostEvent`** 把事件路由到对应 handler。三种事件是正交的生命周期事实，不是层级关系。
 - **30 行 + 一张数据库表**就能落出能扛住版本升级的租户审计流水线。
 

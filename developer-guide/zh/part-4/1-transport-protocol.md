@@ -138,6 +138,7 @@ def subscribe(
 **框架内置使用方**：
 - replay 录制器（订阅 `TURN_BEGIN` / `TURN_END` / 工具 / 子 agent 事件，替代过去从 agent 状态直接调 replay adapter 的路径）
 - `agent.events()` 背后的宿主事件流（见 [4.7](./7-host-contract)）
+- `agent.astream()`：通过订阅（而不是替换 transport）流式输出一轮的 assistant 文本（见 [4.7](./7-host-contract#streaming-text-agent-astream)）。transport 没有 `subscribe()` 时，`astream()` 在调用时、本轮开始前就抛 `TypeError`。
 
 **调用前先探测** —— 路径 C 的自定义实现可能完全不实现该方法：
 
@@ -200,12 +201,13 @@ from agentao.transport import NullTransport, EventType
 
 class MyTransport(NullTransport):
     def __init__(self, on_token):
+        super().__init__()          # 初始化 subscribe()；astream() 依赖它
         self.on_token = on_token
 
     def emit(self, event):
         if event.type == EventType.LLM_TEXT:
             self.on_token(event.data["chunk"])
-        # 其他事件继续走 NullTransport 默认（即 pass）
+        super().emit(event)         # 仍然通知订阅者
 
     def confirm_tool(self, name, desc, args):
         # 只允许读类工具

@@ -10,7 +10,7 @@ If you've already built agents with another framework, the mental model of Agent
 | Tool | `BaseTool` | function with docstring | `tool` decorator | `Tool` ABC |
 | Multi-agent | LangGraph | `GroupChat` | `Crew` | spawn another `Agentao` or use ACP reverse call |
 | Memory | `ConversationBufferMemory` / vector stores | `memory` on agent | `memory` on agent | `MemoryManager` (SQLite, project+user) |
-| Streaming | callbacks / LCEL `astream` | `register_hook` | event hooks | `Transport` + `AgentEvent` |
+| Streaming | callbacks / LCEL `astream` | `register_hook` | event hooks | `agent.astream()` for text; `Transport` + `AgentEvent` for everything else |
 | Tool approval | HITL via `interrupt` | `a_human_input_mode` | `human_input=True` | `Transport.confirm_tool` |
 | External model context | MCP adapter | function calling | n/a | first-class MCP (stdio + Streamable HTTP + SSE) |
 | Host-proc isolation | n/a (in-proc) | n/a (in-proc) | n/a (in-proc) | **ACP** (subprocess) |
@@ -35,7 +35,7 @@ If you've already built agents with another framework, the mental model of Agent
 1. Port tools first. `_run(self, **kw)` → `execute(self, **kw)`; `args_schema` Pydantic → `parameters` JSON Schema (or generate it with `pydantic.TypeAdapter`).
 2. Move prompt text to `AGENTAO.md` + skill files. Any per-request dynamic context stays in the user message.
 3. Replace `AgentExecutor(..., memory=ConversationBufferMemory())` with `Agentao(...)`; history lives in `agent.messages` automatically.
-4. Wire streaming: replace callback handlers with a `SdkTransport(on_event=…)`.
+4. Wire streaming: LCEL `astream` → `agent.astream()` for the answer text (deltas for display, the final `TurnOutcome` is the answer — see [4.4](/en/part-4/4-streaming-ui)); other callback handlers → a `SdkTransport(on_event=…)`.
 5. For RAG, expose your vector store as an MCP server or a `Tool` subclass.
 
 ## E.3 From AutoGen

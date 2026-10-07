@@ -111,37 +111,41 @@ The UI parses this marker to render the image.
 
 ```python
 # app.py (abridged)
+from contextlib import aclosing
 from agentao import Agentao
-from agentao.transport import SdkTransport
-from agentao.transport.events import EventType
+from agentao.host import TextDelta
 from pathlib import Path
 import re, asyncio
 
-CHART_RE = re.compile(r"\[CHART\]\s+(\S+)")
+CHART_RE = re.compile(r"\[CHART\]\s+(\S+?\.png)")  # ends at .png: joined deltas from two LLM calls have no separator
 
 @app.post("/ask")
 async def ask(req: dict, user=Depends(current_user)):
     workdir = Path(f"/workspaces/{user.username}")
     workdir.mkdir(exist_ok=True)
 
-    charts: list[str] = []
-
-    def on_event(ev):
-        if ev.type is EventType.LLM_TEXT:
-            for m in CHART_RE.finditer(ev.data["chunk"]):
-                charts.append(m.group(1))
-
-    transport = SdkTransport(on_event=on_event)
-    agent = Agentao(working_directory=workdir, transport=transport)
+    agent = Agentao(working_directory=workdir)
     agent.skill_manager.activate_skill(
         "duckdb-analyst",
         task_description=f"Answer: {req['question']}",
     )
-    reply = await asyncio.to_thread(agent.chat, req["question"])
-    agent.close()
+    streamed: list[str] = []
+    try:
+        async with aclosing(agent.astream(req["question"])) as stream:
+            async for item in stream:
+                if isinstance(item, TextDelta):
+                    streamed.append(item.text)   # narration included
+                else:
+                    outcome = item               # TurnOutcome: the answer
+    finally:
+        await asyncio.to_thread(agent.close)
 
+    # A [CHART] line can come in narration before a tool call, so scan
+    # everything streamed, joined first (one line can span chunks).
+    charts = CHART_RE.findall("".join(streamed))
     return {
-        "text": reply,
+        "text": outcome.text,
+        "is_answer": outcome.is_answer,
         "charts": [str(workdir / c) for c in charts],
     }
 ```
@@ -159,7 +163,7 @@ Enforced at the OS level — even if the sandbox profile is loosened, the mount 
 
 ## UX detail: show the SQL
 
-Analysts trust answers only when they see the query. Parse `LLM_TEXT` chunks for fenced ```sql blocks client-side and render them as copy-able code. The `duckdb-analyst` skill's "always print the SQL" rule makes this reliable.
+Analysts trust answers only when they see the query. Parse the streamed `TextDelta` text for fenced ```sql blocks client-side and render them as copy-able code. The `duckdb-analyst` skill's "always print the SQL" rule makes this reliable.
 
 ## ⚠️ Pitfalls
 

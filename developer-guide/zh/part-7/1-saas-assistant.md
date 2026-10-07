@@ -31,7 +31,7 @@ FastAPI 后端
         ├─ working_directory = /data/tenants/{tenant_id}/{session_id}
         ├─ 自定义工具: list_projects, create_task, assign_user
         ├─ PermissionEngine: WORKSPACE_WRITE，内置写入工具用 deny 规则挡掉
-        └─ SdkTransport → SSE 桥接
+        └─ agent.astream() → SSE 桥接
 ```
 
 ## 关键代码
@@ -101,13 +101,12 @@ class CreateTaskTool(Tool):
 
 ```python
 # app.py
+from contextlib import aclosing
 from fastapi import FastAPI, Depends
 from fastapi.responses import StreamingResponse
-from agentao import Agentao
-from agentao.transport import SdkTransport
-from agentao.transport.events import AgentEvent, EventType
+from agentao.host import TextDelta
 from pathlib import Path
-import asyncio, httpx, json
+import httpx, json
 
 from .tools.project_tools import ListProjectsTool, CreateTaskTool
 from .auth import current_user
@@ -123,33 +122,24 @@ async def chat(payload: dict, user=Depends(current_user)):
     workdir = Path(f"/data/tenants/{user.tenant_id}/{session_id}")
     workdir.mkdir(parents=True, exist_ok=True)
 
-    queue: asyncio.Queue = asyncio.Queue()
-    loop = asyncio.get_running_loop()
-
-    def on_event(ev: AgentEvent):
-        loop.call_soon_threadsafe(queue.put_nowait, ev)
-
-    transport = SdkTransport(on_event=on_event)
-    agent = await get_or_create_agent(
+    agent, lock = await get_or_create_agent(
         session_id=f"{user.tenant_id}:{session_id}",
         workdir=workdir,
         tenant_id=user.tenant_id,
-        transport=transport,
     )
 
-    async def run():
-        reply = await asyncio.to_thread(agent.chat, message)
-        await queue.put({"type": "done", "text": reply})
-
-    asyncio.create_task(run())
-
     async def sse():
-        while True:
-            ev = await queue.get()
-            if isinstance(ev, dict) and ev.get("type") == "done":
-                yield f"event: done\ndata: {json.dumps(ev)}\n\n"
-                return
-            yield f"data: {json.dumps({'type': ev.type.value, **ev.data})}\n\n"
+        async with lock:  # 每个会话一次一轮；不加锁时第二个请求会得到 TurnInProgressError
+            # astream() 订阅 agent 的 transport；不要每个请求替换 agent.transport。
+            # 客户端断开时，aclosing 会取消本轮。
+            async with aclosing(agent.astream(message)) as stream:
+                async for item in stream:
+                    if isinstance(item, TextDelta):
+                        frame = {"type": "llm_text", "chunk": item.text}
+                        yield f"data: {json.dumps(frame)}\n\n"
+                    else:  # TurnOutcome：最终答案（流出的片段里还有工具调用前的说明文字）
+                        done = {"text": item.text, "is_answer": item.is_answer}
+                        yield f"event: done\ndata: {json.dumps(done)}\n\n"
 
     return StreamingResponse(sse(), media_type="text/event-stream")
 ```
@@ -158,15 +148,17 @@ async def chat(payload: dict, user=Depends(current_user)):
 
 ```python
 # pool.py
+import asyncio
 from agentao import Agentao
 from agentao.permissions import PermissionEngine, PermissionMode
 from .tools.project_tools import ListProjectsTool, CreateTaskTool
 
-async def get_or_create_agent(session_id, workdir, tenant_id, transport):
+_pool: dict[str, tuple[Agentao, asyncio.Lock]] = {}
+
+async def get_or_create_agent(session_id, workdir, tenant_id):
     existing = _pool.get(session_id)
     if existing:
-        existing.transport = transport
-        return existing
+        return existing  # 跨请求复用同一个 agent 和 transport
     # Deny the built-in writers by rule; read-only mode would deny
     # CreateTaskTool too. create_task keeps asking via requires_confirmation.
     engine = PermissionEngine(project_root=workdir, rules=[
@@ -178,13 +170,12 @@ async def get_or_create_agent(session_id, workdir, tenant_id, transport):
     engine.set_mode(PermissionMode.WORKSPACE_WRITE)
     agent = Agentao(
         working_directory=workdir,
-        transport=transport,
         permission_engine=engine,
     )
     agent.tools.register(ListProjectsTool(tenant_id, api_client))
     agent.tools.register(CreateTaskTool(tenant_id, api_client))
-    _pool[session_id] = agent
-    return agent
+    _pool[session_id] = (agent, asyncio.Lock())
+    return _pool[session_id]
 ```
 
 TTL + LRU 驱逐用 [6.7 Pattern B](/zh/part-6/7-resource-concurrency#pattern-b-会话池-ttl-驱逐) 里的完整 `AgentPool`。
@@ -196,10 +187,15 @@ const es = new EventSource(`/chat`, { method: "POST", body: JSON.stringify({sess
 es.onmessage = (e) => {
   const ev = JSON.parse(e.data);
   if (ev.type === "llm_text") append(ev.chunk);
-  if (ev.type === "tool_start") showSpinner(ev.tool);
-  if (ev.type === "tool_confirmation") showConfirmModal(ev);  // 见 4.5
+  // 工具活动不在这条流里：另开一个通道转发 agent.events()（ToolLifecycleEvent）。
+  // 确认由构造 agent 时的 transport 回答，例如 SdkTransport(confirm_tool=...)——见 4.5。
 };
-es.addEventListener("done", (e) => { finalize(JSON.parse(e.data).text); es.close(); });
+es.addEventListener("done", (e) => {
+  const done = JSON.parse(e.data);
+  if (done.is_answer) finalize(done.text);   // 这才是答案
+  else showError(done.text);                 // 例如 [LLM API error: …] 文本
+  es.close();
+});
 ```
 
 ## ⚠️ 陷阱

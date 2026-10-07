@@ -15,8 +15,11 @@ _Targeting 0.5.12. Add entries under the relevant heading as work lands._
 - **`Agentao.set_permission_mode()` accepts the mode's string value**, the vocabulary `ActivePermissions.mode` already uses. An unknown string raises `ValueError`, another type `TypeError`. The enum is still accepted, and the return value is unchanged: the previous mode as `PermissionMode`.
 - **`CancellationToken` is exported from `agentao.host`** — the same class as `agentao.cancellation.CancellationToken`, now on the stable surface. `PermissionMode` is deliberately not exported; strings are the public spelling.
 - **`dir(agentao.host)` lists its lazy exports** (`Tool`, `AsyncToolBase`, `RegistrableTool`). It imports nothing to do so.
+- **`Agentao.astream(prompt, *, max_iterations=100, images=None, cancellation_token=None)`: streaming text on the stable contract.** It runs one turn and yields `TextDelta` items as the assistant's text streams, then the turn's `TurnOutcome`; both types are exported from `agentao.host`. The deltas are for display: every LLM call in the turn streams, including one that ends in tool calls, so joined deltas are not the answer — `TurnOutcome.text` is, checked with `is_answer`. The outcome is bound to the call, even when several callers share the agent. Close the stream with `contextlib.aclosing` when leaving early: closing it, or cancelling its task, cancels the turn and waits for cleanup like a cancelled `arun()`, while after a bare `break` the turn is not closed until the generator is garbage-collected or the loop shuts down, and once its queue is full it stalls there, still holding the agent. It subscribes to the agent's transport and never replaces it; a transport without `subscribe()` raises `TypeError` before the turn starts. Reasoning text and tool events are not in the stream, and neither type is a `HostEvent` or enters replay.
 
 ### Changed
+
+- **`TurnOutcome` is defined in `agentao.outcome`**, a standard-library-only module, and exported from `agentao.host`. `agentao.TurnOutcome` and `agentao.runtime.outcome.TurnOutcome` are the same class. `from agentao import TurnOutcome` no longer loads the chat loop and the LLM client, which the comment beside it had always claimed.
 
 ### Fixed
 

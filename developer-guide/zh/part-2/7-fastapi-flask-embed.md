@@ -19,7 +19,7 @@
 
 ### 你会得到
 
-- `POST /chat/{session_id}` —— SSE 把 token 流回客户端
+- `POST /chat/{session_id}` —— 用 SSE 把 assistant 文本流回客户端（`agent.astream()`）
 - `POST /chat/{session_id}/cancel` —— 中止正在跑的轮次
 - `DELETE /session/{session_id}` —— 释放该 session 的 MCP 子进程
 - 每 session 一把锁（同一 agent 不会并发两轮）
@@ -37,17 +37,15 @@ import asyncio
 import json
 import os
 from asyncio import Lock, to_thread
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager  # aclosing: Python 3.10+
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Set, Tuple
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from agentao import Agentao
-from agentao.cancellation import CancellationToken
-from agentao.transport import SdkTransport
-from agentao.transport.events import AgentEvent, EventType
+from agentao.host import CancellationToken, TextDelta
 
 
 # --------------------------------------------------------------------------
@@ -92,7 +90,7 @@ class SessionPool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.pool = SessionPool(Path(os.environ.get("AGENTAO_ROOT", "/app/tenants")))
-    app.state.active_tokens: Dict[str, CancellationToken] = {}
+    app.state.active_tokens: Dict[str, Set[CancellationToken]] = {}
     yield
     await app.state.pool.close_all()
 
@@ -124,49 +122,51 @@ async def chat_endpoint(
     message = body["message"]
 
     pool: SessionPool = request.app.state.pool
-    tokens: Dict[str, CancellationToken] = request.app.state.active_tokens
+    tokens: Dict[str, Set[CancellationToken]] = request.app.state.active_tokens
 
     agent, lock = await pool.get(session_id, tenant)
     token = CancellationToken()
-    tokens[session_id] = token
-
-    # Transport 把事件塞到 asyncio queue 里中转给 SSE。
-    queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
-    loop = asyncio.get_running_loop()
-
-    def on_event(event: AgentEvent) -> None:
-        loop.call_soon_threadsafe(queue.put_nowait, event)
-
-    transport = SdkTransport(on_event=on_event)
-    agent.transport = transport   # 两轮之间换 transport 是安全的
 
     async def watch_disconnect():
         while not await request.is_disconnected():
             await asyncio.sleep(0.5)
         token.cancel("client-disconnected")
 
-    async def run_chat():
-        async with lock:
-            try:
-                return await to_thread(agent.chat, message, cancellation_token=token)
-            finally:
-                await queue.put(None)  # 哨兵 → 关流
-
     async def sse_stream():
+        # Registered here, not in the endpoint: a response whose body never
+        # starts never runs this generator's ``finally``. A set per session:
+        # the stop button cancels the running turn and any request still
+        # waiting for the session lock.
+        tokens.setdefault(session_id, set()).add(token)
         watcher = asyncio.create_task(watch_disconnect())
-        chat_task = asyncio.create_task(run_chat())
         try:
-            while True:
-                ev = await queue.get()
-                if ev is None:
-                    break
-                data = {"type": ev.type.value, "data": ev.data}
-                yield f"data: {json.dumps(data)}\n\n"
-            reply = await chat_task
-            yield f"data: {json.dumps({'type': 'done', 'reply': reply})}\n\n"
+            async with lock:
+                if token.is_cancelled:
+                    # 等锁期间已被停止。照样开始本轮，仍会把这条提示和一条
+                    # "[Cancelled: …]" 回复写进会话历史。
+                    data = {"type": "done", "status": "cancelled",
+                            "is_answer": False, "reply": ""}
+                    yield f"data: {json.dumps(data)}\n\n"
+                    return
+                # astream() 订阅 agent 的 transport；不要为了抓文本
+                # 按请求替换 agent.transport。
+                async with aclosing(
+                    agent.astream(message, cancellation_token=token)
+                ) as stream:
+                    async for item in stream:
+                        if isinstance(item, TextDelta):   # 用于显示
+                            data = {"type": "text", "text": item.text}
+                        else:                             # TurnOutcome 总是最后一项：这才是回答
+                            data = {"type": "done", "status": item.status,
+                                    "is_answer": item.is_answer, "reply": item.text}
+                        yield f"data: {json.dumps(data)}\n\n"
         finally:
             watcher.cancel()
-            tokens.pop(session_id, None)
+            live = tokens.get(session_id)
+            if live is not None:
+                live.discard(token)
+                if not live:
+                    del tokens[session_id]
 
     return StreamingResponse(sse_stream(), media_type="text/event-stream")
 
@@ -177,8 +177,7 @@ async def chat_endpoint(
 
 @app.post("/chat/{session_id}/cancel")
 async def cancel_endpoint(session_id: str, tenant: str = Depends(auth)):
-    token = app.state.active_tokens.get(session_id)
-    if token:
+    for token in list(app.state.active_tokens.get(session_id, ())):
         token.cancel("user-stop-button")
     return {"ok": True}
 
@@ -218,13 +217,15 @@ curl -N -X POST http://localhost:8000/chat/s-1 \
 | `SessionPool` | 按 session 缓存 `(agent, lock)`，按租户建工作目录 |
 | `lifespan` | 关停时关闭所有 agent——**关键**，不然 MCP 泄漏 |
 | `auth` 依赖 | 从 Bearer 解出 tenant id；生产上换 JWT/OAuth |
-| `SdkTransport(on_event=…)` | 把 agent 事件通过 `call_soon_threadsafe` 送进 asyncio queue |
+| `agent.astream(…)` | 运行本轮，先产出 `TextDelta`，最后是 `TurnOutcome`——不用线程桥接，也不用换 transport |
 | `watch_disconnect` | 客户端断连时取消本轮 |
-| `sse_stream` | 把事件作为 SSE 帧往外推，最后发 `{type:"done", reply: …}` |
+| `sse_stream` | 把每个增量作为 SSE 帧往外推，最后用 `TurnOutcome` 发 `{type:"done", status, is_answer, reply}` |
 
 ### 注意
 
-- `on_event` 跑在**agent 的那个线程**，不是事件循环里。必须 `loop.call_soon_threadsafe` 做交接
+- **增量用于显示，结果以 outcome 为准（即 `done` 帧）。** 增量拼起来不等于 `reply`：以工具调用结束的 LLM 调用里的说明文字也会流出来，而 `reply` 可能是从未流出的占位或错误字符串。只有 `is_answer` 为真时才保存 `reply`。见 [4.7](/zh/part-4/7-host-contract#streaming-text-agent-astream)
+- `aclosing(...)` 很重要：响应生成器被提前关闭时，它会关闭流，从而取消本轮。只写 `break` 会让本轮继续跑
+- **不要按请求替换 `agent.transport`。** 工具执行器持有自己的引用，工具事件和确认仍会发到旧 transport，replay 也会丢掉它的适配器。`astream()` 用的是订阅。工具和权限活动在 `agent.events()` 上（[4.7](/zh/part-4/7-host-contract)）；reasoning 文本只在内部 transport 上（[4.3](/zh/part-4/3-sdk-transport)）
 - `SessionPool` 用了 dict + asyncio.Lock。生产上加 TTL 淘汰 + 每租户最大会话数，参见 [Part 7](/zh/part-7/)
 - 本模板不持久化消息。要扛重启，把 [2.4](./4-session-state) 的 `save_session` / `load_session` 插进来
 
@@ -252,6 +253,7 @@ from agentao.transport import SdkTransport
 
 # 每个 Gunicorn worker 一个独立的池
 _sessions: dict[str, tuple[Agentao, threading.Lock]] = {}
+_sinks: dict[str, Queue] = {}   # session_id -> 正在跑这一轮的请求的队列
 _active_tokens: dict[str, CancellationToken] = {}
 
 app = Flask(__name__)
@@ -261,7 +263,14 @@ def _get_agent(session_id: str, tenant: str) -> tuple[Agentao, threading.Lock]:
     if session_id not in _sessions:
         workdir = Path(f"/app/tenants/{tenant}")
         workdir.mkdir(parents=True, exist_ok=True)
-        agent = Agentao(working_directory=workdir)
+        # agent 整个生命周期只用一个 transport，构造时设好——
+        # 绝不按请求替换。它把事件转给当前持有锁的那个请求。
+        def on_event(ev, sid=session_id):
+            q = _sinks.get(sid)
+            if q is not None:
+                q.put(ev)
+
+        agent = Agentao(working_directory=workdir, transport=SdkTransport(on_event=on_event))
         _sessions[session_id] = (agent, threading.Lock())
     return _sessions[session_id]
 
@@ -285,13 +294,15 @@ def chat(session_id: str):
     _active_tokens[session_id] = token
 
     queue: Queue = Queue()
-    transport = SdkTransport(on_event=lambda ev: queue.put(ev))
-    agent.transport = transport
 
     def worker():
         try:
             with lock:
-                reply = agent.chat(message, cancellation_token=token)
+                _sinks[session_id] = queue      # 本请求接管该会话的事件
+                try:
+                    reply = agent.chat(message, cancellation_token=token)
+                finally:
+                    _sinks.pop(session_id, None)
                 queue.put(("__DONE__", reply))
         except Exception as e:
             queue.put(("__ERROR__", str(e)))
@@ -353,6 +364,7 @@ uv run gunicorn --worker-class gthread --threads 8 --workers 2 \
 
 ### 与 FastAPI 版本的差别
 
+- **用内部事件，不用 `astream()`**：`astream()` 是异步的，所以这个 WSGI 模板转发的是内部 `AgentEvent` 流（字段可能随版本变化），走的是构造时设好的 transport。不要按请求给 `agent.transport` 赋值——工具事件和确认会留在旧 transport 上
 - **没断连检测**：WSGI 不给"客户端走了"的干净钩子。靠用户点取消 + 硬超时兜
 - **Worker 本地池**：每个 Gunicorn worker 有自己的 `_sessions`。多 worker 部署要把同一个 `session_id` 路由到同一个 worker（nginx `ip_hash`、cookie 路由、反代 sticky session）
 - **跨 worker 持久化**：要在 worker 之间共享会话，接 [2.4.3](./4-session-state#2-4-3-持久化-还原配方) 的 DB 落盘方案

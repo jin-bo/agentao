@@ -25,10 +25,13 @@ embedding of Agentao. Three pillars:
   its own clients; vanilla in-process hosts ignore this surface.
 
 It is **not** a complete chat runtime. To drive an agent turn, hosts
-call `Agentao.arun()`. To render streaming chat UI, hosts consume the
-internal `Transport` / `AgentEvent` stream — that carries the
-assistant text, reasoning, and raw tool I/O the stable contract
-intentionally omits.
+call `Agentao.arun()`. To stream the assistant's text, hosts call
+`Agentao.astream()`, which yields `TextDelta` items and then the turn's
+`TurnOutcome` (added after this design, see
+`docs/design/host-api-ergonomics-review.md` F2). Those two types are a
+delivery API: they are not `HostEvent` members and are not projected into
+replay. Reasoning and raw tool I/O stay outside the stable contract, on the
+internal `Transport` / `AgentEvent` stream.
 
 The ACP server (`agentao --acp --stdio`) and the ACP client
 (`ACPManager`) are **separate deployment models**, not transports

@@ -322,6 +322,7 @@ LEAF_MODULES: Set[str] = {
     "frontmatter",
     "logging_utils",
     "media_limits",
+    "outcome",
     "paths",
     "redact",
     "sandbox",

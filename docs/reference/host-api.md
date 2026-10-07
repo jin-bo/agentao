@@ -12,11 +12,14 @@ Agentao inside another application. Internal runtime types
 intentionally not part of this surface.
 
 > **Scope.** This package is the stability boundary for hosts embedding
-> Agentao **in-process**. Three pillars:
+> Agentao **in-process**. Four pillars:
 >
 > - **Observability events** — `ToolLifecycleEvent`,
 >   `SubagentLifecycleEvent`, `PermissionDecisionEvent`.
 > - **Permission state** — `ActivePermissions` snapshot.
+> - **Streaming text** — `Agentao.astream()` yields `TextDelta`, then
+>   the turn's `TurnOutcome`. A delivery API, not an audit record: see
+>   [Streaming text](#streaming-text-agentaoastream).
 > - **ACP schema surface** — versioned Pydantic models for ACP wire
 >   payloads, exported *only* for the long-tail case where an
 >   in-process host *also* re-exposes Agentao to its own clients via
@@ -24,10 +27,9 @@ intentionally not part of this surface.
 >   ignore the ACP-related exports entirely.
 >
 > This package is **not** a complete chat runtime. Drive a turn with
-> `Agentao.arun()` and render streaming UI from the internal
-> `Transport` / `AgentEvent` stream — that carries assistant text,
-> reasoning, and raw tool I/O, which the stable host contract
-> intentionally omits.
+> `Agentao.arun()`, or with `Agentao.astream()` to stream its text.
+> Reasoning text and raw tool I/O stay outside the stable contract; they
+> are on the internal `Transport` / `AgentEvent` stream.
 >
 > > Not sure whether you want this surface, the ACP server
 > > (`agentao --acp --stdio`), or the ACP client (`ACPManager`)?
@@ -36,7 +38,9 @@ intentionally not part of this surface.
 > **Import discipline.** All public types live on the `agentao.host`
 > module — they are deliberately **not** re-exported from the top-level
 > `agentao` package. Always `from agentao.host import ...`; do not
-> rely on `agentao.ToolLifecycleEvent` or similar to exist.
+> rely on `agentao.ToolLifecycleEvent` or similar to exist. The one
+> name on both is `TurnOutcome`: `agentao.TurnOutcome` predates this
+> export and is the same class.
 
 ## Public exports
 
@@ -54,6 +58,8 @@ intentionally not part of this surface.
 | `Tool`, `AsyncToolBase` | Base classes for host-supplied tools passed via `Agentao(extra_tools=[...])`. Re-export of the canonical types in `agentao.tools.base` — a stable import path, not a new abstraction layer. |
 | `RegistrableTool` | `Union[Tool, AsyncToolBase]` — the type the registry / `extra_tools=` accepts. |
 | `CancellationToken` | The token `chat()` / `arun()` accept as `cancellation_token=`. Re-export of `agentao.cancellation.CancellationToken` (the same class). A simple async call can end its turn by cancelling the task instead; pass a token for a stop button, cancelling across tasks, a signal shared by several calls, or a sync `chat()` cancelled from another thread. |
+| `TextDelta` | One chunk of assistant text from `Agentao.astream()`. For display: joined deltas are not the answer — see [Streaming text](#streaming-text-agentaoastream). |
+| `TurnOutcome` | How a turn ended: `text`, `status`, `incomplete_reason`, `tool_count`, `error`, `finish_reason_missing`, and `.is_answer`. The last item of `astream()`, and what `agent.last_turn` returns. Same class as `agentao.TurnOutcome`; defined in the standard-library-only `agentao.outcome`. |
 | `agentao.host.replay_projection` | Submodule bridging `EventStream` ⇄ replay JSONL — see [Replay projection](#replay-projection-agentaohostreplay_projection) below. |
 
 ### Sub-agent `failed` has two shapes
@@ -228,6 +234,74 @@ never changes mid-turn — `add_tool` / `remove_tool` are reflected on the
 v1 supports calling these methods **between** turns only (not from a concurrent
 task, nor from inside a tool's `execute()` mid-turn — see
 [`runtime-tool-injection.md`](../design/runtime-tool-injection.md) §7).
+
+## Streaming text (`Agentao.astream`)
+
+`Agentao.astream(prompt, *, max_iterations=100, images=None, cancellation_token=None)` runs one
+turn and yields its assistant text as it streams, then the turn's
+`TurnOutcome`:
+
+```python
+from contextlib import aclosing  # Python 3.10+
+from agentao.host import TextDelta, TurnOutcome
+
+async with aclosing(agent.astream(prompt)) as stream:
+    async for item in stream:
+        if isinstance(item, TextDelta):
+            send_to_ui(item.text)
+        else:                         # TurnOutcome, always the last item
+            store(item.text) if item.is_answer else report(item)
+```
+
+**Deltas are for display; the outcome is the answer.** Joined `TextDelta`s
+are not `TurnOutcome.text`. Every LLM call in the turn streams its text,
+including a call that ends in tool calls, so narration such as "Let me
+check the file" arrives as deltas and is not in the final text. The final
+text can also be a string no delta carried: the `[No response]`
+placeholder, an abort notice or an `[LLM API error: …]` string. Show the
+deltas; store or act on `TurnOutcome.text`, checked with `is_answer`.
+
+**Close it when you leave early.** `break` alone does not close an async
+generator: it is closed when it is garbage-collected or when the event loop
+shuts down, so while anything still references it, the turn stays open: it streams until the queue is full (64 deltas), then waits there, still holding the agent, and a later turn raises `TurnInProgressError`.
+`aclosing(...)` closes it on the way out, deterministically. Closing, or
+cancelling the task that consumes the stream, cancels the turn and waits
+for its cleanup, bounded, as a cancelled `arun()` does. A turn cancelled
+that way yields nothing more; `agent.last_turn` records it once the turn
+has ended. A turn still queued for a worker when the stream closed never
+starts, and `agent.last_turn` is not set for it.
+
+**The rest of the contract:**
+- `TurnOutcome` is yielded only when the turn returned: an answer, a turn
+  with no answer (`is_answer` false, for example an `llm_error`), or a
+  cancelled one (`status="cancelled"`). A turn that raised yields no outcome:
+  its exception is raised from the iterator after the text already streamed,
+  and `agent.last_turn` records it with `status="error"`.
+- The outcome is this call's, even if another caller's turn on the same
+  agent ran before you read it. `agent.last_turn` is the latest turn's.
+- One turn at a time, as with `arun()`: a second turn on the same agent
+  raises `TurnInProgressError` from the iterator, when the worker starts it
+  (with the `arun` pool busy, that can be after a wait). A refused stream
+  yields nothing from the running turn, and since it never started a turn,
+  `agent.last_turn` is not set for it.
+- `cancellation_token=` is linked to the stream's own token, so cancelling
+  it ends the turn; the link is removed when the stream ends. It is one
+  way: a turn cancelled by closing the stream does not cancel your token, so
+  read the outcome's `status`.
+- The queue is bounded like `events()`'s: a consumer that stops reading
+  slows the turn instead of growing memory.
+- The stream attaches by subscribing to the agent's transport and never
+  replaces it, so confirmations and replay are unchanged. A transport with
+  no `subscribe()` makes `astream()` raise `TypeError` when called, before
+  the turn starts. `NullTransport` and `SdkTransport` both subscribe. A
+  subclass of either that overrides `emit()` must call `super().emit()`:
+  otherwise no event reaches the stream, and `astream()` raises
+  `RuntimeError` after the turn, with no outcome (`agent.last_turn` has it).
+- Not included: reasoning text, tool and permission events (they stay on
+  `events()`), and a sub-agent's text, which runs on its own transport.
+- `TextDelta` and `TurnOutcome` are not `HostEvent` members. They are not
+  projected into replay and are not in `docs/schema/host.events.v1.json`;
+  the text already reaches replay through the internal stream.
 
 ## Compaction (`Agentao.compact`)
 
@@ -638,7 +712,7 @@ above.
 
 The host contract above is **deliberately narrow** — three Pydantic
 event families with versioned schema snapshots and a stability
-promise. A second, **wider** event channel exists alongside it: the
+promise, plus assistant text through `astream()`. A second, **wider** event channel exists alongside it: the
 internal `Transport` / `AgentEvent` stream. Hosts that need finer
 visibility (LLM call usage, memory writes, hook fires, skill swaps,
 context compression) attach a transport callback at construction
@@ -718,6 +792,8 @@ meaning changed under a name consumers already read.
 
 - **Audit, compliance, billing, third-party UI:** `HostEvent`. The
   schema is the contract.
+- **A chat UI streaming the answer:** `astream()`, with `events()`
+  beside it for tool activity.
 - **Local-process diagnostics, dev-tools panels, replay capture,
   cost dashboards owned by the same team:** `Transport` /
   `AgentEvent`. Cheap to attach, no projection cost, every internal
@@ -791,7 +867,8 @@ confirmation even in `full-access`, and the ACP server offers only
   o.finish_reason_missing`; one on a known-lenient provider keeps
   ignoring it. That is a **pull** surface: it answers "how did the turn I just
   awaited end?", which covers `chat()` / `arun()` callers, `agentao
-  run`, and any embedder. What is **not** on the stable contract is the
+  run`, and any embedder. A host that drives the turn with `astream()`
+  gets the same `TurnOutcome` as the stream's last item. What is **not** on the stable contract is the
   **push** shape — a `HostEvent` an async observer that does *not* drive
   the turn could subscribe to. That gap is now **main-loop-only**: for
   **sub-agent** turns the outcome *is* on the public surface, because a

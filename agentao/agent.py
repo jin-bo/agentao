@@ -7,7 +7,7 @@ import concurrent.futures
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Union, TYPE_CHECKING
+from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional, Sequence, Set, Union, TYPE_CHECKING
 
 from .llm import LLMClient
 from .llm.client import KEEP_BASE_URL as _KEEP_BASE_URL
@@ -49,7 +49,8 @@ if TYPE_CHECKING:
     from .mcp import McpClientManager  # type-only; MCP SDK is heavy
     from .memory import MemoryManager  # noqa: F401
     from .replay import ReplayConfig, ReplayManager  # type-only — replay no longer in core surface
-    from .runtime.outcome import TurnOutcome  # noqa: F401
+    from .host.stream import TextDelta  # noqa: F401
+    from .outcome import TurnOutcome  # noqa: F401
     from .tools.base import RegistrableTool  # noqa: F401
 
 
@@ -1525,6 +1526,59 @@ class Agentao:
             if not work.cancel():
                 await _await_turn_cleanup(future, work)
             raise
+
+    def astream(
+        self,
+        user_message: str,
+        *,
+        max_iterations: int = 100,
+        images: Optional[List[Dict[str, str]]] = None,
+        cancellation_token: Optional[CancellationToken] = None,
+    ) -> "AsyncGenerator[Union[TextDelta, TurnOutcome], None]":
+        """Run one turn, yielding its text as it streams, then its outcome.
+
+        Yields :class:`~agentao.host.TextDelta` items while the turn runs,
+        then the turn's :class:`~agentao.host.TurnOutcome` as the last item
+        when the turn returned. Deltas are for display; the answer is the
+        outcome's ``text``, checked with ``is_answer``. Joined deltas are not
+        the answer: narration before a tool call streams too, and a
+        placeholder or error text is never streamed.
+
+        Close the stream when leaving it early::
+
+            async with contextlib.aclosing(agent.astream(prompt)) as stream:
+                async for item in stream:
+                    ...
+
+        ``break`` alone does not close an async generator: it is closed when
+        it is garbage-collected or the event loop shuts down, so while
+        anything still references it, the turn stays open: once the queue
+        is full it waits, still holding the agent, and a later turn raises
+        ``TurnInProgressError``. Closing
+        (``aclose()``, or cancelling the consuming task) cancels the turn and
+        waits for its cleanup, bounded, like a cancelled :meth:`arun`.
+
+        Same turn rules as :meth:`arun`: a second turn on the same agent
+        raises ``TurnInProgressError``, from the iterator, when the worker
+        starts it. An exception from the turn is raised from the iterator
+        after the text already streamed. Tool and permission events stay on
+        :meth:`events`. A sub-agent's text is not included.
+
+        Raises ``TypeError`` here, before anything runs, when the agent's
+        transport has no ``subscribe()``. The stream attaches by subscribing
+        and never replaces the transport.
+        """
+        from .runtime.astream import resolve_subscribe, stream_turn
+
+        subscribe = resolve_subscribe(self.transport)
+        return stream_turn(
+            self,
+            user_message,
+            subscribe,
+            max_iterations=max_iterations,
+            images=images,
+            cancellation_token=cancellation_token,
+        )
 
     def _chat_inner(self, user_message: str, max_iterations: int,
                     token: CancellationToken,

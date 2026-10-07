@@ -10,7 +10,7 @@
 | 工具 | `BaseTool` | 带 docstring 的函数 | `tool` 装饰器 | `Tool` ABC |
 | 多 agent | LangGraph | `GroupChat` | `Crew` | 再起一个 `Agentao` 或 ACP 反向调另一个 |
 | 记忆 | `ConversationBufferMemory` / 向量库 | agent 上的 `memory` | agent 上的 `memory` | `MemoryManager`（SQLite，项目+用户） |
-| 流式 | callback / LCEL `astream` | `register_hook` | event hook | `Transport` + `AgentEvent` |
+| 流式 | callback / LCEL `astream` | `register_hook` | event hook | 文本用 `agent.astream()`；其余用 `Transport` + `AgentEvent` |
 | 工具审批 | 用 `interrupt` 的 HITL | `a_human_input_mode` | `human_input=True` | `Transport.confirm_tool` |
 | 外部模型上下文 | MCP 适配器 | function calling | 无 | 一等 MCP（stdio + Streamable HTTP + SSE） |
 | 宿主进程隔离 | 无（进程内） | 无（进程内） | 无（进程内） | **ACP**（子进程） |
@@ -35,7 +35,7 @@
 1. 先移工具。`_run(self, **kw)` → `execute(self, **kw)`；`args_schema` Pydantic → `parameters` JSON Schema（或用 `pydantic.TypeAdapter` 生成）
 2. 提示词文本放 `AGENTAO.md` + 技能文件。每请求的动态上下文仍放在用户消息里
 3. `AgentExecutor(..., memory=ConversationBufferMemory())` 换成 `Agentao(...)`；历史自动存在 `agent.messages`
-4. 接流式：callback handler 换成 `SdkTransport(on_event=…)`
+4. 接流式：LCEL `astream` → 回答文本用 `agent.astream()`（增量用于显示，结果以最后的 `TurnOutcome` 为准——见 [4.4](/zh/part-4/4-streaming-ui)）；其余 callback handler 换成 `SdkTransport(on_event=…)`
 5. RAG：向量库以 MCP 服务器或 `Tool` 子类暴露
 
 ## E.3 从 AutoGen 迁移
