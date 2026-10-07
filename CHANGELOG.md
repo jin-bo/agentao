@@ -31,6 +31,7 @@ _Targeting 0.5.12. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **`glob` preserves recursive segments and the requested directory prefix.** Patterns such as `src/**/test.py` now find nested files below `src` without also matching unrelated `other/src` directories. A host `FileSystem.glob` now receives `**` patterns unchanged with `recursive=False` and must interpret them with `Path.glob` semantics.
 - **Replay inspection keeps valid records when a crash truncates a UTF-8 character.** Decode each JSONL record independently, so an incomplete or invalid UTF-8 record is skipped without losing earlier or later events in listings and readers.
 
 - **One unreadable replay file no longer stops replay listing, lookup or retention.** `list_replays`, `open_replay` (finding a session's latest instance) and retention sorted `.agentao/replays/*.jsonl` by `stat()` and raised on the first entry whose `stat()` failed — a dangling symlink, or a file another process pruned between listing the directory and reading its metadata. `/replay list` and `/replay prune` failed, and because `ReplayManager` swallows a pruning error at session start and end, automatic retention silently deleted nothing while such an entry was present, so the directory grew past `replay.max_instances`. Those entries are now skipped and the rest keep their oldest-first order; a skipped entry is neither counted nor deleted. (#459)

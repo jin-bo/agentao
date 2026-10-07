@@ -364,7 +364,7 @@ from agentao.host.protocols import (
 
 | 符号 | 用途 |
 |---|---|
-| `FileSystem` | 文件系统 IO 的协议（`read_bytes`、`read_partial`、`open_text`、`write_text`、`list_dir`、`glob`、`stat`、`exists`、`is_dir`、`is_file`）。`write_text` 带一条原子性要求——见下文。 |
+| `FileSystem` | 文件系统 IO 的协议（`read_bytes`、`read_partial`、`open_text`、`write_text`、`list_dir`、`glob`、`stat`、`exists`、`is_dir`、`is_file`）。内置 `find_files` 工具以 `recursive=False` 原样传递 `glob` 模式；实现必须按 `Path.glob` 的语义处理 `**`。`write_text` 带一条原子性要求——见下文。 |
 | `ShellExecutor` | Shell 执行 + 后台句柄的协议。 |
 | `MCPRegistry` | 运行时使用的 MCP 服务器/工具发现协议。 |
 | `MemoryStore` | 持久化记忆存储后端的协议。 |

@@ -450,7 +450,7 @@ from agentao.host.protocols import (
 
 | Symbol | Purpose |
 |---|---|
-| `FileSystem` | Protocol for filesystem IO (`read_bytes`, `read_partial`, `open_text`, `write_text`, `list_dir`, `glob`, `stat`, `exists`, `is_dir`, `is_file`). `write_text` carries an atomicity requirement — see below. |
+| `FileSystem` | Protocol for filesystem IO (`read_bytes`, `read_partial`, `open_text`, `write_text`, `list_dir`, `glob`, `stat`, `exists`, `is_dir`, `is_file`). The built-in `find_files` tool passes `glob` patterns unchanged with `recursive=False`; implementations must interpret `**` with `Path.glob` semantics. `write_text` carries an atomicity requirement — see below. |
 | `ShellExecutor` | Protocol for shell execution + background handles. |
 | `MCPRegistry` | Protocol for MCP server / tool discovery used by the runtime. |
 | `MemoryStore` | Protocol for persistent memory storage backends. |

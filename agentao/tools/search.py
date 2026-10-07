@@ -176,9 +176,9 @@ class FindFilesTool(Tool):
                 return f"Error: Directory {directory} does not exist"
 
             matches = []
-            recursive = "**" in pattern
-            search_pattern = pattern.replace("**/", "") if recursive else pattern
-            for item in fs.glob(path, search_pattern, recursive=recursive):
+            # The pattern already locates each recursive segment. Adding an
+            # implicit leading ** or stripping inner ** changes its meaning.
+            for item in fs.glob(path, pattern, recursive=False):
                 if fs.is_file(item):
                     matches.append(str(item.relative_to(path)))
 
