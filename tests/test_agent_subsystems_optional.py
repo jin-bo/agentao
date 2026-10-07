@@ -10,11 +10,12 @@ When ``None`` (the default), each subsystem is fully disabled:
 - ``sandbox_policy=None`` → ``ToolRunner`` runs shell commands without
   the macOS sandbox-exec wrapper.
 - ``replay_config=None`` → no ``ReplayManager`` is attached
-  (``agent.replay_manager is None``), no ``<wd>/.agentao/replay.json``
-  is read.
+  (``agent.replay_manager is None``), and the ``replay`` block of
+  ``<wd>/.agentao/settings.json`` is not read.
 
 The factory (:func:`agentao.embedding.build_from_environment`) wires
-all three up from disk so CLI / ACP behavior is preserved.
+all three up from disk so CLI / ACP behavior is preserved. Passing any
+of them as an explicit ``None`` to the factory disables it the same way.
 """
 
 from __future__ import annotations
@@ -257,5 +258,64 @@ class TestFactoryDefaults:
         )
         assert agent.bg_store is None
         assert agent.sandbox_policy is None
+        assert agent.replay_manager is None
         # No bg-related tools advertised through the factory either.
         assert "check_background_agent" not in agent.tools.tools
+
+
+def _enable_replay_on_disk(wd: Path) -> None:
+    (wd / ".agentao").mkdir(exist_ok=True)
+    (wd / ".agentao" / "settings.json").write_text(
+        '{"replay": {"enabled": true}}', encoding="utf-8"
+    )
+
+
+class TestFactoryReplayConfig:
+    """An omitted ``replay_config`` reads ``settings.json``; an explicit
+    ``None`` disables replay like ``bg_store=None`` / ``sandbox_policy=None``.
+    It used to read ``settings.json`` too, so a host that passed ``None``
+    to turn replay off still recorded whenever that file enabled it."""
+
+    def test_omitted_loads_settings(self, tmp_path, _stub_factory_env):
+        _enable_replay_on_disk(tmp_path)
+        agent = build_from_environment(working_directory=tmp_path)
+        try:
+            assert agent.replay_manager is not None
+            assert agent.replay_manager.config.enabled is True
+        finally:
+            agent.close()
+
+    def test_explicit_none_skips_the_loader(
+        self, tmp_path, _stub_factory_env, monkeypatch
+    ):
+        # Record rather than raise: the factory swallows any exception
+        # from the loader, so a raising stub would pass either way.
+        calls = []
+        monkeypatch.setattr(
+            "agentao.replay.load_replay_config",
+            lambda *a, **kw: calls.append(a),
+        )
+        agent = build_from_environment(
+            working_directory=tmp_path, replay_config=None
+        )
+        try:
+            assert calls == []
+            assert agent.replay_manager is None
+        finally:
+            agent.close()
+
+    def test_explicit_none_disables_despite_settings(
+        self, tmp_path, _stub_factory_env
+    ):
+        _enable_replay_on_disk(tmp_path)
+        agent = build_from_environment(
+            working_directory=tmp_path, replay_config=None
+        )
+        try:
+            assert agent.replay_manager is None
+            # Same as a bare ``Agentao``: start_replay() builds a manager
+            # with replay off and records nothing.
+            assert agent.start_replay() is None
+            assert not (tmp_path / ".agentao" / "replays").exists()
+        finally:
+            agent.close()

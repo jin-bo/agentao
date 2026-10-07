@@ -131,9 +131,8 @@ What the factory does, in order:
    DB (disabled with a warning if either path is unwritable).
 6. Builds `FileBackedMCPRegistry(project_root=wd, user_root=user_root())`.
 7. Wires opt-in defaults (`BackgroundTaskStore`, `SandboxPolicy`,
-   `replay_config`). Pass `None` to disable `bg_store` or
-   `sandbox_policy`; for replay, `None` means "load from disk", so pass
-   `ReplayConfig(enabled=False)` (`agentao.replay`) to disable it.
+   `replay_config`, read from the `replay` block of
+   `.agentao/settings.json`). Pass `None` to disable any of them.
 8. Reads `<wd>/.agentao/settings.json` for factory-level toggles such
    as `agents.enable_builtin`.
 9. Constructs `Agentao(...)` with all of the above as explicit kwargs.
@@ -533,14 +532,13 @@ agent = build_from_environment(
     # calls agent.start_replay()
 )
 
-# Factory: disable replay specifically. ``replay_config=None`` would
-# load it from disk instead, unlike ``bg_store`` / ``sandbox_policy``.
-# A later ``agent.reload_replay_config()`` re-reads settings.json and
-# replaces this config.
-from agentao.replay import ReplayConfig
+# Factory: disable replay specifically. The ``replay`` block of
+# settings.json is not read and no manager is attached. A later ``agent.reload_replay_config()``
+# still reads settings.json, and a ``start_replay()`` after it records
+# if that file enables replay.
 agent = build_from_environment(
     working_directory=workdir,
-    replay_config=ReplayConfig(enabled=False),
+    replay_config=None,
 )
 
 # Bare construction: pass the ones you need; the rest stay None

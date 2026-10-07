@@ -589,7 +589,7 @@ unless overridden. Enable deliberately:
 | Subsystem | Enable when | Reads |
 |---|---|---|
 | `sandbox_policy` | untrusted prompts, multi-tenant, CI eval | `<wd>/.agentao/sandbox.json` |
-| `replay_config` | reproducing flake, A/B prompt diffs (records only when the config is enabled and you call `agent.start_replay()`); under the factory `None` still loads it from disk, so disable with `ReplayConfig(enabled=False)` (`agentao.replay`, not on the host surface) | `<wd>/.agentao/settings.json :: replay` |
+| `replay_config` | reproducing flake, A/B prompt diffs (records only when the config is enabled and you call `agent.start_replay()`); pass `None` to the factory to disable it | `<wd>/.agentao/settings.json :: replay` |
 | `bg_store` | background sub-agents in a long-lived host (not one-shot: workers die at exit); continuing after one finishes is the host's job | `<wd>/.agentao/background_tasks.json` |
 | `enable_builtin_agents=True` | want `codebase-investigator` / `generalist` delegation tools | `<wd>/.agentao/settings.json :: agents.enable_builtin` |
 
