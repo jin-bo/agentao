@@ -129,7 +129,7 @@ def search_via_subagent(query: str) -> str:
 把它包成 Agentao `Tool`，主 agent 就能像调其它工具一样调它：
 
 ```python
-from agentao.tools.base import Tool
+from agentao.host import Tool
 
 class SearcherTool(Tool):
     name = "delegate_search"

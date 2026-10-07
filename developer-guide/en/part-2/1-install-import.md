@@ -50,8 +50,8 @@ from agentao.transport import (
 )
 
 from agentao.permissions import PermissionEngine, PermissionMode
-from agentao.cancellation import CancellationToken, AgentCancelledError
-from agentao.tools.base import Tool, ToolRegistry  # when authoring custom tools
+from agentao.host import CancellationToken, Tool, AsyncToolBase  # Tool / AsyncToolBase: custom tools (sync / async)
+from agentao.cancellation import AgentCancelledError  # not exported from agentao.host
 ```
 
 ## Lazy loading

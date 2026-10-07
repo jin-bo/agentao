@@ -42,7 +42,7 @@ The whole pattern is an outer `while`:
 
 ```python
 import time
-from agentao.tools.base import Tool
+from agentao.host import Tool
 
 class UpdateGoalTool(Tool):
     """The agent's ONLY write into goal state: mark complete / blocked."""

@@ -107,7 +107,7 @@ Agentao's `web_fetch` uses `httpx` through `agentao/security/url_policy.py::guar
 You can **override `web_fetch`** with your own stricter version:
 
 ```python
-from agentao.tools.base import Tool
+from agentao.host import Tool
 import httpx
 
 class StrictWebFetchTool(Tool):

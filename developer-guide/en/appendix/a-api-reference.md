@@ -8,7 +8,7 @@ Authoritative `__all__`:
 - `from agentao.embedding import ...` → `build_from_environment`
 - `from agentao.transport import ...` → `AgentEvent`, `EventType`, `CoreTransport`, `Transport`, `NullTransport`, `SdkTransport`, `build_compat_transport`, `gate_note`
 - `from agentao.capabilities import ...` → `FileSystem`, `LocalFileSystem`, `FileEntry`, `FileStat`, `ShellExecutor`, `LocalShellExecutor`, `ShellRequest`, `ShellResult`, `BackgroundHandle`, `MemoryStore`, `SQLiteMemoryStore`, `MCPRegistry`, `FileBackedMCPRegistry`, `InMemoryMCPRegistry`
-- `from agentao.tools.base import ...` → `Tool`, `ToolRegistry`
+- `from agentao.tools.base import ...` → `Tool`, `ToolRegistry` (`Tool` is also exported from `agentao.host`, with `AsyncToolBase` and the `RegistrableTool` union — the same objects, and the stable path for hosts)
 - `from agentao.permissions import ...` → `PermissionEngine`, `PermissionMode`, `PermissionDecision`
 - `from agentao.memory.manager import MemoryManager`
 - `from agentao.cancellation import ...` → `CancellationToken`, `AgentCancelledError` (`CancellationToken` is also exported from `agentao.host` — the same class, and the stable path for hosts)
@@ -73,7 +73,7 @@ Mutual-exclusion rules (raise `ValueError` if violated):
 
 Opt-in subsystem semantics (defaults are `None` since 0.2.16):
 
-- `replay_config=None` — no `<wd>/.agentao/replay.json` is read at construction time and no `ReplayManager` is attached: `agent.replay_manager` is `None` until `start_replay()` / `reload_replay_config()` creates one.
+- `replay_config=None` — the `replay` block of `<wd>/.agentao/settings.json` is not read at construction time and no `ReplayManager` is attached: `agent.replay_manager` is `None` until `start_replay()` / `reload_replay_config()` creates one.
 - `sandbox_policy=None` — `ToolRunner` runs shell commands without the macOS `sandbox-exec` wrapper.
 - `bg_store=None` — `check_background_agent` / `cancel_background_agent` are not registered, the chat loop's background-notification drain short-circuits, and the `run_in_background` field is **schema-level removed** from sub-agent tool definitions (the LLM cannot call a disabled feature). `/agent bg|dashboard|cancel|delete|logs|result` CLI subcommands short-circuit with a clear warning. Pass it for a one-shot process, as `agentao run` does (0.5.6): background workers are daemon threads and die with it.
 - With a store, a finished background sub-agent's update reaches the parent only on its **next** turn, and the runtime never starts that turn itself. Either continue from the terminal `SubagentLifecycleEvent` on your own turn driver (recipe in `docs/reference/host-api.md`, *Continuing after a background sub-agent*), or let the model wait in-turn with `check_background_agent(agent_id, wait_seconds=…)` (0.5.6, at most 1800 s; cancelling the turn ends the wait, not the child).
@@ -588,8 +588,8 @@ from agentao.host import (
 | `PermissionDecisionEvent` | Per-decision projection. Fires on `allow` / `deny` / `prompt`; consumers must drain even allow events. |
 | `HostEvent` | Discriminated union of the three event models (Pydantic discriminator: `event_type`). |
 | `RFC3339UTCString` | Constrained timestamp type. Canonical `Z` suffix only — `+00:00` offsets are rejected. |
-| `EventStream` | Runtime side of `Agentao.events()`. Producers call `publish()`; consumers iterate `subscribe()`. |
-| `StreamSubscribeError` | Raised when a second concurrent subscriber for the same `session_id` filter is requested (MVP supports one stream consumer per `Agentao` instance). |
+| `EventStream` | Runtime side of `Agentao.events()`. Reference only: `Agentao` keeps its stream private, so a host reads it through `agent.events()` or `agent.add_host_event_observer()`, never by calling `publish()` / `subscribe()` itself. |
+| `StreamSubscribeError` | Raised when a second concurrent subscriber for the same `session_id` filter is iterated while the first is open — raised on its first iteration, not when `agent.events()` is called (MVP supports one consumer per filter; close the first with `aclosing`, or fan out with synchronous observers). |
 | `export_host_event_json_schema()` | Emit the canonical JSON schema for events + permissions. Used by `tests/test_host_schema.py` for byte-equality against `docs/schema/host.events.v1.json`. |
 | `export_host_acp_json_schema()` | Emit the canonical JSON schema for host-facing ACP payloads. Snapshot lives at `docs/schema/host.acp.v1.json`. |
 | `CancellationToken` | The token `chat()` / `arun()` accept as `cancellation_token=`. Re-export of `agentao.cancellation.CancellationToken` (the same class). |
@@ -619,7 +619,7 @@ Delivery contract:
 - **No replay.** Events emitted before the first subscription are dropped.
 - Backpressure is host-pulled via a bounded queue — slow consumers block the producer for matching events rather than dropping them.
 - Cancelling the iterator releases queue/subscription resources.
-- MVP supports one public stream consumer per `Agentao` instance.
+- MVP supports one async-iterator consumer per `session_id` filter; a second one on the same filter raises `StreamSubscribeError` on its first iteration while the first is open. For several consumers, use `agent.add_host_event_observer()`.
 
 ### `agent.active_permissions()`
 

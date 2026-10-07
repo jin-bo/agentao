@@ -42,7 +42,7 @@ Zendesk / Intercom / HubSpot
 
 ```python
 # tools/support.py
-from agentao.tools.base import Tool
+from agentao.host import Tool
 import httpx
 
 class GetCustomerProfile(Tool):

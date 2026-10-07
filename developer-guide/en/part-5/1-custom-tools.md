@@ -13,7 +13,7 @@
 ```python
 from abc import ABC, abstractmethod
 from typing import Dict, Any
-from agentao.tools.base import Tool
+from agentao.host import Tool
 
 class MyTool(Tool):
     @property
@@ -248,7 +248,7 @@ These APIs reduce the **schema the model sees**; they are not authorization. If 
 """Your SaaS backend exposes order queries to the agent."""
 import json
 from typing import Dict, Any
-from agentao.tools.base import Tool
+from agentao.host import Tool
 
 class GetCustomerOrdersTool(Tool):
     def __init__(self, backend_client, tenant_id: str):

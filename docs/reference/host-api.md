@@ -52,6 +52,8 @@ intentionally not part of this surface.
 | `SubagentUsage` | The four token counts on a terminal `SubagentLifecycleEvent.usage` (0.5.2) — see [What a sub-agent cost](#what-a-sub-agent-cost). |
 | `PermissionDecisionEvent` | Per-decision permission projection. |
 | `HostEvent` | Discriminated union of the three event models. |
+| `EventStream` | The stream behind `agent.events()` and the observer methods. The runtime constructs it, and the iterator `agent.events()` returns reads from it; `Agentao` keeps it private, so a host reaches it only through those methods. To record an agent's events, see [Replay projection](#replay-projection-agentaohostreplay_projection). See [Event subscription semantics](#event-subscription-semantics). |
+| `StreamSubscribeError` | Raised when a second async iterator attaches with the same `session_id` filter while the first is open (has started iterating and is not closed) — on the second iterator's first iteration, not when `agent.events()` is called. Close the first (`aclosing`), or fan out with synchronous observers. |
 | `RFC3339UTCString` | Constrained timestamp type used by all public events. |
 | `export_host_event_json_schema()` | Canonical JSON schema for the events + permissions surface. |
 | `export_host_acp_json_schema()` | Canonical JSON schema for the host-facing ACP payload surface. |
@@ -567,14 +569,27 @@ from agentao.host.replay_projection import (
 
 | Symbol | Purpose |
 |---|---|
-| `HostReplaySink(recorder, *, stream=None)` | Forward projection. `Agentao.start_replay()` wires this automatically; hosts that drive replay manually can pass a stream explicitly. Every published `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` is then written into `recorder` as a v1.2 replay event. Errors during write are logged at WARNING and swallowed — audit storage failure never breaks the runtime. |
+| `HostReplaySink(recorder, *, stream=None, turn_id_provider=None)` | Forward projection. `Agentao.start_replay()` wires this automatically, and is the route for hosts. `stream=` takes an `EventStream`, which `Agentao` keeps private; without it the sink is in pull mode, and `agent.add_host_event_observer(sink.record)` feeds it. Every published `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` is then written into `recorder` as a v1.2 replay event. Errors during write are logged at WARNING and swallowed — audit storage failure never breaks the runtime. |
 | `replay_payload_to_host_event(kind, payload)` | Reverse projection. Rehydrates a `HostEvent` Pydantic model from a replay JSONL line. Strips the sanitizer's optional projection metadata (`redaction_hits`, `redacted`, `redacted_fields`) so a redacted line still validates against the public `extra="forbid"` models. |
 | `host_event_to_replay_kind(event)` / `host_event_to_replay_payload(event)` | Lower-level helpers used by sinks and tests. Return `None` / `model_dump(mode="json")` respectively. |
 
 `Agentao.start_replay()` auto-instantiates `HostReplaySink` against
 the agent's `EventStream`; `end_replay()` detaches and clears the sink.
-Hosts that drive the replay subsystem manually can do the same wiring
-themselves.
+That is the route for hosts. A sink built by hand needs a
+`ReplayRecorder` (from `agentao.replay`, not the host surface), and is fed through
+`agent.add_host_event_observer(sink.record)`, since `Agentao` keeps its
+`EventStream` private; it records the host events only, not the LLM and
+tool turns that `start_replay()` also records through its transport
+adapter. Without `turn_id_provider=` (which `start_replay()` takes from
+that adapter) its lines carry the runtime's own turn ids, which the
+replay reader groups as turns of their own (a `SubagentLifecycleEvent`
+carries none, so its lines fall outside every turn).
+`start_replay()` records only when replay is enabled. A bare `Agentao(...)` starts with
+replay off, so its `start_replay()` returns `None`: pass
+`replay_config=ReplayConfig(enabled=True)` (from `agentao.replay`) at
+construction, or set `replay.enabled` in `.agentao/settings.json` and
+call `agent.reload_replay_config()` first. `build_from_environment()`
+reads that file for you.
 
 The on-disk shape is the public Pydantic model's `model_dump(mode="json")`
 — byte-equivalent to what the v1.2 replay schema's `oneOf` discriminator
@@ -665,8 +680,10 @@ to subscribe to every session owned by this `Agentao` instance.
   producer blocks for matching events.
 - Cancellation of the iterator releases queue/subscription resources.
 - MVP supports one **async iterator** consumer per filter
-  (`Agentao.events(session_id=…)`); attaching a second iterator with
-  the same filter raises `StreamSubscribeError`. For multi-sink
+  (`Agentao.events(session_id=…)`). A second iterator with the same
+  filter raises `StreamSubscribeError` on its first iteration (not when
+  `agent.events()` is called) if the first has started iterating and is
+  not closed. For multi-sink
   fan-out (audit, metrics, replay) use synchronous observers — see
   [Synchronous observer fan-out](#synchronous-observer-fan-out) below.
 
@@ -807,8 +824,8 @@ meaning changed under a name consumers already read.
   cost dashboards owned by the same team:** `Transport` /
   `AgentEvent`. Cheap to attach, no projection cost, every internal
   fact is reachable.
-- **Both at once:** common — observers (`add_observer`) on
-  `EventStream` for stable sinks, plus `SdkTransport(on_event=...)`
+- **Both at once:** common — observers
+  (`agent.add_host_event_observer`) for stable sinks, plus `SdkTransport(on_event=...)`
   for the firehose. They run on independent code paths and don't
   interfere.
 

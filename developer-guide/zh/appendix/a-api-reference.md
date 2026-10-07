@@ -8,7 +8,7 @@
 - `from agentao.embedding import ...` → `build_from_environment`
 - `from agentao.transport import ...` → `AgentEvent`、`EventType`、`CoreTransport`、`Transport`、`NullTransport`、`SdkTransport`、`build_compat_transport`、`gate_note`
 - `from agentao.capabilities import ...` → `FileSystem`、`LocalFileSystem`、`FileEntry`、`FileStat`、`ShellExecutor`、`LocalShellExecutor`、`ShellRequest`、`ShellResult`、`BackgroundHandle`、`MemoryStore`、`SQLiteMemoryStore`、`MCPRegistry`、`FileBackedMCPRegistry`、`InMemoryMCPRegistry`
-- `from agentao.tools.base import ...` → `Tool`、`ToolRegistry`
+- `from agentao.tools.base import ...` → `Tool`、`ToolRegistry`（`Tool` 也从 `agentao.host` 导出，同时导出的还有 `AsyncToolBase` 和联合类型 `RegistrableTool`——是同一批对象，也是宿主应走的稳定路径）
 - `from agentao.permissions import ...` → `PermissionEngine`、`PermissionMode`、`PermissionDecision`
 - `from agentao.memory.manager import MemoryManager`
 - `from agentao.cancellation import ...` → `CancellationToken`、`AgentCancelledError`（`CancellationToken` 也从 `agentao.host` 导出——同一个类，是宿主应使用的稳定路径）
@@ -73,7 +73,7 @@ Agentao(
 
 可选子系统语义（默认 `None`）：
 
-- `replay_config=None` —— 构造时不读 `<wd>/.agentao/replay.json`，也不挂 `ReplayManager`：在 `start_replay()` / `reload_replay_config()` 创建它之前，`agent.replay_manager` 是 `None`。
+- `replay_config=None` —— 构造时不读 `<wd>/.agentao/settings.json` 的 `replay` 块，也不挂 `ReplayManager`：在 `start_replay()` / `reload_replay_config()` 创建它之前，`agent.replay_manager` 是 `None`。
 - `sandbox_policy=None` —— `ToolRunner` 跑 shell 时不再走 macOS `sandbox-exec` 包装。
 - `bg_store=None` —— `check_background_agent` / `cancel_background_agent` 不注册，chat loop 后台通知 drain 短路，子 agent 工具定义里 `run_in_background` 字段在 **schema 层被移除**（LLM 看不到、就不会调用一个被禁用的能力）。`/agent bg|dashboard|cancel|delete|logs|result` 这几个 CLI 子命令也会短路，并打印明确的提示。一次性进程应该传它，`agentao run` 就是这样做的（0.5.6）：后台 worker 是 daemon 线程，会随进程一起结束。
 - 有 store 时，后台子代理完成后的更新只会在父级**下一**轮交给它，而运行时从不自己开启这一轮。两种做法任选：在宿主自己驱动轮次的地方，根据终态 `SubagentLifecycleEvent` 续跑（配方见 `docs/reference/host-api.zh.md`《后台子 Agent 结束后继续》）；或者让模型用 `check_background_agent(agent_id, wait_seconds=…)` 在轮次内等待（0.5.6，最多 1800 秒；取消这一轮只结束等待，不取消子代理）。
@@ -585,8 +585,8 @@ from agentao.host import (
 | `PermissionDecisionEvent` | 单次权限决定的投影。在 `allow` / `deny` / `prompt` 都触发；不渲染 allow 的消费者也必须排空迭代器以避免背压 |
 | `HostEvent` | 三种事件模型的判别联合（Pydantic discriminator: `event_type`） |
 | `RFC3339UTCString` | 受约束的时间戳类型。仅允许标准 `Z` 后缀 —— `+00:00` 偏移会被拒绝 |
-| `EventStream` | `Agentao.events()` 的运行时侧。生产者调 `publish()`；消费者迭代 `subscribe()` |
-| `StreamSubscribeError` | 同一 `session_id` 过滤器上发起第二个并发订阅时抛出（MVP 每个 `Agentao` 只支持一个公共流消费者） |
+| `EventStream` | `Agentao.events()` 的运行时侧。仅供参考：`Agentao` 把自己的流设为私有，宿主通过 `agent.events()` 或 `agent.add_host_event_observer()` 读取，不自己调 `publish()` / `subscribe()` |
+| `StreamSubscribeError` | 同一 `session_id` 过滤器上发起第二个并发订阅时抛出，且第一个还开着；在第二个迭代器第一次迭代时抛出，而不是调用 `agent.events()` 时（MVP 每个过滤条件只支持一个消费者；先用 `aclosing` 关掉第一个，或者用同步观察者做多路分发） |
 | `export_host_event_json_schema()` | 导出事件 + 权限面的标准 JSON schema。`tests/test_host_schema.py` 用它与 `docs/schema/host.events.v1.json` 做字节相等校验 |
 | `export_host_acp_json_schema()` | 导出宿主面 ACP 载荷的标准 JSON schema。快照在 `docs/schema/host.acp.v1.json` |
 | `CancellationToken` | `chat()` / `arun()` 的 `cancellation_token=` 参数接受的 token。重新导出 `agentao.cancellation.CancellationToken`（同一个类） |
@@ -616,7 +616,7 @@ async for ev in agent.events():
 - **不 replay。** 第一次订阅前发出的事件被丢弃。
 - 背压走宿主拉取：消费者慢时，生产者会 await 匹配事件的容量，不会丢事件，也不会无限堆队列。
 - 取消迭代器会释放队列/订阅资源。
-- MVP 每个 `Agentao` 只支持一个公共流消费者。
+- MVP 每个 `session_id` 过滤条件只支持一个异步迭代器消费者；第一个还开着时，同一过滤条件的第二个会在第一次迭代时抛出 `StreamSubscribeError`。需要多个消费者时，用 `agent.add_host_event_observer()`。
 
 ### `agent.active_permissions()`
 

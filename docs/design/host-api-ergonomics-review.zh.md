@@ -1,6 +1,6 @@
 # 宿主 API 易用性评审：嵌入能不能更简单？
 
-**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 和 F3 第 0 步**已在 PR #423 实施**（只改文档和示例导入）；F4 的代码实施尚未获批；第 2 步（字符串模式与导出）已合并，第 3 步（`astream`）已实现，见本行末尾。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。**第三次修订（2026-10-06），收窄导出：** 不导出 `PermissionMode`，去掉 `TurnFinished`；新增导出为 `CancellationToken`、`TextDelta`、`TurnOutcome`；已决定 `Agentao(permission_mode=...)`。新增 F7：保留所有导出，指南分层介绍，加 `__dir__`。**第 2 步已实现（2026-10-06）：** 静默启动，构造时不接受 `"plan"`，replay 起始姿态留作后续；已作为 PR #426 合并。**同类对照（2026-10-06）：** §7 评审了一份参照 Pydantic AI 和 Strands 的建议。据此给 F2 加上“增量用于显示，结果以 outcome 为准”的规则，新增 F8（宿主自身方法的返回类型标注）和 F9（函数工具适配器，排在 `astream` 之后，按需做）。评审还发现，只做审批的宿主已经可以用 `SdkTransport(confirm_tool=...)`，并扩充了 §5。这次对照新增的内容（F2 的两条新要点、F8、F9、§7）引用的是 `main` @ `ef8a2d2`；其余内容仍引用 `2750e16`，那里 `agent.py` 的行号更小，例如 `active_permissions()` 在 `2750e16` 是 `:1036`，在 `ef8a2d2` 是 `:1086`。**第 3 步已实现（2026-10-06）：** 按 F2 的设计实现 `astream`，另加 `max_iterations=`；见 F2 的*实现中做出的决定*。**第 4 步已实现（2026-10-06）：** F8 的类型标注，并把类型门禁扩展到宿主对这些方法的使用；见 F8 的*实现中做出的决定*。
+**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 和 F3 第 0 步**已在 PR #423 实施**（只改文档和示例导入）；F4 的代码实施尚未获批；第 2 步（字符串模式与导出）、第 3 步（`astream`）和第 4 步（F8）都已合并，见本行末尾。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。**第三次修订（2026-10-06），收窄导出：** 不导出 `PermissionMode`，去掉 `TurnFinished`；新增导出为 `CancellationToken`、`TextDelta`、`TurnOutcome`；已决定 `Agentao(permission_mode=...)`。新增 F7：保留所有导出，指南分层介绍，加 `__dir__`。**第 2 步已实现（2026-10-06）：** 静默启动，构造时不接受 `"plan"`，replay 起始姿态留作后续；已作为 PR #426 合并。**同类对照（2026-10-06）：** §7 评审了一份参照 Pydantic AI 和 Strands 的建议。据此给 F2 加上“增量用于显示，结果以 outcome 为准”的规则，新增 F8（宿主自身方法的返回类型标注）和 F9（函数工具适配器，排在 `astream` 之后，按需做）。评审还发现，只做审批的宿主已经可以用 `SdkTransport(confirm_tool=...)`，并扩充了 §5。这次对照新增的内容（F2 的两条新要点、F8、F9、§7）引用的是 `main` @ `ef8a2d2`；其余内容仍引用 `2750e16`，那里 `agent.py` 的行号更小，例如 `active_permissions()` 在 `2750e16` 是 `:1036`，在 `ef8a2d2` 是 `:1086`。**第 3 步已实现（2026-10-06）：** 按 F2 的设计实现 `astream`，另加 `max_iterations=`；见 F2 的*实现中做出的决定*。已作为 PR #428 合并。**第 4 步已实现（2026-10-06）：** F8 的类型标注，并把类型门禁扩展到宿主对这些方法的使用；见 F8 的*实现中做出的决定*。已作为 PR #432 合并。**F7 的指南分层已完成（2026-10-07）：** 只改文档；见 F7 的*已完成*。
 **读者：** 决定改动嵌入式宿主接口的 agentao 维护者，以及后续 PR 的评审者。
 **相关文档：**
 - `docs/design/host-api-ergonomics-review.md`：英文版，内容相同
@@ -236,6 +236,14 @@
 
 **实现：** 给 `agentao.host` 加一个 `__dir__()`，把懒导出的名字也列进去，做法与 `agentao/__init__.py:85` 相同，让交互式发现能看到它们。沿用现有的懒导出机制，调用时不导入任何东西。
 
+**已完成（2026-10-07，只改文档）：**
+- `embedding.md` §7 新增一张表，把 17 个名字按任务分组：观察、流式文本与结果、取消、编写宿主工具（同步用 `Tool`，异步用 `AsyncToolBase`，`RegistrableTool` 只用于类型标注）、第二个 `events()` 迭代器（`StreamSubscribeError`），以及仅供参考（`EventStream`、`RFC3339UTCString`、两个 schema 导出函数；`Agentao` 把 `EventStream` 设为私有，宿主通过 `events()` 和 `add_host_event_observer()` 接触它）；`SubagentUsage` 归在观察一组，是终态子 Agent 事件 `usage` 的类型。分层说的是宿主在哪里需要某个名字，不是它有多稳定。
+- `embed-for-agents.md` §3 保留可直接复制的导入代码块，在其中加上 `SdkTransport`（即下文 §7 记录的缺口），并按任务何时需要列出其余名字。
+- `host-api.md`（中英两份）的*公共导出*表补上原来缺的两行：`EventStream` 和 `StreamSubscribeError`。
+- `embedding.md` 里那份平铺的 `agentao.host` 列表在 *From 0.3.1* 下，是记录那个版本新增内容的迁移说明，所以不动。开发者指南附录 A 列出全部 17 个名字，作为完整参考本该如此。两份嵌入指南都没有中文版。
+- 开发者指南（中英两份）原来有七页仍在教 `from agentao.tools.base import Tool`，正是 F3 第 0 步已让示例弃用的路径；现在都改从 `agentao.host` 导入 `Tool`（同一个类）。附录 A 的 `__all__` 列表保留 `agentao.tools.base`，并注明宿主应走 `agentao.host`，与它对 `CancellationToken` 的写法一致。
+- 同一轮还更正了这些页面里关于 replay 的说法：配置在 `.agentao/settings.json` 的 `replay` 块里（没有 `replay.json`）；只有调用 `start_replay()` 且 replay 已开启（由该块开启，或显式传入 `ReplayConfig(enabled=True)`）时才记录；在 `build_from_environment()` 下 `replay_config=None` 会从磁盘读取，所以要关闭就传 `ReplayConfig(enabled=False)`。`events()` 只允许一个消费者的规则改为按 `session_id` 过滤条件说明，在第二个迭代器第一次迭代时抛出。
+
 ### F8. 宿主自身的方法有一部分没有类型标注
 
 `agentao/py.typed` 已随包发布，类型门禁是 `mypy --strict --package agentao.host`（`.github/workflows/ci.yml:54-55`）。它覆盖契约里的类型，不覆盖 `Agentao` 的方法。用 `inspect.signature` 遍历 `Agentao` 的公开成员，测得（2026-10-06）：
@@ -271,12 +279,12 @@ Agentao 和它的指南都没有把普通函数变成工具的办法（grep `fro
 
 1. ~~**F1(a) 文档，加上示例里现有的错误导入**（F3 第 0 步）。只改文档和示例。~~ **已在 PR #423 完成。**
 2. ~~**字符串形式的权限模式、`Agentao(permission_mode=...)`，以及从 `agentao.host` 导出 `CancellationToken`**（F3 第 1–3 步），加上 F7 的 `__dir__`。~~ **2026-10-06 完成，已作为 PR #426 合并**，经过五轮 `/code-review --fix`；见*实现中做出的决定*。F4 仍待做。
-3. ~~**最小的 `astream`**（F2）：先把 `TurnOutcome` 移到轻量模块，再实现 `TextDelta` + 最后的 `TurnOutcome`（都从 `agentao.host` 导出），通过订阅接入，遵守上面的生命周期约束。然后把示例从 `SdkTransport` / `EventType` 上移走，并修好 `saas-assistant` 的替换写法（F3 第 3 步）。~~ **2026-10-06 已实现**；见 F2 的*实现中做出的决定*。
+3. ~~**最小的 `astream`**（F2）：先把 `TurnOutcome` 移到轻量模块，再实现 `TextDelta` + 最后的 `TurnOutcome`（都从 `agentao.host` 导出），通过订阅接入，遵守上面的生命周期约束。然后把示例从 `SdkTransport` / `EventType` 上移走，并修好 `saas-assistant` 的替换写法（F3 第 3 步）。~~ **2026-10-06 已实现，已作为 PR #428 合并**；见 F2 的*实现中做出的决定*。
 
-4. ~~**给面向宿主的方法补返回类型标注**（F8）。小改动，纯新增。~~ **2026-10-06 已实现**；见 F8 的*实现中做出的决定*。
+4. ~~**给面向宿主的方法补返回类型标注**（F8）。小改动，纯新增。~~ **2026-10-06 已实现，已作为 PR #432 合并**；见 F8 的*实现中做出的决定*。
 5. **函数工具适配器**（F9），等宿主提出需要时再做。
 
-第 2 步已完成，F4 单独做；它很小，而且是纯新增。F7 的 `__dir__` 已随第 2 步完成；F7 的指南分层随第 3 步的指南修改一起做（也可以提前，只改文档）。F6 暂缓。
+第 2 步已完成，F4 单独做；它很小，而且是纯新增。F7 的 `__dir__` 已随第 2 步完成；F7 的指南分层已完成（2026-10-07，只改文档）；见 F7 的*已完成*。F6 暂缓。
 
 ## 5. 有意不提议的
 
@@ -322,6 +330,6 @@ Agentao 和它的指南都没有把普通函数变成工具的办法（grep `fro
 
 **关于第 3 条：把结果绑定到调用。** 每个 agent 只有一个调用方时，`agent.last_turn` 是对的：轮次锁防止了重叠（`runtime/turn.py:72-100`）。多个调用方共用一个池化 agent 时，在 `chat()` 返回之后、调用方读取之前，另一个请求的轮次可能已经替换了 `last_turn`。`astream` 把结果放在流里送达，消除了这个空档。返回 `TurnOutcome` 的非流式入口，如建议所说，等宿主需要时再加。
 
-**关于第 6 条：只做审批的宿主已经有薄适配器。** `SdkTransport` 的每个回调都是可选的（`transport/sdk.py:76-82`）。只需要审批的宿主传 `SdkTransport(confirm_tool=my_policy)`，别的都不用传。它不需要 `on_event`，因为 `agent.events()` 仍通过 transport 的订阅工作。没有其他回调时，`ask_user` 回答不可用，达到最大迭代次数时本轮停止（`transport/sdk.py:101-131`）。`embed-for-agents.md` §1 为失败关闭的情形展示的就是这个形式（`confirm_tool=lambda *_: False`）。契约正如建议所说：`permission_mode`（或引擎）决定姿态，剩下的 ASK 由 transport 回答。还剩一个文档缺口：指南 §3 的稳定导入列表列了 `NullTransport`，没有列 `SdkTransport`，而 §1 和 `host-api.md` 都在用它。这是指南分层（F7）时要修的文档问题，不是新 API。
+**关于第 6 条：只做审批的宿主已经有薄适配器。** `SdkTransport` 的每个回调都是可选的（`transport/sdk.py:76-82`）。只需要审批的宿主传 `SdkTransport(confirm_tool=my_policy)`，别的都不用传。它不需要 `on_event`，因为 `agent.events()` 仍通过 transport 的订阅工作。没有其他回调时，`ask_user` 回答不可用，达到最大迭代次数时本轮停止（`transport/sdk.py:101-131`）。`embed-for-agents.md` §1 为失败关闭的情形展示的就是这个形式（`confirm_tool=lambda *_: False`）。契约正如建议所说：`permission_mode`（或引擎）决定姿态，剩下的 ASK 由 transport 回答。当时还剩一个文档缺口：指南 §3 的稳定导入列表列了 `NullTransport`，没有列 `SdkTransport`，而 §1 和 `host-api.md` 都在用它。这是指南分层（F7）时要修的文档问题，不是新 API。（已在 F7 中修复，2026-10-07。）
 
-**本评审之后的顺序：** `astream`（第 3 步），然后 F8，F9 按需做。F4 仍然独立。不删除任何现有导出；新的稳定数据类型继续放在 `agentao.host`；不引入 Capability、Plugin 或构造配置框架。
+**本评审之后的顺序：** `astream`（第 3 步），然后 F8，F9 按需做。（第 3 步和 F8 之后已分别作为 PR #428、#432 合并；见 §4。）F4 仍然独立。不删除任何现有导出；新的稳定数据类型继续放在 `agentao.host`；不引入 Capability、Plugin 或构造配置框架。

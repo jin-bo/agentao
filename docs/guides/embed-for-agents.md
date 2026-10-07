@@ -222,7 +222,7 @@ These are the lines most likely to drift. Follow them exactly.
 from agentao import Agentao
 from agentao.embedding import build_from_environment
 from agentao.llm import LLMClient
-from agentao.transport import NullTransport
+from agentao.transport import NullTransport, SdkTransport   # SdkTransport(confirm_tool=...): §1, §5
 from agentao.host import (                      # observability contract
     ActivePermissions, HostEvent,
     ToolLifecycleEvent, SubagentLifecycleEvent, PermissionDecisionEvent,
@@ -233,6 +233,26 @@ from agentao.host.protocols import (            # capability injection
     FileSystem, ShellExecutor, MemoryStore, MCPRegistry,
 )
 ```
+
+The block above is what a typical integration needs. `agentao.host`
+has more names, all equally stable; reach for them only when the task
+does:
+
+- **A host tool:** `Tool` (sync) or `AsyncToolBase` (async), from
+  `agentao.host`; subclass one and pass an instance in the
+  `extra_tools=[...]` list.
+  `RegistrableTool` is only for annotations (e.g. that list).
+- **A second `agent.events()` iterator** on the same filter can raise
+  `StreamSubscribeError` (exact rule: `docs/reference/host-api.md` →
+  *Event subscription semantics*); for several consumers, fan out with
+  `agent.add_host_event_observer`.
+- **Sub-agent cost:** `SubagentUsage` is the type of a terminal
+  `SubagentLifecycleEvent.usage`; import it only to annotate.
+- **Reference only, not for integration code:** `EventStream` (the
+  runtime builds it and keeps it private; use `agent.events()` or
+  `agent.add_host_event_observer()`), `RFC3339UTCString`, and
+  the two `export_host_*_json_schema` helpers. See
+  `docs/reference/host-api.md` → *Public exports*.
 
 ❌ **DO NOT import these from a host** (internal; may move any release):
 
@@ -475,7 +495,8 @@ Delivery contract (full version in [`api/host.md`](../reference/host-api.md)):
   `ToolLifecycleEvent(phase="started")`.
 - **No replay** — events before your first subscription are dropped.
 - Host-pulled backpressure (bounded queue; producer blocks, never grows
-  unbounded). One public stream consumer per `Agentao` instance (MVP).
+  unbounded). One async-iterator consumer per `session_id` filter (MVP);
+  for several consumers, use `agent.add_host_event_observer`.
 
 For streaming assistant text, use `agent.astream(prompt)` (stable). It
 yields `TextDelta` items, then the turn's `TurnOutcome`, and it must be
@@ -568,7 +589,7 @@ unless overridden. Enable deliberately:
 | Subsystem | Enable when | Reads |
 |---|---|---|
 | `sandbox_policy` | untrusted prompts, multi-tenant, CI eval | `<wd>/.agentao/sandbox.json` |
-| `replay_config` | reproducing flake, A/B prompt diffs | `<wd>/.agentao/replay.json` |
+| `replay_config` | reproducing flake, A/B prompt diffs (records only when the config is enabled and you call `agent.start_replay()`); under the factory `None` still loads it from disk, so disable with `ReplayConfig(enabled=False)` (`agentao.replay`, not on the host surface) | `<wd>/.agentao/settings.json :: replay` |
 | `bg_store` | background sub-agents in a long-lived host (not one-shot: workers die at exit); continuing after one finishes is the host's job | `<wd>/.agentao/background_tasks.json` |
 | `enable_builtin_agents=True` | want `codebase-investigator` / `generalist` delegation tools | `<wd>/.agentao/settings.json :: agents.enable_builtin` |
 

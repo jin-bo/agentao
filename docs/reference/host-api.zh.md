@@ -47,6 +47,8 @@ Harness API 是宿主应用嵌入 Agentao 时面向外部的兼容性边界。�
 | `SubagentUsage` | 终态 `SubagentLifecycleEvent.usage` 上的四项 token 计数（0.5.2）——见[子 Agent 花了多少](#子-agent-花了多少)。 |
 | `PermissionDecisionEvent` | 每次权限决策的对外投影。 |
 | `HostEvent` | 上述三种事件的判别联合。 |
+| `EventStream` | `agent.events()` 和观察者方法背后的流。由运行时构造，`agent.events()` 返回的迭代器从它读取；`Agentao` 把它设为私有，宿主只能通过这些方法接触它。要记录 agent 的事件，见 [Replay 投影](#replay-投影agentaohostreplay_projection)。见[事件订阅语义](#事件订阅语义)。 |
+| `StreamSubscribeError` | 第一个异步迭代器还开着（已开始迭代且未关闭）时，第二个用相同 `session_id` 过滤条件接入就会抛出——在第二个迭代器第一次迭代时抛出，而不是调用 `agent.events()` 时。先关掉第一个（`aclosing`），或者用同步观察者做多路分发。 |
 | `RFC3339UTCString` | 所有公共事件使用的受限时间戳类型。 |
 | `export_host_event_json_schema()` | 事件 + 权限的规范 JSON schema。 |
 | `export_host_acp_json_schema()` | 对外的 ACP 负载规范 JSON schema。 |
@@ -459,13 +461,18 @@ from agentao.host.replay_projection import (
 
 | 符号 | 用途 |
 |---|---|
-| `HostReplaySink(recorder, *, stream=None)` | 正向投影。`Agentao.start_replay()` 会自动接线；手动驱动 replay 的宿主也可以显式传入 stream。之后每个发布的 `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` 会被写入 `recorder` 作为一条 v1.2 replay 事件。写入失败仅记 WARNING 后吞掉——审计存储坏了不能拖垮运行时。 |
+| `HostReplaySink(recorder, *, stream=None, turn_id_provider=None)` | 正向投影。`Agentao.start_replay()` 会自动接线，宿主应走这条路。`stream=` 接受的是 `EventStream`，而 `Agentao` 把自己的那个设为私有；不传它时 sink 处于拉取模式，用 `agent.add_host_event_observer(sink.record)` 喂给它。之后每个发布的 `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` 会被写入 `recorder` 作为一条 v1.2 replay 事件。写入失败仅记 WARNING 后吞掉——审计存储坏了不能拖垮运行时。 |
 | `replay_payload_to_host_event(kind, payload)` | 反向投影。把一行 replay JSONL 还原回 `HostEvent` Pydantic 模型。会先剥掉 sanitizer 注入的可选元字段（`redaction_hits`、`redacted`、`redacted_fields`），让被脱敏过的事件仍能通过公共模型的 `extra="forbid"` 校验。 |
 | `host_event_to_replay_kind(event)` / `host_event_to_replay_payload(event)` | 较底层的两个辅助函数，给 sink 与测试使用。分别返回 `None` / `model_dump(mode="json")`。 |
 
 `Agentao.start_replay()` 会自动以 agent 的 `EventStream` 实例化
-`HostReplaySink`；`end_replay()` 负责 detach 并清空。手动驱动 replay
-子系统的宿主可以照样自己接线。
+`HostReplaySink`；`end_replay()` 负责 detach 并清空。宿主应走这条路：
+自己构造 sink 需要 `ReplayRecorder`（来自 `agentao.replay`，不在宿主接口面上），并通过 `agent.add_host_event_observer(sink.record)` 喂给它，因为 `Agentao` 把自己的 `EventStream` 设为私有；这样只记录宿主事件，不记录 `start_replay()` 通过 transport 适配器另外记录的 LLM 和工具轮次。不传 `turn_id_provider=`（`start_replay()` 从该适配器取得）时，写入的行带的是运行时自己的轮次 id，replay 读取端会把它们当成单独的轮次分组（`SubagentLifecycleEvent` 不带轮次 id，它的行不属于任何轮次）。
+`start_replay()` 只在 replay 开启时记录。裸 `Agentao(...)` 起始时 replay 关闭，所以它的
+`start_replay()` 返回 `None`：可以在构造时传
+`replay_config=ReplayConfig(enabled=True)`（来自 `agentao.replay`），
+也可以先在 `.agentao/settings.json` 里打开 `replay.enabled`，再调用
+`agent.reload_replay_config()`。`build_from_environment()` 会替你读这个文件。
 
 落盘形状就是公共 Pydantic 模型的 `model_dump(mode="json")`——与 v1.2
 replay schema `oneOf` 判别器匹配的字节完全一致。版本兼容契约见
@@ -546,8 +553,9 @@ CI 的 `Typing gate` Job 在每个 PR 上强制执行。下游项目对自己代
   匹配的事件阻塞。
 - 取消迭代器必须释放队列/订阅资源。
 - MVP 每个 filter 仅允许 **一个 async 迭代器** 消费者
-  （`Agentao.events(session_id=…)`）；同 filter 的第二个迭代器会
-  抛出 `StreamSubscribeError`。多 sink 扇出（审计 / 指标 / replay）
+  （`Agentao.events(session_id=…)`）。如果第一个迭代器已开始迭代且未
+  关闭，同 filter 的第二个迭代器会在它第一次迭代时（而不是调用
+  `agent.events()` 时）抛出 `StreamSubscribeError`。多 sink 扇出（审计 / 指标 / replay）
   请使用同步 observer，见下文
   [同步 observer 扇出](#同步-observer-扇出)。
 
@@ -590,7 +598,7 @@ agent.add_host_event_observer(metrics)
 - `agent.remove_host_event_observer(callback)` 用于解除注册；幂等，重复调用安全。
 
 `HostReplaySink` 就是这套机制的典型用户——见上文
-[Replay 投影](#replay-投影-agentaohostreplay_projection)。
+[Replay 投影](#replay-投影agentaohostreplay_projection)。
 
 ## 想要更细粒度的事件？内部 `Transport` 通道
 
@@ -669,7 +677,7 @@ for ev in events:
 - **本进程诊断、开发面板、replay 抓包、自家团队用的成本看板：**
   `Transport` / `AgentEvent`。挂上去成本低、无投影开销、所有内部
   事实都能拿到。
-- **同时用：** 很常见——`EventStream` 上挂 `add_observer` 喂稳定
+- **同时用：** 很常见——用 `agent.add_host_event_observer` 挂观察者喂稳定
   sink，加一个 `SdkTransport(on_event=...)` 喂 firehose。两条路径
   独立运行、互不干扰。
 

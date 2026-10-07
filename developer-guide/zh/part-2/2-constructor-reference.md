@@ -153,7 +153,7 @@ agent = Agentao(
 |------|----------|
 | `bg_store` | 后台任务工具（`check_background_agent` / `cancel_background_agent`）不注册；子 agent 的工具 schema 抠掉 `run_in_background` 字段；`/agent bg\|dashboard\|cancel\|delete\|logs\|result` 等 CLI 子命令 no-op + 警告 |
 | `sandbox_policy` | Shell 不套 macOS `sandbox-exec` |
-| `replay_config` | 不读 `<wd>/.agentao/replay.json`，agent 用空 recorder |
+| `replay_config` | 构造时不读 `<wd>/.agentao/settings.json` 里的 `replay` 块；在 `start_replay()` / `reload_replay_config()` 创建 `ReplayManager` 之前不挂它。单独调 `start_replay()` 创建的是关闭 replay 的管理器（返回 `None`）；`reload_replay_config()` 才读这个块，但它本身不开始记录：之后再调 `start_replay()`，且只有其中 `enabled` 为真时才记录 |
 :::
 
 ::: details Logger 注入 — `logger`

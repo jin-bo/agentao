@@ -36,7 +36,7 @@ harness 无需任何用量观测原语。
 
 ```python
 import time
-from agentao.tools.base import Tool
+from agentao.host import Tool
 
 class UpdateGoalTool(Tool):
     """The agent's ONLY write into goal state: mark complete / blocked."""

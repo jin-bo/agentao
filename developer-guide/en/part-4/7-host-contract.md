@@ -102,7 +102,7 @@ Both deliver events, but they're for different jobs. Don't pick one *instead of*
 | Building an **audit pipeline** / SIEM feed / billing meter? | ✅ | ❌ |
 | Building **CLI / debug tooling** that wants every internal detail? | ❌ — too redacted | ✅ |
 | Need **async pull** semantics with backpressure? | ✅ — `async for` with bounded queue | ❌ — push callback |
-| Need **multiple concurrent consumers**? | ⚠️ MVP: one stream per `Agentao` | ✅ — fan out via your own dispatcher |
+| Need **multiple concurrent consumers**? | ⚠️ One async iterator per `session_id` filter (MVP); several consumers via `agent.add_host_event_observer` | ✅ — fan out via your own dispatcher |
 
 Most production deployments use **both**: `events()` drives the audit / observability pipeline; the UI streams the answer through `astream()`, and attaches a Transport callback only for what the contract doesn't carry (reasoning, raw tool I/O). They share zero code paths so they don't fight each other.
 
