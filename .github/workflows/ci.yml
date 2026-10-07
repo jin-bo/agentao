@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+# A new push to a PR cancels that PR's run still in progress: only the latest
+# commit's result is read. A push to main gets a group of its own (its run id),
+# not one keyed on the ref: a shared group holds at most one pending run, so a
+# third push would cancel the waiting one even with cancel-in-progress off.
+# Every merge keeps a complete run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # ─────────────────────────────────────────────────────────────
   # Job 0 · Generated-schema drift check (fast fail signal)
@@ -123,8 +132,11 @@ jobs:
         # downloaded, and no test launches Chromium.
         run: uv sync --python ${{ matrix.python-version }} --extra cli --extra web --extra i18n --extra playwright
 
+      # `--durations=20` on one interpreter only: it reports the slowest tests,
+      # which is the data for deciding where CI time goes. One report per run
+      # is enough, and the other two jobs' logs stay as they were.
       - name: Run tests
-        run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short
+        run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short ${{ matrix.python-version == '3.12' && '--durations=20' || '' }}
 
   # ─────────────────────────────────────────────────────────────
   # Job 1a · Windows
@@ -144,6 +156,18 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.12"]
+
+    # The shell and PowerShell modules, run on their own first (see the step
+    # below) and then left out of the full suite, which used to run them a
+    # second time. One list, so the two steps cannot drift apart.
+    env:
+      SHELL_TESTS: >-
+        tests/test_shell_spec.py tests/test_shell_config.py
+        tests/test_shell_tool_shell_dialect.py tests/test_explicit_shell_path.py
+        tests/test_powershell_discovery.py tests/test_powershell_launch.py
+        tests/test_powershell_floor.py tests/test_powershell_output.py
+        tests/test_powershell_lowering.py tests/test_windows_launch_matrix.py
+        tests/test_shell_output_bound.py
 
     steps:
       - uses: actions/checkout@v5
@@ -183,14 +207,9 @@ jobs:
       # shell support is broken, and failing only the second means something
       # else in the suite met Windows.
       - name: Run the shell and PowerShell tests
-        run: >
-          uv run --python ${{ matrix.python-version }} python -m pytest -v --tb=short
-          tests/test_shell_spec.py tests/test_shell_config.py
-          tests/test_shell_tool_shell_dialect.py tests/test_explicit_shell_path.py
-          tests/test_powershell_discovery.py tests/test_powershell_launch.py
-          tests/test_powershell_floor.py tests/test_powershell_output.py
-          tests/test_powershell_lowering.py tests/test_windows_launch_matrix.py
-          tests/test_shell_output_bound.py
+        run: |
+          $tests = $env:SHELL_TESTS -split '\s+' | Where-Object { $_ }
+          uv run --python ${{ matrix.python-version }} python -m pytest -v --tb=short @tests
 
       # In parallel (pytest-xdist), because this job is the one the whole run
       # waits for: the suite spends most of its time waiting on subprocesses
@@ -198,9 +217,12 @@ jobs:
       # `logical` rather than `auto`: `auto` switches to physical cores
       # whenever psutil is importable, which is half the runner's vCPUs.
       # The ubuntu test jobs stay serial, so the suite still has a
-      # fixed-order run.
+      # fixed-order run. The shell modules ran in the step above, so they are
+      # ignored here.
       - name: Run the full suite
-        run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short -n logical
+        run: |
+          $ignore = $env:SHELL_TESTS -split '\s+' | Where-Object { $_ } | ForEach-Object { "--ignore=$_" }
+          uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short -n logical @ignore
 
   # ─────────────────────────────────────────────────────────────
   # Job 1a · macOS — the sandbox-exec backend
