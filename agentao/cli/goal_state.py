@@ -23,6 +23,7 @@ see ``docs/design/codex-goal-mechanism-review.md`` §D) and collapses codex's
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -156,6 +157,8 @@ class GoalState:
 
     @classmethod
     def from_dict(cls, data: dict) -> "GoalState":
+        if not isinstance(data, dict):
+            raise ValueError("goal state must be an object")
         data = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         if "status" in data:
             data["status"] = GoalStatus(data["status"])
@@ -174,6 +177,8 @@ class GoalState:
             data.pop("time_used_seconds", None)    # fall back to default (0.0)
         elif "time_used_seconds" in data:
             data["time_used_seconds"] = float(data["time_used_seconds"])
+            if not math.isfinite(data["time_used_seconds"]):
+                raise ValueError("time_used_seconds must be finite")
         return cls(**data)
 
 
@@ -191,7 +196,7 @@ def load_goal(project_root: Path) -> Optional[GoalState]:
         return None
     try:
         return GoalState.from_dict(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+    except (OSError, json.JSONDecodeError, ValueError, TypeError, OverflowError):
         return None
 
 
