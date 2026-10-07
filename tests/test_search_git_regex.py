@@ -13,7 +13,7 @@ def git_search(tmp_path):
     if shutil.which("git") is None:
         pytest.skip("git is not installed")
     assert run_captured(["git", "init", "-q"], cwd=str(tmp_path), timeout=5).returncode == 0
-    (tmp_path / "sample.txt").write_text("foo\nbar\naaa\ncolor\ncolour\n", encoding="utf-8")
+    (tmp_path / "sample.txt").write_bytes(b"foo\nbar\naaa\ncolor\ncolour\n")
     assert run_captured(["git", "add", "sample.txt"], cwd=str(tmp_path), timeout=5).returncode == 0
     tool = SearchTextTool()
     tool.working_directory = tmp_path
