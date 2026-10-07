@@ -32,14 +32,18 @@ jobs:
       - name: Install Python 3.12
         run: uv python install 3.12
 
+      # `--locked` on every `uv sync` / `uv run` in this file: a `uv.lock`
+      # that no longer matches pyproject.toml fails CI instead of being
+      # quietly re-resolved, so what CI tests is what the lock pins. The
+      # example jobs below already did this. `uv lock` is the remedy.
       - name: Install dependencies
-        run: uv sync --python 3.12
+        run: uv sync --locked --python 3.12
 
       - name: Verify replay schemas match agentao/replay/events.py
-        run: uv run --python 3.12 python scripts/write_replay_schema.py --check
+        run: uv run --locked --python 3.12 python scripts/write_replay_schema.py --check
 
       - name: Verify host schemas match agentao/host/models.py + agentao/acp/schema.py
-        run: uv run --python 3.12 python scripts/write_host_schema.py --check
+        run: uv run --locked --python 3.12 python scripts/write_host_schema.py --check
 
   # ─────────────────────────────────────────────────────────────
   # Job 0b · P0.4 typing gate — mypy --strict on agentao.host
@@ -58,10 +62,10 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies (incl. dev group for mypy)
-        run: uv sync --python 3.12 --group dev
+        run: uv sync --locked --python 3.12 --group dev
 
       - name: mypy --strict --package agentao.host
-        run: uv run --python 3.12 mypy --strict --package agentao.host
+        run: uv run --locked --python 3.12 mypy --strict --package agentao.host
 
   lint-gate:
     name: Lint gate (ruff, defect rules only)
@@ -95,7 +99,7 @@ jobs:
       # the gate. Rules: E9/F401/F402/F405/F811/F821, with F401 exempted
       # for agentao/. See docs/design/lint-gate.md.
       - name: ruff check
-        run: uv run --python 3.12 --only-group dev ruff check .
+        run: uv run --locked --python 3.12 --only-group dev ruff check .
 
   # ─────────────────────────────────────────────────────────────
   # Job 1 · Unit tests across Python 3.10 / 3.11 / 3.12
@@ -130,13 +134,13 @@ jobs:
         # without the extra, so omitting it would silently retire the guard.
         # Note this installs the Python package only; no browser binary is
         # downloaded, and no test launches Chromium.
-        run: uv sync --python ${{ matrix.python-version }} --extra cli --extra web --extra i18n --extra playwright
+        run: uv sync --locked --python ${{ matrix.python-version }} --extra cli --extra web --extra i18n --extra playwright
 
       # `--durations=20` on one interpreter only: it reports the slowest tests,
       # which is the data for deciding where CI time goes. One report per run
       # is enough, and the other two jobs' logs stay as they were.
       - name: Run tests
-        run: uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short ${{ matrix.python-version == '3.12' && '--durations=20' || '' }}
+        run: uv run --locked --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short ${{ matrix.python-version == '3.12' && '--durations=20' || '' }}
 
   # ─────────────────────────────────────────────────────────────
   # Job 1a · Windows
@@ -179,7 +183,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies (same extras as the ubuntu test job)
-        run: uv sync --python ${{ matrix.python-version }} --extra cli --extra web --extra i18n --extra playwright
+        run: uv sync --locked --python ${{ matrix.python-version }} --extra cli --extra web --extra i18n --extra playwright
 
       # The tests' temp files go on the D: drive, where the checkout already is,
       # instead of %TEMP% on C:. Under xdist, the modules that write SQLite files
@@ -200,7 +204,7 @@ jobs:
         # present makes a skip legible: a green run that quietly skipped every
         # measurement looks identical to one that made them.
         run: |
-          uv run --python ${{ matrix.python-version }} python -c "import shutil, tempfile; print('pwsh:', shutil.which('pwsh')); print('powershell:', shutil.which('powershell')); print('cmd:', shutil.which('cmd')); print('bash:', shutil.which('bash')); print('tempdir:', tempfile.gettempdir())"
+          uv run --locked --python ${{ matrix.python-version }} python -c "import shutil, tempfile; print('pwsh:', shutil.which('pwsh')); print('powershell:', shutil.which('powershell')); print('cmd:', shutil.which('cmd')); print('bash:', shutil.which('bash')); print('tempdir:', tempfile.gettempdir())"
 
       # Two steps, so a red run is readable. The shell modules are written for
       # Windows and are expected to pass; failing the first step means the
@@ -209,7 +213,7 @@ jobs:
       - name: Run the shell and PowerShell tests
         run: |
           $tests = $env:SHELL_TESTS -split '\s+' | Where-Object { $_ }
-          uv run --python ${{ matrix.python-version }} python -m pytest -v --tb=short @tests
+          uv run --locked --python ${{ matrix.python-version }} python -m pytest -v --tb=short @tests
 
       # In parallel (pytest-xdist), because this job is the one the whole run
       # waits for: the suite spends most of its time waiting on subprocesses
@@ -218,11 +222,12 @@ jobs:
       # whenever psutil is importable, which is half the runner's vCPUs.
       # The ubuntu test jobs stay serial, so the suite still has a
       # fixed-order run. The shell modules ran in the step above, so they are
-      # ignored here.
+      # ignored here. `--durations=20` reports the slowest tests on Windows,
+      # where per-test times are otherwise invisible under xdist.
       - name: Run the full suite
         run: |
           $ignore = $env:SHELL_TESTS -split '\s+' | Where-Object { $_ } | ForEach-Object { "--ignore=$_" }
-          uv run --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short -n logical @ignore
+          uv run --locked --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short -n logical --durations=20 @ignore
 
   # ─────────────────────────────────────────────────────────────
   # Job 1a · macOS — the sandbox-exec backend
@@ -249,7 +254,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies (same extras as the ubuntu test job)
-        run: uv sync --python 3.12 --extra cli --extra web --extra i18n --extra playwright
+        run: uv sync --locked --python 3.12 --extra cli --extra web --extra i18n --extra playwright
 
       # The integration tests depend on both facts; printing them makes a red
       # run readable without re-running it.
@@ -261,7 +266,7 @@ jobs:
 
       - name: Run the sandbox and shell tests
         run: >
-          uv run --python 3.12 python -m pytest -v --tb=short
+          uv run --locked --python 3.12 python -m pytest -v --tb=short
           tests/test_sandbox_policy.py
           tests/test_path_policy.py
           tests/test_shell_tool_shell_dialect.py
@@ -295,7 +300,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Install dependencies
-        run: uv sync --python 3.12 --extra cli --extra web --extra i18n
+        run: uv sync --locked --python 3.12 --extra cli --extra web --extra i18n
 
       - name: Override the locked MCP SDK
         # `--upgrade-package mcp` is load-bearing: without it uv keeps any
@@ -350,7 +355,7 @@ jobs:
       # at module scope. A core-only sync fails collection with exit 2 and
       # never reaches a single slow test.
       - name: Install dependencies (dev group for pytest, extras for collection)
-        run: uv sync --python 3.12 --extra cli --extra web --extra i18n --extra playwright --group dev
+        run: uv sync --locked --python 3.12 --extra cli --extra web --extra i18n --extra playwright --group dev
 
       # The `slow` marker is excluded from every other pytest run in this file,
       # so until now nothing ran these at all — the P0.7 roadmap always meant
@@ -360,8 +365,12 @@ jobs:
       # Pinned to 3.12 deliberately: tests/data/full_extras_baseline.txt is a
       # dependency closure for one interpreter, and a version-gated backport
       # would make 3.10's closure legitimately different.
+      # In parallel: each of these tests builds its own venv under its own
+      # tmp_path and pip-installs the wheel into it (6-14 s apiece), so they
+      # share nothing, and run serially they were almost all of this job.
+      # Measured locally: 254 s serial, 73 s with four workers.
       - name: Clean-install suite against the built wheel (-m slow)
-        run: uv run --python 3.12 python -m pytest -m slow -v --tb=short
+        run: uv run --locked --python 3.12 python -m pytest -m slow -v --tb=short -n logical
 
       - name: Upload dist artifacts
         uses: actions/upload-artifact@v7
