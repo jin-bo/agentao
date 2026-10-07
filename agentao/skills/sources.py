@@ -158,7 +158,7 @@ class GitHubSkillSource(SkillSource):
 
         # Read version from skill.json if present
         version = ""
-        skill_json = extracted / "skill.json"
+        skill_json = extracted / spec.package_path / "skill.json"
         if skill_json.exists():
             import json
             try:
