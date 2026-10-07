@@ -81,6 +81,7 @@ agent = Agentao(
 | `api_format` | `str` | `"openai-completions"` | The wire protocol spoken to `base_url` (0.5.0): `"openai-completions"`, `"anthropic-messages"` (Anthropic's Messages API over the official SDK) or `"openai-responses"` (OpenAI's Responses API, 0.5.3). **Keyword-only**, configured and never inferred from the URL or the model name, changed afterwards only by `set_provider(..., api_format=)`, inherited by sub-agents, and **mutually exclusive with `llm_client=`**. An unknown value raises `ValueError`. On `anthropic-messages`, `base_url` is the API root, `temperature` is not sent, and extended thinking goes through `extra_body`. Env equivalent: `{PROVIDER}_API_FORMAT` — see [Appendix B](/en/appendix/b-config-keys) |
 | `transport` | `Transport` | `NullTransport()` | UI bridge: events + confirm + ask_user + max-iter fallback. See [Part 4](/en/part-4/) |
 | `permission_engine` | `PermissionEngine` | `None` — no engine, no rule evaluated (`build_from_environment` builds one rooted at `working_directory`) | Rule-based gating; modes and `set_permission_mode` need one. See [5.4](/en/part-5/4-permissions) |
+| `permission_mode` | `str` | `None` — builds nothing | `"read-only"` / `"workspace-write"` / `"full-access"` (`"plan"` is refused): builds `PermissionEngine(project_root=working_directory, rules=[])` in that mode, reading no rule file, and starts in it without emitting an event. Mutually exclusive with `permission_engine`. See [5.4](/en/part-5/4-permissions) |
 | `max_context_tokens` | `int` | `200_000` | Triggers conversation compression beyond this |
 | `extra_mcp_servers` | `Dict[str,Dict]` | `None` | Per-session MCP servers without touching `.agentao/mcp.json`. Same-name keys override. Useful for per-tenant tokens |
 | `extra_tools` | `Sequence[Tool]` | `None` | Inject / replace tools (instances; register last, same name overrides a built-in). See [5.1](/en/part-5/1-custom-tools) |
@@ -213,6 +214,7 @@ Violating any of these raises `ValueError` at construction:
 | `llm_client=` + any of `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` | The injected client is already the credential source — pass `extra_body=` to that client directly instead |
 | `mcp_manager=` + `extra_mcp_servers=` | Per-session merge needs a manager Agentao constructs |
 | `mcp_manager=` + `mcp_registry=` | Registry is the config source; manager is the construction outcome |
+| `permission_engine=` + `permission_mode=` | One is an engine, the other builds one — set the mode on your engine, or call `set_permission_mode()` after construction |
 
 ---
 

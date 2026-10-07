@@ -17,9 +17,13 @@ holds no transport and does no I/O, deliberately.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Union
 
-from ..permissions import PermissionMode
+from ..permissions import (
+    PermissionMode,
+    parse_construction_permission_mode,
+    parse_permission_mode,
+)
 from ..transport import AgentEvent, EventType
 
 if TYPE_CHECKING:
@@ -33,7 +37,7 @@ def _mode_name(mode: Any) -> str:
 
 def apply_permission_mode(
     agent: "Agentao",
-    mode: PermissionMode,
+    mode: Union[str, PermissionMode],
     *,
     cause: str,
 ) -> Optional[PermissionMode]:
@@ -56,6 +60,11 @@ def apply_permission_mode(
     ``"cli-plan-implement"``, ``"acp"``, ``"run"``, ``"host"`` — and is the
     payload's only free-form field.
 
+    ``mode`` may be the string value (``"read-only"`` …) or the enum; it is
+    normalised by :func:`~agentao.permissions.parse_permission_mode` before
+    anything moves, so an unknown string raises ``ValueError`` and changes
+    nothing.
+
     Returns the mode that was active before, for a caller that wants to
     report the transition itself.
 
@@ -64,6 +73,7 @@ def apply_permission_mode(
     answering "done" is the fail-open reading. ACP checks for the engine
     first so it can answer with a JSON-RPC error naming the session.
     """
+    mode = parse_permission_mode(mode)
     engine = getattr(agent, "permission_engine", None)
     if engine is None:
         raise ValueError(
@@ -88,3 +98,31 @@ def apply_permission_mode(
         except Exception:
             pass
     return previous
+
+
+def set_initial_permission_mode(agent: "Agentao", mode: PermissionMode) -> None:
+    """Put a just-built ``agent`` in ``mode``, recording nothing.
+
+    The starting posture is a state, not a switch: emitting
+    ``PERMISSION_MODE_CHANGED`` here would invent a transition from
+    ``workspace-write`` that never happened, deliver it to the host's
+    transport before the constructor has returned the agent, and still miss
+    a replay that can only start later. So both of read-only's switches are
+    set directly — the engine's preset and the runner's flag, which
+    :meth:`ToolRunner.set_readonly_mode` would otherwise announce — and
+    nothing is emitted, ``READONLY_MODE_CHANGED`` included. Every switch
+    *after* construction goes through :func:`apply_permission_mode` and is
+    recorded as before.
+
+    Used by ``Agentao(permission_mode=)`` and
+    ``build_from_environment(permission_mode=)``, once tooling is wired.
+    Enforces the construction modes itself rather than trusting callers to
+    pre-filter: ``PLAN`` raises ``ValueError``, since the PLAN preset without
+    a ``PlanSession`` is the state the construction vocabulary excludes.
+    """
+    mode = parse_construction_permission_mode(mode)
+    engine = agent.permission_engine
+    if engine is None:  # pragma: no cover - callers build or hold one
+        raise ValueError("set_initial_permission_mode needs a permission engine")
+    engine.set_mode(mode)
+    agent.tool_runner.readonly_mode = mode == PermissionMode.READ_ONLY

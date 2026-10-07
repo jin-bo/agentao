@@ -11,9 +11,9 @@ Authoritative `__all__`:
 - `from agentao.tools.base import ...` → `Tool`, `ToolRegistry`
 - `from agentao.permissions import ...` → `PermissionEngine`, `PermissionMode`, `PermissionDecision`
 - `from agentao.memory.manager import MemoryManager`
-- `from agentao.cancellation import ...` → `CancellationToken`, `AgentCancelledError`
+- `from agentao.cancellation import ...` → `CancellationToken`, `AgentCancelledError` (`CancellationToken` is also exported from `agentao.host` — the same class, and the stable path for hosts)
 - `from agentao.acp_client import ...` → `ACPManager`, `ACPClient`, `AcpClientError`, `AcpErrorCode`, `AcpRpcError`, `AcpInteractionRequiredError`, `AcpClientConfig`, `AcpServerConfig`, `AcpConfigError`, `PromptResult`, `ServerState`, `load_acp_client_config` (and lower-level re-exports — see `agentao.acp_client.__init__.py` docstring for which are "stable embedding surface" vs. "implementation detail")
-- `from agentao.host import ...` → `ActivePermissions`, `EventStream`, `StreamSubscribeError`, `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `SubagentUsage`, `PermissionDecisionEvent`, `RFC3339UTCString`, `export_host_event_json_schema`, `export_host_acp_json_schema` — host-facing harness contract, see [A.10](#a-10-embedded-host-contract)
+- `from agentao.host import ...` → `ActivePermissions`, `EventStream`, `StreamSubscribeError`, `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `SubagentUsage`, `PermissionDecisionEvent`, `RFC3339UTCString`, `export_host_event_json_schema`, `export_host_acp_json_schema`, `CancellationToken` — host-facing harness contract, see [A.10](#a-10-embedded-host-contract)
 
 ## A.1 `Agentao`
 
@@ -40,6 +40,7 @@ Agentao(
     disable_tools: Iterable[str] | None = None,             # skip built-ins by name
     enabled_tools: Iterable[str] | None = None,             # allowlist (mutually excl. w/ disable_tools)
     permission_engine: PermissionEngine | None = None,
+    permission_mode: str | None = None,         # "read-only" | "workspace-write" | "full-access"; builds an engine (rules=[])
     max_context_tokens: int = 200_000,
     plan_session: PlanSession | None = None,
     # Embedded-harness explicit injections
@@ -68,6 +69,7 @@ Mutual-exclusion rules (raise `ValueError` if violated):
 - `mcp_manager=` together with `extra_mcp_servers=`
 - `mcp_manager=` together with `mcp_registry=` — the registry is a config source, the manager is the construction outcome
 - `enabled_tools=` together with `disable_tools=` — an allowlist and a denylist at once is ambiguous (holds even for `enabled_tools=set()`). See [5.1](/en/part-5/1-custom-tools)
+- `permission_engine=` together with `permission_mode=` — one is an engine, the other builds one; set the mode on your engine instead. See [5.4](/en/part-5/4-permissions)
 
 Opt-in subsystem semantics (defaults are `None` since 0.2.16):
 
@@ -567,6 +569,7 @@ from agentao.host import (
     RFC3339UTCString,
     export_host_event_json_schema,
     export_host_acp_json_schema,
+    CancellationToken,
 )
 ```
 
@@ -583,6 +586,7 @@ from agentao.host import (
 | `StreamSubscribeError` | Raised when a second concurrent subscriber for the same `session_id` filter is requested (MVP supports one stream consumer per `Agentao` instance). |
 | `export_host_event_json_schema()` | Emit the canonical JSON schema for events + permissions. Used by `tests/test_host_schema.py` for byte-equality against `docs/schema/host.events.v1.json`. |
 | `export_host_acp_json_schema()` | Emit the canonical JSON schema for host-facing ACP payloads. Snapshot lives at `docs/schema/host.acp.v1.json`. |
+| `CancellationToken` | The token `chat()` / `arun()` accept as `cancellation_token=`. Re-export of `agentao.cancellation.CancellationToken` (the same class). |
 
 ### `agent.events(session_id=None)`
 

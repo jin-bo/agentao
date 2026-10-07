@@ -53,6 +53,7 @@ intentionally not part of this surface.
 | `export_host_acp_json_schema()` | Canonical JSON schema for the host-facing ACP payload surface. |
 | `Tool`, `AsyncToolBase` | Base classes for host-supplied tools passed via `Agentao(extra_tools=[...])`. Re-export of the canonical types in `agentao.tools.base` — a stable import path, not a new abstraction layer. |
 | `RegistrableTool` | `Union[Tool, AsyncToolBase]` — the type the registry / `extra_tools=` accepts. |
+| `CancellationToken` | The token `chat()` / `arun()` accept as `cancellation_token=`. Re-export of `agentao.cancellation.CancellationToken` (the same class). A simple async call can end its turn by cancelling the task instead; pass a token for a stop button, cancelling across tasks, a signal shared by several calls, or a sync `chat()` cancelled from another thread. |
 | `agentao.host.replay_projection` | Submodule bridging `EventStream` ⇄ replay JSONL — see [Replay projection](#replay-projection-agentaohostreplay_projection) below. |
 
 ### Sub-agent `failed` has two shapes
@@ -185,6 +186,22 @@ While waiting, the tool reports progress once a minute through the ordinary
 tool-output stream (`TOOL_OUTPUT`, ACP `tool_call_update`). The 1800-second
 bound is provisional: check your client's own prompt-turn timeout, since a
 wait the client abandons first ends the turn from the outside.
+
+### Permission posture
+
+A mode is spelled as its string value — `"read-only"`, `"workspace-write"`,
+`"full-access"`, `"plan"` — the same vocabulary as `ActivePermissions.mode`.
+`PermissionMode` is not part of this surface; the enum is still accepted
+wherever a string is.
+
+| Entry point | Behaviour |
+|---|---|
+| `Agentao(permission_mode="read-only")` | `"read-only"`, `"workspace-write"` or `"full-access"`; `"plan"` raises `ValueError` (plan mode is entered through the plan session). The agent starts in that mode with the engine and the read-only gate agreeing, and **no event is emitted** — a starting state is not a switch. Default `None`: no engine. The rule is one for callers: **an engine you pass and a mode are mutually exclusive** (`ValueError`). `Agentao(permission_mode=)` builds `PermissionEngine(project_root=working_directory, rules=[])` and reads no rule file; `build_from_environment(permission_mode=)` applies the mode to the engine the factory loads from the permission files — an internal engine, not one you passed — so the user's rules stay. A bad mode is refused before anything is opened. |
+| `Agentao.set_permission_mode(mode)` | Switches the posture and records it (`cause="host"`). Takes the string or the enum; an unknown string raises `ValueError`, another type `TypeError`. **Returns the previous mode as a `PermissionMode`**, not a string. Raises `ValueError` when the agent has no engine. |
+
+Rules (`rules=`) still need a `PermissionEngine` you build yourself, from
+`agentao.permissions`. Every remaining *ask* is answered by the transport,
+and `NullTransport` answers yes — see [`embedding.md` §2](../guides/embedding.md#permissions-and-the-transport).
 
 ### Tool injection methods
 

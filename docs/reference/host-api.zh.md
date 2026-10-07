@@ -47,6 +47,9 @@ Harness API 是宿主应用嵌入 Agentao 时面向外部的兼容性边界。�
 | `RFC3339UTCString` | 所有公共事件使用的受限时间戳类型。 |
 | `export_host_event_json_schema()` | 事件 + 权限的规范 JSON schema。 |
 | `export_host_acp_json_schema()` | 对外的 ACP 负载规范 JSON schema。 |
+| `Tool`、`AsyncToolBase` | 通过 `Agentao(extra_tools=[...])` 传入的宿主工具的基类。重新导出 `agentao.tools.base` 里的规范类型——是稳定的导入路径，不是新的抽象层。 |
+| `RegistrableTool` | `Union[Tool, AsyncToolBase]`——注册表和 `extra_tools=` 接受的类型。 |
+| `CancellationToken` | `chat()` / `arun()` 的 `cancellation_token=` 参数接受的 token。重新导出 `agentao.cancellation.CancellationToken`（同一个类）。简单的异步调用可以直接取消任务来结束本轮；独立的停止按钮、跨任务取消、多个调用共用一个信号，或从别的线程取消同步的 `chat()`，就传 token。 |
 | `agentao.host.replay_projection` | 把 `EventStream` 桥接到 replay JSONL 的子模块——见下文 [Replay 投影](#replay-投影agentaohostreplay_projection)。 |
 
 ### 子 Agent 的 `failed` 有两种形态
@@ -158,6 +161,21 @@ LLM 请求时才被取出。父级这一轮如果已经结束，在有人开启�
 模型不要重复同样的等待。等待期间，工具每分钟通过普通的工具输出流（`TOOL_OUTPUT`、
 ACP 的 `tool_call_update`）报告一次进度。1800 秒这个上限是暂定的：请核对你的
 客户端自己的 prompt 轮次超时，因为客户端先放弃的等待会从外部结束这一轮。
+
+### 权限姿态
+
+模式用字符串值表示——`"read-only"`、`"workspace-write"`、`"full-access"`、
+`"plan"`——与 `ActivePermissions.mode` 的取值相同。`PermissionMode` 不属于这个
+接口；凡是接受字符串的地方，仍然也接受这个枚举。
+
+| 入口 | 行为 |
+|---|---|
+| `Agentao(permission_mode="read-only")` | 取值为 `"read-only"`、`"workspace-write"` 或 `"full-access"`；`"plan"` 抛 `ValueError`（plan 模式通过 plan 会话进入）。agent 以该模式启动，引擎和只读闸门一致，且**不发任何事件**——起始状态不是一次切换。默认 `None`：不建引擎。对调用方只有一条规则：**你传入的引擎与模式互斥**（抛 `ValueError`）。`Agentao(permission_mode=)` 构造 `PermissionEngine(project_root=working_directory, rules=[])`，不读取任何规则文件；`build_from_environment(permission_mode=)` 把模式应用到工厂从权限文件加载的那个引擎上——那是工厂内部的引擎，不是你传入的——所以用户的规则保留。模式写错会在打开任何东西之前被拒绝。 |
+| `Agentao.set_permission_mode(mode)` | 切换权限姿态并记录（`cause="host"`）。接受字符串或枚举；未知字符串抛 `ValueError`，其他类型抛 `TypeError`。**返回切换前的模式，类型是 `PermissionMode`**，不是字符串。agent 没有引擎时抛 `ValueError`。 |
+
+规则（`rules=`）仍需要你自己从 `agentao.permissions` 构造 `PermissionEngine`。
+剩下的每个"问"都由 transport 回答，而 `NullTransport` 一律回答"是"——见
+[`embedding.md` §2](../guides/embedding.md#permissions-and-the-transport)。
 
 ## 压缩（`Agentao.compact`）
 

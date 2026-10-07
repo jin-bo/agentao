@@ -46,18 +46,13 @@ If no rule matches (`decide()` returns `None`), the agent falls back to the tool
 **Switching modes**:
 
 ```python
-from agentao.permissions import PermissionMode
-
-agent.set_permission_mode(PermissionMode.READ_ONLY)
+agent = Agentao(..., permission_mode="workspace-write")  # builds the engine
+agent.set_permission_mode("read-only")                   # returns PermissionMode.WORKSPACE_WRITE
 ```
 
-Switchable at runtime — takes effect on the next tool call.
+Modes are strings — `"read-only"`, `"workspace-write"`, `"full-access"`, `"plan"`, the vocabulary of `ActivePermissions.mode`. The `PermissionMode` enum is still accepted. An unknown string raises `ValueError`. Switchable at runtime — takes effect on the next tool call.
 
-**Modes need an engine.** A `PermissionEngine` starts in `WORKSPACE_WRITE`, and `build_from_environment` always builds one. A bare `Agentao(...)` without `permission_engine=` has none: no rule is evaluated, and `set_permission_mode` raises `ValueError`. Pass `permission_engine=PermissionEngine(project_root=...)` (no file I/O) to get modes and the preset's `deny` rules.
-
-**"Ask" is answered by the transport.** Every "Ask" in the table above goes to `transport.confirm_tool`. The default `NullTransport` answers yes to all of them except a confirmation the MCP Skills gate raises, so in a headless host "Ask" means "Allow". A host with nobody to ask that should refuse passes `SdkTransport(confirm_tool=lambda *_: False)`.
-
-Prefer this over `agent.permission_engine.set_mode(...)`, which is only
+Prefer `set_permission_mode` over `agent.permission_engine.set_mode(...)`, which is only
 half the switch. `read-only` has **two** of them — the engine's preset and
 `ToolRunner.readonly_mode` — and the engine holds no transport, so a bare
 `set_mode` also emits neither `READONLY_MODE_CHANGED` nor
@@ -65,7 +60,12 @@ half the switch. `read-only` has **two** of them — the engine's preset and
 and nothing saying when the posture changed. `set_permission_mode` moves
 both switches, emits both events (tagged `cause="host"`, or `"cli"` /
 `"cli-allow-all"` / `"cli-plan-implement"` / `"acp"` / `"run"` from those
-entry points), and returns the mode that was active before.
+entry points), and returns the mode that was active before — **as the `PermissionMode` enum**,
+not a string (`.value` gives the string).
+
+**Modes need an engine.** `build_from_environment` always builds one, starting in `workspace-write` unless `permission_mode=` says otherwise. A bare `Agentao(...)` with neither `permission_mode=` nor `permission_engine=` has none: no rule is evaluated, and `set_permission_mode` raises `ValueError`. `permission_mode=` takes `"read-only"`, `"workspace-write"` or `"full-access"`; `"plan"` is refused, because plan mode is entered through the plan session. The agent starts in that mode silently — a starting state is not a switch, so no event is emitted; switches after construction are recorded as above. When you need `rules=`, build the engine yourself and pass `permission_engine=`. The rule is one for callers: **an engine you pass and a mode are mutually exclusive** (`ValueError`). `Agentao(permission_mode=)` builds `PermissionEngine(project_root=working_directory, rules=[])` and reads no rule file; `build_from_environment(permission_mode=)` applies the mode to the engine the factory loads from the permission files — an internal engine, not one you passed — so the user's rules stay.
+
+**"Ask" is answered by the transport.** Every "Ask" in the table above goes to `transport.confirm_tool`. The default `NullTransport` answers yes to all of them except a confirmation the MCP Skills gate raises, so in a headless host "Ask" means "Allow". A host with nobody to ask that should refuse passes `SdkTransport(confirm_tool=lambda *_: False)`.
 
 ## Rule JSON format
 

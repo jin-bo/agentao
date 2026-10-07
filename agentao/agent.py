@@ -11,7 +11,11 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Union, TY
 
 from .llm import LLMClient
 from .llm.client import KEEP_BASE_URL as _KEEP_BASE_URL
-from .permissions import PermissionEngine, PermissionMode
+from .permissions import (
+    PermissionEngine,
+    PermissionMode,
+    parse_construction_permission_mode,
+)
 from .runtime import ChatLoopRunner, ToolRunner, run_llm_call, run_turn
 from .runtime import model as _runtime_model
 from .runtime import permission_mode as _runtime_permission_mode
@@ -162,6 +166,10 @@ class Agentao:
         *,
         max_context_tokens: int = 200_000,
         permission_engine: Optional[PermissionEngine] = None,
+        # Build an engine in this mode (``"read-only"`` /
+        # ``"workspace-write"`` / ``"full-access"``; ``"plan"`` is refused).
+        # ``None`` builds none. Mutually exclusive with ``permission_engine=``.
+        permission_mode: Optional[Union[str, PermissionMode]] = None,
         transport=None,                   # Transport protocol instance
         plan_session: Optional[PlanSession] = None,
         working_directory: Path,
@@ -239,6 +247,15 @@ class Agentao:
                        headless mode: every confirmation is approved).
             max_context_tokens: Maximum context window tokens (default 200K).
             permission_engine: Optional PermissionEngine for rule-based tool access.
+            permission_mode: ``"read-only"`` / ``"workspace-write"`` /
+                ``"full-access"`` (or the matching ``PermissionMode``);
+                ``"plan"`` is refused — plan mode is entered through the
+                plan session. Builds ``PermissionEngine(project_root=
+                working_directory, rules=[])`` — no permission file is read —
+                and starts the agent in that mode with both read-only
+                switches set and **no event emitted** (a starting state is
+                not a switch). ``None`` (default) builds no engine. Mutually
+                exclusive with ``permission_engine=``.
             working_directory: Per-runtime working directory (required
                 since 0.3.0; was a deprecated optional in 0.2.16).
                 Frozen at construction: memory/permissions/MCP config/
@@ -308,6 +325,14 @@ class Agentao:
             mcp_manager=mcp_manager,
             extra_mcp_servers=extra_mcp_servers,
             mcp_registry=mcp_registry,
+            permission_engine=permission_engine,
+            permission_mode=permission_mode,
+        )
+        # Parsed before anything is built, so a bad mode fails at the call
+        # site rather than after half the runtime exists.
+        initial_mode: Optional[PermissionMode] = (
+            parse_construction_permission_mode(permission_mode)
+            if permission_mode is not None else None
         )
 
         # Freeze working directory to an absolute path. Resolved once so
@@ -365,6 +390,13 @@ class Agentao:
         # calls, so the set is handed over on the agent (see prompts/builder.py).
         self._stable_memory_ids: Set[str] = set()
         self.todo_tool = TodoWriteTool()
+        if initial_mode is not None:
+            # ``rules=[]``, never ``None``: ``None`` makes the engine run the
+            # permission-file loader. ``permission_mode=`` asks for a preset,
+            # not for whatever policy file this machine happens to hold.
+            permission_engine = PermissionEngine(
+                project_root=self._working_directory, rules=[],
+            )
         self.permission_engine = permission_engine
 
         # An explicit transport, or the silent headless default.
@@ -395,6 +427,14 @@ class Agentao:
             sandbox_policy=sandbox_policy,
             enable_builtin_agents=enable_builtin_agents,
         )
+        if initial_mode is not None:
+            # Both read-only switches, silently: a starting state is not a
+            # switch, and an event here would reach the host's transport
+            # before this constructor has returned. Needs ``tool_runner``,
+            # hence after wiring.
+            _runtime_permission_mode.set_initial_permission_mode(
+                self, initial_mode,
+            )
 
     def _validate_construction_args(
         self,
@@ -412,6 +452,8 @@ class Agentao:
         mcp_manager: Optional["McpClientManager"],
         extra_mcp_servers: Optional[Dict[str, Dict[str, Any]]],
         mcp_registry: Optional["MCPRegistry"],
+        permission_engine: Optional[PermissionEngine],
+        permission_mode: Optional[Union[str, PermissionMode]],
     ) -> None:
         """Reject mutually-exclusive construction kwargs.
 
@@ -443,6 +485,14 @@ class Agentao:
             raise ValueError(
                 "Agentao(): pass either mcp_manager= (pre-built) or "
                 "mcp_registry= (config source), not both."
+            )
+        # No precedence rule between the two: one builds an engine, the other
+        # is one. A host with its own engine sets the mode on it.
+        if permission_engine is not None and permission_mode is not None:
+            raise ValueError(
+                "Agentao(): pass either permission_engine= or "
+                "permission_mode=, not both. Set the mode on your engine, or "
+                "call set_permission_mode() after construction."
             )
 
     @staticmethod
@@ -1596,7 +1646,7 @@ class Agentao:
         return _runtime_model.list_available_models(self)
 
     def set_permission_mode(
-        self, mode: PermissionMode, *, cause: str = "host"
+        self, mode: Union[str, PermissionMode], *, cause: str = "host"
     ) -> Optional[PermissionMode]:
         """Switch the permission posture, and record the transition.
 
@@ -1607,9 +1657,16 @@ class Agentao:
         ``READONLY_MODE_CHANGED`` nor ``PERMISSION_MODE_CHANGED``, leaving a
         replay file with the resulting denials and no record of the switch.
 
+        ``mode`` is the mode's string value (``"read-only"``,
+        ``"workspace-write"``, ``"full-access"``, ``"plan"`` — the vocabulary
+        of ``ActivePermissions.mode``) or a ``PermissionMode``. An unknown
+        string raises ``ValueError``; another type raises ``TypeError``.
+
         ``cause`` labels the entry path in the event payload; the default
-        suits an embedded host. Returns the previously active mode, and
-        raises ``ValueError`` when this runtime has no permission engine.
+        suits an embedded host. Returns the previously active mode **as a
+        ``PermissionMode``** (unchanged since before strings were accepted),
+        and raises ``ValueError`` when this runtime has no permission engine
+        (``mode`` is validated first, so a bad mode reports itself either way).
 
         Implementation lives in ``agentao.runtime.permission_mode``.
         """

@@ -1,6 +1,6 @@
 # 宿主 API 易用性评审：嵌入能不能更简单？
 
-**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 和 F3 第 0 步**已在 PR #423 实施**（只改文档和示例导入）；代码部分（字符串模式与导出、F4、`astream`）的实施尚未获批。本文内容都还没有实现。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。**第三次修订（2026-10-06），收窄导出：** 不导出 `PermissionMode`，去掉 `TurnFinished`；新增导出为 `CancellationToken`、`TextDelta`、`TurnOutcome`；已决定 `Agentao(permission_mode=...)`。新增 F7：保留所有导出，指南分层介绍，加 `__dir__`。
+**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 和 F3 第 0 步**已在 PR #423 实施**（只改文档和示例导入）；F4 和 `astream` 的代码实施尚未获批，第 2 步（字符串模式与导出）已实现，见本行末尾。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。**第三次修订（2026-10-06），收窄导出：** 不导出 `PermissionMode`，去掉 `TurnFinished`；新增导出为 `CancellationToken`、`TextDelta`、`TurnOutcome`；已决定 `Agentao(permission_mode=...)`。新增 F7：保留所有导出，指南分层介绍，加 `__dir__`。**第 2 步已实现（2026-10-06）：** 静默启动，构造时不接受 `"plan"`，replay 起始姿态留作后续。
 **读者：** 决定改动嵌入式宿主接口的 agentao 维护者，以及后续 PR 的评审者。
 **相关文档：**
 - `docs/design/host-api-ergonomics-review.md`：英文版，内容相同
@@ -160,14 +160,19 @@
 1. **公开入口统一用字符串表示模式。** `set_permission_mode` 同时接受 `"read-only"`、`"workspace-write"`、`"full-access"`、`"plan"`，与 `ActivePermissions.mode` 和 `PermissionDecisionEvent.mode` 的取值相同（都是 `Literal[...]`，`host/models.py:58`、`:167`）。入口先校验字符串，再转换成内部枚举；未知字符串抛异常。原来传枚举的写法照样能用。**不导出 `PermissionMode`**（2026-10-06 修订）：导出它会让公开契约里同一个值有两种写法。
    - **返回值不变，文档必须如实说明：** `set_permission_mode()` 仍然返回切换前的模式，类型是内部枚举 `PermissionMode`（`Optional[PermissionMode]`），不是字符串。文档要写明这一点，不能声称"统一用字符串"；改返回值本身就是一项兼容性变更，这里不做。
 2. **`Agentao(permission_mode=...)`**——2026-10-06 已决定（见下面的*构造时设定权限姿态*）。只需要模式的宿主不必导入任何权限相关的东西。
-3. **从 `agentao.host` 导出 `CancellationToken`。** `cancellation.py` 只导入标准库，所以通过 `agentao.host` 的 PEP 562 `__getattr__` 懒导出，`test_import_agentao_host_stays_off_the_runtime_stack`（`tests/test_import_layering.py:477`）仍然能守住分层。为什么需要它：简单的异步调用可以通过取消任务来结束本轮，`arun()` 已经会转发这个取消；其他场景（独立的停止按钮、跨任务取消、多个调用共用一个取消信号、同步宿主从别的线程取消 `chat()`）需要显式传 token。
+3. **从 `agentao.host` 导出 `CancellationToken`。** `cancellation.py` 只导入标准库，所以在 `agentao/host/__init__.py` 里直接导入，`import agentao.host` 仍然不会加载运行时（`tests/test_import_layering.py:477`）。为什么需要它：简单的异步调用可以通过取消任务来结束本轮，`arun()` 已经会转发这个取消；其他场景（独立的停止按钮、跨任务取消、多个调用共用一个取消信号、同步宿主从别的线程取消 `chat()`）需要显式传 token。
 4. F2 落地后，把示例都改成用稳定导入。
 
 **构造时设定权限姿态——2026-10-06 已决定：`Agentao(permission_mode=...)`。** 这不是 F1 里被否决的 (b)：宿主不传这个参数时，什么都不变。
 - **默认 `permission_mode=None`：** 不创建引擎，与现在完全相同（F1 的决定不变）。
-- **显式传入模式时：** 先校验字符串（取值同上），再创建引擎 `PermissionEngine(project_root=working_directory, rules=[])`。不隐式加载任何权限文件；需要 `~/.agentao/permissions.json` 的宿主用 `build_from_environment`，或者自己构造引擎。
-- **初始模式通过现有的切换函数 `runtime/permission_mode.py::apply_permission_mode` 应用**，保证引擎的预设和工具执行器的只读标志从第一次调用起就一致。这个函数需要工具执行器，所以要在 `_wire_tooling`（`agent.py:392`）之后执行。它只在模式真的变化时发出 `PERMISSION_MODE_CHANGED` / `READONLY_MODE_CHANGED`（以 `"workspace-write"` 开始时什么都不发）；这个入口的 `cause` 标签在实现时命名。
+- **显式传入模式时：** 在构造任何东西之前校验 `"read-only"`、`"workspace-write"` 或 `"full-access"`，再创建引擎 `PermissionEngine(project_root=working_directory, rules=[])`。不隐式加载任何权限文件；需要 `~/.agentao/permissions.json` 的宿主用 `build_from_environment`，或者自己构造引擎。**不接受 `"plan"`**（2026-10-06 已决定，见下文）。
+- **agent 静默地以该模式启动**（2026-10-06 修订；初稿是通过 `apply_permission_mode` 应用并带 `cause="host-init"`）。`runtime/permission_mode.py::set_initial_permission_mode` 在 `_wire_tooling` 之后直接设置引擎的预设和工具执行器的只读标志，不发任何事件——既不发 `PERMISSION_MODE_CHANGED`，也不发 `READONLY_MODE_CHANGED`。起始状态不是一次切换：发事件会凭空造出一次从 `workspace-write` 的转换，会在构造函数返回之前就到达宿主的 transport，而且仍然赶不上只能稍后才开始的 replay。构造之后的每次 `set_permission_mode()` 照旧记录。
 - **2026-10-06 已决定：同时传入 `permission_mode=` 和 `permission_engine=` 时抛 `ValueError`**，这样两者之间就没有需要定义和说明的优先级规则。与 `llm_client=` 和原始 LLM 配置互斥的规则一致。自带引擎的宿主在引擎上设好模式，或者构造后再调 `set_permission_mode`。
+- **实现中做出的决定（2026-10-06）：**
+  - **`permission_mode=` 不接受 `"plan"`**，`Agentao()` 和 `build_from_environment()` 都一样，并且在打开任何资源之前就拒绝。PLAN 预设和 `PlanSession` 是两套状态，只设预设会让模型被拒绝，却没有 plan 提示告诉它正在规划。内部的 `PLAN` 模式和现有的枚举调用不变，`set_permission_mode("plan")` 仍然接受；这次不新增进入 plan 模式的接口。
+  - **对调用方只有一条规则：你传入的引擎与模式互斥。** `build_from_environment(permission_mode=)` 把模式应用到工厂从权限文件加载的那个引擎上——那是工厂内部的引擎，不是调用方传入的——所以用户的规则保留，同样静默启动。这是第二轮审查发现的：原来直接转发这个参数，会让工厂总是报错。
+  - **参数类型保持 `str`**（也接受枚举），在运行时校验。宿主通常从配置、请求或环境变量拿到模式，要求 `Literal` 会让它们先做类型收窄。
+  - **后续单独做：把起始权限姿态写进 replay。** 在开始录制时，把当时的权限姿态加进 `session_started`，这样 replay 记录的是实际的起始状态，也能覆盖"构造后改了模式、再开始 replay"的情况。现在 `session_started` 只有 `session_id`、`cwd` 和 `model`，所以任何 agent 的起始姿态都进不了 replay，注入引擎的也一样。
 - `PermissionEngine` 仍然不进 `agentao.host`（`host/__init__.py:23-24`、`host-api.md:10-11`）。需要 `rules=` 的宿主仍从 `agentao.permissions` 构造它，见 `embed-for-agents.md` §1。
 
 **决定（维护者，2026-10-06）：新增的稳定类型只从 `agentao.host` 导出**，因为它有类型门禁。不另加顶层出口。
@@ -221,10 +226,10 @@
 已按评审修订。每一步单独一个 PR。
 
 1. ~~**F1(a) 文档，加上示例里现有的错误导入**（F3 第 0 步）。只改文档和示例。~~ **已在 PR #423 完成。**
-2. **字符串形式的权限模式、`Agentao(permission_mode=...)`，以及从 `agentao.host` 导出 `CancellationToken`**（F3 第 1–3 步）。纯新增；`set_permission_mode` 的返回值不变。
+2. ~~**字符串形式的权限模式、`Agentao(permission_mode=...)`，以及从 `agentao.host` 导出 `CancellationToken`**（F3 第 1–3 步），加上 F7 的 `__dir__`。~~ **2026-10-06 完成**，经过五轮 `/code-review --fix`；见*实现中做出的决定*。F4 仍待做。
 3. **最小的 `astream`**（F2）：先把 `TurnOutcome` 移到轻量模块，再实现 `TextDelta` + 最后的 `TurnOutcome`（都从 `agentao.host` 导出），通过订阅接入，遵守上面的生命周期约束。然后把示例从 `SdkTransport` / `EventType` 上移走，并修好 `saas-assistant` 的替换写法（F3 第 3 步）。
 
-F4 可以并入第 2 步，也可以单独做；它很小，而且是纯新增。F7 的 `__dir__` 并入第 2 步；F7 的指南分层随第 3 步的指南修改一起做（也可以提前，只改文档）。F6 暂缓。
+第 2 步已完成，F4 单独做；它很小，而且是纯新增。F7 的 `__dir__` 已随第 2 步完成；F7 的指南分层随第 3 步的指南修改一起做（也可以提前，只改文档）。F6 暂缓。
 
 ## 5. 有意不提议的
 

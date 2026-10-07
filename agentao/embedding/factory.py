@@ -184,7 +184,12 @@ def build_from_environment(
             ``skill_manager``, ``project_instructions``, ``mcp_manager``,
             ``filesystem``, ``shell``, ``transport``, ``logger``,
             ``temperature``, ``max_context_tokens``, ``plan_session``
-            are all valid here.
+            are all valid here. ``permission_mode`` (not ``"plan"``) is
+            applied to the engine this factory loads from the permission
+            files, keeping the user's rules, rather than replacing it with
+            a rule-less one; the agent starts in it silently, as with
+            ``Agentao``. With an explicit ``permission_engine`` it is
+            refused, as by ``Agentao`` itself.
         resolved_llm: LLM kwargs the caller already resolved (the
             :func:`discover_llm_kwargs` shape). When given, the factory
             neither loads a ``.env`` into ``os.environ`` nor reads LLM
@@ -206,12 +211,35 @@ def build_from_environment(
     from ..mcp import FileBackedMCPRegistry
     from ..memory import MemoryManager, SQLiteMemoryStore
     from ..paths import user_root
-    from ..permissions import PermissionEngine
+    from ..permissions import PermissionEngine, parse_construction_permission_mode
     from ..replay import ReplayManager, load_replay_config
     from ..sandbox import SandboxPolicy
     from .permission_loader import load_permission_config
 
     wd = (working_directory or Path.cwd()).expanduser().resolve()
+
+    permission_engine = overrides.pop("permission_engine", None)
+    # ``Agentao(permission_mode=)`` builds a rule-less engine and refuses an
+    # explicit one — but this factory always passes one, so forwarding the
+    # key would raise for a caller who supplied only the mode. Apply it to
+    # the file-loaded engine instead: dropping the user's permission rules
+    # for a preset would be the fail-open reading. Parsed here so a bad
+    # mode fails before ``settings.json`` is read, the ``.env`` is loaded
+    # into ``os.environ``, or the stores are opened. With an explicit engine
+    # the pair is refused here too, for the same reason: ``Agentao`` would
+    # refuse it only after the memory stores and the background store were
+    # opened.
+    initial_mode = None
+    requested_mode = overrides.pop("permission_mode", None)
+    if requested_mode is not None:
+        if permission_engine is not None:
+            raise ValueError(
+                "build_from_environment(): pass either permission_engine= or "
+                "permission_mode=, not both. Set the mode on your engine, or "
+                "call set_permission_mode() after construction."
+            )
+        initial_mode = parse_construction_permission_mode(requested_mode)
+
     settings = _load_settings(wd)
 
     if resolved_llm is None:
@@ -232,7 +260,6 @@ def build_from_environment(
     else:
         discovered_llm = discover_llm_kwargs()
 
-    permission_engine = overrides.pop("permission_engine", None)
     ur = user_root()
     # One record through this root, so the shell block travels with the rules instead of
     # having no route at all.
@@ -329,4 +356,10 @@ def build_from_environment(
     agent = Agentao(**kwargs)
     if replay_config is not None:
         agent.replay_manager = ReplayManager(agent, config=replay_config)
+    if initial_mode is not None:
+        # Same silent start as ``Agentao(permission_mode=)``; the engine is
+        # the file-loaded one, so the user's rules stay.
+        from ..runtime.permission_mode import set_initial_permission_mode
+
+        set_initial_permission_mode(agent, initial_mode)
     return agent

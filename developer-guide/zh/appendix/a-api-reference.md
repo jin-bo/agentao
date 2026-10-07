@@ -11,9 +11,9 @@
 - `from agentao.tools.base import ...` → `Tool`、`ToolRegistry`
 - `from agentao.permissions import ...` → `PermissionEngine`、`PermissionMode`、`PermissionDecision`
 - `from agentao.memory.manager import MemoryManager`
-- `from agentao.cancellation import ...` → `CancellationToken`、`AgentCancelledError`
+- `from agentao.cancellation import ...` → `CancellationToken`、`AgentCancelledError`（`CancellationToken` 也从 `agentao.host` 导出——同一个类，是宿主应使用的稳定路径）
 - `from agentao.acp_client import ...` → `ACPManager`、`ACPClient`、`AcpClientError`、`AcpErrorCode`、`AcpRpcError`、`AcpInteractionRequiredError`、`AcpClientConfig`、`AcpServerConfig`、`AcpConfigError`、`PromptResult`、`ServerState`、`load_acp_client_config`（以及更底层的 re-export——哪些属于"稳定嵌入面"、哪些属于"实现细节"请参考 `agentao.acp_client.__init__.py` 的 docstring）
-- `from agentao.host import ...` → `ActivePermissions`、`EventStream`、`StreamSubscribeError`、`HostEvent`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`SubagentUsage`、`PermissionDecisionEvent`、`RFC3339UTCString`、`export_host_event_json_schema`、`export_host_acp_json_schema` —— 宿主面 harness 合约，详见 [A.10](#a-10-嵌入-harness-合约)
+- `from agentao.host import ...` → `ActivePermissions`、`EventStream`、`StreamSubscribeError`、`HostEvent`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`SubagentUsage`、`PermissionDecisionEvent`、`RFC3339UTCString`、`export_host_event_json_schema`、`export_host_acp_json_schema`、`CancellationToken` —— 宿主面 harness 合约，详见 [A.10](#a-10-嵌入-harness-合约)
 
 ## A.1 `Agentao`
 
@@ -40,6 +40,7 @@ Agentao(
     disable_tools: Iterable[str] | None = None,             # 按名跳过内置
     enabled_tools: Iterable[str] | None = None,             # 白名单（与 disable_tools 互斥）
     permission_engine: PermissionEngine | None = None,
+    permission_mode: str | None = None,         # "read-only" | "workspace-write" | "full-access"；构造引擎（rules=[]）
     max_context_tokens: int = 200_000,
     plan_session: PlanSession | None = None,
     # 嵌入式 harness 显式注入
@@ -68,6 +69,7 @@ Agentao(
 - `mcp_manager=` 与 `extra_mcp_servers=` 同时传
 - `mcp_manager=` 与 `mcp_registry=` 同时传——registry 是配置源，manager 是构造结果
 - `enabled_tools=` 与 `disable_tools=` 同时传——白名单和黑名单并存有歧义（`enabled_tools=set()` 也照样报错）。见 [5.1](/zh/part-5/1-custom-tools)
+- `permission_engine=` 与 `permission_mode=` 同时传——一个是引擎，一个会构造引擎；请在你自己的引擎上设置模式。见 [5.4](/zh/part-5/4-permissions)
 
 可选子系统语义（默认 `None`）：
 
@@ -564,6 +566,7 @@ from agentao.host import (
     RFC3339UTCString,
     export_host_event_json_schema,
     export_host_acp_json_schema,
+    CancellationToken,
 )
 ```
 
@@ -580,6 +583,7 @@ from agentao.host import (
 | `StreamSubscribeError` | 同一 `session_id` 过滤器上发起第二个并发订阅时抛出（MVP 每个 `Agentao` 只支持一个公共流消费者） |
 | `export_host_event_json_schema()` | 导出事件 + 权限面的标准 JSON schema。`tests/test_host_schema.py` 用它与 `docs/schema/host.events.v1.json` 做字节相等校验 |
 | `export_host_acp_json_schema()` | 导出宿主面 ACP 载荷的标准 JSON schema。快照在 `docs/schema/host.acp.v1.json` |
+| `CancellationToken` | `chat()` / `arun()` 的 `cancellation_token=` 参数接受的 token。重新导出 `agentao.cancellation.CancellationToken`（同一个类） |
 
 ### `agent.events(session_id=None)`
 
