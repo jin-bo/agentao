@@ -153,7 +153,7 @@ Inject pre-built managers when you don't want Agentao to construct them from def
 |-------|-------------|
 | `bg_store` | Background-task tools (`check_background_agent`, `cancel_background_agent`) are not registered; sub-agent tool schemas drop the `run_in_background` field; `/agent bg\|dashboard\|cancel\|delete\|logs\|result` CLI subcommands no-op with a warning |
 | `sandbox_policy` | Shell runs without macOS `sandbox-exec` wrapper |
-| `replay_config` | No `<wd>/.agentao/replay.json` read; agent uses a no-op recorder |
+| `replay_config` | The `replay` block of `<wd>/.agentao/settings.json` is not read at construction; no `ReplayManager` is attached until `start_replay()` / `reload_replay_config()` creates one. `start_replay()` alone creates it with replay off (it returns `None`); `reload_replay_config()` reads that block but starts nothing: a `start_replay()` after it records only if the block has `enabled` true |
 :::
 
 ::: details Logger injection — `logger`

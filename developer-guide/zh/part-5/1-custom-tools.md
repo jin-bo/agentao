@@ -13,7 +13,7 @@
 ```python
 from abc import ABC, abstractmethod
 from typing import Dict, Any
-from agentao.tools.base import Tool
+from agentao.host import Tool
 
 class MyTool(Tool):
     @property
@@ -238,7 +238,7 @@ agent.tools.register(my_tool)
 """你的 SaaS 后端把订单查询暴露给 Agent。"""
 import json
 from typing import Dict, Any
-from agentao.tools.base import Tool
+from agentao.host import Tool
 
 class GetCustomerOrdersTool(Tool):
     def __init__(self, backend_client, tenant_id: str):

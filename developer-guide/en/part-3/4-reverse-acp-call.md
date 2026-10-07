@@ -129,7 +129,7 @@ def search_via_subagent(query: str) -> str:
 Wrap it as an Agentao `Tool` so your main agent can use it like any other capability:
 
 ```python
-from agentao.tools.base import Tool
+from agentao.host import Tool
 
 class SearcherTool(Tool):
     name = "delegate_search"

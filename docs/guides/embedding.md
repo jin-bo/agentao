@@ -131,7 +131,9 @@ What the factory does, in order:
    DB (disabled with a warning if either path is unwritable).
 6. Builds `FileBackedMCPRegistry(project_root=wd, user_root=user_root())`.
 7. Wires opt-in defaults (`BackgroundTaskStore`, `SandboxPolicy`,
-   `replay_config`) — pass `None` for any of them to disable.
+   `replay_config`). Pass `None` to disable `bg_store` or
+   `sandbox_policy`; for replay, `None` means "load from disk", so pass
+   `ReplayConfig(enabled=False)` (`agentao.replay`) to disable it.
 8. Reads `<wd>/.agentao/settings.json` for factory-level toggles such
    as `agents.enable_builtin`.
 9. Constructs `Agentao(...)` with all of the above as explicit kwargs.
@@ -515,24 +517,30 @@ caller does not override them:
 
 | Subsystem | What it does | When to enable |
 |---|---|---|
-| `replay_config` | Records every LLM/tool turn and lets you re-run sessions deterministically. Reads `<wd>/.agentao/replay.json`. | Debugging non-deterministic flake; A/B comparing prompt changes; reproducing user-reported issues. |
+| `replay_config` | Records every LLM/tool turn to `<wd>/.agentao/replays/*.jsonl` for later inspection (`/replay show`); it records, it does not re-run a session. Recording starts only when the host calls `agent.start_replay()` (or `agent.replay_manager.start()` when a manager is attached; the CLI and ACP do this per session; neither the factory nor `Agentao(...)` does). Reads the `replay` block of `<wd>/.agentao/settings.json`. | Debugging non-deterministic flake; A/B comparing prompt changes; reproducing user-reported issues. |
 | `sandbox_policy` | Restricts file/shell tool side-effects to a project root with explicit allow/deny rules. Reads `<wd>/.agentao/sandbox.json`. | Multi-tenant deployments; running untrusted prompts; CI evaluation harnesses. |
 | `bg_store` | Enables background **sub-agents**: the `run_in_background` option on agent tools, plus `check_background_agent` / `cancel_background_agent`. Records are kept in `<wd>/.agentao/background_tasks.json`; after a restart, a task that was still running is marked `failed` — the work itself does not survive. A finished task's update reaches the parent on its next turn, and the runtime never starts that turn itself (see host-api, *Continuing after a background sub-agent*). At most `max_concurrent` background sub-agents run at once (default 6; `BackgroundTaskStore(..., max_concurrent=None)` for no cap); a launch past that is refused, not queued. | Long-lived hosts that keep the process up while children run. Leave it `None` for a one-shot process — `agentao run` does — since workers are daemon threads cut off at exit. |
 
 Each is opt-out under the factory and opt-in under bare construction:
 
 ```python
-# Factory: enable all three, override the policy
+# Factory: wire all three, override the policy
 agent = build_from_environment(
     working_directory=workdir,
     sandbox_policy=MyStrictSandbox(project_root=workdir),
-    # replay_config / bg_store unspecified → factory defaults
+    # replay_config / bg_store unspecified → factory defaults; replay
+    # records only if settings.json has replay.enabled and the host
+    # calls agent.start_replay()
 )
 
-# Factory: disable replay specifically
+# Factory: disable replay specifically. ``replay_config=None`` would
+# load it from disk instead, unlike ``bg_store`` / ``sandbox_policy``.
+# A later ``agent.reload_replay_config()`` re-reads settings.json and
+# replaces this config.
+from agentao.replay import ReplayConfig
 agent = build_from_environment(
     working_directory=workdir,
-    replay_config=None,
+    replay_config=ReplayConfig(enabled=False),
 )
 
 # Bare construction: pass the ones you need; the rest stay None
@@ -602,6 +610,20 @@ from agentao.host import (
 )
 ```
 
+`agentao.host` exports more names than a common integration meets.
+All of them are stable; the tiers say where you need each one,
+not how stable it is. The full list is in
+[`host-api.md` → Public exports](../reference/host-api.md#public-exports).
+
+| You are… | Names |
+|---|---|
+| Observing a running agent | `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `ActivePermissions` (above); `SubagentUsage`, the type of a terminal sub-agent event's `usage` |
+| Streaming text or reading how a turn ended | `TextDelta`, `TurnOutcome` ([§4](#streaming-text-astream)) |
+| Cancelling a turn from elsewhere | `CancellationToken` ([§4](#4-async-usage)) |
+| Writing a host tool | `Tool` for a sync tool, `AsyncToolBase` for an async one (subclass one of them); `RegistrableTool` only to annotate, e.g. a list passed as `extra_tools=`. See [developer guide 5.1](../../developer-guide/en/part-5/1-custom-tools.md). |
+| Attaching a second `events()` iterator | `StreamSubscribeError`; when it is raised: [Event subscription semantics](../reference/host-api.md#event-subscription-semantics) |
+| Reference only | `EventStream` (the runtime builds it and keeps it private; `agent.events()` and `agent.add_host_event_observer()` reach it), `RFC3339UTCString`, `export_host_event_json_schema`, `export_host_acp_json_schema` ([Schema snapshots](#schema-snapshots)) |
+
 ### `agent.active_permissions()`
 
 Returns a JSON-safe `ActivePermissions` snapshot of the policy used by
@@ -653,7 +675,10 @@ Delivery semantics (the full contract is in
   full, the producer blocks for matching events — Agentao does not grow
   an unbounded queue.
 - Cancelling the iterator releases queue/subscription resources.
-- MVP supports one public stream consumer per `Agentao` instance.
+- MVP supports one async-iterator consumer per `session_id` filter; a
+  second one on the same filter raises `StreamSubscribeError` (exact
+  rule: [Event subscription semantics](../reference/host-api.md#event-subscription-semantics)).
+  For several consumers, use `agent.add_host_event_observer()`.
 
 ### What is *not* on the harness surface
 

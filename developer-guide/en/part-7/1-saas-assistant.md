@@ -40,7 +40,7 @@ FastAPI backend
 
 ```python
 # tools/project_tools.py
-from agentao.tools.base import Tool
+from agentao.host import Tool
 import httpx
 
 class ListProjectsTool(Tool):

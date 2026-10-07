@@ -49,8 +49,8 @@ from agentao.transport import (
 )
 
 from agentao.permissions import PermissionEngine, PermissionMode
-from agentao.cancellation import CancellationToken, AgentCancelledError
-from agentao.tools.base import Tool, ToolRegistry  # 写自定义工具时
+from agentao.host import CancellationToken, Tool, AsyncToolBase  # Tool / AsyncToolBase：写自定义工具时（同步 / 异步）
+from agentao.cancellation import AgentCancelledError  # 不从 agentao.host 导出
 ```
 
 ## 懒加载优化

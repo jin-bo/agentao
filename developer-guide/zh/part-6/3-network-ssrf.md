@@ -107,7 +107,7 @@ Agentao 的 `web_fetch` 通过 `agentao/security/url_policy.py::guarded_get_asyn
 你可以**自定义 web_fetch**（替代内置）来加严：
 
 ```python
-from agentao.tools.base import Tool
+from agentao.host import Tool
 import httpx
 
 class StrictWebFetchTool(Tool):
