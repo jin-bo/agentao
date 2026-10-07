@@ -1,6 +1,6 @@
 # Host API ergonomics review: can embedding be simpler?
 
-**Status:** Review, 2026-10-06. **Decided 2026-10-06:** F1 takes route (a), docs only (§3 F1, *Decision*). Streaming text enters the stable contract (F2). New stable types are exported from `agentao.host` only (F3). F1(a) and F3 step 0 are **implemented in PR #423** (docs and example imports only). The code steps for F4 and `astream` are not yet authorized; step 2 (string modes and exports) is implemented, see the end of this line. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered. **Second revision, after re-review:** F2's close order releases pending queue writes first, early exit requires `aclosing`, and the stream is bound to its own turn by token identity. **Third revision (2026-10-06), exports narrowed:** `PermissionMode` is not exported and `TurnFinished` is dropped; new exports are `CancellationToken`, `TextDelta`, `TurnOutcome`; `Agentao(permission_mode=...)` decided. F7 added: keep every export, tier the guides, add `__dir__`. **Step 2 implemented (2026-10-06):** silent start, `"plan"` refused at construction, replay posture as a follow-up.
+**Status:** Review, 2026-10-06. **Decided 2026-10-06:** F1 takes route (a), docs only (§3 F1, *Decision*). Streaming text enters the stable contract (F2). New stable types are exported from `agentao.host` only (F3). F1(a) and F3 step 0 are **implemented in PR #423** (docs and example imports only). The code steps for F4 and `astream` are not yet authorized; step 2 (string modes and exports) is implemented, see the end of this line. Evidence is cited at `main` @ `2750e16`. **Revised 2026-10-06 after review:** F2 narrowed to a minimal `astream` with its lifecycle written out, and the `saas-assistant` transport swap recorded as a defect; F4's thread-pool option dropped; F6 deferred; §4 reordered. **Second revision, after re-review:** F2's close order releases pending queue writes first, early exit requires `aclosing`, and the stream is bound to its own turn by token identity. **Third revision (2026-10-06), exports narrowed:** `PermissionMode` is not exported and `TurnFinished` is dropped; new exports are `CancellationToken`, `TextDelta`, `TurnOutcome`; `Agentao(permission_mode=...)` decided. F7 added: keep every export, tier the guides, add `__dir__`. **Step 2 implemented (2026-10-06):** silent start, `"plan"` refused at construction, replay posture as a follow-up; merged as PR #426. **Peer comparison (2026-10-06):** a proposal drawn from Pydantic AI and Strands is reviewed in §7. It adds F2's *deltas are display, the outcome is the answer* rule, F8 (return annotations on the host's own methods) and F9 (a function-tool adapter, after `astream`, on demand). It finds approval-only hosts already served by `SdkTransport(confirm_tool=...)`, and it widens §5. The additions from this comparison (F2's two new bullets, F8, F9, §7) cite `main` @ `ef8a2d2`; everything else still cites `2750e16`, where `agent.py` line numbers are lower, for example `active_permissions()` is `:1036` there and `:1086` at `ef8a2d2`.
 **Audience:** agentao maintainers deciding what to change in the embedded-host surface, and reviewers of any follow-up PR.
 **Companions:**
 - `docs/design/host-api-ergonomics-review.zh.md`: Chinese version, same content
@@ -19,12 +19,14 @@ The question was whether the host-facing API could be simpler. This review compa
 | # | Finding | Proposal | Compatibility |
 |---|---|---|---|
 | F1 | A headless host approves every ASK, and the docs do not say so; an engine-less agent also cannot switch mode | **Decided: (a) docs only.** (b) and (c) not adopted | None |
-| F2 | Streaming text is outside the contract; every chat example imports internals, and `saas-assistant` swaps the transport per request in a way that misroutes events | Minimal `Agentao.astream()` yielding `TextDelta`, then the `TurnOutcome`; attached by subscription | Additive; audit schema unchanged |
+| F2 | Streaming text is outside the contract; every chat example imports internals, and `saas-assistant` swaps the transport per request in a way that misroutes events | Minimal `Agentao.astream()` yielding `TextDelta`, then the `TurnOutcome`; attached by subscription; deltas are display, `TurnOutcome.text` is the answer | Additive; audit schema unchanged |
 | F3 | Imports are spread over 8 modules; `set_permission_mode`'s argument type is not public; examples use wrong imports | Fix the examples' imports; string modes (enum not exported); `Agentao(permission_mode=...)`; export `CancellationToken` from `agentao.host` | Additive |
 | F4 | No `with` / `async with`; every host writes `try/finally close()` | `__enter__/__exit__`; `aclose()` = `asyncio.to_thread(close)`; host ends its turns first | Additive |
 | F5 | `chat()` returning a string does not mean the model answered | Covered by F2's final event; `chat()` unchanged | n/a |
 | F6 | Duplicate observer aliases; 32 constructor parameters | **Deferred**; leave the constructor alone | n/a |
 | F7 | Guides list `agentao.host` flat and incompletely; `dir()` hides the lazy tool types | Keep every export; tier how the guides present them; add `__dir__` | Additive |
+| F8 | `events()` and `active_permissions()`, the two host methods the guides lead with, have no return annotation | Annotate the host-facing methods of `Agentao` | Additive |
+| F9 | A host tool needs a class, even for one plain function | A thin function → `Tool` / `AsyncToolBase` adapter, after `astream`, on demand | Additive |
 
 ## 3. Findings
 
@@ -135,6 +137,8 @@ So no design here may require or encourage replacing the transport.
             if should_stop():
                 break  # aclosing runs aclose() on the way out
     ```
+- **Deltas are display; the outcome is the answer** (added 2026-10-06, peer comparison §7). The concatenated `TextDelta`s are **not** guaranteed to equal `TurnOutcome.text`, and the docs must say so. `LLM_TEXT` is emitted per chunk of **every** LLM call in the turn (`runtime/llm_call.py:147-152`), including a call that ends in tool calls, so narration such as "Let me check the file" arrives as deltas and is not in the final text. The reverse also holds: `TurnOutcome.text` can be a string no delta carried, such as the `[No response]` placeholder, a harness abort notice or an `[LLM API error: …]` string (`runtime/outcome.py:3-7`). A host shows deltas as they arrive and takes `TurnOutcome.text`, checked with `is_answer`, as the result to store or act on. Retries do not duplicate text: a call is retried only while nothing has been shown (`llm_call.py:143-144`, `:155-157`).
+- **Why `aclosing`, not a native `async with`.** Pydantic AI's `run_stream_events()` is itself an async context manager and ends with an `AgentRunResultEvent` (checked against its docs, 2026-10-06). `astream` gets the same scoped lifetime from the stdlib's `contextlib.aclosing` over an async generator. That takes no second object type, and the final `TurnOutcome` plays the role of Pydantic's result event. Returning an object that is both an async iterator and an async context manager stays possible later, as an additive change.
 - **Where it lives:** above the runtime, as `arun()` plus a subscription. The chat loop does not change.
 
 **Decision (maintainer, 2026-10-06): streaming text enters the stable contract**, in the minimal form above: `astream` yielding `TextDelta` and then the `TurnOutcome`, outside the audit schema. This reverses `host-api.md`'s earlier exclusion of assistant text, for text deltas only; raw tool I/O stays out. When `astream` lands, every statement that text is outside the contract is updated: `host-api.md` (its scope note at `:27`), the `agentao.host` docstring, and `docs/design/embedded-host-contract.md:28-31`.
@@ -221,13 +225,36 @@ Review conclusion (2026-10-06): **no existing export is worth removing or moving
 
 **Implementation:** give `agentao.host` a `__dir__()` that includes the lazy exports, the same pattern as `agentao/__init__.py:85`, so interactive discovery sees them. It reuses the existing lazy-export mechanism and imports nothing when called.
 
+### F8. The host's own methods are partly unannotated
+
+`agentao/py.typed` ships, and the typing gate is `mypy --strict --package agentao.host` (`.github/workflows/ci.yml:54-55`). It covers the contract's types, not `Agentao`'s methods. Measured with `inspect.signature` over `Agentao`'s public members (2026-10-06):
+- no return annotation: `events()` (`agent.py:1068`, returns `EventStream.subscribe(...)`, an async iterator typed with the private union `_PublishedEvent` (`host/events.py:53-57`, `:328-331`), whose public name is `HostEvent`) and `active_permissions()` (`:1086`, returns `ActivePermissions`), the two methods the embedding guides lead with; also `add_message`, `clear_history`, and the `memory_manager` and `compaction_coordinator` properties;
+- unannotated parameters: `__init__`'s `transport`, and the `callback` of the four observer methods.
+
+`chat()`, `arun()`, `add_tool()`, `close()`, `last_turn` and `set_permission_mode()` are annotated. So a host's type checker sees `Any` from the first call a guide shows.
+
+**Proposal:** annotate the host-facing methods, `events()` and `active_permissions()` first. Use `TYPE_CHECKING` imports from `agentao.host`, so `agent.py` gains no runtime import. Whether the typing gate is extended to check a host's use of these methods (for example through `tests/test_host_typing.py`'s downstream consumer) is decided at implementation. Internal accessors such as `compaction_coordinator` are annotated or left as they are, but they are not promoted into the contract by this.
+
+### F9. A host tool needs a class
+
+Neither Agentao nor its guides offer a way to turn a plain function into a tool (grep for `from_function`, `function_tool`, `FunctionTool` finds no match). A host writes a `Tool` subclass with `name`, `description`, `parameters` (a hand-written JSON schema) and `execute`, even for "look up an order". Pydantic AI and Strands both build a tool from a function's signature and docstring.
+
+**Proposal, deferred until after `astream` and taken up on demand:** a thin adapter that turns a sync or async function into an ordinary `Tool` or `AsyncToolBase`. It is not a second tool system:
+- The result is registered through `add_tool` / `extra_tools=` and goes through the same registry, planner, permission engine, events and executor.
+- The parameter schema comes from the annotations. `pydantic>=2` is already a core dependency (`pyproject.toml:37`).
+- **Safety attributes are explicit and fail closed.** `Tool`'s defaults are `requires_confirmation=False` and `is_read_only=False` (`tools/base.py:112-131`). The adapter keeps them and never infers read-only from a function's name or signature. It does not set `copies_to_subagents` either, so a function tool reaches a sub-agent only when the host declares it.
+- Class tools remain the form for state, resources or a lifecycle.
+
 ## 4. Recommended order
 
 Revised after review. Each step is its own PR.
 
 1. ~~**F1(a) docs, plus the examples' existing wrong imports** (F3 step 0). Docs and examples only.~~ **Done in PR #423.**
-2. ~~**String permission modes, `Agentao(permission_mode=...)`, and `CancellationToken` exported from `agentao.host`** (F3 steps 1–3), plus F7's `__dir__`.~~ **Done 2026-10-06**, after five `/code-review --fix` passes; see *Decided during implementation*. F4 remains open.
+2. ~~**String permission modes, `Agentao(permission_mode=...)`, and `CancellationToken` exported from `agentao.host`** (F3 steps 1–3), plus F7's `__dir__`.~~ **Done 2026-10-06, merged as PR #426**, after five `/code-review --fix` passes; see *Decided during implementation*. F4 remains open.
 3. **A minimal `astream`** (F2): first move `TurnOutcome` to a lightweight module, then `TextDelta` + the final `TurnOutcome`, both exported from `agentao.host`, attached by subscription, with the lifecycle above. Then move the examples off `SdkTransport` / `EventType` and fix the `saas-assistant` swap (F3 step 3).
+
+4. **Return annotations on the host-facing methods** (F8). Small and additive.
+5. **A function-tool adapter** (F9), when a host asks for it.
 
 F4 stands alone now that step 2 has landed; it is small and additive. F7's `__dir__` landed with step 2; F7's guide tiering lands with the guide changes of step 3 (or earlier, as docs only). F6 is deferred.
 
@@ -237,6 +264,13 @@ F4 stands alone now that step 2 has landed; it is small and additive. F7's `__di
 - Changing `chat()`'s return type (F5).
 - Deprecating the observer aliases for now (F6).
 - Moving goal / continuation loops into the harness. That stays the host's job (`embed-for-agents.md` §7b; `docs/design/codex-goal-mechanism-review.md` §11).
+- From the peer comparison (§7), not proposed:
+  - a general Capability or Plugin framework for assembling an agent;
+  - a `HarnessClient`, `HostAgent` or builder over `Agentao(...)` and `build_from_environment(...)`;
+  - parameters that take `bool | str | dict | Manager`, or a mixed mapping syntax for `enabled_tools` / `disable_tools` / `extra_tools`;
+  - a generic `RunResult[T]`, or structured model output tied to the run result;
+  - a separate approval callback type, or an approval pause/resume or persistence state machine;
+  - typed `deps` or per-call usage budgets.
 
 ## 6. Questions for the maintainer
 
@@ -246,3 +280,28 @@ F4 stands alone now that step 2 has landed; it is small and additive. F7's `__di
 4. ~~**F3:** how does a host set a permission posture without importing `PermissionEngine`?~~ **Answered 2026-10-06: `Agentao(permission_mode=...)`**, default `None`. Passing both `permission_mode=` and `permission_engine=` raises `ValueError` (decided 2026-10-06).
 
 **`agentao.host` after steps 2–3:** the 14 names exported today, unchanged, plus `CancellationToken`, `TextDelta` and `TurnOutcome`. None of the existing 14 is removed: each is on the typed stable surface, and removing one breaks hosts for no real simplification. The simplification is in how the guides present them (F7).
+
+## 7. Peer comparison: Pydantic AI and Strands (2026-10-06)
+
+A proposal compared the host surface with Pydantic AI (`Agent(..., capabilities=[...])`) and the Strands harness SDK (`create_harness(...)`, which returns a plain `strands.Agent`). It concluded that the useful lessons are a short common path, a complete result per call, and a stream with a clear end, and that a general Capability or Plugin framework is not needed. This review agrees with that conclusion.
+
+**Checked.**
+- Pydantic AI's `run_stream_events()` is used as `async with … as events: async for event in events`, and the stream ends with an `AgentRunResultEvent` (its agent docs, fetched 2026-10-06).
+- The Strands statements (factory returning `Agent`, `AgentResult`, `interventions`, mixed parameter forms) were **not** re-checked here. Nothing below depends on them.
+- Every Agentao statement was checked against the code; the evidence is in the findings named below.
+
+| # | Proposal | Verdict | Where |
+|---|---|---|---|
+| 1 | Keep the factory and the explicit constructor, both returning `Agentao`; no client, wrapper or builder | Agreed; already so | §5 |
+| 2 | A stream with a clear end: `aclosing`, `TextDelta \| TurnOutcome`, no `TurnFinished` | Agreed; already designed. Adds the rule that deltas are display and `TurnOutcome.text` is the answer | F2 |
+| 3 | Bind the result to the call; keep `chat()/arun() -> str`; `astream` delivers the `TurnOutcome`; separate run status from structured output | Agreed. Already so: F5 and F2 | F2, F5 |
+| 4 | Simple form plus advanced injection, mutually exclusive; no mixed-type parameters | Agreed; it is step 2's rule (`permission_mode=` XOR `permission_engine=`) | F3, §5 |
+| 5 | A function-tool adapter over the existing tool path | Agreed, after `astream` and on demand, with explicit fail-closed safety attributes | F9 |
+| 6 | Separate permission posture from host approval; maybe a thin approval-callback adapter later | The adapter already exists, see below | §7 |
+| — | Annotate the host's common methods (from the proposal's closing order) | Agreed; measured | F8 |
+
+**On 3: binding the outcome to the call.** `agent.last_turn` is correct for one caller per agent: the turn lock prevents overlap (`runtime/turn.py:72-100`). With several callers on one pooled agent, another request's turn can replace `last_turn` between a `chat()` returning and its caller reading it. `astream` closes that gap because the outcome travels in the stream. A non-streaming entry that returns the `TurnOutcome` is left until a host needs it, as the proposal says.
+
+**On 6: an approval-only host already has a thin adapter.** `SdkTransport` takes every callback as optional (`transport/sdk.py:76-82`). A host that only approves passes `SdkTransport(confirm_tool=my_policy)` and nothing else. It needs no `on_event`, because `agent.events()` still works through the transport's subscription. Without the other callbacks, `ask_user` answers that it is not available and reaching max iterations stops the turn (`transport/sdk.py:101-131`). This is the same form `embed-for-agents.md` §1 shows for the fail-closed case (`confirm_tool=lambda *_: False`). The contract is as the proposal states it: `permission_mode` (or an engine) sets the posture, and the transport answers what is left as ASK. One documentation gap remains: the guide's §3 list of stable imports names `NullTransport` but not `SdkTransport`, although §1 and `host-api.md` use it. That is a docs fix for the guide-tiering pass (F7), not a new API.
+
+**Order after this review:** `astream` (step 3), then F8, then F9 on demand. F4 stays independent. No existing export is removed. New stable data types stay in `agentao.host`, and no Capability, Plugin or construction-config framework is introduced.

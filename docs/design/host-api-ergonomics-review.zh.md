@@ -1,6 +1,6 @@
 # 宿主 API 易用性评审：嵌入能不能更简单？
 
-**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 和 F3 第 0 步**已在 PR #423 实施**（只改文档和示例导入）；F4 和 `astream` 的代码实施尚未获批，第 2 步（字符串模式与导出）已实现，见本行末尾。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。**第三次修订（2026-10-06），收窄导出：** 不导出 `PermissionMode`，去掉 `TurnFinished`；新增导出为 `CancellationToken`、`TextDelta`、`TurnOutcome`；已决定 `Agentao(permission_mode=...)`。新增 F7：保留所有导出，指南分层介绍，加 `__dir__`。**第 2 步已实现（2026-10-06）：** 静默启动，构造时不接受 `"plan"`，replay 起始姿态留作后续。
+**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 和 F3 第 0 步**已在 PR #423 实施**（只改文档和示例导入）；F4 和 `astream` 的代码实施尚未获批，第 2 步（字符串模式与导出）已实现，见本行末尾。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。**第三次修订（2026-10-06），收窄导出：** 不导出 `PermissionMode`，去掉 `TurnFinished`；新增导出为 `CancellationToken`、`TextDelta`、`TurnOutcome`；已决定 `Agentao(permission_mode=...)`。新增 F7：保留所有导出，指南分层介绍，加 `__dir__`。**第 2 步已实现（2026-10-06）：** 静默启动，构造时不接受 `"plan"`，replay 起始姿态留作后续；已作为 PR #426 合并。**同类对照（2026-10-06）：** §7 评审了一份参照 Pydantic AI 和 Strands 的建议。据此给 F2 加上“增量用于显示，结果以 outcome 为准”的规则，新增 F8（宿主自身方法的返回类型标注）和 F9（函数工具适配器，排在 `astream` 之后，按需做）。评审还发现，只做审批的宿主已经可以用 `SdkTransport(confirm_tool=...)`，并扩充了 §5。这次对照新增的内容（F2 的两条新要点、F8、F9、§7）引用的是 `main` @ `ef8a2d2`；其余内容仍引用 `2750e16`，那里 `agent.py` 的行号更小，例如 `active_permissions()` 在 `2750e16` 是 `:1036`，在 `ef8a2d2` 是 `:1086`。
 **读者：** 决定改动嵌入式宿主接口的 agentao 维护者，以及后续 PR 的评审者。
 **相关文档：**
 - `docs/design/host-api-ergonomics-review.md`：英文版，内容相同
@@ -19,12 +19,14 @@
 | # | 发现 | 提议 | 兼容性 |
 |---|---|---|---|
 | F1 | 无界面宿主会批准所有 ASK，文档没说；没有 engine 的 agent 也切换不了模式 | **已决定：(a) 只改文档。** 不采用 (b) 和 (c) | 无影响 |
-| F2 | 流式文本不在契约内；所有聊天类示例都导入了内部接口，`saas-assistant` 每次请求替换 transport，会把事件送错地方 | 最小的 `Agentao.astream()`：先产出 `TextDelta`，最后产出 `TurnOutcome`；通过订阅接入 | 纯新增；审计 schema 不变 |
+| F2 | 流式文本不在契约内；所有聊天类示例都导入了内部接口，`saas-assistant` 每次请求替换 transport，会把事件送错地方 | 最小的 `Agentao.astream()`：先产出 `TextDelta`，最后产出 `TurnOutcome`；通过订阅接入；增量用于显示，`TurnOutcome.text` 才是结果 | 纯新增；审计 schema 不变 |
 | F3 | 导入分散在 8 个模块；`set_permission_mode` 的参数类型不公开；示例里有错误导入 | 修正示例导入；字符串模式（不导出枚举）；`Agentao(permission_mode=...)`；从 `agentao.host` 导出 `CancellationToken` | 纯新增 |
 | F4 | 不支持 `with` / `async with`，每个宿主都写 `try/finally close()` | `__enter__/__exit__`；`aclose()` 即 `asyncio.to_thread(close)`；宿主先结束自己的轮次 | 纯新增 |
 | F5 | `chat()` 返回字符串不代表模型真的回答了 | 由 F2 的结束事件覆盖；`chat()` 不改 | 不适用 |
 | F6 | 观察者别名重复；构造函数 32 个参数 | **暂缓**；构造函数不动 | 不适用 |
 | F7 | 指南把 `agentao.host` 写成扁平且不完整的一行；`dir()` 看不到懒导出的工具类型 | 保留所有导出；指南按层次介绍；加 `__dir__` | 纯新增 |
+| F8 | 指南最先介绍的两个宿主方法 `events()` 和 `active_permissions()` 没有返回类型标注 | 给 `Agentao` 面向宿主的方法补标注 | 纯新增 |
+| F9 | 宿主工具哪怕只是一个普通函数，也得写一个类 | 一个薄的函数 → `Tool` / `AsyncToolBase` 适配器，排在 `astream` 之后，按需做 | 纯新增 |
 
 ## 3. 发现
 
@@ -135,6 +137,8 @@
             if should_stop():
                 break  # 退出时 aclosing 会调用 aclose()
     ```
+- **增量用于显示，结果以 outcome 为准**（2026-10-06 新增，见 §7 同类对照）。所有 `TextDelta` 拼起来**不保证**等于 `TurnOutcome.text`，文档必须写明。本轮里**每一次** LLM 调用都会逐块发出 `LLM_TEXT`（`runtime/llm_call.py:147-152`），包括以工具调用结束的那次，所以“我先看一下文件”这类说明文字会作为增量到达，却不在最终文本里。反过来也成立：`TurnOutcome.text` 可能是没有任何增量带过的字符串，例如 `[No response]` 占位、harness 的中止说明或 `[LLM API error: …]`（`runtime/outcome.py:3-7`）。宿主边收边显示增量；要保存或据以行动的结果取 `TurnOutcome.text`，并先用 `is_answer` 检查。重试不会让文本重复：只有在还没显示任何内容时才重试（`llm_call.py:143-144`、`:155-157`）。
+- **为什么用 `aclosing`，而不是原生的 `async with`。** Pydantic AI 的 `run_stream_events()` 本身就是异步上下文管理器，流以 `AgentRunResultEvent` 结束（2026-10-06 已对照其文档核实）。`astream` 用标准库的 `contextlib.aclosing` 包住异步生成器，得到同样有作用域的生命周期，不需要第二种对象类型；最后的 `TurnOutcome` 起的就是 Pydantic 结果事件的作用。以后若要返回一个既是异步迭代器、又是异步上下文管理器的对象，仍可作为纯新增的改动加入。
 - **实现位置：** 在运行时之上，即 `arun()` 加一个订阅，chat 循环不改。
 
 **决定（维护者，2026-10-06）：流式文本进入稳定契约**，形式就是上面的最小版本：`astream` 先产出 `TextDelta`，最后产出 `TurnOutcome`，不进审计 schema。这改变了 `host-api.md` 原先不放 assistant 文本的做法，但只限文本增量；工具原始 I/O 仍不放。`astream` 落地时，凡是说文本不在契约内的地方都要同步更新：`host-api.md`（`:27` 的范围说明）、`agentao.host` 的 docstring，以及 `docs/design/embedded-host-contract.md:28-31`。
@@ -172,7 +176,7 @@
   - **`permission_mode=` 不接受 `"plan"`**，`Agentao()` 和 `build_from_environment()` 都一样，并且在打开任何资源之前就拒绝。PLAN 预设和 `PlanSession` 是两套状态，只设预设会让模型被拒绝，却没有 plan 提示告诉它正在规划。内部的 `PLAN` 模式和现有的枚举调用不变，`set_permission_mode("plan")` 仍然接受；这次不新增进入 plan 模式的接口。
   - **对调用方只有一条规则：你传入的引擎与模式互斥。** `build_from_environment(permission_mode=)` 把模式应用到工厂从权限文件加载的那个引擎上——那是工厂内部的引擎，不是调用方传入的——所以用户的规则保留，同样静默启动。这是第二轮审查发现的：原来直接转发这个参数，会让工厂总是报错。
   - **参数类型保持 `str`**（也接受枚举），在运行时校验。宿主通常从配置、请求或环境变量拿到模式，要求 `Literal` 会让它们先做类型收窄。
-  - **后续单独做：把起始权限姿态写进 replay。** 在开始录制时，把当时的权限姿态加进 `session_started`，这样 replay 记录的是实际的起始状态，也能覆盖"构造后改了模式、再开始 replay"的情况。现在 `session_started` 只有 `session_id`、`cwd` 和 `model`，所以任何 agent 的起始姿态都进不了 replay，注入引擎的也一样。
+  - **后续单独做：把起始权限姿态写进 replay。** 在开始录制时，把当时的权限姿态加进 `session_started`，这样 replay 记录的是实际的起始状态，也能覆盖构造后、`start_replay()` 之前改了模式的情况。现在 `session_started` 只有 `session_id`、`cwd` 和 `model`，所以任何 agent 的起始姿态都进不了 replay，注入引擎的也一样。
 - `PermissionEngine` 仍然不进 `agentao.host`（`host/__init__.py:23-24`、`host-api.md:10-11`）。需要 `rules=` 的宿主仍从 `agentao.permissions` 构造它，见 `embed-for-agents.md` §1。
 
 **决定（维护者，2026-10-06）：新增的稳定类型只从 `agentao.host` 导出**，因为它有类型门禁。不另加顶层出口。
@@ -221,13 +225,36 @@
 
 **实现：** 给 `agentao.host` 加一个 `__dir__()`，把懒导出的名字也列进去，做法与 `agentao/__init__.py:85` 相同，让交互式发现能看到它们。沿用现有的懒导出机制，调用时不导入任何东西。
 
+### F8. 宿主自身的方法有一部分没有类型标注
+
+`agentao/py.typed` 已随包发布，类型门禁是 `mypy --strict --package agentao.host`（`.github/workflows/ci.yml:54-55`）。它覆盖契约里的类型，不覆盖 `Agentao` 的方法。用 `inspect.signature` 遍历 `Agentao` 的公开成员，测得（2026-10-06）：
+- 没有返回类型标注：`events()`（`agent.py:1068`，返回 `EventStream.subscribe(...)`，这是一个异步迭代器，类型用的是私有联合类型 `_PublishedEvent`（`host/events.py:53-57`、`:328-331`），它的公开名字是 `HostEvent`）和 `active_permissions()`（`:1086`，返回 `ActivePermissions`），正是嵌入指南最先介绍的两个方法；另有 `add_message`、`clear_history`，以及 `memory_manager` 和 `compaction_coordinator` 两个属性；
+- 参数没有标注：`__init__` 的 `transport`，以及四个观察者方法的 `callback`。
+
+`chat()`、`arun()`、`add_tool()`、`close()`、`last_turn` 和 `set_permission_mode()` 都有标注。所以宿主的类型检查器从指南展示的第一个调用起就看到 `Any`。
+
+**提议：** 给面向宿主的方法补标注，先做 `events()` 和 `active_permissions()`。用 `TYPE_CHECKING` 从 `agentao.host` 导入，`agent.py` 不增加运行时导入。是否扩展类型门禁、检查宿主对这些方法的使用（例如通过 `tests/test_host_typing.py` 的下游消费者），留到实现时决定。`compaction_coordinator` 这类内部访问器可以标注也可以不动，但不会因此进入契约。
+
+### F9. 宿主工具必须写成类
+
+Agentao 和它的指南都没有把普通函数变成工具的办法（grep `from_function`、`function_tool`、`FunctionTool` 无匹配）。宿主哪怕只是“查订单”，也要写一个 `Tool` 子类，提供 `name`、`description`、`parameters`（手写的 JSON schema）和 `execute`。Pydantic AI 和 Strands 都能从函数签名和 docstring 构造工具。
+
+**提议，暂缓到 `astream` 之后，按需做：** 一个薄适配器，把同步或异步函数变成普通的 `Tool` 或 `AsyncToolBase`。它不是第二套工具体系：
+- 结果通过 `add_tool` / `extra_tools=` 注册，走同一个注册表、规划器、权限引擎、事件和执行器。
+- 参数 schema 由类型标注生成。`pydantic>=2` 已是核心依赖（`pyproject.toml:37`）。
+- **安全属性显式给出，默认按失败关闭处理。** `Tool` 的默认值是 `requires_confirmation=False` 和 `is_read_only=False`（`tools/base.py:112-131`）。适配器保留这些默认值，绝不根据函数名或签名推断只读。它也不设置 `copies_to_subagents`，所以函数工具只有在宿主声明后才会传给子代理。
+- 需要状态、资源或生命周期的工具仍然写成类。
+
 ## 4. 建议顺序
 
 已按评审修订。每一步单独一个 PR。
 
 1. ~~**F1(a) 文档，加上示例里现有的错误导入**（F3 第 0 步）。只改文档和示例。~~ **已在 PR #423 完成。**
-2. ~~**字符串形式的权限模式、`Agentao(permission_mode=...)`，以及从 `agentao.host` 导出 `CancellationToken`**（F3 第 1–3 步），加上 F7 的 `__dir__`。~~ **2026-10-06 完成**，经过五轮 `/code-review --fix`；见*实现中做出的决定*。F4 仍待做。
+2. ~~**字符串形式的权限模式、`Agentao(permission_mode=...)`，以及从 `agentao.host` 导出 `CancellationToken`**（F3 第 1–3 步），加上 F7 的 `__dir__`。~~ **2026-10-06 完成，已作为 PR #426 合并**，经过五轮 `/code-review --fix`；见*实现中做出的决定*。F4 仍待做。
 3. **最小的 `astream`**（F2）：先把 `TurnOutcome` 移到轻量模块，再实现 `TextDelta` + 最后的 `TurnOutcome`（都从 `agentao.host` 导出），通过订阅接入，遵守上面的生命周期约束。然后把示例从 `SdkTransport` / `EventType` 上移走，并修好 `saas-assistant` 的替换写法（F3 第 3 步）。
+
+4. **给面向宿主的方法补返回类型标注**（F8）。小改动，纯新增。
+5. **函数工具适配器**（F9），等宿主提出需要时再做。
 
 第 2 步已完成，F4 单独做；它很小，而且是纯新增。F7 的 `__dir__` 已随第 2 步完成；F7 的指南分层随第 3 步的指南修改一起做（也可以提前，只改文档）。F6 暂缓。
 
@@ -237,6 +264,13 @@
 - 改 `chat()` 的返回类型（F5）。
 - 暂不废弃观察者别名（F6）。
 - 把目标 / 持续执行循环移进 harness。这仍然是宿主的事（`embed-for-agents.md` §7b；`docs/design/codex-goal-mechanism-review.md` §11）。
+- 来自同类对照（§7），不提议：
+  - 用于组装 agent 的通用 Capability 或 Plugin 框架；
+  - 在 `Agentao(...)` 和 `build_from_environment(...)` 之上再加 `HarnessClient`、`HostAgent` 或 Builder；
+  - 接受 `bool | str | dict | Manager` 的参数，或给 `enabled_tools` / `disable_tools` / `extra_tools` 用混合映射语法；
+  - 泛型 `RunResult[T]`，或把模型的结构化输出绑在运行结果上；
+  - 单独的审批回调类型，或审批的暂停／恢复、持久化状态机；
+  - 类型化的 `deps` 或按调用计的用量预算。
 
 ## 6. 请维护者决定的问题
 
@@ -246,3 +280,28 @@
 4. ~~**F3：** 宿主不导入 `PermissionEngine` 时怎样设定权限姿态？~~ **已于 2026-10-06 答复：`Agentao(permission_mode=...)`**，默认 `None`。同时传入 `permission_mode=` 和 `permission_engine=` 时抛 `ValueError`（2026-10-06 已决定）。
 
 **第 2–3 步之后 `agentao.host` 的导出：** 现有 14 个名字不变，再加 `CancellationToken`、`TextDelta` 和 `TurnOutcome`。现有 14 个一个都不删：它们都在有类型门禁的稳定接口上，删掉任何一个都会破坏宿主，而换不来实际的简化。简化体现在指南怎样介绍它们（F7）。
+
+## 7. 同类对照：Pydantic AI 与 Strands（2026-10-06）
+
+一份建议把宿主接口与 Pydantic AI（`Agent(..., capabilities=[...])`）和 Strands harness SDK（`create_harness(...)`，返回普通的 `strands.Agent`）做了对照。它的结论是：值得借鉴的是常见接入路径短、一次调用的结果完整、流式调用有明确的结束边界；不需要通用的 Capability 或 Plugin 框架。本评审同意这个结论。
+
+**核实情况。**
+- Pydantic AI 的 `run_stream_events()` 的用法是 `async with … as events: async for event in events`，流以 `AgentRunResultEvent` 结束（其 agent 文档，2026-10-06 抓取）。
+- 关于 Strands 的说法（工厂返回 `Agent`、`AgentResult`、`interventions`、多形态参数）此处**没有**重新核实；下面的结论都不依赖它们。
+- 关于 Agentao 的每一条都已对照代码核实，证据见下表所指的各条发现。
+
+| # | 建议 | 结论 | 位置 |
+|---|---|---|---|
+| 1 | 保留工厂和显式构造，都返回 `Agentao`；不加 client、包装层或 Builder | 同意；现状即如此 | §5 |
+| 2 | 流式调用要有明确的结束边界：`aclosing`、`TextDelta \| TurnOutcome`、不要 `TurnFinished` | 同意；已在设计中。新增一条规则：增量用于显示，`TurnOutcome.text` 才是结果 | F2 |
+| 3 | 结果与调用绑定；保留 `chat()/arun() -> str`；`astream` 交付 `TurnOutcome`；运行状态与结构化输出分开推进 | 同意。现状即如此：F5 和 F2 | F2、F5 |
+| 4 | 简单形式加高级注入，两者互斥；不用多形态参数 | 同意；这正是第 2 步的规则（`permission_mode=` 与 `permission_engine=` 互斥） | F3、§5 |
+| 5 | 在现有工具路径上加函数工具适配器 | 同意，排在 `astream` 之后、按需做，安全属性显式给出并失败关闭 | F9 |
+| 6 | 区分权限姿态与宿主审批；以后可加薄的审批回调适配器 | 适配器已经存在，见下文 | §7 |
+| — | 给宿主常用方法补类型标注（来自建议末尾的顺序） | 同意；已测得缺口 | F8 |
+
+**关于第 3 条：把结果绑定到调用。** 每个 agent 只有一个调用方时，`agent.last_turn` 是对的：轮次锁防止了重叠（`runtime/turn.py:72-100`）。多个调用方共用一个池化 agent 时，在 `chat()` 返回之后、调用方读取之前，另一个请求的轮次可能已经替换了 `last_turn`。`astream` 把结果放在流里送达，消除了这个空档。返回 `TurnOutcome` 的非流式入口，如建议所说，等宿主需要时再加。
+
+**关于第 6 条：只做审批的宿主已经有薄适配器。** `SdkTransport` 的每个回调都是可选的（`transport/sdk.py:76-82`）。只需要审批的宿主传 `SdkTransport(confirm_tool=my_policy)`，别的都不用传。它不需要 `on_event`，因为 `agent.events()` 仍通过 transport 的订阅工作。没有其他回调时，`ask_user` 回答不可用，达到最大迭代次数时本轮停止（`transport/sdk.py:101-131`）。`embed-for-agents.md` §1 为失败关闭的情形展示的就是这个形式（`confirm_tool=lambda *_: False`）。契约正如建议所说：`permission_mode`（或引擎）决定姿态，剩下的 ASK 由 transport 回答。还剩一个文档缺口：指南 §3 的稳定导入列表列了 `NullTransport`，没有列 `SdkTransport`，而 §1 和 `host-api.md` 都在用它。这是指南分层（F7）时要修的文档问题，不是新 API。
+
+**本评审之后的顺序：** `astream`（第 3 步），然后 F8，F9 按需做。F4 仍然独立。不删除任何现有导出；新的稳定数据类型继续放在 `agentao.host`；不引入 Capability、Plugin 或构造配置框架。
