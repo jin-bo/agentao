@@ -48,7 +48,7 @@ from agentao import Agentao
 from agentao.llm import LLMClient
 from agentao.transport import NullTransport
 
-agent = Agentao(
+with Agentao(
     working_directory=Path("/tmp/agent-run-1"),
     llm_client=LLMClient(
         api_key="sk-...",
@@ -56,10 +56,9 @@ agent = Agentao(
         model="gpt-5.4",
     ),
     transport=NullTransport(),
-)
-reply = agent.chat("总结今天的日志。")
-print(reply)
-agent.close()
+) as agent:
+    reply = agent.chat("总结今天的日志。")
+    print(reply)
 ```
 
 构造出来的 agent **不读环境变量、不开隐式网络、没有全局状态** —— 所有输入由宿主显式提供。要走环境发现路径（CLI 内部就是这个），改用 `agentao.embedding.build_from_environment(working_directory=...)`。

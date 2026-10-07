@@ -255,7 +255,7 @@ async def ws(websocket: WebSocket, session_id: str):
                 if fut and not fut.done():
                     fut.set_result(msg["allowed"])
     finally:
-        agent.close()
+        await agent.aclose()
 ```
 
 ### 前端（浏览器）

@@ -213,7 +213,7 @@ async def handle_request(tenant_id: str, message: str, db):
         return reply
     finally:
         audit.cancel()                # cancel 会释放队列和订阅
-        agent.close()
+        await agent.aclose()
 ```
 
 **这套模式为什么稳**：

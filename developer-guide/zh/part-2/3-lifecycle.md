@@ -89,22 +89,24 @@ agent.close()
 - 断开所有 MCP 客户端连接
 - 关闭 MCP 管理器的事件循环线程
 
-不调用会**泄漏 MCP 子进程和线程**。在 try/finally 或 context manager 中处理：
+不调用会**泄漏 MCP 子进程和线程**。`Agentao` 本身就是 context manager，用 `with` 时，无论是否出错，退出时都会关闭：
 
 ```python
-from contextlib import contextmanager
-
-@contextmanager
-def agent_session(**kwargs):
-    agent = Agentao(**kwargs)
-    try:
-        yield agent
-    finally:
-        agent.close()
-
-with agent_session(working_directory=Path("/tmp/x")) as agent:
+with Agentao(working_directory=Path("/tmp/x")) as agent:
     reply = agent.chat("hi")
 ```
+
+异步代码里用 `async with`（或 `await agent.aclose()`），它在工作线程上运行 `close()`，断开 MCP 时不会阻塞事件循环，类似 `await asyncio.to_thread(agent.close)`，区别是取消 `await` 也不会阻止 `close()` 执行：
+
+```python
+from agentao.embedding import build_from_environment
+
+async def main() -> None:
+    async with build_from_environment(working_directory=Path("/tmp/x")) as agent:
+        reply = await agent.arun("hi")
+```
+
+关闭前先结束 agent 的轮次：两种写法都不会等待或取消正在进行的轮次。用 `async with` 包住 `await agent.arun(...)` 时，即使任务被取消（客户端断开、超时）也满足这一点：被取消的 `arun()` 会取消本轮，并最多等 5 秒让它停下，然后才退出代码块。超过这个时间仍在运行的轮次（例如不检查取消令牌的阻塞工具）会在运行中被关闭；第二次取消打断了这段等待时也是如此。`close()` 可以重复调用，所以在块内显式调用 `close()` 也无妨。agent 的生命周期超出一个代码块时（例如按会话缓存），仍可用 `try/finally` 调用 `close()`。
 
 ## 运行时切换 LLM
 
@@ -199,7 +201,12 @@ async def chat_endpoint(session_id: str, message: str):
 async def end_session(session_id: str):
     entry = _sessions.pop(session_id, None)
     if entry:
-        await to_thread(entry[0].close)
+        agent, lock = entry
+        try:
+            async with lock:       # 等持锁的请求结束（被取消的请求会在
+                pass               # chat() 仍在运行时就释放锁）
+        finally:                   # 本请求在等待时被取消也要关闭：
+            await agent.aclose()   # 条目已经弹出
     return {"ok": True}
 ```
 
@@ -215,7 +222,7 @@ async def end_session(session_id: str):
 
 - **一个 agent = 一个有状态会话**。不要每轮重建——会丢上下文。
 - `chat()` 是**阻塞且非线程安全**的。同会话加锁 + 异步宿主用 `asyncio.to_thread`。
-- 永远要 `close()`（或用 context manager）——否则会泄露 MCP 子进程和 DB 句柄。
+- 永远要关闭 agent：用 `with` / `async with`，或调用 `close()` / `await aclose()`——否则会泄露 MCP 子进程和 DB 句柄。
 - `clear_history()` 只清 `messages`；**记忆 DB 故意保留**。
 - 用 `set_provider()` / `set_model()` 运行时切换模型；历史不变。
 

@@ -195,7 +195,7 @@ async def on_ticket(ticket: dict):
         )
         return {"status": "processed", "summary": reply}
     finally:
-        agent.close()
+        await agent.aclose()
 ```
 
 ## 跟审核员的输出契约

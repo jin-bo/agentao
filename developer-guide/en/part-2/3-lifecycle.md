@@ -88,22 +88,24 @@ Always call this. It:
 - Disconnects all MCP clients
 - Stops the MCP manager's event loop thread
 
-Without it you **leak MCP subprocesses and threads**. Wrap with try/finally or a context manager:
+Without it you **leak MCP subprocesses and threads**. `Agentao` is a context manager, so `with` closes it on the way out, error or not:
 
 ```python
-from contextlib import contextmanager
-
-@contextmanager
-def agent_session(**kwargs):
-    agent = Agentao(**kwargs)
-    try:
-        yield agent
-    finally:
-        agent.close()
-
-with agent_session(working_directory=Path("/tmp/x")) as agent:
+with Agentao(working_directory=Path("/tmp/x")) as agent:
     reply = agent.chat("hi")
 ```
+
+In async code, `async with` (or `await agent.aclose()`) runs `close()` on a worker thread, so the MCP disconnect does not block the event loop. It is like `await asyncio.to_thread(agent.close)`, except that cancelling the `await` never keeps `close()` from running:
+
+```python
+from agentao.embedding import build_from_environment
+
+async def main() -> None:
+    async with build_from_environment(working_directory=Path("/tmp/x")) as agent:
+        reply = await agent.arun("hi")
+```
+
+End the agent's turns before closing: neither form waits for or cancels a turn in progress. Wrapping `await agent.arun(...)` in `async with` meets this even when the task is cancelled (a client disconnect, a timeout): the cancelled `arun()` cancels its turn and waits up to 5 seconds for it to stop before the block exits. A turn still running after that, such as a blocking tool that does not check the cancellation token, is closed while it runs; so is one whose wait a second cancel cuts short. Calling `close()` again is safe, so an explicit `close()` inside the block does no harm. A `try/finally` that calls `close()` still works when the agent outlives one block, such as a per-session cache.
 
 ## Switching LLMs at runtime
 
@@ -198,7 +200,12 @@ async def chat_endpoint(session_id: str, message: str):
 async def end_session(session_id: str):
     entry = _sessions.pop(session_id, None)
     if entry:
-        await to_thread(entry[0].close)
+        agent, lock = entry
+        try:
+            async with lock:       # wait for the request holding it (a cancelled
+                pass               # request releases it while its chat() still runs)
+        finally:                   # close even if this request is cancelled while
+            await agent.aclose()   # waiting: the entry is already popped
     return {"ok": True}
 ```
 
@@ -214,7 +221,7 @@ For production you still need TTL eviction, memory caps, crash recovery — cove
 
 - **One agent = one stateful session.** Don't rebuild per turn — you'll lose context.
 - `chat()` is **blocking and not thread-safe**. Per-session lock + `asyncio.to_thread` for async hosts.
-- Always call `close()` (or use a context manager) — leaks MCP subprocesses + DB handles otherwise.
+- Always close the agent: `with` / `async with`, or `close()` / `await aclose()` — leaks MCP subprocesses + DB handles otherwise.
 - `clear_history()` resets `messages` only; **memory DB persists** by design.
 - Swap models at runtime via `set_provider()` / `set_model()`; history continues unchanged.
 

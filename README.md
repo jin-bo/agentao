@@ -49,7 +49,7 @@ from agentao import Agentao
 from agentao.llm import LLMClient
 from agentao.transport import NullTransport
 
-agent = Agentao(
+with Agentao(
     working_directory=Path("/tmp/agent-run-1"),
     llm_client=LLMClient(
         api_key="sk-...",
@@ -57,10 +57,9 @@ agent = Agentao(
         model="gpt-5.4",
     ),
     transport=NullTransport(),
-)
-reply = agent.chat("Summarize today's logs.")
-print(reply)
-agent.close()
+) as agent:
+    reply = agent.chat("Summarize today's logs.")
+    print(reply)
 ```
 
 This constructs an agent with **no env-discovery, no implicit network, no global state** — the host owns every input. For env-driven discovery (the path the CLI uses), call `agentao.embedding.build_from_environment(working_directory=...)` instead.

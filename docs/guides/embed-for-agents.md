@@ -59,9 +59,8 @@ genuinely want to inherit local config.
 from pathlib import Path
 from agentao.embedding import build_from_environment
 
-agent = build_from_environment(working_directory=Path("/srv/myapp/run-1"))
-reply = agent.chat("Summarize today's logs.")
-agent.close()
+with build_from_environment(working_directory=Path("/srv/myapp/run-1")) as agent:
+    reply = agent.chat("Summarize today's logs.")
 ```
 
 ### Pure-injection skeleton (copy this for host integration)
@@ -72,7 +71,7 @@ from agentao import Agentao
 from agentao.llm import LLMClient
 from agentao.transport import NullTransport
 
-agent = Agentao(
+with Agentao(
     working_directory=Path("/srv/myapp/run-1"),   # REQUIRED, frozen at construction
     llm_client=LLMClient(
         api_key="sk-...",
@@ -80,12 +79,13 @@ agent = Agentao(
         model="gpt-5.4",
     ),
     transport=NullTransport(),
-)
-try:
+) as agent:                                       # ALWAYS close: `with` does it
     reply = agent.chat("Summarize today's logs.")
-finally:
-    agent.close()                                 # ALWAYS close
 ```
+
+An agent that outlives one block (a per-session cache) is closed with
+`agent.close()` (`await agent.aclose()` in async code) when it is evicted,
+after its turn has ended, or in a `try/finally`.
 
 Required args (pure injection):
 
@@ -168,12 +168,13 @@ plugin), use `arun()` — never call the sync `chat()` on the loop thread.
 
 ```python
 async def handle(req):
-    agent = build_from_environment(working_directory=Path(req.workdir))
-    try:
+    async with build_from_environment(working_directory=Path(req.workdir)) as agent:
         return await agent.arun(req.prompt)
-    finally:
-        await asyncio.to_thread(agent.close)
 ```
+
+`async with` closes with `await agent.aclose()`, which runs `close()` on a
+worker thread so the loop is not blocked. End the agent's turns first:
+closing does not wait for or cancel one in progress.
 
 `arun()` runs the sync loop in a worker thread. To cancel, pass a
 `CancellationToken` into the call and trip it from elsewhere; the
@@ -658,7 +659,7 @@ must pass `logger=`. ([`EMBEDDING.md` §2](embedding.md#2-pure-injection-constru
 - [ ] Construction uses `build_from_environment` **or** pure `Agentao(...)`; no no-arg `Agentao()`.
 - [ ] `working_directory` is an explicit absolute path.
 - [ ] LLM creds supplied (`llm_client` or `api_key`+`base_url`+`model`).
-- [ ] Every code path calls `agent.close()` (use `try/finally`).
+- [ ] Every code path closes the agent: `with` / `async with`, or `agent.close()` / `await agent.aclose()` in `try/finally`.
 - [ ] Async host uses `arun()`, not `chat()` on the loop thread.
 - [ ] A turn that produced no answer is not presented as one (§6.1) — the reply string alone does not tell you.
 - [ ] If the host forwards images: `data`/`mimeType` validated, size/count capped host-side, and consumers of `agent.messages` tolerate the `<attachment …/>` degradation rewrite (§2).
@@ -675,13 +676,10 @@ must pass `logger=`. ([`EMBEDDING.md` §2](embedding.md#2-pure-injection-constru
 Minimal smoke test the integration should pass:
 
 ```python
-agent = Agentao(working_directory=Path("/tmp/agentao-smoke"),
-                api_key=..., base_url=..., model=..., transport=NullTransport())
-try:
+with Agentao(working_directory=Path("/tmp/agentao-smoke"),
+             api_key=..., base_url=..., model=..., transport=NullTransport()) as agent:
     out = agent.chat("Reply with the single word: ok")
     assert "ok" in out.lower()     # also rejects the §6.1 placeholders
-finally:
-    agent.close()
 ```
 
 Assert on *content*, not truthiness. `assert out` or `assert len(out)`

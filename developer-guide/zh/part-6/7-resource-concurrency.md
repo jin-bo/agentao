@@ -110,11 +110,10 @@ MCP 工具的超时从 `timeout` 字段：
 async def chat(req):
     workdir = Path(f"/tmp/ephemeral-{uuid.uuid4()}")
     try:
-        agent = Agentao(working_directory=workdir)
-        return await asyncio.to_thread(agent.chat, req.message)
+        async with Agentao(working_directory=workdir) as agent:
+            return await asyncio.to_thread(agent.chat, req.message)
     finally:
-        agent.close()
-        shutil.rmtree(workdir)
+        shutil.rmtree(workdir, ignore_errors=True)
 ```
 
 **适合**：无状态场景（每次都是独立问题，不需要跨轮上下文）、低 QPS。
@@ -123,6 +122,7 @@ async def chat(req):
 ### 模式 B · 会话池 + TTL 淘汰
 
 ```python
+import asyncio
 from time import monotonic
 from asyncio import Lock
 
@@ -137,10 +137,23 @@ class AgentPool:
         async with self._global_lock:
             now = monotonic()
             # 1. 淘汰过期的
-            self._evict_expired(now)
+            victims = self._pop_expired(now)
             # 2. 淘汰溢出的
-            while len(self._pool) >= self.max_sessions:
-                self._evict_lru()
+            while session_id not in self._pool and len(self._pool) >= self.max_sessions:
+                victims.append(self._pop_lru())
+            # 在全局锁内、且在创建任何 agent 之前关闭：被淘汰会话（包括本会话）
+            # 的 get() 不能在旧 agent 还没关完时，在同一工作目录上再建一个
+            # agent。用 return_exceptions，因为 close() 自己会记录清理错误，
+            # 某个被淘汰 agent 的失败不应让本次 get() 失败。被取消时，先等关闭
+            # 完成再离开锁。
+            closing = asyncio.gather(
+                *(a.aclose() for a in victims), return_exceptions=True
+            )
+            try:
+                await asyncio.shield(closing)
+            except asyncio.CancelledError:
+                await closing  # 旧 agent 关完之前不释放锁
+                raise
             # 3. 创建或返回
             if session_id not in self._pool:
                 agent = Agentao(working_directory=workdir)
@@ -148,25 +161,23 @@ class AgentPool:
             entry = list(self._pool[session_id])
             entry[2] = now   # touch
             self._pool[session_id] = tuple(entry)
-            return entry[0], entry[1]
+        return entry[0], entry[1]
 
-    def _evict_expired(self, now):
-        for sid, (a, _, last) in list(self._pool.items()):
-            if now - last > self.ttl_s:
-                a.close()
-                del self._pool[sid]
+    def _pop_expired(self, now):
+        expired = [sid for sid, (_, _, last) in self._pool.items()
+                   if now - last > self.ttl_s]
+        return [self._pool.pop(sid)[0] for sid in expired]
 
-    def _evict_lru(self):
-        victim = min(self._pool.items(), key=lambda kv: kv[1][2])
-        victim[1][0].close()
-        del self._pool[victim[0]]
+    def _pop_lru(self):
+        sid = min(self._pool, key=lambda k: self._pool[k][2])
+        return self._pool.pop(sid)[0]
 ```
 
 **关键点**：
 
 - `Lock()` 保证**同一会话串行**（Agent 不是线程安全的，参见 [2.3](/zh/part-2/3-lifecycle)）
 - TTL 淘汰 + LRU 上限一起加，避免无限增长
-- 淘汰时记得 `agent.close()` 释放 MCP
+- 淘汰时记得 `await agent.aclose()` 释放 MCP
 
 ### 模式 C · ACP 进程池
 

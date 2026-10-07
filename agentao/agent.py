@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import concurrent.futures
+import contextvars
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -55,12 +56,26 @@ if TYPE_CHECKING:
     from .outcome import TurnOutcome  # noqa: F401
     from .tools.base import RegistrableTool  # noqa: F401
     from .transport.base import CoreTransport
+    from types import TracebackType
 
 
 _logger = logging.getLogger(__name__)
 
 # The observer methods hand back the callback they were given, with its own type.
 _ObserverT = TypeVar("_ObserverT", bound="Callable[[HostEvent], object]")
+
+
+def _log_abandoned_close_failure(work: "concurrent.futures.Future[None]") -> None:
+    exc = work.exception()
+    if exc is not None:
+        _logger.warning(
+            "close() failed after aclose() was cancelled",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+
+# ``with`` / ``async with`` hand back the agent with its own (sub)class type.
+_AgentT = TypeVar("_AgentT", bound="Agentao")
 
 
 #: Workers for the ``arun`` bridge pool. Deliberately the same capacity
@@ -678,6 +693,14 @@ class Agentao:
         # Held for the whole of a turn by ``runtime.turn.run_turn``; a second
         # turn on this agent fails fast instead of sharing ``messages``.
         self._turn_lock = threading.Lock()
+        # Serializes ``close()``: a cancelled ``aclose()`` leaves one running
+        # on a worker thread, and a second close must not run the teardown
+        # beside it. Re-entrant so a ``close()`` reached again on the same
+        # thread (a signal handler during the teardown) does not deadlock;
+        # ``_closing`` then makes that nested call return at once instead of
+        # running the teardown inside itself.
+        self._close_lock = threading.RLock()
+        self._closing = False
 
         # Structured outcome of the most recent turn (see the ``last_turn``
         # property). Populated in ``runtime/turn.py``'s finally; None until the
@@ -1219,30 +1242,127 @@ class Agentao:
         """Clean up resources (MCP connections, event loops).
 
         NOTE: SessionEnd hooks are dispatched by the CLI layer
-        (on_session_end / _dispatch_session_end_hooks) which runs before
-        close() on every exit path.  We intentionally do NOT duplicate
-        the dispatch here to avoid double-firing.
+        (on_session_end / _dispatch_session_end_hooks), which runs them
+        before close() on every CLI exit path.  close() does NOT dispatch
+        them, to avoid double-firing there, so neither does ``with`` /
+        ``async with`` / :meth:`aclose` for an embedded host.
+
+        Safe to call more than once, and from more than one thread: calls
+        are serialized. A later call skips the MCP disconnect and repeats the
+        replay end and the memory-store close, both of which are no-ops then.
+        A call re-entered on the closing thread (a signal handler during the
+        teardown) returns at once.
         """
-        if self.replay_manager is not None:
+        with self._close_lock:
+            if self._closing:
+                return  # re-entered on this thread from inside the teardown
             try:
-                self.replay_manager.end()
-            except Exception:
-                pass
-        if self.mcp_manager is not None:
+                # Set inside the ``try``: a KeyboardInterrupt landing between
+                # the set and the ``try`` would leave the flag stuck, and every
+                # later ``close()`` would return without closing.
+                self._closing = True
+                if self.replay_manager is not None:
+                    try:
+                        self.replay_manager.end()
+                    except Exception:
+                        pass
+                if self.mcp_manager is not None:
+                    try:
+                        self.mcp_manager.disconnect_all()
+                    except Exception as e:
+                        self.llm.logger.warning(f"Error disconnecting MCP: {e}")
+                    self.mcp_manager = None
+                # The memory stores hold no connection between calls on a file backing,
+                # but a transient ``:memory:`` store does, and a host that is done with an
+                # agent should not have to wait for the collector to get it back.
+                memory_manager = getattr(self, "memory_manager", None)
+                if memory_manager is not None:
+                    try:
+                        memory_manager.close()
+                    except Exception as e:
+                        self.llm.logger.warning(f"Error closing memory stores: {e}")
+            finally:
+                self._closing = False
+
+    async def aclose(self) -> None:
+        """Async :meth:`close`: runs it on a worker thread so the loop keeps going.
+
+        Like ``await asyncio.to_thread(agent.close)``, but on a thread of its
+        own: a cancelled ``to_thread`` whose work is still queued behind a
+        busy default executor never runs it, which would leave the agent
+        open, and the default executor stays free for the loop's own work
+        (``getaddrinfo`` for httpx). End the agent's turns first: neither this
+        nor :meth:`close` waits for or cancels one in progress. ``async with``
+        around ``await agent.arun()`` meets that when the task is cancelled
+        too, because a cancelled ``arun()`` cancels its turn and waits up to
+        5 seconds for it before re-raising; a turn still running after that
+        (a blocking tool that ignores the token), or when a second cancel
+        cuts that wait short, is closed under.
+
+        Cancelling the ``await`` stops the waiting, not ``close()``: it
+        finishes on its worker thread, and a warning says so.
+        """
+        work: "concurrent.futures.Future[None]" = concurrent.futures.Future()
+        # Marked running before the thread exists, so cancelling the awaiter
+        # cannot cancel the work (``wrap_future`` propagates ``cancel()``).
+        work.set_running_or_notify_cancel()
+        ctx = contextvars.copy_context()
+
+        def _run() -> None:
             try:
-                self.mcp_manager.disconnect_all()
-            except Exception as e:
-                self.llm.logger.warning(f"Error disconnecting MCP: {e}")
-            self.mcp_manager = None
-        # The memory stores hold no connection between calls on a file backing,
-        # but a transient ``:memory:`` store does, and a host that is done with an
-        # agent should not have to wait for the collector to get it back.
-        memory_manager = getattr(self, "memory_manager", None)
-        if memory_manager is not None:
-            try:
-                memory_manager.close()
-            except Exception as e:
-                self.llm.logger.warning(f"Error closing memory stores: {e}")
+                ctx.run(self.close)
+            except BaseException as e:  # handed to the awaiter, if any
+                work.set_exception(e)
+            else:
+                work.set_result(None)
+
+        # Not a daemon, explicitly: a new thread inherits the creating
+        # thread's flag, and a host running its loop on a daemon thread
+        # would otherwise let interpreter exit cut the teardown short.
+        try:
+            threading.Thread(
+                target=_run, name="agentao-aclose", daemon=False
+            ).start()
+        except RuntimeError:
+            # No new thread (interpreter shutdown has begun, or the process
+            # is at its thread limit): closing on the loop thread blocks it,
+            # but beats leaving the agent open.
+            self.close()
+            return
+        try:
+            await asyncio.wrap_future(work)
+        except asyncio.CancelledError:
+            if not work.done():
+                _logger.warning(
+                    "aclose cancelled; close() is still running on a worker thread"
+                )
+            # Nobody will read the result now, so a failure is logged here,
+            # including one that landed in the window before the cancel (a
+            # done callback runs at once on a finished future).
+            work.add_done_callback(_log_abandoned_close_failure)
+            raise
+
+    def __enter__(self: _AgentT) -> _AgentT:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional["TracebackType"],
+    ) -> None:
+        self.close()
+
+    async def __aenter__(self: _AgentT) -> _AgentT:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional["TracebackType"],
+    ) -> None:
+        await self.aclose()
 
     # ------------------------------------------------------------------
     # Session Replay lifecycle — supported delegation surface.

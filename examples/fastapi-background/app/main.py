@@ -83,7 +83,7 @@ def create_app(llm_client_factory: Callable[[], LLMClient] = get_llm_client) -> 
         try:
             return await agent.arun(prompt, cancellation_token=job.token)
         finally:
-            agent.close()
+            await agent.aclose()
 
     @app.post("/run", status_code=202)
     async def run(body: dict[str, Any]) -> dict[str, Any]:

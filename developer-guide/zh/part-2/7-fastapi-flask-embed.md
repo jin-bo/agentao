@@ -36,7 +36,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from asyncio import Lock, to_thread
+from asyncio import Lock
 from contextlib import aclosing, asynccontextmanager  # aclosing: Python 3.10+
 from pathlib import Path
 from typing import Dict, Set, Tuple
@@ -73,14 +73,25 @@ class SessionPool:
         async with self._mu:
             entry = self._sessions.pop(session_id, None)
         if entry:
-            await to_thread(entry[0].close)
+            agent, lock = entry
+            try:
+                async with lock:  # 等持锁的轮次结束：
+                    pass          # 关闭不会等待进行中的轮次
+            finally:              # 条目已弹出；即使被取消也要关闭
+                await agent.aclose()
 
     async def close_all(self) -> None:
         async with self._mu:
             items = list(self._sessions.items())
             self._sessions.clear()
-        for _, (agent, _lock) in items:
-            await to_thread(agent.close)
+        # 并发关闭：每次关闭都要等各自的 MCP 断开。用 shield 包住：
+        # gather 被取消时会取消还没开始的关闭。
+        await asyncio.shield(
+            asyncio.gather(
+                *(agent.aclose() for _, (agent, _lock) in items),
+                return_exceptions=True,  # close() 自己会记录错误
+            )
+        )
 
 
 # --------------------------------------------------------------------------
