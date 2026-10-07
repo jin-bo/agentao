@@ -197,3 +197,50 @@ def test_new_command_resets_staged_images():
     """/new must drop staged images so they don't leak into the fresh session."""
     cli = _run_loop_once(["/new", "/exit"])
     assert cli._staged_images == []
+
+
+def test_compressed_image_is_not_staged_as_uncompressed_mime(tmp_path, monkeypatch):
+    import bz2
+    import gzip
+    import lzma
+
+    console = Mock()
+    monkeypatch.setattr("agentao.cli.commands.image.console", console)
+    for suffix, compress, encoding in (
+        ("gz", gzip.compress, "gzip"),
+        ("bz2", bz2.compress, "bzip2"),
+        ("xz", lzma.compress, "xz"),
+        ("br", lambda data: b"compressed image", "br"),
+        ("Z", lambda data: b"compressed image", "compress"),
+    ):
+        image = tmp_path / f"shot.png.{suffix}"
+        image.write_bytes(compress(_PNG_BYTES))
+        cli = _cli()
+        handle_image_command(cli, str(image))
+        assert cli._staged_images == [], suffix
+        message = console.print.call_args.args[0]
+        assert f"Compressed image file: {image}" in message
+        assert f"({encoding}; decompress it before attaching)" in message
+
+    image = tmp_path / "logo.svgz"
+    image.write_bytes(gzip.compress(b"<svg/>"))
+    cli = _cli()
+    handle_image_command(cli, str(image))
+    assert cli._staged_images == []
+    message = console.print.call_args.args[0]
+    assert f"Compressed image file: {image}" in message
+    assert "(gzip; decompress it before attaching)" in message
+
+
+def test_compressed_non_image_retains_non_image_error(tmp_path, monkeypatch):
+    console = Mock()
+    monkeypatch.setattr("agentao.cli.commands.image.console", console)
+    for name in ("notes.txt.gz", "backup.tar.gz", "backup.tgz"):
+        path = tmp_path / name
+        path.write_bytes(b"compressed non-image")
+        cli = _cli()
+        handle_image_command(cli, str(path))
+        assert cli._staged_images == []
+        message = console.print.call_args.args[0]
+        assert f"Not a recognized image file: {path}" in message
+        assert "Compressed image file" not in message

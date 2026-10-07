@@ -13,7 +13,8 @@ Subcommands:
 
 Only image files are accepted — the MIME type is inferred from the
 extension via :func:`mimetypes.guess_type` and must start with
-``image/``. Errors (missing file, non-image, unreadable) are surfaced,
+``image/``. Compressed image encodings (gzip, bzip2, xz, br, compress)
+are refused. Errors (missing file, non-image, unreadable) are surfaced,
 never silently swallowed.
 """
 
@@ -87,7 +88,13 @@ def handle_image_command(cli: "AgentaoCLI", args: str) -> None:
         console.print(f"\n[error]Not a file: {path}[/error]\n")
         return
 
-    mime_type, _ = mimetypes.guess_type(str(path))
+    mime_type, encoding = mimetypes.guess_type(str(path))
+    if encoding is not None and mime_type is not None and mime_type.startswith("image/"):
+        console.print(
+            f"\n[error]Compressed image file: {path}[/error] "
+            f"[dim]({encoding}; decompress it before attaching)[/dim]\n"
+        )
+        return
     if mime_type is None or not mime_type.startswith("image/"):
         console.print(
             f"\n[error]Not a recognized image file: {path}[/error] "
