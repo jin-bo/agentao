@@ -10,20 +10,22 @@ Harness API 是宿主应用嵌入 Agentao 时面向外部的兼容性边界。�
 对外暴露。
 
 > **覆盖范围。** 本包是宿主**进程内**嵌入 Agentao 的稳定合约边界，
-> 三个支柱：
+> 四个支柱：
 >
 > - **观测事件**——`ToolLifecycleEvent`、`SubagentLifecycleEvent`、
 >   `PermissionDecisionEvent`。
 > - **权限状态**——`ActivePermissions` 快照。
+> - **流式文本**——`Agentao.astream()` 先产出 `TextDelta`，最后产出本轮的
+>   `TurnOutcome`。它是交付 API，不是审计记录，见
+>   [流式文本](#流式文本agentaoastream)。
 > - **ACP schema surface**——ACP wire payload 的版本化 Pydantic 模型，
 >   **只**为这种长尾场景导出：in-process 宿主**同时**还要把 Agentao
 >   通过 ACP 再暴露给自己的客户端。普通 in-process 宿主用不到这层，
 >   完全可以忽略所有 ACP 相关导出。
 >
-> 本包**不是**完整的聊天 runtime。驱动一轮执行用 `Agentao.arun()`；
-> 做流式聊天 UI 从内部的 `Transport` / `AgentEvent` 流取——那里有
-> assistant 文本、reasoning、原始工具 I/O，稳定 host contract 有意
-> 不包含这些。
+> 本包**不是**完整的聊天 runtime。驱动一轮执行用 `Agentao.arun()`，要流式
+> 输出文本就用 `Agentao.astream()`。reasoning 文本和原始工具 I/O 仍不在
+> 稳定契约内，它们在内部的 `Transport` / `AgentEvent` 流里。
 >
 > > 不确定要用这一层，还是 ACP server（`agentao --acp --stdio`），
 > > 还是 ACP client（`ACPManager`）？见
@@ -32,7 +34,8 @@ Harness API 是宿主应用嵌入 Agentao 时面向外部的兼容性边界。�
 > **导入纪律。** 所有公共类型只活在 `agentao.host` 模块下，**没有**
 > 从顶层 `agentao` 包再 re-export。请始终
 > `from agentao.host import ...`；不要假定 `agentao.ToolLifecycleEvent`
-> 之类的快捷路径存在。
+> 之类的快捷路径存在。唯一两处都有的名字是 `TurnOutcome`：
+> `agentao.TurnOutcome` 早于这个导出就存在，是同一个类。
 
 ## 公共导出
 
@@ -50,6 +53,8 @@ Harness API 是宿主应用嵌入 Agentao 时面向外部的兼容性边界。�
 | `Tool`、`AsyncToolBase` | 通过 `Agentao(extra_tools=[...])` 传入的宿主工具的基类。重新导出 `agentao.tools.base` 里的规范类型——是稳定的导入路径，不是新的抽象层。 |
 | `RegistrableTool` | `Union[Tool, AsyncToolBase]`——注册表和 `extra_tools=` 接受的类型。 |
 | `CancellationToken` | `chat()` / `arun()` 的 `cancellation_token=` 参数接受的 token。重新导出 `agentao.cancellation.CancellationToken`（同一个类）。简单的异步调用可以直接取消任务来结束本轮；独立的停止按钮、跨任务取消、多个调用共用一个信号，或从别的线程取消同步的 `chat()`，就传 token。 |
+| `TextDelta` | `Agentao.astream()` 产出的一段 assistant 文本。用于显示：所有增量拼起来不是答案，见[流式文本](#流式文本agentaoastream)。 |
+| `TurnOutcome` | 一轮怎样结束：`text`、`status`、`incomplete_reason`、`tool_count`、`error`、`finish_reason_missing`，以及 `.is_answer`。是 `astream()` 的最后一项，也是 `agent.last_turn` 的返回值。与 `agentao.TurnOutcome` 是同一个类；定义在只依赖标准库的 `agentao.outcome`。 |
 | `agentao.host.replay_projection` | 把 `EventStream` 桥接到 replay JSONL 的子模块——见下文 [Replay 投影](#replay-投影agentaohostreplay_projection)。 |
 
 ### 子 Agent 的 `failed` 有两种形态
@@ -176,6 +181,63 @@ ACP 的 `tool_call_update`）报告一次进度。1800 秒这个上限是暂定�
 规则（`rules=`）仍需要你自己从 `agentao.permissions` 构造 `PermissionEngine`。
 剩下的每个"问"都由 transport 回答，而 `NullTransport` 一律回答"是"——见
 [`embedding.md` §2](../guides/embedding.md#permissions-and-the-transport)。
+
+## 流式文本（`Agentao.astream`）
+
+`Agentao.astream(prompt, *, max_iterations=100, images=None, cancellation_token=None)` 运行一轮，
+边生成边产出 assistant 文本，最后产出本轮的 `TurnOutcome`：
+
+```python
+from contextlib import aclosing  # Python 3.10+
+from agentao.host import TextDelta, TurnOutcome
+
+async with aclosing(agent.astream(prompt)) as stream:
+    async for item in stream:
+        if isinstance(item, TextDelta):
+            send_to_ui(item.text)
+        else:                         # TurnOutcome，总是最后一项
+            store(item.text) if item.is_answer else report(item)
+```
+
+**增量用于显示，结果以 outcome 为准。** 所有 `TextDelta` 拼起来不等于
+`TurnOutcome.text`。本轮里每一次 LLM 调用都会流出文本，包括以工具调用结束
+的那次，所以“我先看一下文件”这类说明文字会作为增量到达，却不在最终文本里。
+最终文本也可能是没有任何增量带过的字符串：`[No response]` 占位、中止说明或
+`[LLM API error: …]`。增量拿来显示；要保存或据以行动的取 `TurnOutcome.text`，
+并先用 `is_answer` 检查。
+
+**提前离开时要关闭它。** 单用 `break` 不会关闭异步生成器：它要等被垃圾回收
+或事件循环关闭时才关闭，只要还有引用持有它，本轮就不会结束：它一直流到队列满（64 个增量），然后停在那里等待，同时一直占着 agent，之后的轮次会抛 `TurnInProgressError`。`aclosing(...)`
+在退出时确定地关闭它。关闭流，或取消
+消费它的任务，都会取消本轮，并像被取消的 `arun()` 一样有界地等待清理。这样
+取消的一轮不会再产出任何东西；本轮结束后 `agent.last_turn` 会记下它。关闭流时
+还在排队等 worker 的一轮根本不会开始，`agent.last_turn` 不会为它更新。
+
+**契约的其余部分：**
+- 只有本轮返回时才产出 `TurnOutcome`：有答案的、没有答案的（`is_answer` 为假，
+  例如 `llm_error`），或被取消的（`status="cancelled"`）。抛出异常的一轮不产出
+  结果：异常在已流出的文本之后从迭代器抛出，`agent.last_turn` 以
+  `status="error"` 记下它。
+- 结果是本次调用的，即使在你读取之前同一个 agent 上另一个调用方的轮次已经
+  跑过。`agent.last_turn` 是最近一轮的。
+- 和 `arun()` 一样一次只跑一轮：同一个 agent 上的第二轮在 worker 开始执行时
+  从迭代器抛出 `TurnInProgressError`（`arun` 线程池忙时可能先等一会儿）。
+  被拒绝的流不会收到正在运行那一轮的任何内容；它没有开始任何一轮，所以
+  `agent.last_turn` 不会为它更新。
+- `cancellation_token=` 会关联到流自己的 token，取消它就结束本轮；流结束时
+  解除关联。关联是单向的：关闭流而取消的一轮不会取消你的 token，所以要看
+  结果的 `status`。
+- 队列和 `events()` 一样有界：消费方不读时本轮会变慢，内存不会增长。
+- 流通过订阅 agent 的 transport 接入，从不替换它，所以确认和 replay 都不受
+  影响。transport 没有 `subscribe()` 时，`astream()` 在调用时、本轮开始前就
+  抛 `TypeError`。`NullTransport` 和 `SdkTransport` 都支持订阅。继承它们并
+  覆盖 `emit()` 的子类必须调用 `super().emit()`：否则任何事件都到不了流，
+  `astream()` 会在本轮结束后抛 `RuntimeError`，不产出结果（`agent.last_turn`
+  里有）。
+- 不包含：reasoning 文本、工具和权限事件（仍在 `events()` 上），以及子
+  agent 的文本——子 agent 运行在自己的 transport 上。
+- `TextDelta` 和 `TurnOutcome` 不是 `HostEvent` 成员，不投影进 replay，也不
+  在 `docs/schema/host.events.v1.json` 里；文本已经通过内部流进入 replay。
 
 ## 压缩（`Agentao.compact`）
 
@@ -526,7 +588,7 @@ agent.add_host_event_observer(metrics)
 ## 想要更细粒度的事件？内部 `Transport` 通道
 
 上面这套 host contract **故意保持窄**——三类 Pydantic 事件家族、有
-版本化 schema 快照、有稳定性承诺。除此之外还有一条**更宽**的事件
+版本化 schema 快照、有稳定性承诺，外加通过 `astream()` 送达的 assistant 文本。除此之外还有一条**更宽**的事件
 通道：内部 `Transport` / `AgentEvent` 流。需要更细可视化（LLM 调用
 用量、内存写删、hook 触发、skill 切换、上下文压缩）的宿主，可以在
 构造时挂回调：
@@ -596,6 +658,7 @@ for ev in events:
 ### 什么时候用哪个
 
 - **审计、合规、计费、第三方 UI：** `HostEvent`。schema 就是合约。
+- **流式显示答案的聊天 UI：** `astream()`，旁边用 `events()` 看工具活动。
 - **本进程诊断、开发面板、replay 抓包、自家团队用的成本看板：**
   `Transport` / `AgentEvent`。挂上去成本低、无投影开销、所有内部
   事实都能拿到。
@@ -655,7 +718,8 @@ class MyTransport(NullTransport):
 
   这是一个 **pull** 面：它回答
   "我刚 await 完的这个 turn 是怎么结束的"，覆盖 `chat()` / `arun()` 调用方、
-  `agentao run` 和任何嵌入方。**尚未**进稳定契约的是 **push** 形态——一个
+  `agentao run` 和任何嵌入方。用 `astream()` 驱动本轮的宿主，会在流的
+  最后一项拿到同一个 `TurnOutcome`。**尚未**进稳定契约的是 **push** 形态——一个
   不驱动 turn 的异步观察者可以订阅的 `HostEvent`。这个缺口现在**只剩主循环**：
   **子 agent** 的 turn 结果*已经*在公共面上了——没答出来的子 agent 会发
   `SubagentLifecycleEvent(phase="failed", error_type="incomplete:<reason>")`，

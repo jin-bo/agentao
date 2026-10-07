@@ -205,9 +205,9 @@ uv sync --extra dev
 uv run pytest tests/ -v   # 没微信、没 API key、没网络
 ```
 
-## 想要流式预览？接 `Agentao.events()`
+## 想要流式预览？用 `Agentao.astream()`
 
-参考 repo（`wechat-claude-code`）会把 LLM 输出的中间片段当成"打字中"实时回到聊天里。在 Agentao 这边，把 `agent.arun(text)` 换成订阅 `agent.events()` 流，把 `LLM_TEXT` 增量按"每 N 字符 / 每 M 毫秒"刷给 `client.send_message` 即可（事件契约见 [§4 事件流](/zh/part-4/)）。多数 ilink 客户端有单条消息频率限制，刷得太快会被截断——保守值是 **1.5 秒一段**。
+参考 repo（`wechat-claude-code`）会把 LLM 输出的中间片段当成"打字中"实时回到聊天里。在 Agentao 这边，把 `agent.arun(text)` 换成在 `contextlib.aclosing(...)` 里调用 `agent.astream(text)`，把 `TextDelta` 文本攒起来，按"每 N 字符 / 每 M 毫秒"刷给 `client.send_message`。最终回复发 `TurnOutcome.text`：增量里还有工具调用前的说明文字（见 [4.7](/zh/part-4/7-host-contract#streaming-text-agent-astream)）。`agent.events()` 里是工具和权限事件，没有文本。多数 ilink 客户端有单条消息频率限制，刷得太快会被截断——保守值是 **1.5 秒一段**。
 
 ## ⚠️ 陷阱
 

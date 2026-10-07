@@ -4,8 +4,11 @@
 > - 线程 / 事件循环边界问题，以及如何干净地桥接
 > - 单向场景用 SSE（服务端 → 浏览器）
 > - 需要双向（用户边接收边输入）时用 WebSocket
+> - 稳定的文本路径 `agent.astream()`，以及什么时候仍需要内部 `AgentEvent` 流
 
-Agent 事件是**后端内部**的 Python 对象。要让前端实时看到 Agent 的响应，需要把 `AgentEvent` 翻译成网络协议。本节给出 SSE 与 WebSocket 两种典型桥接。
+Agent 事件是**后端内部**的 Python 对象。要让前端实时看到 Agent 的响应，需要把它们翻译成网络协议。本节给出 SSE 与 WebSocket 两种典型桥接。
+
+**assistant 文本**请先用 `agent.astream()`——它属于稳定的宿主合约。下面的桥接转发的是内部 `AgentEvent` 流（`LLM_TEXT`、`THINKING`、`TOOL_OUTPUT`……）；UI 还要展示 reasoning 或原始工具输出时再用它，并且要知道它的字段可能随版本变化。
 
 ## 总体架构
 
@@ -22,6 +25,42 @@ Agent 事件是**后端内部**的 Python 对象。要让前端实时看到 Agen
 - **每会话一个队列**：Agent 线程把事件 push 到队列，Web 处理器从队列 pull 推给浏览器
 - **背压**：浏览器慢了不能拖垮 Agent；用 `queue.Queue(maxsize=N)` 或溢出丢弃策略
 - **JSON 可序列化**：`AgentEvent.data` 已经保证是 JSON 可序列化的
+
+## 稳定的文本路径：`agent.astream()`
+
+`agent.astream(prompt)` 运行一轮，运行中产出 `TextDelta`，最后一项是本轮的 `TurnOutcome`。它不需要线程桥接，也不需要 transport 回调——异步 SSE 端点可以直接转发（复用下面模式 A 里的 `make_session`）：
+
+```python
+import json
+from contextlib import aclosing  # Python 3.10+
+from fastapi.responses import StreamingResponse
+from agentao.host import TextDelta
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    agent, _ = _sessions.get(req.session_id) or make_session(req.session_id)
+    # 每个 agent 一次一轮：同一会话上重叠的第二个请求会从流里抛
+    # TurnInProgressError。请求可能重叠时，按会话加锁串行化（见 2.7）。
+
+    async def gen():
+        async with aclosing(agent.astream(req.message)) as stream:
+            async for item in stream:
+                if isinstance(item, TextDelta):
+                    yield f"data: {json.dumps({'type': 'text', 'text': item.text})}\n\n"
+                else:  # TurnOutcome，总是最后一项
+                    yield f"data: {json.dumps({'type': 'done', 'status': item.status, 'text': item.text, 'is_answer': item.is_answer})}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+```
+
+对 UI 要紧的几条规则：
+
+- **增量用于显示，结果以 outcome 为准。** 所有增量拼起来不等于 `TurnOutcome.text`。本轮里每一次 LLM 调用都会流出文本，包括以工具调用结束的那次，所以"我先看一下文件"这类说明文字会流出来，却不在最终文本里；最终文本也可能是从未流出的占位（`[No response]`）、中止说明或 `[LLM API error: …]`。增量实时渲染，要保存或据以行动的取 `TurnOutcome.text`，并先用 `.is_answer` 检查。
+- **提前离开时要关闭流。** 单用 `break` 不会关闭异步生成器：它要等被垃圾回收或事件循环关闭时才关闭，只要还有引用持有它，本轮就不会结束：它一直流到队列满（64 个增量），然后停在那里等待，同时一直占着 agent，之后的轮次会抛 `TurnInProgressError`。`aclosing(...)` 会关闭它；关闭流，或取消消费它的任务，都会取消本轮，并像被取消的 `arun()` 一样有界地等待清理。
+- **不要为了抓文本按请求替换 `agent.transport`。** `astream()` *订阅*现有的 transport（上面的 `SdkTransport` 就可以）。工具执行器持有自己的 transport 引用，换进来的 transport 收不到工具事件和确认，replay 也会丢掉它的适配器。
+- **流里没有的：** reasoning 文本、工具 / 权限事件（用 `agent.events()`——见 [4.7](./7-host-contract)），以及子 agent 的文本。队列有界：客户端慢，本轮就变慢，内存不会增长。
+
+完整契约：[4.7 · 流式文本](./7-host-contract#streaming-text-agent-astream)。
 
 ## 模式 A · Server-Sent Events（SSE）
 
@@ -277,7 +316,8 @@ def on_event(ev):
 
 ## TL;DR
 
-- Agent 循环跑在 worker 线程，事件循环跑在主线程。用 `loop.call_soon_threadsafe(queue.put_nowait, ev)` 桥接。
+- assistant 文本用 `aclosing(...)` 包住的 `agent.astream()`：显示 `TextDelta`，把最后的 `TurnOutcome` 当作回答。不要为了抓文本替换 transport。
+- reasoning / 原始工具输出走内部事件流的桥接：Agent 循环跑在 worker 线程，事件循环跑在主线程。用 `loop.call_soon_threadsafe(queue.put_nowait, ev)` 桥接。
 - **SSE** 适合常规场景（单向流式、浏览器自动重连、简单）。
 - **WebSocket** 适合用户在流式过程中需要打字 / 取消 / 确认。
 - 永远要发周期性 keep-alive（SSE 用 `: keepalive\n\n`，WS 用 ping/pong）——代理和浏览器会杀掉 idle 长连接。

@@ -13,7 +13,7 @@ Authoritative `__all__`:
 - `from agentao.memory.manager import MemoryManager`
 - `from agentao.cancellation import ...` → `CancellationToken`, `AgentCancelledError` (`CancellationToken` is also exported from `agentao.host` — the same class, and the stable path for hosts)
 - `from agentao.acp_client import ...` → `ACPManager`, `ACPClient`, `AcpClientError`, `AcpErrorCode`, `AcpRpcError`, `AcpInteractionRequiredError`, `AcpClientConfig`, `AcpServerConfig`, `AcpConfigError`, `PromptResult`, `ServerState`, `load_acp_client_config` (and lower-level re-exports — see `agentao.acp_client.__init__.py` docstring for which are "stable embedding surface" vs. "implementation detail")
-- `from agentao.host import ...` → `ActivePermissions`, `EventStream`, `StreamSubscribeError`, `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `SubagentUsage`, `PermissionDecisionEvent`, `RFC3339UTCString`, `export_host_event_json_schema`, `export_host_acp_json_schema`, `CancellationToken` — host-facing harness contract, see [A.10](#a-10-embedded-host-contract)
+- `from agentao.host import ...` → `ActivePermissions`, `EventStream`, `StreamSubscribeError`, `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `SubagentUsage`, `PermissionDecisionEvent`, `RFC3339UTCString`, `export_host_event_json_schema`, `export_host_acp_json_schema`, `CancellationToken`, `Tool`, `AsyncToolBase`, `RegistrableTool`, `TextDelta`, `TurnOutcome` — host-facing harness contract, see [A.10](#a-10-embedded-host-contract)
 
 ## A.1 `Agentao`
 
@@ -99,6 +99,7 @@ CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars
 |--------|-----------|---------|
 | `chat` | `chat(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | Run one turn. Returns final assistant text. `images` (0.4.8+): inline image attachments — see [Image input and vision degradation](#image-input-and-vision-degradation). |
 | `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | Async surface — bridges `chat()` through `loop.run_in_executor`. Same semantics for cancellation, replay, max_iterations, images. |
+| `astream` | `astream(user_message: str, *, max_iterations: int = 100, images: list[dict] | None = None, cancellation_token: CancellationToken | None = None) -> AsyncGenerator[TextDelta | TurnOutcome, None]` | Run one turn and stream it: yields `TextDelta` items, then the turn's `TurnOutcome` as the last item. Deltas are for display; the answer is `TurnOutcome.text`, checked with `.is_answer`. Wrap in `contextlib.aclosing(...)` — closing it (or cancelling the consumer) cancels the turn. Subscribes to the agent's transport, never replaces it. See [4.7](/en/part-4/7-host-contract#streaming-text-agent-astream). |
 | `clear_history` | `clear_history() -> None` | Reset `self.messages`, active skills, todos and token counters; does not touch memory DB. Background agents keep running, but their completion notifications no longer reach the history (read them via `check_background_agent`). |
 | `close` | `close() -> None` | Release MCP subprocesses, close DB handles. Call in `finally:`. |
 | `set_provider` | `set_provider(api_key: str, base_url: str | None = None, model: str | None = None, *, api_format: str | None = None) -> None` | Runtime LLM swap. `api_format` (0.5.0) names the new provider's wire protocol; `None` keeps the current one. |
@@ -570,6 +571,11 @@ from agentao.host import (
     export_host_event_json_schema,
     export_host_acp_json_schema,
     CancellationToken,
+    Tool,
+    AsyncToolBase,
+    RegistrableTool,
+    TextDelta,
+    TurnOutcome,
 )
 ```
 
@@ -587,6 +593,10 @@ from agentao.host import (
 | `export_host_event_json_schema()` | Emit the canonical JSON schema for events + permissions. Used by `tests/test_host_schema.py` for byte-equality against `docs/schema/host.events.v1.json`. |
 | `export_host_acp_json_schema()` | Emit the canonical JSON schema for host-facing ACP payloads. Snapshot lives at `docs/schema/host.acp.v1.json`. |
 | `CancellationToken` | The token `chat()` / `arun()` accept as `cancellation_token=`. Re-export of `agentao.cancellation.CancellationToken` (the same class). |
+| `Tool`, `AsyncToolBase` | Base classes for host-supplied tools (`extra_tools=` / `add_tool`). Re-export of the canonical types in `agentao.tools.base`. |
+| `RegistrableTool` | `Union[Tool, AsyncToolBase]` — what `extra_tools=` / `add_tool` accept. |
+| `TextDelta` | One chunk of assistant text from `Agentao.astream()` (`text: str`). For display: joined deltas are not the answer. Not a `HostEvent` member; not projected into replay or the schema snapshot. |
+| `TurnOutcome` | How a turn ended: `text`, `status`, `incomplete_reason`, `tool_count`, `error`, `finish_reason_missing`, and `.is_answer`. The last item of `astream()`, and what `agent.last_turn` returns. Same class as `agentao.TurnOutcome`. |
 
 ### `agent.events(session_id=None)`
 

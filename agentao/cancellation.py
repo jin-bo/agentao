@@ -6,7 +6,7 @@ import contextvars
 import logging
 import threading
 from contextlib import contextmanager
-from typing import Callable, Iterator, List, Optional
+from typing import Callable, Iterator, List, Optional, Tuple
 
 
 _logger = logging.getLogger(__name__)
@@ -176,3 +176,32 @@ def bind_cancellation_token(token: Optional[CancellationToken]) -> Iterator[None
         yield
     finally:
         _CURRENT_TOKEN.reset(reset)
+
+
+# The turn running on this thread, as ``(agent, token)``, bound by
+# ``run_turn`` from before ``TURN_BEGIN`` until after ``TURN_END``. Read by a
+# transport listener to tell which turn emitted an event: listeners run inline
+# on the emitting thread, and events carry no turn id. ``Agentao.astream``
+# uses it, because an agent attribute cannot tell two agents sharing one
+# transport apart. Both halves are needed: the token alone is not unique, since
+# a host may pass one token to a nested turn of another agent, and the agent
+# alone is not, since it runs many turns. Separate from ``_CURRENT_TOKEN``
+# above, which is bound only around a tool call.
+_CURRENT_TURN: "contextvars.ContextVar[Optional[Tuple[object, CancellationToken]]]" = (
+    contextvars.ContextVar("agentao_current_turn", default=None)
+)
+
+
+def current_turn() -> Optional[Tuple[object, CancellationToken]]:
+    """The ``(agent, token)`` of the turn running on this thread, if any."""
+    return _CURRENT_TURN.get()
+
+
+@contextmanager
+def bind_turn(agent: object, token: CancellationToken) -> Iterator[None]:
+    """Make ``(agent, token)`` the :func:`current_turn` for the block."""
+    reset = _CURRENT_TURN.set((agent, token))
+    try:
+        yield
+    finally:
+        _CURRENT_TURN.reset(reset)

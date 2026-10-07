@@ -4,6 +4,7 @@
 > - **Why** there's a separate `agentao.host` package alongside Transport / AgentEvent
 > - The **three surfaces** it exposes (events, policy snapshot, capability protocols) and which problem each solves
 > - **`agent.events()` vs. `Transport(on_event=…)`** — when to use which (or both)
+> - **`agent.astream()`** — the stable way to stream a turn's assistant text
 > - **End-to-end**: a tenant-scoped audit pipeline in ~30 lines that won't break on the next Agentao release
 
 If you've read [4.2 AgentEvent](./2-agent-events) and the `:::warning` told you "use `HostEvent` instead for production", this chapter is the **how** behind that advice.
@@ -23,10 +24,10 @@ The **embedded harness contract** is the answer: a deliberately small surface at
 - **A redacted projection** of internal events — e.g. user prompt text isn't in the audit body
 - **Versioned** — adding optional fields is backwards-compatible; removing or renaming requires a schema bump
 
-If your code only touches `agentao.host` (plus the documented `Agentao(...)` constructor and `chat()` / `events()` / `active_permissions()` methods), you stay forward-compatible.
+If your code only touches `agentao.host` (plus the documented `Agentao(...)` constructor and `chat()` / `arun()` / `astream()` / `events()` / `active_permissions()` methods), you stay forward-compatible.
 
 ::: tip Harness wraps the runtime — it doesn't replace it.
-The harness contract types the **observability**, **policy**, and **wire-schema** surfaces *around* an Agentao session. It is **not** a turnkey chat runtime: you still call `agent.arun()` (or `agent.chat()`) to drive a turn, and you still pick a streaming surface (`Transport` or ACP) for assistant text / reasoning / raw tool I/O. Think of harness as the OEM connector around the engine, not the engine itself.
+The harness contract types the **observability**, **policy**, and **wire-schema** surfaces *around* an Agentao session. It is **not** a turnkey chat runtime: you still call `agent.arun()` (or `agent.chat()`) to drive a turn, or `agent.astream()` to drive it and stream its assistant text ([below](#streaming-text-agent-astream)). Reasoning text and raw tool I/O are still outside the contract: for those you pick the internal `Transport` or ACP. Think of harness as the OEM connector around the engine, not the engine itself.
 :::
 
 ## 4.7.2 The three surfaces
@@ -38,6 +39,8 @@ The harness contract types the **observability**, **policy**, and **wire-schema*
 | **Events** | `agent.events()` async iterator | A stream of `HostEvent` (tool / sub-agent / permission lifecycle) | Audit pipelines, observability, real-time UI |
 | **Policy snapshot** | `agent.active_permissions()` | A JSON-safe `ActivePermissions` (mode + rules + sources) | Settings UI, audit-log enrichment, compliance reports |
 | **Capability protocols** | `from agentao.host.protocols import FileSystem, ShellExecutor, MCPRegistry, MemoryStore` | Runtime-checkable Protocols you implement to inject Docker / virtual FS / audit proxies / programmatic MCP / remote memory backends | See [2.2 Tier 3 · capability protocols](/en/part-2/2-constructor-reference#tier-3-advanced-injections) and [6.4](/en/part-6/4-multi-tenant-fs); end-to-end demo [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection) |
+
+Streaming a turn's assistant text has a stable path too, `agent.astream()` — see [Streaming text](#streaming-text-agent-astream) in 4.7.4.
 
 This chapter focuses on **events** and **policy snapshot** — the parts most readers reach for first. Capability protocols are already covered in their construction-time context; for a runnable end-to-end shape that replaces all four slots at once, see [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection).
 
@@ -94,13 +97,38 @@ Both deliver events, but they're for different jobs. Don't pick one *instead of*
 | Question | Use `agent.events()` (harness) | Use `Transport(on_event=…)` |
 |----------|-------------------------------|------------------------------|
 | Is this a **production host** that needs forward compatibility? | ✅ | ❌ — fields will churn |
-| Do you need **streaming text chunks** for a UI (`LLM_TEXT`, `THINKING`)? | ❌ — projected out | ✅ — that's exactly its job |
+| Do you need the **assistant's text** streamed to a UI? | ❌ — projected out; use `agent.astream()` (below) | ⚠️ works (`LLM_TEXT`), but internal — prefer `astream()` |
+| Do you need **reasoning text** (`THINKING`) or raw tool I/O? | ❌ — projected out | ✅ — only here |
 | Building an **audit pipeline** / SIEM feed / billing meter? | ✅ | ❌ |
 | Building **CLI / debug tooling** that wants every internal detail? | ❌ — too redacted | ✅ |
 | Need **async pull** semantics with backpressure? | ✅ — `async for` with bounded queue | ❌ — push callback |
 | Need **multiple concurrent consumers**? | ⚠️ MVP: one stream per `Agentao` | ✅ — fan out via your own dispatcher |
 
-Most production deployments use **both**: Transport drives the streaming UI; `events()` drives the audit / observability pipeline. They share zero code paths so they don't fight each other.
+Most production deployments use **both**: `events()` drives the audit / observability pipeline; the UI streams the answer through `astream()`, and attaches a Transport callback only for what the contract doesn't carry (reasoning, raw tool I/O). They share zero code paths so they don't fight each other.
+
+### Streaming text: `agent.astream()` {#streaming-text-agent-astream}
+
+`agent.astream(user_message, *, max_iterations=100, images=None, cancellation_token=None)` runs one turn and yields `TextDelta` items while it runs, then the turn's `TurnOutcome` as the **last** item:
+
+```python
+from contextlib import aclosing  # Python 3.10+
+from agentao.host import TextDelta, TurnOutcome
+
+async with aclosing(agent.astream(prompt)) as stream:
+    async for item in stream:
+        if isinstance(item, TextDelta):
+            send_to_ui(item.text)
+        else:                         # TurnOutcome, always the last item
+            store(item.text) if item.is_answer else report(item)
+```
+
+- **Deltas are for display; the outcome is the answer.** Joined deltas are not `TurnOutcome.text`: every LLM call in the turn streams its text, including calls that end in tool calls, so narration like "Let me check the file" streams but is not in the final text. The final text can also be a string no delta carried — the `[No response]` placeholder, an abort notice, or an `[LLM API error: …]` string. Show the deltas; store or act on `TurnOutcome.text`, checked with `.is_answer`.
+- **Close it when you leave early.** `break` alone does not close an async generator: it is closed when it is garbage-collected or when the event loop shuts down, so while anything still references it, the turn stays open: it streams until the queue is full (64 deltas), then waits there, still holding the agent, and a later turn raises `TurnInProgressError`. `aclosing(...)` closes it. Closing, or cancelling the consuming task, cancels the turn and waits (bounded) for its cleanup, like a cancelled `arun()`.
+- **The outcome is this call's.** `TurnOutcome` is yielded only when the turn returned — an answer, a turn with no answer (`is_answer` false), or a cancelled one (`status="cancelled"`). A turn that raised yields no outcome: its exception is raised from the iterator after the text already streamed, and `agent.last_turn` records it with `status="error"`. `agent.last_turn` is the *latest* turn's outcome, which may be another caller's.
+- **One turn at a time.** A second concurrent turn on the same agent raises `TurnInProgressError` from the iterator when the worker starts it; a refused stream yields nothing from the running turn, and since it never started a turn, `agent.last_turn` is not set for it.
+- `cancellation_token=` is linked to the stream's own token — cancelling it ends the turn. The link is one way: a turn cancelled by closing the stream does not cancel your token, so read the outcome's `status`. The queue is bounded like `events()`'s: a slow consumer slows the turn instead of growing memory.
+- **Never swap `agent.transport` to capture text.** `astream()` *subscribes* to the agent's transport and never replaces it (`NullTransport` and `SdkTransport` both support `subscribe()`; a transport without it makes `astream()` raise `TypeError` before the turn starts). Replacing the transport per request does not work: the tool runner keeps its own reference, so tool events and confirmations would still go to the old transport, and replay would lose its adapter.
+- **Not in the stream:** reasoning text, tool and permission events (they stay on `agent.events()`), and sub-agent text (sub-agents run on their own transports). `TextDelta` and `TurnOutcome` are **not** `HostEvent` members, are not projected into replay, and are not in `host.events.v1.json`.
 
 ## 4.7.5 End-to-end: tenant-scoped audit pipeline
 
@@ -252,8 +280,11 @@ Q: I need to react to agent events. Which surface?
 ├─ Driving a turn / getting the final reply?
 │      → agent.arun() or agent.chat()  (Part 2)
 │
-├─ Streaming UI (text chunks, thinking, in-flight tool view)?
-│      → Transport(on_event=…)         (Part 4.3)
+├─ Streaming the assistant's text to a UI?
+│      → agent.astream()               (§ 4.7.4)
+│
+├─ Reasoning text, raw tool output, LLM-call detail?
+│      → Transport(on_event=…)         (Part 4.3, internal)
 │
 ├─ Audit / SIEM / billing / compliance?
 │      → agent.events()                (this chapter)
@@ -275,8 +306,8 @@ Q: I need to react to agent events. Which surface?
 ## TL;DR
 
 - **`agentao.host` is the stable, schema-snapshotted, forward-compatible host surface.** Pin to it for production code.
-- **Three surfaces**: `events()` for streams, `active_permissions()` for policy snapshots, `agentao.host.protocols` for capability injection.
-- **`events()` is not a replacement for Transport** — they're complementary. Use Transport for UI streaming, `events()` for audit / observability.
+- **Three surfaces**: `events()` for streams, `active_permissions()` for policy snapshots, `agentao.host.protocols` for capability injection — plus `astream()` to stream a turn's text.
+- **`astream()` for the answer text, `events()` for audit / observability, Transport only for what neither carries** (reasoning, raw tool I/O). Deltas are for display; the answer is the final `TurnOutcome`.
 - **`isinstance`-dispatch on `HostEvent`** to route to the right handler. The three event types are orthogonal lifecycle facts, not a hierarchy.
 - **30 lines + a database** is all it takes to ship a tenant audit pipeline that survives release upgrades.
 

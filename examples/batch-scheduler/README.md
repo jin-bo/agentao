@@ -8,7 +8,7 @@ Corresponds to [Part 7.5 of the developer guide](../../developer-guide/en/part-7
 
 - **Unattended design**: `max_iterations=40` cap, strict output contract, fail-loud exits
 - **SkillManager**: project-scoped skill loaded from [`.agentao/skills/daily-digest/SKILL.md`](./.agentao/skills/daily-digest/SKILL.md) — co-located rather than in the [skills gallery](../skills/README.md) because the skill bakes in this blueprint's `RESULT: {...}` stdout contract
-- **Custom event tap**: token estimation via a `SdkTransport(on_event=…)` hook
+- **Streaming text tap**: a rough token estimate from the `TextDelta` items of `agent.astream()`; the reply parsed for `RESULT:` is the turn's `TurnOutcome.text`
 - **Deterministic stdout**: one `RESULT: {...}` line for the scheduler to parse
 - **k8s packaging**: reference `CronJob` manifest with `concurrencyPolicy: Forbid`
 

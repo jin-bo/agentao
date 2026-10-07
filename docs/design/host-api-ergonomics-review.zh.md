@@ -1,6 +1,6 @@
 # 宿主 API 易用性评审：嵌入能不能更简单？
 
-**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 和 F3 第 0 步**已在 PR #423 实施**（只改文档和示例导入）；F4 和 `astream` 的代码实施尚未获批，第 2 步（字符串模式与导出）已实现，见本行末尾。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。**第三次修订（2026-10-06），收窄导出：** 不导出 `PermissionMode`，去掉 `TurnFinished`；新增导出为 `CancellationToken`、`TextDelta`、`TurnOutcome`；已决定 `Agentao(permission_mode=...)`。新增 F7：保留所有导出，指南分层介绍，加 `__dir__`。**第 2 步已实现（2026-10-06）：** 静默启动，构造时不接受 `"plan"`，replay 起始姿态留作后续；已作为 PR #426 合并。**同类对照（2026-10-06）：** §7 评审了一份参照 Pydantic AI 和 Strands 的建议。据此给 F2 加上“增量用于显示，结果以 outcome 为准”的规则，新增 F8（宿主自身方法的返回类型标注）和 F9（函数工具适配器，排在 `astream` 之后，按需做）。评审还发现，只做审批的宿主已经可以用 `SdkTransport(confirm_tool=...)`，并扩充了 §5。这次对照新增的内容（F2 的两条新要点、F8、F9、§7）引用的是 `main` @ `ef8a2d2`；其余内容仍引用 `2750e16`，那里 `agent.py` 的行号更小，例如 `active_permissions()` 在 `2750e16` 是 `:1036`，在 `ef8a2d2` 是 `:1086`。
+**状态：** 评审，2026-10-06。**2026-10-06 已决定：** F1 走 (a) 路线，只改文档（见 §3 F1 的*决定*）；流式文本进入稳定契约（F2）；新增稳定类型只从 `agentao.host` 导出（F3）。F1(a) 和 F3 第 0 步**已在 PR #423 实施**（只改文档和示例导入）；F4 的代码实施尚未获批；第 2 步（字符串模式与导出）已合并，第 3 步（`astream`）已实现，见本行末尾。证据引用自 `main` @ `2750e16`。**2026-10-06 按评审意见修订：** F2 收缩为最小的 `astream` 并写明生命周期约束，`saas-assistant` 替换 transport 的写法记为缺陷；F4 去掉线程池选项；F6 暂缓；§4 重新排序。**按复审意见第二次修订：** F2 的关闭顺序改为先解除待处理的队列写入，提前退出必须用 `aclosing`，并按 token 身份把流绑定到本轮。**第三次修订（2026-10-06），收窄导出：** 不导出 `PermissionMode`，去掉 `TurnFinished`；新增导出为 `CancellationToken`、`TextDelta`、`TurnOutcome`；已决定 `Agentao(permission_mode=...)`。新增 F7：保留所有导出，指南分层介绍，加 `__dir__`。**第 2 步已实现（2026-10-06）：** 静默启动，构造时不接受 `"plan"`，replay 起始姿态留作后续；已作为 PR #426 合并。**同类对照（2026-10-06）：** §7 评审了一份参照 Pydantic AI 和 Strands 的建议。据此给 F2 加上“增量用于显示，结果以 outcome 为准”的规则，新增 F8（宿主自身方法的返回类型标注）和 F9（函数工具适配器，排在 `astream` 之后，按需做）。评审还发现，只做审批的宿主已经可以用 `SdkTransport(confirm_tool=...)`，并扩充了 §5。这次对照新增的内容（F2 的两条新要点、F8、F9、§7）引用的是 `main` @ `ef8a2d2`；其余内容仍引用 `2750e16`，那里 `agent.py` 的行号更小，例如 `active_permissions()` 在 `2750e16` 是 `:1036`，在 `ef8a2d2` 是 `:1086`。**第 3 步已实现（2026-10-06）：** 按 F2 的设计实现 `astream`，另加 `max_iterations=`；见 F2 的*实现中做出的决定*。
 **读者：** 决定改动嵌入式宿主接口的 agentao 维护者，以及后续 PR 的评审者。
 **相关文档：**
 - `docs/design/host-api-ergonomics-review.md`：英文版，内容相同
@@ -117,7 +117,7 @@
     - 监听器只在 `agent._current_token is` 这个 token 时才转发事件。`run_turn` 在拿到轮次锁之后才设置 `_current_token`（`runtime/turn.py:139`），结束时清空（`:341`）。监听器在生产者线程上被同步调用（`SdkTransport.emit`，`transport/sdk.py:91-97`），所以检查时看到的正是正在发事件的那一轮。
     - 被 `TurnInProgressError` 拒绝的请求，它的 token 从未被设置为当前 token，所以不会交付任何其他轮次的数据。
   - *队列：* 有界，容量和满队列规则都与 `events()` 相同（`host/events.py:60`；队列满时生产者等待）。消费者停止读取会拖慢本轮，而不是让内存增长。代价是：流关闭时，生产者可能正**阻塞在队列写入里**，下面的关闭顺序必须处理这种情况。
-  - *异常：* 本轮抛出的异常，在已经入队的事件交付完之后，由迭代器抛出。只有本轮正常返回时才产出 `TurnOutcome`，作为最后一项，包括 `chat()` 正常返回的 `status="error"` / `"cancelled"` 结果。
+  - *异常：* 本轮抛出的异常，在已经入队的事件交付完之后，由迭代器抛出。只有本轮正常返回时才产出 `TurnOutcome`，作为最后一项，包括 `chat()` 正常返回的无答案结果和 `status="cancelled"` 结果。（第 3 步评审时改正：`status="error"` 的一轮会抛异常，所以不产出结果；`last_turn` 会记下它。）
   - *提前关闭*（`aclose()`、任务被取消），按以下顺序：
     1. **标记流已关闭，并解除待处理的队列写入。** 在流的锁内设置 `closed`，并取消所有待处理的写入。此后监听器直接丢弃事件，不再写入。`EventStream` 已经用这套机制解决了同样的卡死问题（`host/events.py:76-81`、`:296-320`）：复用它的订阅者机制或沿用同样的模式即可，不新增调度层。
     2. **触发本轮的 token。**
@@ -125,7 +125,7 @@
     4. **无论发生什么，都在 `finally` 里取消订阅。**
 
     顺序很重要。在满队列上阻塞的生产者卡在队列写入里，而不是在 token 检查点上；如果先触发 token，工作线程仍会卡住，第 3 步就会一直等它。取消订阅只是移除监听器，解除不了已经在进行的写入。漏掉第 4 步则订阅会泄漏，因为 transport 强引用监听器（`transport/base.py:51-56`）。
-  - *`break` 不等于关闭。* 用 `break` 跳出 `async for` 不会执行异步生成器的 `finally`。在 CPython 上实测，它直到事件循环关闭时（`asyncio.run` 关闭异步生成器那一步）才执行。在此之前本轮会继续运行，生产者也可能卡在满队列上。所以 API 文档必须要求：宿主提前退出时显式关闭流：
+  - *`break` 不等于关闭。* 用 `break` 跳出 `async for` 不会执行异步生成器的 `finally`。在 CPython 上实测，只要还有变量持有这个生成器，它直到事件循环关闭时（`asyncio.run` 关闭异步生成器那一步）才执行；没有任何引用的生成器在被垃圾回收时就会关闭（第 3 步评审时重新实测）。在此之前本轮会继续运行，生产者也可能卡在满队列上。所以 API 文档必须要求：宿主提前退出时显式关闭流：
 
     ```python
     from contextlib import aclosing  # Python 3.10+
@@ -137,9 +137,19 @@
             if should_stop():
                 break  # 退出时 aclosing 会调用 aclose()
     ```
-- **增量用于显示，结果以 outcome 为准**（2026-10-06 新增，见 §7 同类对照）。所有 `TextDelta` 拼起来**不保证**等于 `TurnOutcome.text`，文档必须写明。本轮里**每一次** LLM 调用都会逐块发出 `LLM_TEXT`（`runtime/llm_call.py:147-152`），包括以工具调用结束的那次，所以“我先看一下文件”这类说明文字会作为增量到达，却不在最终文本里。反过来也成立：`TurnOutcome.text` 可能是没有任何增量带过的字符串，例如 `[No response]` 占位、harness 的中止说明或 `[LLM API error: …]`（`runtime/outcome.py:3-7`）。宿主边收边显示增量；要保存或据以行动的结果取 `TurnOutcome.text`，并先用 `is_answer` 检查。重试不会让文本重复：只有在还没显示任何内容时才重试（`llm_call.py:143-144`、`:155-157`）。
+- **增量用于显示，结果以 outcome 为准**（2026-10-06 新增，见 §7 同类对照）。所有 `TextDelta` 拼起来**不保证**等于 `TurnOutcome.text`，文档必须写明。本轮里**每一次** LLM 调用都会逐块发出 `LLM_TEXT`（`runtime/llm_call.py:147-152`），包括以工具调用结束的那次，所以“我先看一下文件”这类说明文字会作为增量到达，却不在最终文本里。反过来也成立：`TurnOutcome.text` 可能是没有任何增量带过的字符串，例如 `[No response]` 占位、harness 的中止说明或 `[LLM API error: …]`（`outcome.py:3-7`）。宿主边收边显示增量；要保存或据以行动的结果取 `TurnOutcome.text`，并先用 `is_answer` 检查。重试不会让文本重复：只有在还没显示任何内容时才重试（`llm_call.py:143-144`、`:155-157`）。
 - **为什么用 `aclosing`，而不是原生的 `async with`。** Pydantic AI 的 `run_stream_events()` 本身就是异步上下文管理器，流以 `AgentRunResultEvent` 结束（2026-10-06 已对照其文档核实）。`astream` 用标准库的 `contextlib.aclosing` 包住异步生成器，得到同样有作用域的生命周期，不需要第二种对象类型；最后的 `TurnOutcome` 起的就是 Pydantic 结果事件的作用。以后若要返回一个既是异步迭代器、又是异步上下文管理器的对象，仍可作为纯新增的改动加入。
 - **实现位置：** 在运行时之上，即 `arun()` 加一个订阅，chat 循环不改。
+
+**实现中做出的决定（2026-10-06）：**
+- **`TurnOutcome` 放在 `agentao/outcome.py`**，这是一个只依赖标准库的模块，与 `cancellation.py` 并列，并列入导入分层测试的叶子模块清单。`agentao.runtime.outcome` 和顶层 `agentao` 重新导出同一个类。`TextDelta` 在 `agentao/host/stream.py`。流本身在 `agentao/runtime/astream.py`；`Agentao.astream` 是普通方法，先检查 transport，再返回异步生成器，所以没有 `subscribe()` 的 transport 在调用时就抛 `TypeError`。
+- **结果在 `TURN_END` 时截取，而不是事后读 `last_turn`。** `run_turn` 在 token 仍然装着、锁仍然持有时设置 `_last_turn_outcome` 并发出 `TURN_END`，所以监听器拿到的是本轮的结果。在 `arun()` 返回后再读 `last_turn`，在共用的 agent 上会与后来的轮次竞争，正是 §7 指出的情形。
+- **`ReplayAdapter` 会被拆开**，找到真正投递事件的 transport，流订阅在那里。
+- **按 context variable 绑定本轮，而不是 `agent._current_token`**（评审中改动）。两个 agent 可以共用一个 transport，这时另一个 agent 的事件会在本 agent 的 token 装着时到达监听器；实测它的文本混进了流里。现在 `run_turn` 从 `TURN_BEGIN` 之前到 `TURN_END` 之后，把本轮以 `(agent, token)` 绑定在 `cancellation._CURRENT_TURN` 上，监听器在发出事件的线程上下文里比较 `current_turn()`：两半都要比，因为宿主可能把同一个 token 传给另一个 agent 的嵌套轮次。它与工具调用用的 `_CURRENT_TOKEN` 分开，后者含义不变。
+- **在宿主事件循环自己的线程上发出事件时，安排队列写入而不阻塞**（评审中发现，实测卡死）。宿主异步工具的协程带着本轮的上下文运行在宿主事件循环上；如果它通过 transport 发出文本，阻塞写入会等待正被它阻塞的那个循环。最后的排空会等这些安排好的写入完成。与 `EventStream.publish` 的规则相同。
+- **关闭时取消 `arun` 任务**：先释放待处理的队列写入，再取消任务；任务会触发 token，并执行 `arun` 自己的有界清理等待。这一步同时完成了关闭顺序的第 2、3 步。
+- **新增 `max_iterations=`**，仅限关键字参数，含义和默认值与 `arun` 相同。改用 `astream` 的示例都传了它；不加的话，`astream` 会成为唯一不支持它的入口。
+- **示例已迁移。** `saas-assistant` 不再替换 transport：它在每个会话的锁里流式转发 `astream()` 的增量，SSE 载荷保持不变（`llm_text` / `chunk`；`done` 带 `reply`，另加 `status`、`is_answer` 和 `incomplete_reason`）。工具事件不再在这条流里，它们在 `agent.events()` 上。`data-workbench` 和 `batch-scheduler` 改为通过 `astream()` 读取文本，不再用 `EventType.LLM_TEXT`。
 
 **决定（维护者，2026-10-06）：流式文本进入稳定契约**，形式就是上面的最小版本：`astream` 先产出 `TextDelta`，最后产出 `TurnOutcome`，不进审计 schema。这改变了 `host-api.md` 原先不放 assistant 文本的做法，但只限文本增量；工具原始 I/O 仍不放。`astream` 落地时，凡是说文本不在契约内的地方都要同步更新：`host-api.md`（`:27` 的范围说明）、`agentao.host` 的 docstring，以及 `docs/design/embedded-host-contract.md:28-31`。
 
@@ -157,7 +167,7 @@
 **缺口：**
 - `Agentao.set_permission_mode(mode: PermissionMode)` 是公开方法，但 `PermissionMode` 既不在指南 §3 的稳定清单里，也不在 `host-api.md` 里（grep 无结果）。有三个示例从 `agentao.permissions` 导入它。
 - 两个示例从 `agentao.tools.base` 导入 `Tool`，没有用已公开的 `agentao.host.Tool`。
-- 两个示例导入了 `agentao.transport.events.EventType`，它属于"禁止导入"一侧。这两处要等 F2 落地后才能改。
+- 两个示例导入了 `agentao.transport.events.EventType`，它属于"禁止导入"一侧。这两处要等 F2 落地后才能改。（已在第 3 步改掉。）
 
 **提议：**
 0. 已经有稳定出处的导入现在就改（`Tool` 改从 `agentao.host` 导入），与 F1 的文档修改一起做。
@@ -165,7 +175,7 @@
    - **返回值不变，文档必须如实说明：** `set_permission_mode()` 仍然返回切换前的模式，类型是内部枚举 `PermissionMode`（`Optional[PermissionMode]`），不是字符串。文档要写明这一点，不能声称"统一用字符串"；改返回值本身就是一项兼容性变更，这里不做。
 2. **`Agentao(permission_mode=...)`**——2026-10-06 已决定（见下面的*构造时设定权限姿态*）。只需要模式的宿主不必导入任何权限相关的东西。
 3. **从 `agentao.host` 导出 `CancellationToken`。** `cancellation.py` 只导入标准库，所以在 `agentao/host/__init__.py` 里直接导入，`import agentao.host` 仍然不会加载运行时（`tests/test_import_layering.py:477`）。为什么需要它：简单的异步调用可以通过取消任务来结束本轮，`arun()` 已经会转发这个取消；其他场景（独立的停止按钮、跨任务取消、多个调用共用一个取消信号、同步宿主从别的线程取消 `chat()`）需要显式传 token。
-4. F2 落地后，把示例都改成用稳定导入。
+4. ~~F2 落地后，把示例都改成用稳定导入。~~ 已在第 3 步完成。
 
 **构造时设定权限姿态——2026-10-06 已决定：`Agentao(permission_mode=...)`。** 这不是 F1 里被否决的 (b)：宿主不传这个参数时，什么都不变。
 - **默认 `permission_mode=None`：** 不创建引擎，与现在完全相同（F1 的决定不变）。
@@ -192,7 +202,7 @@
 
 ### F5. 返回字符串不代表模型回答了
 
-`chat()` / `arun()` 返回 `str`。模型是否真的回答了，要看 `agent.last_turn` 上的 `TurnOutcome.status` / `incomplete_reason`（`runtime/outcome.py:22-37`）。指南 §6.1 专门为此提醒。
+`chat()` / `arun()` 返回 `str`。模型是否真的回答了，要看 `agent.last_turn` 上的 `TurnOutcome.status` / `incomplete_reason`（`outcome.py:30-52`）。指南 §6.1 专门为此提醒。
 
 **提议：** `chat()` 不改。改返回类型是破坏性的，而且指南已经说明了这一点。F2 的 `astream` 最后一项就是 `TurnOutcome`，结果会和文本一起带回来。
 
@@ -251,7 +261,7 @@ Agentao 和它的指南都没有把普通函数变成工具的办法（grep `fro
 
 1. ~~**F1(a) 文档，加上示例里现有的错误导入**（F3 第 0 步）。只改文档和示例。~~ **已在 PR #423 完成。**
 2. ~~**字符串形式的权限模式、`Agentao(permission_mode=...)`，以及从 `agentao.host` 导出 `CancellationToken`**（F3 第 1–3 步），加上 F7 的 `__dir__`。~~ **2026-10-06 完成，已作为 PR #426 合并**，经过五轮 `/code-review --fix`；见*实现中做出的决定*。F4 仍待做。
-3. **最小的 `astream`**（F2）：先把 `TurnOutcome` 移到轻量模块，再实现 `TextDelta` + 最后的 `TurnOutcome`（都从 `agentao.host` 导出），通过订阅接入，遵守上面的生命周期约束。然后把示例从 `SdkTransport` / `EventType` 上移走，并修好 `saas-assistant` 的替换写法（F3 第 3 步）。
+3. ~~**最小的 `astream`**（F2）：先把 `TurnOutcome` 移到轻量模块，再实现 `TextDelta` + 最后的 `TurnOutcome`（都从 `agentao.host` 导出），通过订阅接入，遵守上面的生命周期约束。然后把示例从 `SdkTransport` / `EventType` 上移走，并修好 `saas-assistant` 的替换写法（F3 第 3 步）。~~ **2026-10-06 已实现**；见 F2 的*实现中做出的决定*。
 
 4. **给面向宿主的方法补返回类型标注**（F8）。小改动，纯新增。
 5. **函数工具适配器**（F9），等宿主提出需要时再做。

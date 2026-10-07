@@ -13,7 +13,7 @@
 - `from agentao.memory.manager import MemoryManager`
 - `from agentao.cancellation import ...` → `CancellationToken`、`AgentCancelledError`（`CancellationToken` 也从 `agentao.host` 导出——同一个类，是宿主应使用的稳定路径）
 - `from agentao.acp_client import ...` → `ACPManager`、`ACPClient`、`AcpClientError`、`AcpErrorCode`、`AcpRpcError`、`AcpInteractionRequiredError`、`AcpClientConfig`、`AcpServerConfig`、`AcpConfigError`、`PromptResult`、`ServerState`、`load_acp_client_config`（以及更底层的 re-export——哪些属于"稳定嵌入面"、哪些属于"实现细节"请参考 `agentao.acp_client.__init__.py` 的 docstring）
-- `from agentao.host import ...` → `ActivePermissions`、`EventStream`、`StreamSubscribeError`、`HostEvent`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`SubagentUsage`、`PermissionDecisionEvent`、`RFC3339UTCString`、`export_host_event_json_schema`、`export_host_acp_json_schema`、`CancellationToken` —— 宿主面 harness 合约，详见 [A.10](#a-10-嵌入-harness-合约)
+- `from agentao.host import ...` → `ActivePermissions`、`EventStream`、`StreamSubscribeError`、`HostEvent`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`SubagentUsage`、`PermissionDecisionEvent`、`RFC3339UTCString`、`export_host_event_json_schema`、`export_host_acp_json_schema`、`CancellationToken`、`Tool`、`AsyncToolBase`、`RegistrableTool`、`TextDelta`、`TurnOutcome` —— 宿主面 harness 合约，详见 [A.10](#a-10-嵌入-harness-合约)
 
 ## A.1 `Agentao`
 
@@ -99,6 +99,7 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 |------|------|------|
 | `chat` | `chat(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | 跑一轮，返回助手最终文本。`images`（0.4.8+）：内联图片附件——见[图片输入与视觉退化](#图片输入与视觉退化) |
 | `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | 异步接口——通过 `loop.run_in_executor` 桥到 `chat()`。取消、replay、`max_iterations`、`images` 语义与同步版完全一致 |
+| `astream` | `astream(user_message: str, *, max_iterations: int = 100, images: list[dict] | None = None, cancellation_token: CancellationToken | None = None) -> AsyncGenerator[TextDelta | TurnOutcome, None]` | 跑一轮并流式输出：先产出 `TextDelta`，最后一项是本轮的 `TurnOutcome`。增量用于显示，结果以 outcome 为准——回答取 `TurnOutcome.text`，并先用 `.is_answer` 检查。用 `contextlib.aclosing(...)` 包住——关闭它（或取消消费方）会取消本轮。订阅 agent 的 transport，从不替换它。见 [4.7](/zh/part-4/7-host-contract#streaming-text-agent-astream) |
 | `clear_history` | `clear_history() -> None` | 清 `self.messages`、已激活 skills、todos 与 token 计数；不影响 memory DB。后台 agent 继续运行，但完成通知不再进入历史（用 `check_background_agent` 查看） |
 | `close` | `close() -> None` | 关 MCP 子进程与 DB handle；请放 `finally:` |
 | `set_provider` | `set_provider(api_key, base_url=None, model=None, *, api_format=None) -> None` | 运行时换 LLM。`api_format`（0.5.0）指明新 provider 的线路协议；`None` 保持当前线路 |
@@ -567,6 +568,11 @@ from agentao.host import (
     export_host_event_json_schema,
     export_host_acp_json_schema,
     CancellationToken,
+    Tool,
+    AsyncToolBase,
+    RegistrableTool,
+    TextDelta,
+    TurnOutcome,
 )
 ```
 
@@ -584,6 +590,10 @@ from agentao.host import (
 | `export_host_event_json_schema()` | 导出事件 + 权限面的标准 JSON schema。`tests/test_host_schema.py` 用它与 `docs/schema/host.events.v1.json` 做字节相等校验 |
 | `export_host_acp_json_schema()` | 导出宿主面 ACP 载荷的标准 JSON schema。快照在 `docs/schema/host.acp.v1.json` |
 | `CancellationToken` | `chat()` / `arun()` 的 `cancellation_token=` 参数接受的 token。重新导出 `agentao.cancellation.CancellationToken`（同一个类） |
+| `Tool`、`AsyncToolBase` | 宿主自带工具的基类（`extra_tools=` / `add_tool`）。重新导出 `agentao.tools.base` 中的正式类型 |
+| `RegistrableTool` | `Union[Tool, AsyncToolBase]` —— `extra_tools=` / `add_tool` 接受的类型 |
+| `TextDelta` | `Agentao.astream()` 产出的一段 assistant 文本（`text: str`）。用于显示：增量拼起来不是回答。不是 `HostEvent` 成员；不投影进 replay，也不在 schema 快照里 |
+| `TurnOutcome` | 一轮如何结束：`text`、`status`、`incomplete_reason`、`tool_count`、`error`、`finish_reason_missing` 以及 `.is_answer`。`astream()` 的最后一项，也是 `agent.last_turn` 的返回值。与 `agentao.TurnOutcome` 是同一个类 |
 
 ### `agent.events(session_id=None)`
 

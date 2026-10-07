@@ -8,7 +8,7 @@
 Agent 在运行过程中通过 `transport.emit(event)` 推送结构化事件。本节是**全量事件参考**——每个事件的触发时机、`data` 负载、典型用法。
 
 ::: warning 在做生产审计流水线？请用 `HostEvent`，不是本页的 `AgentEvent`
-**本页**的事件是**内部 transport 事件** —— 驱动 CLI、replay、调试工具，字段和枚举值会随版本演进。它们适合做**流式 UI**（LLM_TEXT 文本块、THINKING 气泡、in-flight 工具视图）。
+**本页**的事件是**内部 transport 事件** —— 驱动 CLI、replay、调试工具，字段和枚举值会随版本演进。它们适合做需要细节的**流式 UI**（THINKING 气泡、in-flight 工具视图）。只要 assistant 文本时，`agent.astream()` 是稳定路径（[4.7](./7-host-contract#streaming-text-agent-astream)）。
 
 如果你在做**生产审计 / 可观测 / SIEM 流水线**，请用 **[4.7 嵌入式 Harness 合约](./7-host-contract)** 的稳定宿主表面。快速对照：
 
@@ -16,6 +16,7 @@ Agent 在运行过程中通过 `transport.emit(event)` 推送结构化事件。�
 |---|---|---|---|
 | `agentao.transport.AgentEvent`（本页） | `Transport.emit()` 推送回调 | 内部 —— 随版本可能变 | CLI / 流式 UI 需要细节 |
 | `agentao.host.HostEvent`（[4.7](./7-host-contract)） | `agent.events()` 异步 pull 迭代器 | **稳定**，schema 快照、CI 强制 | 生产审计、计费、多租户合规 |
+| `agentao.host.TextDelta` / `TurnOutcome`（[4.7](./7-host-contract#streaming-text-agent-astream)） | `agent.astream()` 异步生成器 | **稳定**（不是 `HostEvent` 成员） | 把 assistant 文本流式推给 UI |
 
 两个面**互补，不是二选一** —— 大多数生产部署**两者都用**：Transport 给 UI，`events()` 给审计。它们零代码路径共享。
 :::
@@ -137,6 +138,8 @@ if event.type == EventType.LLM_TEXT:
 ```
 
 ⚠️ `chunk` 可能是几个字母、半个词，也可能是一整段——只保证顺序，不保证切分粒度。
+
+要通过稳定合约拿同样的文本，用 `agent.astream()` 产出的 `TextDelta`（[4.7](./7-host-contract#streaming-text-agent-astream)）。
 
 ### `TOOL_START`
 

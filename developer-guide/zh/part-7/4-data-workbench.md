@@ -111,37 +111,41 @@ UI 会解析这个 marker 来渲染图片。
 
 ```python
 # app.py (精简)
+from contextlib import aclosing
 from agentao import Agentao
-from agentao.transport import SdkTransport
-from agentao.transport.events import EventType
+from agentao.host import TextDelta
 from pathlib import Path
 import re, asyncio
 
-CHART_RE = re.compile(r"\[CHART\]\s+(\S+)")
+CHART_RE = re.compile(r"\[CHART\]\s+(\S+?\.png)")  # 以 .png 结尾：两次 LLM 调用的增量拼接时中间没有分隔符
 
 @app.post("/ask")
 async def ask(req: dict, user=Depends(current_user)):
     workdir = Path(f"/workspaces/{user.username}")
     workdir.mkdir(exist_ok=True)
 
-    charts: list[str] = []
-
-    def on_event(ev):
-        if ev.type is EventType.LLM_TEXT:
-            for m in CHART_RE.finditer(ev.data["chunk"]):
-                charts.append(m.group(1))
-
-    transport = SdkTransport(on_event=on_event)
-    agent = Agentao(working_directory=workdir, transport=transport)
+    agent = Agentao(working_directory=workdir)
     agent.skill_manager.activate_skill(
         "duckdb-analyst",
         task_description=f"回答：{req['question']}",
     )
-    reply = await asyncio.to_thread(agent.chat, req["question"])
-    agent.close()
+    streamed: list[str] = []
+    try:
+        async with aclosing(agent.astream(req["question"])) as stream:
+            async for item in stream:
+                if isinstance(item, TextDelta):
+                    streamed.append(item.text)   # 包括说明文字
+                else:
+                    outcome = item               # TurnOutcome：最终答案
+    finally:
+        await asyncio.to_thread(agent.close)
 
+    # [CHART] 行可能出现在工具调用前的说明文字里，所以扫描全部流出的
+    # 文本，并先拼接起来（一行可能跨多个片段）。
+    charts = CHART_RE.findall("".join(streamed))
     return {
-        "text": reply,
+        "text": outcome.text,
+        "is_answer": outcome.is_answer,
         "charts": [str(workdir / c) for c in charts],
     }
 ```
@@ -159,7 +163,7 @@ volumes:
 
 ## UX 细节：把 SQL 亮出来
 
-分析师只相信能看到查询语句的结果。前端把 `LLM_TEXT` 里的 ```sql 代码块解析出来，渲染成可复制的代码。`duckdb-analyst` 技能"永远打印 SQL"的规则让这件事可靠。
+分析师只相信能看到查询语句的结果。前端从流出的 `TextDelta` 文本里把 ```sql 代码块解析出来，渲染成可复制的代码。`duckdb-analyst` 技能"永远打印 SQL"的规则让这件事可靠。
 
 ## ⚠️ 陷阱
 

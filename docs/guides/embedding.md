@@ -431,6 +431,37 @@ task = asyncio.create_task(agent.arun(req.prompt, cancellation_token=token))
 # elsewhere: token.cancel("client-disconnect")
 ```
 
+### Streaming text (`astream()`)
+
+A chat UI that shows the answer as it arrives uses `agent.astream()`. It
+runs one turn like `arun()` and yields `TextDelta` items, then the turn's
+`TurnOutcome`:
+
+```python
+from contextlib import aclosing
+from agentao.host import TextDelta
+
+async with aclosing(agent.astream(req.prompt)) as stream:
+    async for item in stream:
+        if isinstance(item, TextDelta):
+            await sse.send(item.text)
+        else:
+            final = item          # TurnOutcome; store final.text if final.is_answer
+```
+
+- The deltas are for display. Store `TurnOutcome.text`, not the joined
+  deltas: narration before a tool call streams too, and a placeholder or
+  error text is never streamed.
+- Wrap it in `aclosing`. After a bare `break` the turn is not closed until the generator is garbage-collected or the event loop shuts down, and once its queue is full it waits there, still holding the agent; closing
+  the stream, or cancelling its task,
+  cancels the turn, the same as cancelling `arun()`.
+- It subscribes to the agent's transport and never replaces it. Do not
+  swap `agent.transport` per request to capture text: the tool runner
+  holds its own reference, so tool events and confirmations would still go
+  to the old transport, and replay would lose its adapter.
+
+Full contract: [`host-api.md`](../reference/host-api.md#streaming-text-agentaoastream).
+
 ### Multimodal input (`images=`)
 
 `chat()` / `arun()` accept inline image attachments alongside the text

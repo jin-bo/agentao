@@ -142,6 +142,7 @@ def subscribe(
 **Used internally by**:
 - The replay recorder (subscribes to `TURN_BEGIN` / `TURN_END` / tool / sub-agent events instead of being reached through agent state)
 - The host event stream backing `agent.events()` (see [4.7](./7-host-contract))
+- `agent.astream()`, which streams a turn's assistant text by subscribing — never by replacing the transport (see [4.7](./7-host-contract#streaming-text-agent-astream)). A transport without `subscribe()` makes `astream()` raise `TypeError` when called, before the turn starts.
 
 **Probe before calling** — bespoke implementations from path C below may omit this method entirely:
 
@@ -204,12 +205,13 @@ from agentao.transport import NullTransport, EventType
 
 class MyTransport(NullTransport):
     def __init__(self, on_token):
+        super().__init__()          # sets up subscribe(); astream() needs it
         self.on_token = on_token
 
     def emit(self, event):
         if event.type == EventType.LLM_TEXT:
             self.on_token(event.data["chunk"])
-        # other events fall through to NullTransport (pass)
+        super().emit(event)         # still notify subscribers
 
     def confirm_tool(self, name, desc, args):
         # Allow only read-like tools

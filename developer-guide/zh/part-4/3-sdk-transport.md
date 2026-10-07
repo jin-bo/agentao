@@ -7,6 +7,10 @@
 
 `SdkTransport` 是 Agentao 官方提供的**通用 Transport 实现**——四个回调，覆盖 90% 嵌入场景。
 
+::: tip 只需要 assistant 文本？
+用 `agent.astream()`（[4.7](./7-host-contract#streaming-text-agent-astream)）——它属于稳定的宿主合约，而 `on_event` 收到的 `AgentEvent`（`LLM_TEXT`、`THINKING`……）是内部接口，可能随版本变化。两者可以并用：`astream()` *订阅* agent 的 `SdkTransport`，所以确认、`ask_user` 以及合约不带的事件（reasoning、原始工具 I/O）仍交给 `SdkTransport`。不要为了抓文本按请求替换 `agent.transport`。
+:::
+
 ## 构造器
 
 ```python
@@ -307,5 +311,6 @@ agent.close()
 - 当多个回调共享 UI 状态或会话 id 时，**用类把它们组织起来** —— 闭包 + per-session `self` 是最干净的写法。
 - 多个消费者同时关心事件（DB log + WebSocket + UI）时，加一个简单的 dispatcher 做 fan-out。
 - **永远不要在 `on_event` 里 raise** —— 每个分支都加 try/except，否则 `SdkTransport.emit` 会替你吞下异常但下游副作用可能只做了一半。
+- 只要流式 assistant 文本时，优先用稳定的 `agent.astream()`；它订阅这个 transport，而不是替换它。
 
 → 下一节：[4.4 构建流式 UI](./4-streaming-ui)

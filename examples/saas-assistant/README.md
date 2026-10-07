@@ -7,7 +7,7 @@ Corresponds to [Part 7.1 of the developer guide](../../developer-guide/en/part-7
 ## What it demonstrates
 
 - **Session pool** — one `Agentao` per `(tenant_id, session_id)` pair, cached in memory
-- **SSE streaming** — events relayed from `SdkTransport(on_event=…)` → asyncio queue → `StreamingResponse`
+- **SSE streaming** — `agent.astream()` text deltas relayed to a `StreamingResponse`, closed with `aclosing` so an abandoned response cancels the turn. The agent's transport is never swapped per request. Tool activity is not in this stream; a UI that wants it reads `agent.events()`.
 - **Custom tools** — `ListProjectsTool` (read-only) and `CreateTaskTool` (`requires_confirmation=True`) wrapped around an in-memory product store
 - **Deny-by-rule posture** — `workspace-write` plus `deny` rules for `write_file` / `replace` / `run_shell_command` / `save_memory` (the built-ins whose `is_read_only` is `False`). Read-only mode would also deny `create_task`: it blocks every tool that is not read-only, before any rule is consulted.
 - **Cancellation wiring** — client-disconnect watcher + explicit `/cancel` endpoint both fire the same `CancellationToken`
@@ -31,7 +31,7 @@ curl -N -X POST http://127.0.0.1:8000/chat/s-1 \
      -d '{"message":"List my active projects"}'
 ```
 
-Expected: SSE frames stream (`data: {"type":"llm_text","chunk":"…"}`), and the stream ends with `event: done\ndata: {"reply":"…"}`.
+Expected: SSE frames stream (`data: {"type":"llm_text","chunk":"…"}`), and the stream ends with `event: done\ndata: {"reply":"…","status":"ok","is_answer":true,"incomplete_reason":null}`. Show the chunks as they arrive, but keep `reply` as the answer: the chunks also carry narration before tool calls.
 
 Cancel a running turn:
 

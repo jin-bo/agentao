@@ -18,19 +18,18 @@ import asyncio
 import json
 import os
 from asyncio import Lock, to_thread
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict
+from typing import Dict, Set
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from agentao import Agentao  # type alias for the cache values
-from agentao.cancellation import CancellationToken
 from agentao.embedding import build_from_environment
+from agentao.host import CancellationToken, TextDelta
 from agentao.permissions import PermissionEngine, PermissionMode
-from agentao.transport import SdkTransport
 
 from .auth import User, current_user
 from .tools import CreateTaskTool, ListProjectsTool
@@ -106,7 +105,7 @@ async def lifespan(app: FastAPI):
         Path(os.environ.get("AGENTAO_ROOT",
                             str(Path(__file__).resolve().parent.parent / "data" / "tenants")))
     )
-    app.state.active_tokens: Dict[str, CancellationToken] = {}
+    app.state.active_tokens: Dict[str, Set[CancellationToken]] = {}
     yield
     await app.state.pool.close_all()
 
@@ -128,47 +127,63 @@ async def chat_endpoint(session_id: str, request: Request,
 
     key = f"{user.tenant_id}:{session_id}"
     pool: SessionPool = request.app.state.pool
-    tokens: Dict[str, CancellationToken] = request.app.state.active_tokens
+    tokens: Dict[str, Set[CancellationToken]] = request.app.state.active_tokens
 
     agent, lock = await pool.get(key, user.tenant_id)
     token = CancellationToken()
-    tokens[key] = token
-
-    queue: asyncio.Queue[Any] = asyncio.Queue()
-    loop = asyncio.get_running_loop()
-
-    def on_event(ev):
-        loop.call_soon_threadsafe(queue.put_nowait, ev)
-
-    agent.transport = SdkTransport(on_event=on_event)
 
     async def watch_disconnect():
         while not await request.is_disconnected():
             await asyncio.sleep(0.5)
         token.cancel("client-disconnected")
 
-    async def run_chat():
-        async with lock:
-            try:
-                return await to_thread(agent.chat, message, cancellation_token=token)
-            finally:
-                await queue.put(None)
-
     async def sse_stream():
+        # Registered here, not in the endpoint: a response whose body never
+        # starts never runs this generator's ``finally``, and the token would
+        # stay in the set. A set per session: the stop button cancels the
+        # running turn and any request still waiting for the session lock.
+        tokens.setdefault(key, set()).add(token)
         watcher = asyncio.create_task(watch_disconnect())
-        chat_task = asyncio.create_task(run_chat())
         try:
-            while True:
-                ev = await queue.get()
-                if ev is None:
-                    break
-                payload = {"type": ev.type.value, **(ev.data or {})}
-                yield f"data: {json.dumps(payload)}\n\n"
-            reply = await chat_task
-            yield f"event: done\ndata: {json.dumps({'reply': reply})}\n\n"
+            # One turn per session at a time. Without the lock a second
+            # request would get TurnInProgressError instead of waiting.
+            async with lock:
+                if token.is_cancelled:
+                    # Stopped while waiting for the lock. Starting the turn
+                    # anyway would still write this prompt and a
+                    # "[Cancelled: …]" reply into the session's history.
+                    done = {"reply": "", "status": "cancelled",
+                            "is_answer": False, "incomplete_reason": None}
+                    yield f"event: done\ndata: {json.dumps(done)}\n\n"
+                    return
+                # ``astream`` subscribes to the agent's transport; it never
+                # replaces it, so tool confirmations and replay are unchanged.
+                # ``aclosing`` cancels the turn if the response is abandoned.
+                async with aclosing(
+                    agent.astream(message, cancellation_token=token)
+                ) as stream:
+                    async for item in stream:
+                        if isinstance(item, TextDelta):
+                            payload = {"type": "llm_text", "chunk": item.text}
+                            yield f"data: {json.dumps(payload)}\n\n"
+                        else:
+                            # The TurnOutcome. ``reply`` is the answer; the
+                            # streamed chunks also carry narration before tool
+                            # calls, so do not rebuild the reply from them.
+                            done = {
+                                "reply": item.text,
+                                "status": item.status,
+                                "is_answer": item.is_answer,
+                                "incomplete_reason": item.incomplete_reason,
+                            }
+                            yield f"event: done\ndata: {json.dumps(done)}\n\n"
         finally:
             watcher.cancel()
-            tokens.pop(key, None)
+            live = tokens.get(key)
+            if live is not None:
+                live.discard(token)
+                if not live:
+                    del tokens[key]
 
     return StreamingResponse(sse_stream(), media_type="text/event-stream")
 
@@ -176,8 +191,7 @@ async def chat_endpoint(session_id: str, request: Request,
 @app.post("/chat/{session_id}/cancel")
 async def cancel_endpoint(session_id: str, user: User = Depends(current_user)):
     key = f"{user.tenant_id}:{session_id}"
-    token = app.state.active_tokens.get(key)
-    if token:
+    for token in list(app.state.active_tokens.get(key, ())):
         token.cancel("user-stop-button")
     return {"ok": True}
 

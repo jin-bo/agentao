@@ -69,7 +69,9 @@ def test_mypy_strict_on_downstream_consumer(tmp_path: Path) -> None:
                 RFC3339UTCString,
                 StreamSubscribeError,
                 SubagentLifecycleEvent,
+                TextDelta,
                 ToolLifecycleEvent,
+                TurnOutcome,
                 export_host_acp_json_schema,
                 export_host_event_json_schema,
             )
@@ -106,6 +108,13 @@ def test_mypy_strict_on_downstream_consumer(tmp_path: Path) -> None:
                 return token.is_cancelled
 
 
+            def render(item: TextDelta | TurnOutcome) -> str:
+                # ``astream()`` items narrow with ``isinstance`` alone.
+                if isinstance(item, TextDelta):
+                    return item.text
+                return item.text if item.is_answer else (item.error or "")
+
+
             def stream_handle(s: EventStream) -> None:
                 # Confirm the public method signatures are typed.
                 s.bind_loop  # noqa: B018 — attribute access checks typing
@@ -121,7 +130,9 @@ def test_mypy_strict_on_downstream_consumer(tmp_path: Path) -> None:
                 PermissionDecisionEvent,
                 StreamSubscribeError,
                 SubagentLifecycleEvent,
+                TextDelta,
                 ToolLifecycleEvent,
+                TurnOutcome,
                 FileEntry,
                 FileStat,
                 BackgroundHandle,
@@ -216,8 +227,10 @@ def test_host_all_matches_documented_set() -> None:
         "StreamSubscribeError",
         "SubagentLifecycleEvent",
         "SubagentUsage",
+        "TextDelta",
         "Tool",
         "ToolLifecycleEvent",
+        "TurnOutcome",
         "export_host_acp_json_schema",
         "export_host_event_json_schema",
     }

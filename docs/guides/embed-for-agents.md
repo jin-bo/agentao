@@ -226,7 +226,8 @@ from agentao.transport import NullTransport
 from agentao.host import (                      # observability contract
     ActivePermissions, HostEvent,
     ToolLifecycleEvent, SubagentLifecycleEvent, PermissionDecisionEvent,
-    CancellationToken,                          # cancellation_token= for chat()/arun()
+    CancellationToken,                          # cancellation_token= for chat()/arun()/astream()
+    TextDelta, TurnOutcome,                     # astream() items; TurnOutcome = agent.last_turn
 )
 from agentao.host.protocols import (            # capability injection
     FileSystem, ShellExecutor, MemoryStore, MCPRegistry,
@@ -476,9 +477,34 @@ Delivery contract (full version in [`api/host.md`](../reference/host-api.md)):
 - Host-pulled backpressure (bounded queue; producer blocks, never grows
   unbounded). One public stream consumer per `Agentao` instance (MVP).
 
-For streaming assistant *text/tokens* (not on the stable contract),
-you must consume the internal `Transport` — accept that it may change
-between releases.
+For streaming assistant text, use `agent.astream(prompt)` (stable). It
+yields `TextDelta` items, then the turn's `TurnOutcome`, and it must be
+closed when you leave early:
+
+```python
+from contextlib import aclosing
+from agentao.host import TextDelta
+
+async with aclosing(agent.astream(prompt)) as stream:
+    async for item in stream:
+        if isinstance(item, TextDelta):
+            send(item.text)               # display only
+        else:
+            outcome = item                # TurnOutcome, the last item
+```
+
+- Show the deltas; store `outcome.text`, checked with `outcome.is_answer`.
+  Joined deltas are not the answer: narration before a tool call streams
+  too, and a placeholder or error text never streams.
+- After a `break` without `aclosing`, the turn is not closed until the generator is garbage-collected or the event loop shuts down; once its queue is full it waits there, still holding the agent. Closing the
+  stream, or cancelling its task, cancels the turn.
+- Never replace `agent.transport` per request to capture text: the tool
+  runner keeps its own reference, so tool events and confirmations still
+  go to the old one, and replay loses its adapter. `astream()` subscribes
+  instead, and raises `TypeError` for a transport that cannot.
+
+Reasoning text and raw tool I/O are still only on the internal
+`Transport` — accept that it may change between releases.
 
 ### 6.1 `chat()` returning a string is not proof the model answered
 
@@ -496,7 +522,7 @@ Read `agent.last_turn` — the structured companion to the string return —
 before treating the reply as the model's:
 
 ```python
-from agentao import TurnOutcome  # for the type hint; optional
+from agentao.host import TurnOutcome  # for the type hint; optional
 
 reply = agent.chat(prompt)
 outcome: TurnOutcome = agent.last_turn
@@ -525,7 +551,9 @@ otherwise become a failure. Write `outcome.is_answer and not
 outcome.finish_reason_missing` if you want the strict reading.
 
 This is a pull surface: it answers "how did the turn I just awaited
-end?". If instead you need the outcome *pushed* to an async observer
+end?". With `astream()` the same `TurnOutcome` is the stream's last item,
+and it is bound to that call even when several callers share the agent.
+If instead you need the outcome *pushed* to an async observer
 that does not drive the turn, that is not projected onto the stable
 event contract yet — see the known gap in
 [`host-api.md`](../reference/host-api.md#known-gaps-neither-channel-covers-these-today).

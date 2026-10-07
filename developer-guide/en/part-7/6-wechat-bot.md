@@ -205,9 +205,9 @@ uv sync --extra dev
 uv run pytest tests/ -v   # no WeChat, no API key, no network
 ```
 
-## Want streaming previews? Wire `Agentao.events()`
+## Want streaming previews? Use `Agentao.astream()`
 
-The reference repo (`wechat-claude-code`) streams partial LLM output back to the chat as a "typing…" preview. To do that on Agentao, replace the `agent.arun(text)` shot with a subscription to `agent.events()` and forward `LLM_TEXT` increments to `client.send_message` on a "every N chars / every M ms" cadence (see [§4 Event Streams](/en/part-4/)). Most ilink-style clients enforce a per-message rate limit and will throttle aggressive streaming — **1.5 seconds per chunk is a safe default**.
+The reference repo (`wechat-claude-code`) streams partial LLM output back to the chat as a "typing…" preview. To do that on Agentao, replace the `agent.arun(text)` shot with `agent.astream(text)` inside `contextlib.aclosing(...)`, buffer the `TextDelta` text and flush it to `client.send_message` on a "every N chars / every M ms" cadence. Send the final `TurnOutcome.text` as the reply: the deltas also carry narration before tool calls (see [4.7](/en/part-4/7-host-contract#streaming-text-agent-astream)). `agent.events()` carries tool and permission events, not text. Most ilink-style clients enforce a per-message rate limit and will throttle aggressive streaming — **1.5 seconds per chunk is a safe default**.
 
 ## ⚠️ Pitfalls
 
