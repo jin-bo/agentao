@@ -319,3 +319,96 @@ class TestFactoryReplayConfig:
             assert not (tmp_path / ".agentao" / "replays").exists()
         finally:
             agent.close()
+
+
+class TestFactoryReplayGoesThroughConstructor:
+    """The factory hands ``replay_config`` to ``Agentao(replay_config=)``
+    and builds no manager of its own, so ``_init_replay`` is the one place
+    a manager is built from a config. Before, the factory popped the key
+    and replaced the agent's manager after construction."""
+
+    @pytest.fixture
+    def seen(self, monkeypatch):
+        seen: dict = {"loads": 0, "init": []}
+        original = Agentao._init_replay
+
+        def _spy(agent, replay_config):
+            original(agent, replay_config)
+            seen["init"].append((replay_config, agent.replay_manager))
+
+        monkeypatch.setattr(Agentao, "_init_replay", _spy)
+        return seen
+
+    def _stub_loader(self, monkeypatch, seen, result):
+        def _load(*_a, **_kw):
+            seen["loads"] += 1
+            if isinstance(result, BaseException):
+                raise result
+            return result
+
+        monkeypatch.setattr("agentao.replay.load_replay_config", _load)
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    def test_explicit_config_passes_through_unloaded(
+        self, tmp_path, _stub_factory_env, monkeypatch, seen, enabled
+    ):
+        from agentao.replay import ReplayConfig
+
+        self._stub_loader(monkeypatch, seen, ReplayConfig(enabled=not enabled))
+        cfg = ReplayConfig(enabled=enabled)
+        agent = build_from_environment(
+            working_directory=tmp_path, replay_config=cfg
+        )
+        try:
+            assert seen["loads"] == 0
+            [(passed, built)] = seen["init"]
+            assert passed is cfg
+            assert agent.replay_manager is built
+            assert agent.replay_manager.config is cfg
+        finally:
+            agent.close()
+
+    def test_explicit_none_passes_through_unloaded(
+        self, tmp_path, _stub_factory_env, monkeypatch, seen
+    ):
+        from agentao.replay import ReplayConfig
+
+        self._stub_loader(monkeypatch, seen, ReplayConfig(enabled=True))
+        agent = build_from_environment(
+            working_directory=tmp_path, replay_config=None
+        )
+        try:
+            assert seen["loads"] == 0
+            assert seen["init"] == [(None, None)]
+            assert agent.replay_manager is None
+        finally:
+            agent.close()
+
+    def test_omitted_passes_the_loaded_config(
+        self, tmp_path, _stub_factory_env, monkeypatch, seen
+    ):
+        from agentao.replay import ReplayConfig
+
+        loaded = ReplayConfig(enabled=True)
+        self._stub_loader(monkeypatch, seen, loaded)
+        agent = build_from_environment(working_directory=tmp_path)
+        try:
+            assert seen["loads"] == 1
+            [(passed, built)] = seen["init"]
+            assert passed is loaded
+            assert agent.replay_manager is built
+            assert agent.replay_manager.config is loaded
+        finally:
+            agent.close()
+
+    def test_omitted_loader_failure_degrades_to_none(
+        self, tmp_path, _stub_factory_env, monkeypatch, seen
+    ):
+        self._stub_loader(monkeypatch, seen, RuntimeError("bad settings"))
+        agent = build_from_environment(working_directory=tmp_path)
+        try:
+            assert seen["loads"] == 1
+            assert seen["init"] == [(None, None)]
+            assert agent.replay_manager is None
+        finally:
+            agent.close()

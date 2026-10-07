@@ -1,8 +1,10 @@
 """Replay lifecycle owner.
 
 A :class:`ReplayManager` owns the recorder, adapter, host event sink,
-and config for one agent. The factory layer (``embedding/``) creates
-one and assigns it to ``agent.replay_manager``.
+and config for one agent. ``Agentao`` creates one as
+``agent.replay_manager`` when constructed with a ``replay_config``
+(``build_from_environment`` passes one through), or lazily on
+``start_replay()`` / ``reload_replay_config()``.
 
 State machine (idempotent at every edge):
 

@@ -215,7 +215,7 @@ def build_from_environment(
     from ..memory import MemoryManager, SQLiteMemoryStore
     from ..paths import user_root
     from ..permissions import PermissionEngine, _parse_construction_permission_mode
-    from ..replay import ReplayManager, load_replay_config
+    from ..replay import load_replay_config
     from ..sandbox import SandboxPolicy
     from .permission_loader import load_permission_config
 
@@ -321,20 +321,17 @@ def build_from_environment(
         overrides["bg_store"] = BackgroundTaskStore(persistence_dir=wd)
     if "sandbox_policy" not in overrides:
         overrides["sandbox_policy"] = SandboxPolicy(project_root=wd)
-    # Replay state lives outside the agent core (per the May 2026 core-
-    # boundary review). Pop ``replay_config`` from overrides so it does
-    # not flow through the ctor kwarg; the manager is attached
-    # post-construction below. An explicit ``None`` disables it like the
-    # subsystems above (no manager, the ``replay`` block not read),
-    # so the default is read only when the key is absent. Best-effort: a
-    # missing/malformed replay config must not abort session startup.
-    if "replay_config" in overrides:
-        replay_config = overrides.pop("replay_config")
-    else:
+    # Replay: the ``replay`` block of settings.json is read only when the
+    # key is absent. An explicit value, ``None`` included, goes to
+    # ``Agentao(replay_config=)`` as given, so ``None`` disables replay like
+    # the subsystems above. ``Agentao`` builds the manager either way; this
+    # factory never does. Best-effort: a missing/malformed replay config
+    # must not abort session startup.
+    if "replay_config" not in overrides:
         try:
-            replay_config = load_replay_config(wd)
+            overrides["replay_config"] = load_replay_config(wd)
         except Exception:
-            replay_config = None
+            overrides["replay_config"] = None
     if "enable_builtin_agents" not in overrides:
         overrides["enable_builtin_agents"] = _builtin_agents_enabled(settings)
     # Issue #17: default MCP registry reads the same on-disk files the
@@ -360,8 +357,6 @@ def build_from_environment(
     kwargs.update(overrides)
 
     agent = Agentao(**kwargs)
-    if replay_config is not None:
-        agent.replay_manager = ReplayManager(agent, config=replay_config)
     if initial_mode is not None:
         # Same silent start as ``Agentao(permission_mode=)``; the engine is
         # the file-loaded one, so the user's rules stay.
