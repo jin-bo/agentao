@@ -346,7 +346,7 @@ agent = Agentao(working_directory=".", transport=SdkTransport(on_event=on_event)
 
 - **四个维度**：结构化日志（`agentao.log`）、指标（Prometheus / StatsD）、追踪（OpenTelemetry）、会话 replay。
 - 最少上报这些指标：按工具名拆的调用率、工具失败率、LLM 5xx 率、confirm 超时率、轮次延迟 p50/p95/p99、最大迭代命中率。
-- **会话 replay 是杀手特性**——出现"Agent 为什么会做 X"时，用 `replay_config=` 确定性回放，逐步排查。
+- **会话 replay 是杀手特性**——出现"Agent 为什么会做 X"时，用 `replay_config=` 和 `start_replay()` 记录会话，再查看记录下的运行时间线，逐步排查。replay 只记录运行过程，不会重新执行。
 - 把成本作为一等观测目标：跟踪每轮 token 数和按租户的 token 数；突然 2× 飙升通常是切了模型或换了技能。
 
 → [6.7 资源治理与并发](./7-resource-concurrency)

@@ -189,7 +189,10 @@ def build_from_environment(
             files, keeping the user's rules, rather than replacing it with
             a rule-less one; the agent starts in it silently, as with
             ``Agentao``. With an explicit ``permission_engine`` it is
-            refused, as by ``Agentao`` itself.
+            refused, as by ``Agentao`` itself. ``bg_store``,
+            ``sandbox_policy`` and ``replay_config`` default to the
+            interactive CLI's wiring (``replay_config`` from the ``replay`` block of
+            ``.agentao/settings.json``); an explicit ``None`` disables each.
         resolved_llm: LLM kwargs the caller already resolved (the
             :func:`discover_llm_kwargs` shape). When given, the factory
             neither loads a ``.env`` into ``os.environ`` nor reads LLM
@@ -320,11 +323,14 @@ def build_from_environment(
         overrides["sandbox_policy"] = SandboxPolicy(project_root=wd)
     # Replay state lives outside the agent core (per the May 2026 core-
     # boundary review). Pop ``replay_config`` from overrides so it does
-    # not flow through the deprecated ctor kwarg path; the manager is
-    # attached post-construction below. Best-effort: a missing/malformed
-    # replay config must not abort session startup.
-    replay_config = overrides.pop("replay_config", None)
-    if replay_config is None:
+    # not flow through the ctor kwarg; the manager is attached
+    # post-construction below. An explicit ``None`` disables it like the
+    # subsystems above (no manager, the ``replay`` block not read),
+    # so the default is read only when the key is absent. Best-effort: a
+    # missing/malformed replay config must not abort session startup.
+    if "replay_config" in overrides:
+        replay_config = overrides.pop("replay_config")
+    else:
         try:
             replay_config = load_replay_config(wd)
         except Exception:

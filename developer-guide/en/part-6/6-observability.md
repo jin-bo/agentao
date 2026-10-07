@@ -349,7 +349,7 @@ Enough for 99% of small/mid SaaS. Add APM when you scale.
 
 - **Four axes**: structured logs (`agentao.log`), metrics (Prometheus / StatsD), traces (OpenTelemetry), session replay.
 - Minimum metrics: tool call rate by name, tool failure rate, LLM 5xx rate, confirm-timeout rate, turn duration p50/p95/p99, max-iterations hit rate.
-- **Session replay** is the killer feature — when "why did the agent do X?" comes up, replay deterministically with `replay_config=` and step through.
+- **Session replay** is the killer feature — when "why did the agent do X?" comes up, record sessions with `replay_config=` and `start_replay()`, then step through the recorded timeline. Replay records a run; it does not re-execute one.
 - Cost monitoring is a first-class observable: track tokens-per-turn and tokens-per-tenant; sudden 2× spikes usually mean a model swap or skill change.
 
 → [6.7 Resource Governance & Concurrency](./7-resource-concurrency)

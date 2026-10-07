@@ -242,7 +242,7 @@
 - `host-api.md`（中英两份）的*公共导出*表补上原来缺的两行：`EventStream` 和 `StreamSubscribeError`。
 - `embedding.md` 里那份平铺的 `agentao.host` 列表在 *From 0.3.1* 下，是记录那个版本新增内容的迁移说明，所以不动。开发者指南附录 A 列出全部 17 个名字，作为完整参考本该如此。两份嵌入指南都没有中文版。
 - 开发者指南（中英两份）原来有七页仍在教 `from agentao.tools.base import Tool`，正是 F3 第 0 步已让示例弃用的路径；现在都改从 `agentao.host` 导入 `Tool`（同一个类）。附录 A 的 `__all__` 列表保留 `agentao.tools.base`，并注明宿主应走 `agentao.host`，与它对 `CancellationToken` 的写法一致。
-- 同一轮还更正了这些页面里关于 replay 的说法：配置在 `.agentao/settings.json` 的 `replay` 块里（没有 `replay.json`）；只有调用 `start_replay()` 且 replay 已开启（由该块开启，或显式传入 `ReplayConfig(enabled=True)`）时才记录；在 `build_from_environment()` 下 `replay_config=None` 会从磁盘读取，所以要关闭就传 `ReplayConfig(enabled=False)`。`events()` 只允许一个消费者的规则改为按 `session_id` 过滤条件说明，在第二个迭代器第一次迭代时抛出。
+- 同一轮还更正了这些页面里关于 replay 的说法：配置在 `.agentao/settings.json` 的 `replay` 块里（没有 `replay.json`）；只有调用 `start_replay()` 且 replay 已开启（由该块开启，或显式传入 `ReplayConfig(enabled=True)`）时才记录；在 `build_from_environment()` 下 `replay_config=None` 当时会从磁盘读取，所以要关闭得传 `ReplayConfig(enabled=False)`。后续修复让显式传 `None` 就关闭 replay，与 `bg_store=None`、`sandbox_policy=None` 一致，指南也已相应更新。`events()` 只允许一个消费者的规则改为按 `session_id` 过滤条件说明，在第二个迭代器第一次迭代时抛出。
 
 ### F8. 宿主自身的方法有一部分没有类型标注
 
