@@ -35,9 +35,8 @@ Agentao internals.
 from pathlib import Path
 from agentao.embedding import build_from_environment
 
-agent = build_from_environment(working_directory=Path("/srv/myapp/run-1"))
-reply = agent.chat("Summarize today's logs.")
-agent.close()
+with build_from_environment(working_directory=Path("/srv/myapp/run-1")) as agent:
+    reply = agent.chat("Summarize today's logs.")
 ```
 
 ```python
@@ -47,14 +46,16 @@ from agentao import Agentao
 from agentao.llm import LLMClient
 from agentao.transport import NullTransport
 
-agent = Agentao(
+with Agentao(
     working_directory=Path("/srv/myapp/run-1"),
     llm_client=LLMClient(api_key=..., base_url=..., model=...),
     transport=NullTransport(),
-)
-reply = agent.chat("Summarize today's logs.")
-agent.close()
+) as agent:
+    reply = agent.chat("Summarize today's logs.")
 ```
+
+`with` calls `agent.close()` on the way out; `close()` is still there for
+an agent that outlives one block.
 
 The first form is what the CLI and ACP runtimes use under the hood and
 matches existing user expectations (`.env`, `~/.agentao/`,
@@ -397,13 +398,14 @@ the calling thread. For hosts that already run an event loop
 
 ```python
 async def handle_request(req):
-    agent = build_from_environment(working_directory=Path(req.workdir))
-    try:
-        reply = await agent.arun(req.prompt)
-        return reply
-    finally:
-        await asyncio.to_thread(agent.close)
+    async with build_from_environment(working_directory=Path(req.workdir)) as agent:
+        return await agent.arun(req.prompt)
 ```
+
+`async with` closes through `await agent.aclose()`, which runs `close()`
+on a thread of its own so the MCP disconnect does not
+block the loop. End the agent's turns before it closes: neither `aclose()`
+nor `close()` waits for or cancels one in progress.
 
 `arun()` is a thin wrapper over `chat()` that runs the synchronous
 loop in a worker thread — no loop is monopolised. To cancel, pass a

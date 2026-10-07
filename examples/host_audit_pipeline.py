@@ -263,8 +263,10 @@ async def amain(workdir: Path, db_path: Path) -> int:
         dump_audit_table(db)
         return 0
     finally:
-        db.close()
-        agent.close()
+        try:
+            db.close()
+        finally:
+            await agent.aclose()
 
 
 def main() -> int:

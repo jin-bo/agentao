@@ -56,7 +56,7 @@ Python daemon（一个 asyncio 进程）
             │                  llm_client=llm_client_factory(),
             │                  permission_engine=engine)
             ├─ reply = await agent.arun(text)
-            ├─ agent.close() + rmtree(tempdir)
+            ├─ await agent.aclose() + rmtree(tempdir)
             └─ await send(contact_id=contact_id, text=reply)
 ```
 
@@ -122,8 +122,10 @@ async def handle_message(
     try:
         reply = await agent.arun(text)
     finally:
-        agent.close()
-        shutil.rmtree(work_dir, ignore_errors=True)   # close() 不会删 tempdir
+        try:
+            await agent.aclose()
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)   # aclose() 不会删 tempdir；嵌套写法让取消时也会删除
     await send(contact_id=contact_id, text=reply)
     return reply
 ```

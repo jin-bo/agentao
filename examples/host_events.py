@@ -106,7 +106,7 @@ async def amain(workdir: Path) -> int:
         print(f"\n[reply] {reply.strip()}")
         return 0
     finally:
-        agent.close()
+        await agent.aclose()
 
 
 def main() -> int:

@@ -213,7 +213,7 @@ async def handle_request(tenant_id: str, message: str, db):
         return reply
     finally:
         audit.cancel()                # cancellation releases queue/subscription
-        agent.close()
+        await agent.aclose()
 ```
 
 **Why this pattern is robust**:

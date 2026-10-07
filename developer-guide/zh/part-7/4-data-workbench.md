@@ -115,7 +115,7 @@ from contextlib import aclosing
 from agentao import Agentao
 from agentao.host import TextDelta
 from pathlib import Path
-import re, asyncio
+import re
 
 CHART_RE = re.compile(r"\[CHART\]\s+(\S+?\.png)")  # 以 .png 结尾：两次 LLM 调用的增量拼接时中间没有分隔符
 
@@ -138,7 +138,7 @@ async def ask(req: dict, user=Depends(current_user)):
                 else:
                     outcome = item               # TurnOutcome：最终答案
     finally:
-        await asyncio.to_thread(agent.close)
+        await agent.aclose()
 
     # [CHART] 行可能出现在工具调用前的说明文字里，所以扫描全部流出的
     # 文本，并先拼接起来（一行可能跨多个片段）。

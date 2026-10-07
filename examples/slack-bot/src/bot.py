@@ -86,11 +86,14 @@ async def handle_mention(
     try:
         reply = await agent.arun(text)
     finally:
-        agent.close()
-        # ``agent.close()`` releases handles but does not delete the
-        # working directory; without this every mention leaks one
-        # tempdir.
-        shutil.rmtree(work_dir, ignore_errors=True)
+        try:
+            await agent.aclose()
+        finally:
+            # ``aclose()`` releases handles but does not delete the
+            # working directory; without this every mention leaks one
+            # tempdir. Nested so a cancel that lands while ``aclose()``
+            # is awaited still removes it.
+            shutil.rmtree(work_dir, ignore_errors=True)
     await say(text=reply, thread_ts=thread_ts)
     return reply
 

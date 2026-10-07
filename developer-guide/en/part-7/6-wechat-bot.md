@@ -56,7 +56,7 @@ Python daemon (single asyncio process)
             │                  llm_client=llm_client_factory(),
             │                  permission_engine=engine)
             ├─ reply = await agent.arun(text)
-            ├─ agent.close() + rmtree(tempdir)
+            ├─ await agent.aclose() + rmtree(tempdir)
             └─ await send(contact_id=contact_id, text=reply)
 ```
 
@@ -122,8 +122,10 @@ async def handle_message(
     try:
         reply = await agent.arun(text)
     finally:
-        agent.close()
-        shutil.rmtree(work_dir, ignore_errors=True)   # close() does NOT delete tempdir
+        try:
+            await agent.aclose()
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)   # aclose() does NOT delete tempdir; nested so a cancel still removes it
     await send(contact_id=contact_id, text=reply)
     return reply
 ```

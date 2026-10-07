@@ -109,11 +109,10 @@ MCP tool timeout comes from the `timeout` field:
 async def chat(req):
     workdir = Path(f"/tmp/ephemeral-{uuid.uuid4()}")
     try:
-        agent = Agentao(working_directory=workdir)
-        return await asyncio.to_thread(agent.chat, req.message)
+        async with Agentao(working_directory=workdir) as agent:
+            return await asyncio.to_thread(agent.chat, req.message)
     finally:
-        agent.close()
-        shutil.rmtree(workdir)
+        shutil.rmtree(workdir, ignore_errors=True)
 ```
 
 **Fits**: stateless (each question independent, no cross-turn context), low QPS.
@@ -122,6 +121,7 @@ async def chat(req):
 ### Pattern B · Session pool + TTL eviction
 
 ```python
+import asyncio
 from time import monotonic
 from asyncio import Lock
 
@@ -135,34 +135,46 @@ class AgentPool:
     async def get(self, session_id: str, workdir: Path) -> tuple[Agentao, Lock]:
         async with self._global_lock:
             now = monotonic()
-            self._evict_expired(now)
-            while len(self._pool) >= self.max_sessions:
-                self._evict_lru()
+            victims = self._pop_expired(now)
+            while session_id not in self._pool and len(self._pool) >= self.max_sessions:
+                victims.append(self._pop_lru())
+            # Close inside the global lock and before building anything: a
+            # get() for an evicted session (this one included) must not build
+            # a second agent on its workdir while the old one is still
+            # closing. return_exceptions, since close() logs its own teardown
+            # errors and one victim's failure must not fail this caller's
+            # get(). A cancel waits for the closes before it leaves the lock.
+            closing = asyncio.gather(
+                *(a.aclose() for a in victims), return_exceptions=True
+            )
+            try:
+                await asyncio.shield(closing)
+            except asyncio.CancelledError:
+                await closing  # keep the lock until the old agents are closed
+                raise
             if session_id not in self._pool:
                 agent = Agentao(working_directory=workdir)
                 self._pool[session_id] = (agent, Lock(), now)
             entry = list(self._pool[session_id])
             entry[2] = now
             self._pool[session_id] = tuple(entry)
-            return entry[0], entry[1]
+        return entry[0], entry[1]
 
-    def _evict_expired(self, now):
-        for sid, (a, _, last) in list(self._pool.items()):
-            if now - last > self.ttl_s:
-                a.close()
-                del self._pool[sid]
+    def _pop_expired(self, now):
+        expired = [sid for sid, (_, _, last) in self._pool.items()
+                   if now - last > self.ttl_s]
+        return [self._pool.pop(sid)[0] for sid in expired]
 
-    def _evict_lru(self):
-        victim = min(self._pool.items(), key=lambda kv: kv[1][2])
-        victim[1][0].close()
-        del self._pool[victim[0]]
+    def _pop_lru(self):
+        sid = min(self._pool, key=lambda k: self._pool[k][2])
+        return self._pool.pop(sid)[0]
 ```
 
 **Key points**:
 
 - `Lock()` guarantees **serial** turns within a session (agents aren't thread-safe — see [2.3](/en/part-2/3-lifecycle))
 - TTL eviction + LRU cap together to prevent unbounded growth
-- Remember `agent.close()` during eviction to reap MCP
+- Remember `await agent.aclose()` during eviction to reap MCP
 
 ### Pattern C · ACP subprocess pool
 

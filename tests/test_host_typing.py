@@ -299,6 +299,26 @@ def test_mypy_strict_on_host_use_of_agentao(tmp_path: Path) -> None:
 
             def build() -> Agentao:
                 return Agentao(working_directory=Path("."), transport=EmitOnly())
+
+
+            class MyAgent(Agentao):
+                def tag(self) -> str:
+                    return "mine"
+
+
+            def scoped() -> str:
+                # ``with`` hands back the subclass, not plain ``Agentao``.
+                with MyAgent(working_directory=Path(".")) as agent:
+                    return agent.tag()
+
+
+            async def ascoped() -> str:
+                async with MyAgent(working_directory=Path(".")) as agent:
+                    return agent.tag()
+
+
+            async def closed(agent: Agentao) -> None:
+                await agent.aclose()
             """
         ),
         encoding="utf-8",
@@ -338,9 +358,11 @@ def test_agentao_public_members_are_annotated() -> None:
         f"({Agentao.__init__.__qualname__}); fix the shim in tests/conftest.py"
     )
 
+    # The dunders a host calls through syntax (``with`` / ``async with``).
+    host_dunders = {"__init__", "__enter__", "__exit__", "__aenter__", "__aexit__"}
     missing = []
     for name, member in inspect.getmembers(Agentao):
-        if name.startswith("_") and name != "__init__":
+        if name.startswith("_") and name not in host_dunders:
             continue
         if isinstance(member, property):
             # A setter or deleter is part of the public surface too.

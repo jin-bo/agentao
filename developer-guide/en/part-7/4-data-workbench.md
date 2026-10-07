@@ -115,7 +115,7 @@ from contextlib import aclosing
 from agentao import Agentao
 from agentao.host import TextDelta
 from pathlib import Path
-import re, asyncio
+import re
 
 CHART_RE = re.compile(r"\[CHART\]\s+(\S+?\.png)")  # ends at .png: joined deltas from two LLM calls have no separator
 
@@ -138,7 +138,7 @@ async def ask(req: dict, user=Depends(current_user)):
                 else:
                     outcome = item               # TurnOutcome: the answer
     finally:
-        await asyncio.to_thread(agent.close)
+        await agent.aclose()
 
     # A [CHART] line can come in narration before a tool call, so scan
     # everything streamed, joined first (one line can span chunks).
