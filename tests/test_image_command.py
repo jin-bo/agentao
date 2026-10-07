@@ -228,3 +228,17 @@ def test_missing_image_filename_cannot_close_rich_markup(tmp_path, monkeypatch):
     # The path contains [/error], even though neither component exists.
     handle_image_command(_cli(), str(image))
     assert str(image) in output.getvalue()
+
+
+def test_image_listing_preserves_windows_backslash_before_bracket(monkeypatch):
+    import io
+    from rich.console import Console
+    from agentao.cli.commands import image as image_mod
+
+    output = io.StringIO()
+    monkeypatch.setattr(image_mod, "console", Console(file=output, color_system=None, width=200))
+    label = r"C:\images\[\error].png"
+    cli = _cli()
+    cli._staged_images = [{"_label": label, "data": "abcd", "mimeType": "image/png"}]
+    handle_image_command(cli, "")
+    assert label in output.getvalue()
