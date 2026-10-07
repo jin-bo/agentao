@@ -254,7 +254,8 @@ system prompt，没有估算的路径上为 `None`。
 
 `reason` 选的是**适用哪条策略**，不只是一个标签：`manual_cli`（默认）与
 `api_overflow` 会以半开探针的身份穿过已打开的熔断器；`compression_threshold`
-则被它暂停。
+则被它暂停。`compact()` 的类型只接受这三个值（`agentao.compaction.types`
+里的 `ManualCompactionReason`）；运行时并不检查 `reason`。
 
 **`ContextManager.compress_messages()` 是内部变换，不是这个。** 它的签名和返回
 类型都保留，但它只交回一个裸列表——说不出有没有变、也说不出为什么没变——而且
@@ -482,6 +483,12 @@ CI 的 `Typing gate` Job 在每个 PR 上强制执行。下游项目对自己代
 `mypy --strict` 时，可从这一接口面继承到干净的类型；
 `tests/test_host_typing.py` 还包含一个模拟下游消费的脚本，覆盖每个
 公共名称。
+
+`Agentao` 自己的公开方法和属性也都有类型标注，包括 `events()` 和
+`active_permissions()`，所以严格模式下的宿主从第一个调用起拿到的就是
+契约里的类型，而不是 `Any`。同一个测试里的第二个消费者用
+`mypy --strict --follow-imports=silent` 调用这些方法；`agentao.agent`
+本身不受 `--strict` 约束。
 
 ## Schema 快照策略
 

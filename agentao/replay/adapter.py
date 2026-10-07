@@ -233,9 +233,11 @@ class ReplayAdapter:
 
         Splicing this adapter in front of ``agent.transport`` (when replay is
         on) must not strip the inner transport's subscriber channel — otherwise
-        a host that observes turn outcomes via ``agent.transport.subscribe``
-        (the documented path for TURN_END / ``incomplete_reason``) silently
-        registers nothing the moment replay is enabled. Forward to the inner
+        a caller that subscribes through ``agent.transport`` (for TURN_END /
+        ``incomplete_reason``) silently registers nothing the moment replay is
+        enabled. Hosts are told to subscribe on the transport they constructed
+        instead (``agent.transport`` is typed ``CoreTransport``), but this
+        delegation keeps the attribute path working. Forward to the inner
         ``subscribe`` when it exists; return a no-op unsubscribe otherwise, per
         the optional-method contract in ``transport/base.py``.
         """

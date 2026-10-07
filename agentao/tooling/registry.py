@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..agents.tools import CancelBackgroundAgentTool, CheckBackgroundAgentTool
+from .agent_tools import transport_ask_user
 from ..tools import (
     ActivateSkillTool,
     AskUserTool,
@@ -136,7 +137,7 @@ def register_builtin_tools(agent: "Agentao") -> None:
     tools_to_register.extend([
         agent.memory_tool,
         ActivateSkillTool(agent.skill_manager),
-        AskUserTool(ask_user_callback=lambda *a, **kw: agent.transport.ask_user(*a, **kw)),
+        AskUserTool(ask_user_callback=transport_ask_user(agent)),
         agent.todo_tool,
     ])
     # When the background-agent store is disabled, omit the poll /

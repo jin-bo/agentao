@@ -6,7 +6,7 @@ Authoritative `__all__`:
 
 - `from agentao import ...` → `Agentao`, `SkillManager`
 - `from agentao.embedding import ...` → `build_from_environment`
-- `from agentao.transport import ...` → `AgentEvent`, `EventType`, `Transport`, `NullTransport`, `SdkTransport`, `build_compat_transport`, `gate_note`
+- `from agentao.transport import ...` → `AgentEvent`, `EventType`, `CoreTransport`, `Transport`, `NullTransport`, `SdkTransport`, `build_compat_transport`, `gate_note`
 - `from agentao.capabilities import ...` → `FileSystem`, `LocalFileSystem`, `FileEntry`, `FileStat`, `ShellExecutor`, `LocalShellExecutor`, `ShellRequest`, `ShellResult`, `BackgroundHandle`, `MemoryStore`, `SQLiteMemoryStore`, `MCPRegistry`, `FileBackedMCPRegistry`, `InMemoryMCPRegistry`
 - `from agentao.tools.base import ...` → `Tool`, `ToolRegistry`
 - `from agentao.permissions import ...` → `PermissionEngine`, `PermissionMode`, `PermissionDecision`
@@ -31,7 +31,7 @@ Agentao(
     temperature: float | None = None,
     max_tokens: int | None = None,
     *,                                          # everything below is keyword-only (0.5.0)
-    transport: Transport | None = None,
+    transport: CoreTransport | None = None,
     working_directory: Path,                    # required since 0.3.0
     extra_body: dict | None = None,             # keyword-only; LLM .create() request-body passthrough
     api_format: str | None = None,              # keyword-only; "openai-completions" (default) | "anthropic-messages" | "openai-responses"
@@ -104,7 +104,7 @@ CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars
 | `close` | `close() -> None` | Release MCP subprocesses, close DB handles. Call in `finally:`. |
 | `set_provider` | `set_provider(api_key: str, base_url: str | None = None, model: str | None = None, *, api_format: str | None = None) -> None` | Runtime LLM swap. `api_format` (0.5.0) names the new provider's wire protocol; `None` keeps the current one. |
 | `set_model` | `set_model(model: str) -> str` | Swap model only; returns the previous id. |
-| `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncIterator[HostEvent]` | Subscribe to public harness events (tool / sub-agent / permission lifecycle). No replay; bounded backpressure. See [A.10](#a-10-embedded-host-contract). |
+| `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncGenerator[HostEvent, None]` | Subscribe to public harness events (tool / sub-agent / permission lifecycle). No replay; bounded backpressure. See [A.10](#a-10-embedded-host-contract). |
 | `active_permissions` (0.3.1+) | `active_permissions() -> ActivePermissions` | Snapshot of the active permission policy (`mode`, `rules`, `loaded_sources`). JSON-safe. See [A.10](#a-10-embedded-host-contract). |
 | `add_tool` | `add_tool(tool: RegistrableTool, *, replace: bool = False) -> None` | Register a tool post-construction; same validation + capability binding as `extra_tools=`. Name clash without `replace=True` raises (stricter than `tools.register`). Reserved names (`mcp_`, plan tools) rejected. Visible next `chat()`/`arun()`. See [5.1](/en/part-5/1-custom-tools). |
 | `remove_tool` | `remove_tool(name: str) -> bool` | Unregister a tool post-construction; returns whether it existed (absent → `False`, no raise). `mcp_` / plan tools raise. Gone next `chat()`/`arun()`. |
@@ -134,7 +134,7 @@ implementation in
 | `messages` | `list[dict]` | Conversation history in OpenAI chat format. Safe to read, mutate at your own risk. |
 | `tools` | `ToolRegistry` | The live registry. Prefer the contract APIs — `Agentao(extra_tools=[...])` or `agent.add_tool(...)` — which bind capabilities and validate; `agent.tools.register(...)` is the low-level path that skips both. See [5.1](/en/part-5/1-custom-tools). |
 | `skill_manager` | `SkillManager` | `agent.skill_manager.activate_skill(name, task_description)` to turn a skill on. |
-| `transport` | `Transport` | The active transport; rebindable. |
+| `transport` | `CoreTransport` | The active transport; rebindable. With replay enabled it is a `ReplayAdapter` around the transport you passed. To subscribe, call `subscribe()` on the transport you constructed, not through this attribute: an `isinstance(t, Transport)` check passes for a `ReplayAdapter` whose wrapped transport has no `subscribe()` and for an explicit `Transport` subclass's inherited no-op stub, and both register nothing (see [4.1](/en/part-4/1-transport-protocol)). |
 | `_current_token` | `CancellationToken | None` | Public by convention; read to call `.cancel()` from another thread. |
 
 ## A.2 Transport layer

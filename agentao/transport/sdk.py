@@ -284,9 +284,12 @@ def build_compat_transport(
         # answer (``transport/confirmation.py``).
         return _confirmation.gate_note() is None
 
-    def _ask(question: str) -> str:
+    def _ask(question: str, **hints: Any) -> str:
+        # ``**hints`` so ``SdkTransport.ask_user`` forwards the structured
+        # hints here, and the same signature check then decides which of
+        # them the legacy callback can take.
         if ask_user_callback:
-            return ask_user_callback(question)
+            return invoke_ask_user_callback(ask_user_callback, question, hints)
         return "[ask_user: not available in non-interactive mode]"
 
     def _max_iter(count: int, messages: list) -> dict:

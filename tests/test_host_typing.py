@@ -15,6 +15,9 @@ group; CI installs it via ``uv sync --group dev``).
 
 from __future__ import annotations
 
+import functools
+import inspect
+import os
 import shutil
 import subprocess
 import textwrap
@@ -157,7 +160,7 @@ def test_mypy_strict_on_downstream_consumer(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         env={
-            **__import__("os").environ,
+            **os.environ,
             # Force resolution against the in-tree package.
             "MYPYPATH": str(REPO_ROOT),
             "PYTHONPATH": str(REPO_ROOT),
@@ -169,6 +172,212 @@ def test_mypy_strict_on_downstream_consumer(tmp_path: Path) -> None:
         f"stdout:\n{result.stdout}\n"
         f"stderr:\n{result.stderr}\n"
     )
+
+
+@mypy_required
+def test_mypy_strict_on_host_use_of_agentao(tmp_path: Path) -> None:
+    """A strict host sees the types of ``Agentao``'s host-facing methods.
+
+    ``agentao.agent`` is not itself held to ``--strict``, so it is read
+    with ``--follow-imports=silent``: its own errors are not reported, but
+    the signatures a host calls still are. Every result below leaves
+    through a typed ``return``, so a method that hands back ``Any`` fails
+    under ``warn_return_any`` and an unannotated one fails under
+    ``disallow_untyped_calls`` (F8 in
+    ``docs/design/host-api-ergonomics-review.md``).
+    """
+    consumer = tmp_path / "host_agent.py"
+    consumer.write_text(
+        textwrap.dedent(
+            """\
+            from __future__ import annotations
+
+            from contextlib import aclosing
+            from pathlib import Path
+
+            from agentao import Agentao
+            from agentao.compaction.types import CompactionOutcome
+            from agentao.host import (
+                ActivePermissions,
+                HostEvent,
+                TextDelta,
+                ToolLifecycleEvent,
+                TurnOutcome,
+            )
+
+
+            def perms(agent: Agentao) -> ActivePermissions:
+                return agent.active_permissions()
+
+
+            async def first_tool(agent: Agentao) -> str:
+                # ``aclosing`` needs ``aclose()``: closing releases the
+                # stream's one-consumer slot when the host leaves early.
+                async with aclosing(agent.events(session_id=None)) as events:
+                    async for ev in events:
+                        if isinstance(ev, ToolLifecycleEvent):
+                            return ev.tool_name
+                return ""
+
+
+            async def streamed(agent: Agentao) -> TurnOutcome | None:
+                async for item in agent.astream("hi"):
+                    if not isinstance(item, TextDelta):
+                        return item
+                return None
+
+
+            def on_event(ev: HostEvent) -> None:
+                pass
+
+
+            def on_event_flag(ev: HostEvent) -> bool:
+                # An observer's return value is discarded, so any is accepted.
+                return True
+
+
+            def observe(agent: Agentao) -> bool:
+                agent.add_host_event_observer(on_event)
+                agent.add_event_observer(on_event_flag)
+                return agent.remove_host_event_observer(on_event)
+
+
+            def reset(agent: Agentao) -> TurnOutcome | None:
+                agent.add_message("user", "hello")
+                agent.clear_history()
+                return agent.last_turn
+
+
+            async def answer(agent: Agentao) -> str:
+                return await agent.arun("hi")
+
+
+            class EmitOnly:
+                # The four methods the runtime calls, and no ``subscribe()``:
+                # supported for every API but ``astream()``.
+                def emit(self, event: object) -> None:
+                    pass
+
+                def confirm_tool(
+                    self, tool_name: str, description: str, args: dict[str, object]
+                ) -> bool:
+                    return False
+
+                def ask_user(
+                    self,
+                    question: str,
+                    *,
+                    header: str | None = None,
+                    options: list[str] | None = None,
+                    multiple: bool = False,
+                    allow_custom: bool = True,
+                ) -> str:
+                    return ""
+
+                def on_max_iterations(
+                    self, count: int, messages: list[object]
+                ) -> dict[str, object]:
+                    return {"action": "stop"}
+
+
+            class CountingObserver:
+                def __call__(self, ev: HostEvent) -> None:
+                    pass
+
+                def count(self) -> int:
+                    return 0
+
+
+            def kept(agent: Agentao) -> int:
+                # The observer comes back with its own type.
+                return agent.add_host_event_observer(CountingObserver()).count()
+
+
+            def compacted(agent: Agentao) -> CompactionOutcome:
+                return agent.compact(reason="api_overflow")
+
+
+            def build() -> Agentao:
+                return Agentao(working_directory=Path("."), transport=EmitOnly())
+            """
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [MYPY_BIN, "--strict", "--follow-imports=silent", str(consumer)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "MYPYPATH": str(REPO_ROOT),
+            "PYTHONPATH": str(REPO_ROOT),
+        },
+    )
+    assert result.returncode == 0, (
+        "A strict host's use of Agentao's methods failed mypy:\n"
+        f"stdout:\n{result.stdout}\n"
+        f"stderr:\n{result.stderr}\n"
+    )
+
+
+def test_agentao_public_members_are_annotated() -> None:
+    """Every public ``Agentao`` method and property carries annotations.
+
+    The mypy check above covers the methods a host is shown; this one
+    catches a new public member added without them, which would hand a
+    strict host ``Any`` from its first call.
+    """
+    from agentao import Agentao
+
+    # The suite's autouse fixture (tests/conftest.py) swaps ``__init__`` for
+    # a shim; ``functools.wraps`` there is what lets ``inspect`` read the real
+    # signature. Fail here, naming the fixture, rather than report agent.py.
+    assert Agentao.__init__.__qualname__ == "Agentao.__init__", (
+        "Agentao.__init__ is wrapped without functools.wraps "
+        f"({Agentao.__init__.__qualname__}); fix the shim in tests/conftest.py"
+    )
+
+    missing = []
+    for name, member in inspect.getmembers(Agentao):
+        if name.startswith("_") and name != "__init__":
+            continue
+        if isinstance(member, property):
+            # A setter or deleter is part of the public surface too.
+            funcs = [f for f in (member.fget, member.fset, member.fdel) if f is not None]
+        elif isinstance(member, functools.cached_property):
+            funcs = [member.func]
+        elif callable(member):
+            funcs = [member]
+        else:
+            # A kind this loop cannot read (another descriptor, a class
+            # constant) fails rather than passing unchecked.
+            missing.append(f"{name}: unchecked {type(member).__name__}")
+            continue
+        for func in funcs:
+            sig = inspect.signature(func)
+            if sig.return_annotation is inspect.Signature.empty:
+                missing.append(f"{name}: return")
+            missing.extend(
+                f"{name}: {param}"
+                for param, p in sig.parameters.items()
+                if param != "self" and p.annotation is inspect.Parameter.empty
+            )
+    assert missing == [], f"unannotated Agentao members: {missing}"
+
+
+def test_manual_compaction_reason_is_a_subset() -> None:
+    """``compact()``'s reasons stay spellings ``CompactionReason`` knows.
+
+    ``agent.py`` is not checked with ``--strict`` and ``compact()`` does not
+    validate ``reason`` at runtime, so a rename in ``CompactionReason`` would
+    otherwise leave a stale spelling here that reaches the coordinator.
+    """
+    from typing import get_args
+
+    from agentao.compaction.types import CompactionReason, ManualCompactionReason
+
+    assert set(get_args(ManualCompactionReason)) <= set(get_args(CompactionReason))
 
 
 def test_protocols_module_all_matches_imports() -> None:

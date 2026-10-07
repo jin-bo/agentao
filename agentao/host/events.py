@@ -35,7 +35,7 @@ import asyncio
 import concurrent.futures
 import logging
 import threading
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Union
 
 _logger = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ class EventStream:
         # MUST be cheap and non-blocking; raised exceptions are logged
         # at WARNING and swallowed so a broken sink never breaks the
         # runtime publish path.
-        self._observers: List[Callable[["_PublishedEvent"], None]] = []
+        self._observers: List[Callable[["_PublishedEvent"], object]] = []
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     # ------------------------------------------------------------------
@@ -148,8 +148,8 @@ class EventStream:
             self._loop = loop
 
     def add_observer(
-        self, callback: Callable[["_PublishedEvent"], None]
-    ) -> Callable[["_PublishedEvent"], None]:
+        self, callback: Callable[["_PublishedEvent"], object]
+    ) -> Callable[["_PublishedEvent"], object]:
         """Register a synchronous observer fired inside :meth:`publish`.
 
         The callback runs on the producer thread, before async
@@ -163,7 +163,7 @@ class EventStream:
         return callback
 
     def remove_observer(
-        self, callback: Callable[["_PublishedEvent"], None]
+        self, callback: Callable[["_PublishedEvent"], object]
     ) -> bool:
         """Detach a previously registered observer.
 
@@ -328,7 +328,7 @@ class EventStream:
     async def subscribe(
         self,
         session_id: Optional[str] = None,
-    ) -> AsyncIterator[_PublishedEvent]:
+    ) -> AsyncGenerator[_PublishedEvent, None]:
         """Async iterator yielding future events for the given filter.
 
         ``session_id=None`` subscribes to events from every session

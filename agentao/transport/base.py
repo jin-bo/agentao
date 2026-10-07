@@ -6,55 +6,22 @@ from .events import AgentEvent
 
 
 @runtime_checkable
-class Transport(Protocol):
-    """Interface between the Agentao core runtime and any UI or transport layer.
+class CoreTransport(Protocol):
+    """The methods the runtime calls on every transport.
 
-    A Transport has two responsibilities:
-
-    1. **One-way events** (fire-and-forget):
-       ``emit(event)`` receives structured events from the runtime.
-       The runtime never inspects the return value.
-
-    2. **Request-response interactions** (blocking):
-       ``confirm_tool``, ``ask_user``, and ``on_max_iterations`` are called
-       when the runtime needs a synchronous decision from the user/caller.
-
-    Implementing all methods is not required — use ``NullTransport`` as a
-    base or mixin if you only care about a subset.
-
-    Optionally a Transport may also expose ``subscribe(listener)`` so
-    side-channel observers (e.g. the replay recorder) can mirror the
-    event stream without wrapping the transport. The base contract is
-    unchanged — implementations that don't care about subscribers may
-    omit the method.
+    ``Agentao(transport=...)`` takes this: implement these four, and a
+    transport can run turns. One runtime leniency is not a contract: the
+    chat loop looks ``on_max_iterations`` up with ``getattr`` and treats a
+    missing one as ``{"action": "stop"}``, but a type checker requires it.
+    :class:`Transport` adds ``subscribe()``, which only
+    ``Agentao.astream()`` and side-channel observers such as the replay
+    recorder need; a transport without it is a ``CoreTransport`` only.
     """
 
     # ── One-way events ────────────────────────────────────────────────────────
 
     def emit(self, event: AgentEvent) -> None:
         """Receive a runtime event.  Must not raise; errors should be swallowed."""
-        ...
-
-    # ── Optional: side-channel observers ─────────────────────────────────────
-
-    def subscribe(self, listener: Callable[[AgentEvent], None]) -> Callable[[], None]:
-        """Register ``listener`` to receive every emitted event after the inner emit.
-
-        Returns an idempotent unsubscribe function. Errors raised by the
-        listener must be swallowed by the transport; subscription is a
-        side channel and never affects the primary emit path.
-
-        Implementations that do not maintain a subscriber list may omit
-        this method; consumers should ``getattr(transport, "subscribe", None)``
-        before calling.
-
-        **Lifecycle:** the transport holds a strong reference to every
-        registered listener. Hosts MUST call the returned unsubscribe
-        before dropping the listener — otherwise the listener (and
-        anything its closure captures) will not be garbage-collected
-        for the lifetime of the transport. A typical pattern is to
-        unsubscribe in the host's session-end / teardown hook.
-        """
         ...
 
     # ── Request-response interactions ────────────────────────────────────────
@@ -101,5 +68,63 @@ class Transport(Protocol):
             ``"continue"``        — keep running
             ``"stop"``            — return current response
             ``"new_instruction"`` — inject a new user message; set ``"message"`` key
+        """
+        ...
+
+
+@runtime_checkable
+class Transport(CoreTransport, Protocol):
+    """Interface between the Agentao core runtime and any UI or transport layer.
+
+    A Transport has two responsibilities:
+
+    1. **One-way events** (fire-and-forget):
+       ``emit(event)`` receives structured events from the runtime.
+       The runtime never inspects the return value.
+
+    2. **Request-response interactions** (blocking):
+       ``confirm_tool``, ``ask_user``, and ``on_max_iterations`` are called
+       when the runtime needs a synchronous decision from the user/caller.
+
+    Implementing all methods is not required — use ``NullTransport`` as a
+    base or mixin if you only care about a subset.
+
+    A Transport also exposes ``subscribe(listener)`` so side-channel
+    observers (e.g. the replay recorder) can mirror the event stream
+    without wrapping the transport. An implementation that does not care
+    about subscribers may omit it: it is then a :class:`CoreTransport`
+    but not a ``Transport``, for ``isinstance`` and for a type checker
+    alike. ``Agentao(transport=...)`` takes a ``CoreTransport``; only
+    ``Agentao.astream()`` needs ``subscribe()``.
+    """
+
+    # ── Side-channel observers ───────────────────────────────────────────────
+
+    def subscribe(self, listener: Callable[[AgentEvent], None]) -> Callable[[], None]:
+        """Register ``listener`` to receive every emitted event after the inner emit.
+
+        Returns an idempotent unsubscribe function. Errors raised by the
+        listener must be swallowed by the transport; subscription is a
+        side channel and never affects the primary emit path.
+
+        An implementation that does not maintain a subscriber list may
+        omit this method, and is then a :class:`CoreTransport` only. Code
+        holding a ``CoreTransport`` checks ``isinstance(t, Transport)``
+        (or ``getattr(t, "subscribe", None)``) before calling, but neither
+        check shows that ``subscribe()`` works. Both pass for a class that
+        subclasses ``Transport`` explicitly without defining it, which
+        inherits this stub (registers nothing, returns ``None``), and for a
+        ``ReplayAdapter`` around a transport without one (its
+        ``subscribe()`` registers nothing). Subclass ``NullTransport`` (or
+        compose ``EventBroadcaster``) for a working one. ``Agentao.astream()``
+        detects both cases and raises ``TypeError``
+        (``runtime/astream.py::resolve_subscribe``).
+
+        **Lifecycle:** the transport holds a strong reference to every
+        registered listener. Hosts MUST call the returned unsubscribe
+        before dropping the listener — otherwise the listener (and
+        anything its closure captures) will not be garbage-collected
+        for the lifetime of the transport. A typical pattern is to
+        unsubscribe in the host's session-end / teardown hook.
         """
         ...
