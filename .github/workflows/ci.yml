@@ -139,8 +139,15 @@ jobs:
       # `--durations=20` on one interpreter only: it reports the slowest tests,
       # which is the data for deciding where CI time goes. One report per run
       # is enough, and the other two jobs' logs stay as they were.
+      # In parallel on pull requests, serial on pushes to main. A PR's run is
+      # the one a merge waits for, and these serial jobs set its wall clock
+      # in 12 of 16 runs measured (2026-10-07), so they go parallel there
+      # (`logical`: see the Windows job). A push to main keeps the suite's
+      # fixed-order run (#251): an order-dependent failure that xdist's
+      # distribution hides still shows up, one merge later. If one does,
+      # fix it on main rather than reverting the PR.
       - name: Run tests
-        run: uv run --locked --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short ${{ matrix.python-version == '3.12' && '--durations=20' || '' }}
+        run: uv run --locked --python ${{ matrix.python-version }} python -m pytest tests/ -v --tb=short ${{ matrix.python-version == '3.12' && '--durations=20' || '' }} ${{ github.event_name == 'pull_request' && '-n logical' || '' }}
 
   # ─────────────────────────────────────────────────────────────
   # Job 1a · Windows
@@ -220,8 +227,8 @@ jobs:
       # and timers, and Windows process creation makes each of those slower.
       # `logical` rather than `auto`: `auto` switches to physical cores
       # whenever psutil is importable, which is half the runner's vCPUs.
-      # The ubuntu test jobs stay serial, so the suite still has a
-      # fixed-order run. The shell modules ran in the step above, so they are
+      # The ubuntu test jobs run serially on pushes to main, so the suite still
+      # has a fixed-order run there. The shell modules ran in the step above, so they are
       # ignored here. `--durations=20` reports the slowest tests on Windows,
       # where per-test times are otherwise invisible under xdist.
       - name: Run the full suite
