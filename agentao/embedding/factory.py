@@ -372,10 +372,16 @@ def build_from_environment(
             try:
                 _set_initial_permission_mode(agent, initial_mode)
             except BaseException:
-                # Not ``close()``: that also disconnects an ``mcp_manager=``
-                # and closes a ``memory_manager=`` the caller passed in.
+                # Releases what the agent built; the memory manager is not
+                # the agent's yet, and is closed below. Not ``close()``: a
+                # Ctrl-C inside its MCP disconnect skips the log close, and
+                # no caller ever gets this agent to call ``close()`` again.
                 agent._release_failed_construction()
                 raise
+        # Built for this agent alone, and the caller never sees it: the
+        # agent's ``close()`` releases it from here on.
+        if built_memory_manager is not None:
+            agent._adopt_memory_manager(built_memory_manager)
     except BaseException:
         if built_memory_manager is not None:
             try:

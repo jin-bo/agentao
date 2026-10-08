@@ -101,7 +101,7 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 | `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | 异步接口——通过 `loop.run_in_executor` 桥到 `chat()`。取消、replay、`max_iterations`、`images` 语义与同步版完全一致 |
 | `astream` | `astream(user_message: str, *, max_iterations: int = 100, images: list[dict] | None = None, cancellation_token: CancellationToken | None = None) -> AsyncGenerator[TextDelta | TurnOutcome, None]` | 跑一轮并流式输出：先产出 `TextDelta`，最后一项是本轮的 `TurnOutcome`。增量用于显示，结果以 outcome 为准——回答取 `TurnOutcome.text`，并先用 `.is_answer` 检查。用 `contextlib.aclosing(...)` 包住——关闭它（或取消消费方）会取消本轮。订阅 agent 的 transport，从不替换它。见 [4.7](/zh/part-4/7-host-contract#streaming-text-agent-astream) |
 | `clear_history` | `clear_history() -> None` | 清 `self.messages`、已激活 skills、todos 与 token 计数；不影响 memory DB。后台 agent 继续运行，但完成通知不再进入历史（用 `check_background_agent` 查看） |
-| `close` | `close() -> None` | 关 MCP 子进程与 DB handle；可重复调用。请放 `finally:`，或用 `with` |
+| `close` | `close() -> None` | 关 agent 自己打开的 MCP 子进程与 DB handle（注入的 `mcp_manager=` / `memory_manager=` 由你释放）；可重复调用。请放 `finally:`，或用 `with` |
 | `aclose` | `async aclose() -> None` | 在独立线程上运行 `close()`，不阻塞事件循环。先结束 agent 的轮次；它不会等待或取消正在进行的轮次 |
 | `__enter__` / `__exit__`、`__aenter__` / `__aexit__` | `with Agentao(...) as agent:` / `async with ... as agent:` | context manager：返回 agent 本身；退出时调用 `close()`（同步）或 `aclose()`（异步）。块内的异常照常抛出 |
 | `set_provider` | `set_provider(api_key, base_url=None, model=None, *, api_format=None) -> None` | 运行时换 LLM。`api_format`（0.5.0）指明新 provider 的线路协议；`None` 保持当前线路 |

@@ -85,9 +85,13 @@ agent.close()
 ```
 
 Always call this. It:
-- Disconnects all MCP clients
-- Stops the MCP manager's event loop thread
+- Disconnects the MCP clients the agent connected itself, and stops that manager's event loop thread
+- Closes the memory stores the agent opened itself
 - Closes `<working_directory>/agentao.log`, which the agent holds open unless you passed `logger=` or your own `llm_client=` (Windows cannot delete an open file, so removing a temporary working directory before `close()` fails with `WinError 32`)
+
+A manager you pass in (`mcp_manager=`, `memory_manager=`, `llm_client=`), or assign to `agent.mcp_manager` / `agent.memory_manager` later, is yours: `close()` leaves it open, since it may be shared with other agents, and you release it (`disconnect_all()`, `close()`) when you are done with it. `build_from_environment()` hands the memory manager it builds to the agent, so `close()` releases that one.
+
+With a temporary working directory, close the agent before deleting the directory: nest `with Agentao(...)` inside `with tempfile.TemporaryDirectory()`. `logger=` keeps `agentao.log` out of the directory, but does not replace `close()`.
 
 Without it you **leak MCP subprocesses and threads**. `Agentao` is a context manager, so `with` closes it on the way out, error or not:
 

@@ -86,9 +86,13 @@ agent.close()
 ```
 
 必须调用。作用：
-- 断开所有 MCP 客户端连接
-- 关闭 MCP 管理器的事件循环线程
+- 断开 agent 自己连接的 MCP 客户端，并关闭该管理器的事件循环线程
+- 关闭 agent 自己打开的 memory 存储
 - 关闭 `<working_directory>/agentao.log`：除非传了 `logger=` 或自己的 `llm_client=`，agent 会一直打开这个文件（Windows 不能删除打开着的文件，所以在 `close()` 之前删除临时工作目录会报 `WinError 32`）
+
+你传入的管理器（`mcp_manager=`、`memory_manager=`、`llm_client=`），以及之后赋值给 `agent.mcp_manager` / `agent.memory_manager` 的管理器，归你所有：它可能被其他 agent 共用，`close()` 不会关闭它，用完后由你释放（`disconnect_all()`、`close()`）。`build_from_environment()` 会把它创建的 memory 管理器交给 agent，所以那个由 `close()` 释放。
+
+使用临时工作目录时，先关闭 agent，再删除目录：把 `with Agentao(...)` 嵌在 `with tempfile.TemporaryDirectory()` 内部。`logger=` 只让 `agentao.log` 不写进该目录，不能代替 `close()`。
 
 不调用会**泄漏 MCP 子进程和线程**。`Agentao` 本身就是 context manager，用 `with` 时，无论是否出错，退出时都会关闭：
 
