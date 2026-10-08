@@ -31,6 +31,7 @@ _Targeting 0.5.12. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A skill registry whose top level or `skills` member is not an object no longer crashes skill commands.** JSON such as `[]` or `{"skills": null}` now loads as an empty registry, as invalid JSON already did. Loading leaves the file untouched; the next install or remove saves a replacement and does not preserve its old records. Existing skill directories remain on disk but are no longer managed, so reinstalling them requires `--force`.
 - **Replay inspection keeps valid records when a crash truncates a UTF-8 character.** Decode each JSONL record independently, so an incomplete or invalid UTF-8 record is skipped without losing earlier or later events in listings and readers.
 
 - **One unreadable replay file no longer stops replay listing, lookup or retention.** `list_replays`, `open_replay` (finding a session's latest instance) and retention sorted `.agentao/replays/*.jsonl` by `stat()` and raised on the first entry whose `stat()` failed — a dangling symlink, or a file another process pruned between listing the directory and reading its metadata. `/replay list` and `/replay prune` failed, and because `ReplayManager` swallows a pruning error at session start and end, automatic retention silently deleted nothing while such an entry was present, so the directory grew past `replay.max_instances`. Those entries are now skipped and the rest keep their oldest-first order; a skipped entry is neither counted nor deleted. (#459)

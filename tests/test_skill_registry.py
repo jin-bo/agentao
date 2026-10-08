@@ -48,6 +48,17 @@ class TestSkillRegistry:
         assert registry.list_all() == []
         assert path.read_text(encoding="utf-8") == raw
 
+    @pytest.mark.parametrize("payload", [[], {"skills": None}])
+    def test_save_after_invalid_container_writes_valid_registry(self, tmp_path, payload):
+        path = tmp_path / "registry.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        registry = SkillRegistry(path)
+        registry.add(_make_record("foo"))
+        registry.save()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert list(data["skills"]) == ["foo"]
+        assert SkillRegistry(path).get("foo") is not None
+
     def test_empty_registry_loads_clean(self, tmp_path):
         reg = SkillRegistry(tmp_path / "registry.json")
         assert len(reg) == 0
