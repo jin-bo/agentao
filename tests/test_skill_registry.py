@@ -1,5 +1,7 @@
 """Tests for agentao.skills.registry."""
 
+import json
+import pytest
 
 
 from agentao.skills.registry import (
@@ -37,6 +39,15 @@ def _make_record(name="test-skill", scope="global", **overrides):
 # ------------------------------------------------------------------
 
 class TestSkillRegistry:
+    @pytest.mark.parametrize("payload", [None, [], "bad", 1, {"skills": None}, {"skills": []}])
+    def test_non_object_registry_loads_empty_without_overwriting(self, tmp_path, payload):
+        path = tmp_path / "registry.json"
+        raw = json.dumps(payload)
+        path.write_text(raw, encoding="utf-8")
+        registry = SkillRegistry(path)
+        assert registry.list_all() == []
+        assert path.read_text(encoding="utf-8") == raw
+
     def test_empty_registry_loads_clean(self, tmp_path):
         reg = SkillRegistry(tmp_path / "registry.json")
         assert len(reg) == 0

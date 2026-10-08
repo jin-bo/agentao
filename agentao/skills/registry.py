@@ -54,6 +54,8 @@ class SkillRegistry:
         if self._path.exists():
             try:
                 data = json.loads(self._path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict) or not isinstance(data.get("skills", {}), dict):
+                    return {}
                 for name, entry in data.get("skills", {}).items():
                     self._skills[name] = InstalledSkillRecord(**entry)
             except (json.JSONDecodeError, TypeError, KeyError):
