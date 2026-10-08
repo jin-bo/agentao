@@ -74,7 +74,7 @@ class ReplayConfig:
             enabled = _coerce_bool(raw.get("enabled", enabled), enabled)
             try:
                 max_instances = int(raw.get("max_instances", max_instances))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 max_instances = REPLAY_DEFAULTS["max_instances"]
             raw_flags = raw.get("capture_flags")
             if isinstance(raw_flags, dict):
