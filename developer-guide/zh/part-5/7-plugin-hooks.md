@@ -30,7 +30,7 @@ Hooks 在回答**另一个问题**：
 ::: warning 本章是**规则作者**视角
 你会学到怎么写一条 hook 规则、它何时跑、能输出什么。
 
-宿主侧的 hooks list / disable / hot-reload API **故意不暴露**——那部分不在 [4.7 嵌入式 Harness 合约](/zh/part-4/7-host-contract#4-7-8-不在-合约里的东西) 里。如果你在做 SaaS 平台、想给租户提供"管理 hook 开关"的能力，目前的答案是：在自己的 plugin 装载层做，**不要**绕到 `agentao.host` 里去找 API。
+宿主侧的 hooks list / disable / hot-reload API **故意不暴露**——那部分不在 [4.7 嵌入式 Harness 合约](/zh/part-4/7-host-contract#_4-7-8-不在合约里的东西) 里。如果你在做 SaaS 平台、想给租户提供"管理 hook 开关"的能力，目前的答案是：在自己的 plugin 装载层做，**不要**绕到 `agentao.host` 里去找 API。
 :::
 
 ## 5.7.2 八个事件一览
@@ -258,12 +258,20 @@ Hook 留下的痕迹分两层：实时事件流（给 UI / 审计）和 replay �
 每次 hook 派发完——只要 `matched_rule_count > 0`——运行时会发一条 `PLUGIN_HOOK_FIRED` 到 transport：
 
 ```python
-async for ev in agent.events_async():
+from agentao import Agentao
+from agentao.transport import SdkTransport
+from agentao.transport.events import EventType
+
+def on_event(ev):
     if ev.type == EventType.PLUGIN_HOOK_FIRED:
         hook_name = ev.data["hook_name"]
         outcome = ev.data["outcome"]
         # ... 按 hook_name 分支处理
+
+agent = Agentao(..., transport=SdkTransport(on_event=on_event))
 ```
+
+它是 transport 事件，不是 `HostEvent`：`agent.events()` 里没有它，要从 transport 的 `on_event` 读取；`on_event` 在发出事件的线程上同步调用。`EventType` 是内部类型，载荷字段可能随版本变化。
 
 不同 `hook_name` 携带不同字段（emit shape 在 chat-loop 里固定）：
 
@@ -315,7 +323,7 @@ Hook 调度也会被 replay 子系统记录。默认捕获 hook 元数据（事�
 - **体积**：长 stdout 会让 replay 文件膨胀，replay 服务器加载时间也变长。
 - **secret 扫描仍在跑**：deep capture 只绕过长度截断（`ScanTruncate`），secret 扫描器照常工作——但它不是万能的，别当成唯一防线。
 
-完整开关表见 [Appendix B · `replay.capture_flags`](/zh/appendix/b-config-keys#replay-capture-flags)；observability 全景见 [6.6 可观测性](/zh/part-6/6-observability)。
+完整开关表见 [Appendix B · `replay.capture_flags`](/zh/appendix/b-config-keys#b-3-5-settings-json)；observability 全景见 [6.6 可观测性](/zh/part-6/6-observability)。
 :::
 
 ## 5.7.7 边界声明
@@ -324,7 +332,7 @@ Hook 调度也会被 replay 子系统记录。默认捕获 hook 元数据（事�
 
 ### 不开放的宿主面 API
 
-宿主侧的 hooks **list / disable / hot-reload API** 故意不在 [4.7 嵌入式 Harness 合约](/zh/part-4/7-host-contract#4-7-8-不在-合约里的东西) 里。
+宿主侧的 hooks **list / disable / hot-reload API** 故意不在 [4.7 嵌入式 Harness 合约](/zh/part-4/7-host-contract#_4-7-8-不在合约里的东西) 里。
 
 - ❌ "枚举当前生效的 hook 规则"——没有公开 API
 - ❌ "运行时禁用某条规则"——没有

@@ -8,7 +8,7 @@ Python 宿主的**最短集成路径**：直接 `from agentao import Agentao` �
 - **Working directory（cwd）** — 文件工具根目录、MCP cwd、`AGENTAO.md` 查找路径；构造时冻结 · [§2.2](/zh/part-2/2-constructor-reference)、[G.1](/zh/appendix/g-glossary#g-1-核心概念)
 - **Transport** — 推送式回调（`emit(event)`），驱动流式 UI · [§2.7](/zh/part-2/7-fastapi-flask-embed)、[G.2](/zh/appendix/g-glossary#g-2-扩展点)
 - **CancellationToken** — 宿主侧的取消句柄，用于中断进行中的 `chat()` · [§2.6](/zh/part-2/6-cancellation-timeouts)、[G.1](/zh/appendix/g-glossary#g-1-核心概念)
-- **extra_mcp_servers** — 会话级 MCP 注入（不同租户 → 不同 token） · [§2.2](/zh/part-2/2-constructor-reference#第-2-档-生产常用-再加-8-个)
+- **extra_mcp_servers** — 会话级 MCP 注入（不同租户 → 不同 token） · [§2.2](/zh/part-2/2-constructor-reference#第-2-档-·-生产常用)
 :::
 
 ## 本部分覆盖
@@ -36,7 +36,7 @@ Python 宿主的**最短集成路径**：直接 `from agentao import Agentao` �
 
 - [1.2 核心概念](/zh/part-1/2-core-concepts) — Agent / Tool / Transport / Working Directory 等名词
 - [1.3 两种集成模式](/zh/part-1/3-integration-modes) — 确认 Python SDK 是你的选择
-- [1.4 Hello Agentao](/zh/part-1/4-hello-agentao#示例-a-python-sdk-约-20-行) — 20 行可跑样板
+- [1.4 Hello Agentao](/zh/part-1/4-hello-agentao) — 20 行可跑样板
 
 ## 预备心智模型
 

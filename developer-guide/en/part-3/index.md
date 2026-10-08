@@ -31,7 +31,7 @@ Wire-level vocabulary you'll see throughout — full glossary in [Appendix G.3](
 ## Before you start
 
 - [1.3 Integration Modes](/en/part-1/3-integration-modes) — confirm ACP is the right fit
-- [1.4 Hello Agentao · Example B](/en/part-1/4-hello-agentao#example-b-acp-protocol-any-language) — hand-fed protocol messages
+- [3.1 ACP Protocol Tour · Quick try in 60 seconds](/en/part-3/1-acp-tour#quick-try-in-60-seconds) — hand-fed protocol messages
 
 ## Mental model
 

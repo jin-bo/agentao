@@ -76,7 +76,7 @@ not a string (`.value` gives the string).
 ```
 
 ::: warning Project-scope file is ignored
-A `<cwd>/.agentao/permissions.json` is **not** loaded — the engine logs a warning and ignores it. A checked-in `{"tool": "*", "action": "allow"}` would defeat the user policy on first match (the engine returns at the first matching rule), so project files cannot grant capabilities. Permissions are a user/host concern, not a cwd concern — same model OS permissions and IDE workspace-trust use. If you need project-aware policy, inject it from the host: see [4.7.6 active_permissions](/en/part-4/7-host-contract#4-7-6-agent-active-permissions-policy-snapshots).
+A `<cwd>/.agentao/permissions.json` is **not** loaded — the engine logs a warning and ignores it. A checked-in `{"tool": "*", "action": "allow"}` would defeat the user policy on first match (the engine returns at the first matching rule), so project files cannot grant capabilities. Permissions are a user/host concern, not a cwd concern — same model OS permissions and IDE workspace-trust use. If you need project-aware policy, inject it from the host: see [4.7.6 active_permissions](/en/part-4/7-host-contract#_4-7-6-agent-active-permissions-—-policy-snapshots).
 :::
 
 **Structure**:
@@ -245,7 +245,7 @@ snap = agent.active_permissions()
 
 The snapshot is cached; the cache is invalidated on `set_mode()` and on `add_loaded_source(...)` **with a new label** (duplicate labels are coalesced and do not force a rebuild). Direct mutation of `engine.rules` does not invalidate the cache — if you mutate rules in place, follow up with `set_mode(engine.active_mode)` (a no-op-mode set still clears the cache) or label the change via `add_loaded_source("injected:<unique-name>")`.
 
-The same surface drives `PermissionDecisionEvent.loaded_sources` on the public event stream. **For the full how-to** (including audit-pipeline patterns), see **[4.7 Embedded Harness Contract](/en/part-4/7-host-contract#4-7-6-agent-active-permissions-policy-snapshots)**. For the dense field reference, see [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-host-contract).
+The same surface drives `PermissionDecisionEvent.loaded_sources` on the public event stream. **For the full how-to** (including audit-pipeline patterns), see **[4.7 Embedded Harness Contract](/en/part-4/7-host-contract#_4-7-6-agent-active-permissions-—-policy-snapshots)**. For the dense field reference, see [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-host-contract).
 
 ## Common templates
 

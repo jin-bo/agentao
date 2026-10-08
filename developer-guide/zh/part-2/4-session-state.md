@@ -179,7 +179,7 @@ agent = Agentao(working_directory=Path("/app/users/alice"))
 | **每请求重建**（每次从 DB 加载） | Serverless、稀疏请求 | Pod 无状态，易扩缩 | 每轮多 ~50–200 ms 用于回放 + 重开 MCP |
 | **混合**（热池 + 回落 DB） | SaaS 聊天机器人 | 热会话快，冷会话自愈 | 代码量多一些 |
 
-生产部署常选混合模式——详见 [7.2 无状态 vs 有状态服务](/zh/part-7/2-stateless-vs-stateful)。
+生产部署常选混合模式：热池见 [6.7 模式 B · 会话池 + TTL 淘汰](/zh/part-6/7-resource-concurrency#模式-b-·-会话池-ttl-淘汰)，被淘汰的会话通过 [2.4.3](#_2-4-3-存储-还原配方) 还原。
 
 ## TL;DR
 

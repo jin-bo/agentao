@@ -112,7 +112,7 @@ The pattern repeats:
 2. Speak NDJSON JSON-RPC 2.0 over stdio
 3. Wire `session/update` → UI, `session/request_permission` → modal
 
-A VS Code extension using the TypeScript `ACPClient` from [3.3.4](./3-host-client-architecture#3-3-4-typescript-node-reference-implementation) is outlined in [Blueprint B](/en/part-7/2-ide-plugin).
+A VS Code extension using the TypeScript `ACPClient` from [3.3.4](./3-host-client-architecture#_3-3-4-typescript-node-reference-implementation) is outlined in [Blueprint B](/en/part-7/2-ide-plugin).
 
 ### JetBrains / IntelliJ
 

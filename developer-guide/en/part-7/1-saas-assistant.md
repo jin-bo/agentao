@@ -178,7 +178,7 @@ async def get_or_create_agent(session_id, workdir, tenant_id):
     return _pool[session_id]
 ```
 
-Use the full `AgentPool` from [6.7](/en/part-6/7-resource-concurrency#pattern-b-session-pool-ttl-eviction) for TTL + LRU eviction.
+Use the full `AgentPool` from [6.7](/en/part-6/7-resource-concurrency#pattern-b-·-session-pool-ttl-eviction) for TTL + LRU eviction.
 
 ## Frontend skeleton
 
@@ -209,9 +209,9 @@ Each row below is a real production incident. Skim them before you ship — the 
 |-----------|------------|-----|
 | Cross-tenant data leak | Tool captured `tenant_id` at construction time, but pool reused an agent for another tenant | One agent per `(tenant_id, session_id)` — never share across tenants |
 | "My tasks vanished!" | `clear_history()` called when the SDK reset, but backend memory DB retained user-wide notes and bled into another session | Use project-scope memory only; if you mount user-scope, key it by `tenant_id+user_id` |
-| Agent "hangs" forever | No per-chat timeout | Wrap `chat()` in `asyncio.wait_for` ([6.7 Control 3](/en/part-6/7-resource-concurrency#control-3-per-turn-timeout)) |
+| Agent "hangs" forever | No per-chat timeout | Wrap `chat()` in `asyncio.wait_for` ([6.7 Control 3](/en/part-6/7-resource-concurrency#control-3-·-per-turn-timeout)) |
 | SSE stream stops mid-reply | Frontend reconnect buffers didn't match server; browser idle kill | Send periodic `: keep-alive\n\n` every 15s |
-| Confirm modal blocks forever | `confirm_tool` ran on the event-loop thread | See [4.5 Web modal](/en/part-4/5-tool-confirmation-ui#pattern-2-web-modal-asyncio-to-thread-bridge) — use `asyncio.run_coroutine_threadsafe` |
+| Confirm modal blocks forever | `confirm_tool` ran on the event-loop thread | See [4.5 Web modal](/en/part-4/5-tool-confirmation-ui#pattern-b-·-web-modal-async-backend) — use `asyncio.run_coroutine_threadsafe` |
 
 ## Runnable code
 

@@ -238,7 +238,7 @@ def test_mypy_strict_on_host_use_of_agentao(tmp_path: Path) -> None:
 
             def observe(agent: Agentao) -> bool:
                 agent.add_host_event_observer(on_event)
-                agent.add_event_observer(on_event_flag)
+                agent.add_host_event_observer(on_event_flag)
                 return agent.remove_host_event_observer(on_event)
 
 

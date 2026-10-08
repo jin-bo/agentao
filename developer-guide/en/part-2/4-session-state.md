@@ -180,7 +180,7 @@ Field format is **different from the SDK list** — ACP wraps content in an arra
 | **Rebuild-per-request** (load from DB each time) | Serverless, request-sparse workloads | Stateless pods; easy scaling | Extra ~50–200 ms per turn to replay + re-open MCP |
 | **Hybrid** (hot pool + fallback to DB) | SaaS chatbots | Hot sessions are fast; cold sessions self-heal | More code |
 
-Production deployments typically run the hybrid pattern — see [7.2 Stateless vs stateful service](/en/part-7/2-stateless-vs-stateful) for the full design.
+Production deployments typically run the hybrid pattern: the hot pool is [6.7 Pattern B · Session pool + TTL eviction](/en/part-6/7-resource-concurrency#pattern-b-·-session-pool-ttl-eviction), and a session it has evicted comes back through [2.4.3](#_2-4-3-persist-restore-recipe).
 
 ## TL;DR
 
