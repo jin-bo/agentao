@@ -405,10 +405,13 @@ class Agentao:
             api_format=api_format,
             logger=logger,
         )
-        # What this constructor builds itself, so a failure below can release
-        # it: the caller never receives the object, so cannot call close().
-        # Injected managers are the caller's and are left alone. The LLM
-        # client is also released by ``close()``: it holds ``agentao.log`` open.
+        # What this agent owns: what this constructor builds itself (and what
+        # ``_adopt_memory_manager`` hands it). ``close()`` releases these and
+        # only these, and so does a failure below, since the caller never
+        # receives the object. Injected managers are the caller's and are
+        # left alone; so is a manager a host assigns over the attribute
+        # later, while the one built here is still released. The LLM client
+        # is released too: it holds ``agentao.log`` open.
         self._built_llm_client: Optional[LLMClient] = (
             self.llm if llm_client is None else None
         )
@@ -506,6 +509,40 @@ class Agentao:
                         )
             finally:
                 self._close_built_llm_client()
+
+    def _adopt_memory_manager(self, manager: "MemoryManager") -> None:
+        """Take ownership of ``manager``, passed in as ``memory_manager=``.
+
+        For a caller that built the manager only for this agent and has no
+        later point at which to close it — ``build_from_environment`` and
+        the sub-agent factory: ``close()`` then releases it like one the
+        constructor built. Call it only after construction succeeded; before
+        that, a failure leaves the manager with the caller.
+        """
+        self._built_memory_manager = manager
+
+    def _reinit_mcp(self) -> None:
+        """Rebuild the MCP manager from the current server set (a plugin
+        added servers), disconnecting the one this agent built.
+
+        The new manager is the agent's own, so ``close()`` releases it. An
+        injected ``mcp_manager=`` is left connected: it is the caller's.
+        """
+        old = self._built_mcp_manager
+        if old is not None:
+            try:
+                old.disconnect_all()
+            except Exception:
+                _logger.warning("MCP disconnect before a rebuild", exc_info=True)
+            # After the disconnect returns, as in ``close()``: an interrupted
+            # one leaves the manager owned, for ``close()`` to finish.
+            self._built_mcp_manager = None
+            # A rebuild that raises must not leave the agent holding the
+            # manager just closed.
+            if self.mcp_manager is old:
+                self.mcp_manager = None
+        self.mcp_manager = self._init_mcp()
+        self._built_mcp_manager = self.mcp_manager
 
     def _close_built_llm_client(self) -> None:
         """Release the ``agentao.log`` handle of an LLM client built here."""
@@ -1304,9 +1341,14 @@ class Agentao:
         them, to avoid double-firing there, so neither does ``with`` /
         ``async with`` / :meth:`aclose` for an embedded host.
 
-        Also closes ``<working_directory>/agentao.log`` when the agent built
-        its own LLM client and no ``logger=`` was passed; an injected
-        ``llm_client=`` is left to the caller.
+        Releases what the agent built itself: the MCP manager (when no
+        ``mcp_manager=`` was passed), the memory manager (when no
+        ``memory_manager=`` was passed) and ``<working_directory>/agentao.log``
+        (when it built its own LLM client and no ``logger=`` was passed). An
+        injected ``mcp_manager=``, ``memory_manager=`` or ``llm_client=`` is
+        the caller's to release, and so is a manager the caller assigns to
+        ``mcp_manager`` / ``memory_manager`` afterwards; the one the agent
+        built is still released.
 
         Safe to call more than once, and from more than one thread: calls
         are serialized. A later call skips the MCP disconnect and repeats the
@@ -1327,16 +1369,25 @@ class Agentao:
                         self.replay_manager.end()
                     except Exception:
                         pass
-                if self.mcp_manager is not None:
+                # Only what this agent built: an ``mcp_manager=`` /
+                # ``memory_manager=`` the host passed in is the host's to
+                # release, and may be shared with other agents.
+                mcp_manager = self._built_mcp_manager
+                if mcp_manager is not None:
                     try:
-                        self.mcp_manager.disconnect_all()
+                        mcp_manager.disconnect_all()
                     except Exception as e:
                         self.llm.logger.warning(f"Error disconnecting MCP: {e}")
-                    self.mcp_manager = None
+                    # Only once the disconnect has returned: a Ctrl-C inside it
+                    # leaves the manager owned, so a later ``close()`` runs the
+                    # disconnect again, which waits for the first one to finish.
+                    self._built_mcp_manager = None
+                    if self.mcp_manager is mcp_manager:
+                        self.mcp_manager = None
                 # The memory stores hold no connection between calls on a file backing,
                 # but a transient ``:memory:`` store does, and a host that is done with an
                 # agent should not have to wait for the collector to get it back.
-                memory_manager = getattr(self, "memory_manager", None)
+                memory_manager = self._built_memory_manager
                 if memory_manager is not None:
                     try:
                         memory_manager.close()

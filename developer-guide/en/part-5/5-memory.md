@@ -88,7 +88,7 @@ agent = Agentao(
 )
 ```
 
-Works for the session, forgotten on process exit.
+Works for the session, forgotten on process exit. A manager you pass in is yours to close: `agent.close()` leaves it open, so call `agent.memory_manager.close()` after it — a `:memory:` store holds its connection until then.
 
 ### Custom memory backend (Redis / Postgres / remote API)
 

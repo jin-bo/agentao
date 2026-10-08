@@ -88,7 +88,7 @@ agent = Agentao(
 )
 ```
 
-会话内工作，进程结束即丢。
+会话内工作，进程结束即丢。传入的管理器由你关闭：`agent.close()` 不关它，所以在它之后调用 `agent.memory_manager.close()`——`:memory:` store 在此之前一直占着连接。
 
 ### 自定义记忆后端（Redis / Postgres / 远端 API）
 

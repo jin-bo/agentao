@@ -140,9 +140,9 @@ Inject pre-built managers when you don't want Agentao to construct them from def
 
 | Param | Replaces |
 |-------|----------|
-| `memory_manager` | The default `MemoryManager` opening `<wd>/.agentao/memory.db` |
+| `memory_manager` | The default `MemoryManager` opening `<wd>/.agentao/memory.db`. Yours to close: `agent.close()` leaves it open |
 | `skill_manager` | The bundled-skill auto-discovery scan |
-| `mcp_manager` | `.agentao/mcp.json` discovery + lifecycle. **Mutually exclusive with `extra_mcp_servers=` and `mcp_registry=`** |
+| `mcp_manager` | `.agentao/mcp.json` discovery + lifecycle. Yours to disconnect: `agent.close()` leaves it connected. **Mutually exclusive with `extra_mcp_servers=` and `mcp_registry=`** |
 | `mcp_registry` | `load_mcp_config(...)` source. Use `InMemoryMCPRegistry` for programmatic registration. **Mutually exclusive with `mcp_manager=`** |
 :::
 

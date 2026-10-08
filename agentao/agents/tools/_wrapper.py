@@ -635,55 +635,72 @@ class AgentToolWrapper(Tool):
                 ask_user_callback=self._ask_user_callback,
             )
 
-        sub_agent = Agentao(
-            api_key=api_key,
-            base_url=base_url,
-            model=model_name,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            extra_body=extra_body,
-            prompt_cache=prompt_cache,
-            prompt_cache_ttl=prompt_cache_ttl,
-            api_format=api_format,
-            working_directory=self._working_directory,
-            sandbox_policy=self._sandbox_policy,
-            filesystem=self._filesystem,
-            shell=self._shell,
-            # The parent's logger. Left out, the sub-agent's ``LLMClient``
-            # evicts and closes the ``agentao.log`` handler the parent
-            # installed on the package logger and installs its own — from a
-            # background sub-agent's thread, while the parent is still logging
-            # through it. ``None`` for a parent that has no logger yet.
-            logger=live_cfg.get("logger"),
-            # No MCP source of its own: a sub-agent calls the parent's MCP
-            # tools over the parent's connections (``_narrow_tools``). Left to
-            # the default it read ``mcp.json`` again and launched every server
-            # a second time for each spawn (#239), and it missed the servers a
-            # host had passed to the parent in code.
-            mcp_registry=InMemoryMCPRegistry(),
-            # The parent's skills, with activation state of its own (#254) —
-            # and said at construction rather than assigned after it:
-            # ``activate_skill`` is built from whatever manager the agent
-            # holds, so replacing the attribute afterwards left the tool
-            # activating skills out of a manager the system prompt is no
-            # longer built from.
-            skill_manager=(
-                skill_manager if skill_manager is not None
-                else _child_skill_manager(self._skill_manager_getter, agent_name)
-            ),
-            # A memory store of the child's own: transient, unread, and
-            # discarded with it (#234). Left to the default it opened the
-            # parent's project ``memory.db``, and its compaction wrote both a
-            # session summary and crystallized proposals into it — see
-            # ``_child_memory_manager`` for why the read side goes with them.
-            memory_manager=_child_memory_manager(agent_name),
-            # The parent's background-task store, so the sub-agent's own
-            # ``check_background_agent`` / ``cancel_background_agent`` query
-            # and cancel the same tasks the parent's do.
-            bg_store=self._bg_store,
-            transport=transport,
-            max_context_tokens=self._max_context_tokens or 200_000,
-        )
+        # Built here, so a constructor that raises does not leak it: to
+        # ``Agentao`` it is injected, and an injected manager is the caller's.
+        child_memory = _child_memory_manager(agent_name)
+        try:
+            sub_agent = Agentao(
+                api_key=api_key,
+                base_url=base_url,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                extra_body=extra_body,
+                prompt_cache=prompt_cache,
+                prompt_cache_ttl=prompt_cache_ttl,
+                api_format=api_format,
+                working_directory=self._working_directory,
+                sandbox_policy=self._sandbox_policy,
+                filesystem=self._filesystem,
+                shell=self._shell,
+                # The parent's logger. Left out, the sub-agent's ``LLMClient``
+                # evicts and closes the ``agentao.log`` handler the parent
+                # installed on the package logger and installs its own — from a
+                # background sub-agent's thread, while the parent is still logging
+                # through it. ``None`` for a parent that has no logger yet.
+                logger=live_cfg.get("logger"),
+                # No MCP source of its own: a sub-agent calls the parent's MCP
+                # tools over the parent's connections (``_narrow_tools``). Left to
+                # the default it read ``mcp.json`` again and launched every server
+                # a second time for each spawn (#239), and it missed the servers a
+                # host had passed to the parent in code.
+                mcp_registry=InMemoryMCPRegistry(),
+                # The parent's skills, with activation state of its own (#254) —
+                # and said at construction rather than assigned after it:
+                # ``activate_skill`` is built from whatever manager the agent
+                # holds, so replacing the attribute afterwards left the tool
+                # activating skills out of a manager the system prompt is no
+                # longer built from.
+                skill_manager=(
+                    skill_manager if skill_manager is not None
+                    else _child_skill_manager(self._skill_manager_getter, agent_name)
+                ),
+                # A memory store of the child's own: transient, unread, and
+                # discarded with it (#234). Left to the default it opened the
+                # parent's project ``memory.db``, and its compaction wrote both a
+                # session summary and crystallized proposals into it — see
+                # ``_child_memory_manager`` for why the read side goes with them.
+                memory_manager=child_memory,
+                # The parent's background-task store, so the sub-agent's own
+                # ``check_background_agent`` / ``cancel_background_agent`` query
+                # and cancel the same tasks the parent's do.
+                bg_store=self._bg_store,
+                transport=transport,
+                max_context_tokens=self._max_context_tokens or 200_000,
+            )
+        except BaseException:
+            # Best effort, so the constructor's exception is the one that
+            # propagates.
+            try:
+                child_memory.close()
+            except Exception:
+                logger.warning(
+                    "memory close after a failed sub-agent construction",
+                    exc_info=True,
+                )
+            raise
+        # The sub-agent's own from here: its ``close()`` releases it.
+        sub_agent._adopt_memory_manager(child_memory)
 
         return sub_agent, {
             "omit_temperature": omit_temperature,

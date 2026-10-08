@@ -140,9 +140,9 @@ agent = Agentao(
 
 | 参数 | 替代的默认行为 |
 |------|--------------|
-| `memory_manager` | 默认会打开 `<wd>/.agentao/memory.db` 的 `MemoryManager` |
+| `memory_manager` | 默认会打开 `<wd>/.agentao/memory.db` 的 `MemoryManager`。由你关闭：`agent.close()` 不关它 |
 | `skill_manager` | 自带技能扫描 |
-| `mcp_manager` | `.agentao/mcp.json` 发现 + 生命周期。**与 `extra_mcp_servers=` 和 `mcp_registry=` 互斥** |
+| `mcp_manager` | `.agentao/mcp.json` 发现 + 生命周期。由你断开：`agent.close()` 不断开它。**与 `extra_mcp_servers=` 和 `mcp_registry=` 互斥** |
 | `mcp_registry` | `load_mcp_config(...)` 配置源。要程序化注册就传 `InMemoryMCPRegistry`。**与 `mcp_manager=` 互斥** |
 :::
 

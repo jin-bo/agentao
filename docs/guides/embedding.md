@@ -196,7 +196,7 @@ when the host is done with the session.
 | `llm_client` *or* `api_key`+`base_url`+`model` | **Yes** | The constructor raises `ValueError` if both are missing. |
 | `permission_engine` | No | Defaults to **no engine** (`None`): no rule is evaluated, and `set_permission_mode` raises `ValueError`. Pass your own `PermissionEngine(project_root=..., rules=[...])` when you need rules. `build_from_environment` always builds one. |
 | `permission_mode` | No | `"read-only"` / `"workspace-write"` / `"full-access"` (`"plan"` is refused). Builds `PermissionEngine(project_root=working_directory, rules=[])` in that mode, reading no rule file; the agent starts in it without emitting an event. Default `None`: no engine. Passing it with `permission_engine=` raises `ValueError`. |
-| `memory_manager` | No | Defaults to a project-scoped `:memory:`-fallback store. |
+| `memory_manager` | No | Defaults to a project-scoped `:memory:`-fallback store, which `close()` closes. One you pass in is yours to close. |
 | `mcp_registry` | No | Defaults to no MCP servers (the file-backed registry is only wired by the factory). |
 | `transport` | No | Defaults to `NullTransport()`, which approves every ask (below). |
 

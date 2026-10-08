@@ -42,6 +42,13 @@ class _CloseSpy:
         agent.close = _close  # type: ignore[method-assign]
 
 
+def _give_built_mcp(agent: Agentao, mcp: "_FakeMcp") -> None:
+    """Stand ``mcp`` in for a manager the agent built itself, the only kind
+    ``close()`` disconnects."""
+    agent.mcp_manager = mcp  # type: ignore[assignment]
+    agent._built_mcp_manager = mcp  # type: ignore[assignment]
+
+
 class _FakeMcp:
     def __init__(self) -> None:
         self.disconnects = 0
@@ -99,7 +106,7 @@ def test_async_with_closes_and_reraises_on_error(tmp_path):
 def test_aclose_runs_close(tmp_path):
     agent = _bare(tmp_path)
     mcp = _FakeMcp()
-    agent.mcp_manager = mcp  # type: ignore[assignment]
+    _give_built_mcp(agent, mcp)
     asyncio.run(agent.aclose())
     assert mcp.disconnects == 1
     assert agent.mcp_manager is None
@@ -120,7 +127,7 @@ def test_explicit_close_inside_with_is_safe(tmp_path, caplog):
         logger=logging.getLogger("test_agentao_context_manager"),
     )
     mcp = _FakeMcp()
-    agent.mcp_manager = mcp  # type: ignore[assignment]
+    _give_built_mcp(agent, mcp)
     assert agent.start_replay() is not None
     caplog.set_level(logging.WARNING)
     with agent:
@@ -168,7 +175,7 @@ def test_concurrent_closes_run_the_teardown_once(tmp_path):
             release.wait(5)
 
     mcp = _SlowMcp()
-    agent.mcp_manager = mcp  # type: ignore[assignment]
+    _give_built_mcp(agent, mcp)
     first = threading.Thread(target=agent.close)
     first.start()
     assert entered.wait(5)
@@ -190,7 +197,7 @@ def test_cancelled_aclose_still_closes_behind_a_busy_default_executor(tmp_path):
 
     agent = _bare(tmp_path)
     mcp = _FakeMcp()
-    agent.mcp_manager = mcp  # type: ignore[assignment]
+    _give_built_mcp(agent, mcp)
     closed = threading.Event()
     real = agent.close
 
@@ -288,7 +295,7 @@ def test_close_reentered_on_the_same_thread_returns_at_once(tmp_path):
             agent.close()  # what a SIGTERM handler would do mid-teardown
 
     mcp = _ReenteringMcp()
-    agent.mcp_manager = mcp  # type: ignore[assignment]
+    _give_built_mcp(agent, mcp)
     agent.close()
     assert mcp.disconnects == 1
     assert agent.mcp_manager is None
