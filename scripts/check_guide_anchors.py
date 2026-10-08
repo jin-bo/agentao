@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail when a developer-guide link names an ``#anchor`` the target page lacks.
+"""Fail when a developer-guide link names a page or ``#anchor`` the site lacks.
 
 VitePress builds with ``ignoreDeadLinks: true`` and does not check anchors at
 all, so a broken ``#anchor`` builds and deploys cleanly and lands the reader at
@@ -13,11 +13,14 @@ than a re-implementation of its slugger. Build first::
     (cd developer-guide && npm ci && npm run docs:build)
     python3 scripts/check_guide_anchors.py developer-guide
 
-Every ``](target#anchor)`` in ``developer-guide/{en,zh}/**/*.md`` is resolved
-— absolute (``/en/...``), relative and same-page — outside fenced code blocks.
-External URLs are skipped. A link whose page is missing from the build is
-reported too. Exit status 1 if anything is broken, 0 otherwise. Standard
-library only, so CI runs it without installing the project.
+Every ``](target)`` and ``](target#anchor)`` in
+``developer-guide/{en,zh}/**/*.md`` is resolved — absolute (``/en/...``),
+relative and same-page — outside fenced code blocks. External URLs are
+skipped. A relative link that climbs out of the site (``../../../docs/…``)
+works when the Markdown is read on GitHub and is dead on the published site,
+so it is reported as a missing page: link the file's GitHub URL instead.
+Exit status 1 if anything is broken, 0 otherwise. Standard library only, so
+CI runs it without installing the project.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ import sys
 import urllib.parse
 from pathlib import Path
 
-_LINK = re.compile(r"\]\(([^)\s]*)#([^)\s]+)\)")
+_LINK = re.compile(r"\]\(([^)\s#]*)(?:#([^)\s]+))?\)")
 _FENCE = re.compile(r"```.*?```", re.S)
 _ID = re.compile(r'id="([^"]+)"')
 
@@ -38,6 +41,9 @@ _ID = re.compile(r'id="([^"]+)"')
 def _ids(dist: Path, page: str, cache: dict) -> set[str] | None:
     if page not in cache:
         found = None
+        if (dist / page).is_file():  # an asset: an image, a .json, …
+            cache[page] = set()
+            return cache[page]
         for candidate in (dist / f"{page}.html", dist / page / "index.html"):
             if candidate.is_file():
                 text = candidate.read_text(encoding="utf-8")
@@ -63,7 +69,10 @@ def check(root: Path) -> list[str]:
             lambda m: "\n" * m.group(0).count("\n"), path.read_text(encoding="utf-8")
         )
         for m in _LINK.finditer(text):
-            target, anchor = m.group(1), urllib.parse.unquote(m.group(2))
+            target, anchor = m.group(1), m.group(2)
+            if target == "" and anchor is None:
+                continue
+            anchor = urllib.parse.unquote(anchor) if anchor is not None else None
             if re.match(r"^[a-z][a-z0-9+.-]*:", target):  # https:, mailto:, …
                 continue
             if target == "":
@@ -79,8 +88,8 @@ def check(root: Path) -> list[str]:
             ids = _ids(dist, page, cache)
             where = f"{path.relative_to(root.parent).as_posix()}:{line}"
             if ids is None:
-                problems.append(f"{where}: no page {page!r} for #{anchor}")
-            elif anchor not in ids:
+                problems.append(f"{where}: no page {page!r} (link {target!r})")
+            elif anchor is not None and anchor not in ids:
                 problems.append(f"{where}: no #{anchor} on {page}")
     return problems
 
@@ -91,7 +100,7 @@ def main() -> int:
     problems = check(parser.parse_args().root)
     for p in problems:
         print(p)
-    print(f"{len(problems)} broken anchor link(s)", file=sys.stderr)
+    print(f"{len(problems)} broken link(s)", file=sys.stderr)
     return 1 if problems else 0
 
 

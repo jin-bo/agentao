@@ -140,7 +140,7 @@ CLI 在每轮后把 goal 写入 `.agentao/goal.json`,使 goal 跨进程重启存
 - [ ] 每轮消息:首轮用目标,之后用续航提示。
 - [ ] 一个注入的 `update_goal` 式工具,**守卫为 active**,循环前加入、`finally` 移除。
 - [ ] 每轮前检查预算;触限时**一次**收尾轮。
-- [ ](可选)持久化状态以支持重启续命。
+- [ ] （可选）持久化状态以支持重启续命。
 - [ ] **不**建在 `force_continue` 上。
 
 → 范例:`agentao/cli/input_loop.py::run_goal_continuation`。用户指南:

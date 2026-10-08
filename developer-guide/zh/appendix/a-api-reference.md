@@ -21,7 +21,7 @@
 
 ### 构造器
 
-完整参数表见 [Part 2.2](/zh/part-2/2-constructor-reference)。**0.3.0 起**，不传 `working_directory=` 调用 `Agentao()` 会从 Python 签名分派直接抛 `TypeError`——软废弃周期已结束。完整嵌入式接入实践见 [`docs/guides/embedding.md`](../../../docs/guides/embedding.md)。
+完整参数表见 [Part 2.2](/zh/part-2/2-constructor-reference)。**0.3.0 起**，不传 `working_directory=` 调用 `Agentao()` 会从 Python 签名分派直接抛 `TypeError`——软废弃周期已结束。完整嵌入式接入实践见 [`docs/guides/embedding.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md)。
 
 ```python
 Agentao(
@@ -507,7 +507,7 @@ Week 2 字段语义要点：
   调用方侧信号，不是服务端状态。
 
 完整 state-vs-error 合约和 readiness 分级见
-[`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)。
+[`docs/guides/headless-runtime.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md)。
 
 ### 异常类
 
@@ -552,7 +552,7 @@ load_acp_client_config(project_root: Path | None = None) -> AcpClientConfig
 
 > **命名说明。** "Harness" 仍然指 *Agentao 自身嵌入在宿主应用中运行* 这一概念（见 `docs/design/embedded-host-contract.md` 设计语境）；合约包重命名为 `agentao.host` 是为了让 `from agentao.host import HostEvent` 读起来自洽。旧的 `agentao.harness` 导入路径以及旧符号名（`HarnessEvent`、`HarnessReplaySink`、`export_harness_*`）自 0.4.2 起告警，**已于 0.5.0 移除** —— 把 `harness` / `Harness` 换成 `host` / `Host` 即可。
 
-完整参考：[`docs/reference/host-api.md`](../../../docs/reference/host-api.md) · [`docs/reference/host-api.zh.md`](../../../docs/reference/host-api.zh.md)。设计动机：[`docs/design/embedded-host-contract.md`](../../../docs/design/embedded-host-contract.md)。
+完整参考：[`docs/reference/host-api.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/host-api.md) · [`docs/reference/host-api.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/host-api.zh.md)。设计动机：[`docs/design/embedded-host-contract.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/embedded-host-contract.md)。
 
 ### 公共导出
 
@@ -643,8 +643,8 @@ snap = agent.active_permissions()
 
 每个发布版都附带 check-in 的 JSON schema 快照：
 
-- [`docs/schema/host.events.v1.json`](../../../docs/schema/host.events.v1.json) —— 事件 + 权限面
-- [`docs/schema/host.acp.v1.json`](../../../docs/schema/host.acp.v1.json) —— 宿主面 ACP 载荷
+- [`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json) —— 事件 + 权限面
+- [`docs/schema/host.acp.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.acp.v1.json) —— 宿主面 ACP 载荷
 
 `tests/test_host_schema.py` 会从 Pydantic 模型重新生成 schema，并与快照做字节相等比对。任何改变 wire form 的 model 变更必须在同一 PR 内同时更新模型与快照。新增 optional 字段向后兼容；删除/重命名需要 schema 版本号 bump。
 
