@@ -11,12 +11,15 @@ handle itself: detached from the logger and its stream closed.
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
+import shutil
 
 import pytest
 
 from agentao import Agentao
 from agentao.llm import LLMClient
+from agentao.llm import client as llm_client_module
 
 
 def _tagged() -> list[logging.Handler]:
@@ -28,9 +31,15 @@ def _tagged() -> list[logging.Handler]:
 
 
 @pytest.fixture(autouse=True)
-def _restore_package_logger():
+def _restore_package_logger(monkeypatch):
     pkg = logging.getLogger("agentao")
     handlers, level = list(pkg.handlers), pkg.level
+    # A handler and clients left open by other tests are set aside: the
+    # file is not handed to them here, and _tagged() sees only this test's.
+    for h in handlers:
+        if getattr(h, "_agentao_llm_file_handler", False):
+            pkg.removeHandler(h)
+    monkeypatch.setattr(llm_client_module, "_log_owners", [])
     yield
     for h in list(pkg.handlers):
         if h not in handlers:
@@ -157,6 +166,71 @@ def test_closing_an_older_agent_keeps_the_newer_agents_log(tmp_path):
     older.close()
     assert _tagged() == [handler]
     assert handler.stream is not None
+    newer.close()
+    assert _tagged() == []
+
+
+def test_closing_the_newest_agent_hands_the_log_back(tmp_path):
+    """The handler is process-wide; closing the agent that holds it must not
+    end file logging for an agent still running (an ACP server's other
+    sessions)."""
+    older = _build(tmp_path / "a")
+    newer = _build(tmp_path / "b")
+    newer_handler = _log_handler(newer)
+    newer.close()
+    assert newer_handler.stream is None
+    restored = _log_handler(older)
+    assert restored is not newer_handler
+    logging.getLogger("agentao.test").info("after the newer agent closed")
+    assert "after the newer agent closed" in (
+        tmp_path / "a" / "agentao.log"
+    ).read_text(encoding="utf-8")
+    older.close()
+    assert _tagged() == []
+    assert restored.stream is None
+
+
+def test_the_log_goes_back_past_agents_already_closed(tmp_path):
+    first = _build(tmp_path / "a")
+    middle = _build(tmp_path / "b")
+    last = _build(tmp_path / "c")
+    middle.close()  # its handler was already evicted: nothing changes
+    _log_handler(last)
+    last.close()
+    _log_handler(first)
+    first.close()
+    assert _tagged() == []
+
+
+def test_a_failed_construction_hands_the_log_back(tmp_path):
+    live = _build(tmp_path / "a")
+    with pytest.raises(ValueError, match="no_such_tool"):
+        _build(tmp_path / "b", enabled_tools={"no_such_tool"})
+    _log_handler(live)
+    live.close()
+    assert _tagged() == []
+
+
+def test_the_log_is_not_handed_to_an_agent_whose_directory_is_gone(tmp_path):
+    older = _build(tmp_path / "a")
+    newer = _build(tmp_path / "b")
+    shutil.rmtree(tmp_path / "a")
+    newer.close()
+    assert _tagged() == []
+    assert not (tmp_path / "a").exists()
+    older.close()
+
+
+def test_a_client_dropped_without_close_is_not_handed_the_log(tmp_path):
+    dropped = LLMClient(
+        api_key="k",
+        base_url="https://test.local/v1",
+        model="m",
+        log_file=str(tmp_path / "dropped.log"),
+    )
+    newer = _build(tmp_path / "b")
+    del dropped
+    gc.collect()
     newer.close()
     assert _tagged() == []
 

@@ -336,9 +336,11 @@ can delete the working directory afterwards, Windows included. A client
 you built yourself and passed as `llm_client=` is yours to close:
 `llm.close()` does the same for it. The handler lives on the shared
 `"agentao"` logger and each new `LLMClient` replaces the previous one's,
-so with several agents in one process `agentao.log` follows the most
-recently built client, and closing that agent stops file logging for the
-others too.
+so with several agents in one process records go to the `agentao.log` of
+the most recently built agent still open. Closing that agent hands the
+logger back to the next most recent open agent's own `agentao.log`, so the
+others keep logging; a client dropped without `close()` is not handed it
+back.
 
 The rest of the package — `getLogger("agentao.tools.web")`,
 `getLogger("agentao.acp_client")`, `getLogger("agentao.mcp")`, etc. —
