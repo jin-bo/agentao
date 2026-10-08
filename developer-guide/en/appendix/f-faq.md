@@ -18,15 +18,14 @@ uv add 'agentao[mcp]'          # or
 uv add 'agentao[all]'
 ```
 
-### "ValueError: OPENAI_API_KEY is not set"
+### "ValueError: Agentao(): api_key, base_url, and model are required…"
 
-Three resolution options:
+A direct `Agentao(...)` reads no environment variables, so it needs its credentials passed in. Two ways:
 
-1. `.env` at working-directory root, with `OPENAI_API_KEY=…`
-2. Process env: `export OPENAI_API_KEY=…`
-3. Constructor: `Agentao(api_key="sk-…")`
+1. Pass them: `Agentao(api_key=…, base_url=…, model=…, working_directory=…)`, or a pre-built `llm_client=` instead of the three.
+2. Build through the factory: `agentao.embedding.build_from_environment(working_directory=…)` reads `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` (or the `LLM_PROVIDER` block's `{PROVIDER}_*`) from the process environment and from `<working_directory>/.env`.
 
-Constructor wins over env, which wins over `.env`. See [Appendix B](./b-config-keys).
+On the factory path, a keyword argument wins over the process environment, which wins over `.env`. See [Appendix B](./b-config-keys).
 
 ### "Model 'gpt-5.4' not found" (custom endpoint)
 

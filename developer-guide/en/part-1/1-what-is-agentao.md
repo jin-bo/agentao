@@ -9,13 +9,13 @@
 
 ```python
 from pathlib import Path
-from agentao import Agentao
+from agentao.embedding import build_from_environment
 
-agent = Agentao(working_directory=Path.cwd())
+agent = build_from_environment(working_directory=Path.cwd())
 print(agent.chat("Summarize the last 5 commits."))
 ```
 
-That's the whole minimum. No web server, no extra services. The same runtime also speaks the **ACP** stdio JSON-RPC protocol, so non-Python hosts (IDE plugins, Node, Go, Rust) can drive it without re-implementing anything:
+That's the whole minimum, with the model's credentials in the `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` environment variables ([1.4](/en/part-1/4-hello-agentao)). A host that passes them in code calls `Agentao(...)` directly instead ([2.2](/en/part-2/2-constructor-reference)). No web server, no extra services. The same runtime also speaks the **ACP** stdio JSON-RPC protocol, so non-Python hosts (IDE plugins, Node, Go, Rust) can drive it without re-implementing anything:
 
 ```bash
 agentao --acp --stdio

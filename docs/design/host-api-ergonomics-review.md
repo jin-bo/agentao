@@ -225,6 +225,7 @@ So no design here may require or encourage replacing the transport.
   - keyword-only already bounds the misuse risk;
   - grouping parameters into config objects would churn every doc, example and test without closing a defect;
   - the guide already leads with one form.
+  - **Docs pass (2026-10-07).** The signature is unchanged (33 parameters since `permission_mode=`). The developer guide's constructor reference (en/zh, §2.2) now opens with a map of all 33, grouped by purpose, and documents the six it had left out (`max_tokens`, `prompt_cache`, `prompt_cache_ttl`, `compaction_controller`, `plan_session`, `enable_builtin_agents`). It also corrects its smallest call: without `llm_client=`, `api_key`, `base_url` and `model` are all required, and a direct `Agentao(...)` reads no environment variables, so the three-parameter example it showed raised `ValueError`.
 
 ### F7. A common task should touch few names
 
