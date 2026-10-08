@@ -33,7 +33,7 @@ Handshake. MUST be first call.
 
 | Field | Value | Meaning |
 |-------|-------|---------|
-| `loadSession` | `true` | `session/load` supported — see [7.2](/en/part-7/2-ide-plugin#3-persist-resume-across-ide-restart) |
+| `loadSession` | `true` | `session/load` supported — see [7.2](/en/part-7/2-ide-plugin#_3-·-persist-resume-across-ide-restart) |
 | `promptCapabilities.image` | `true` | 0.4.8+: inline `{data, mimeType}` image blocks; non-vision degradation — see [A.1](/en/appendix/a-api-reference#image-input-and-vision-degradation) |
 | `promptCapabilities.audio` | `false` | |
 | `promptCapabilities.embeddedContext` | `false` | |
@@ -164,7 +164,7 @@ Server asks client to confirm a tool call.
 | `outcome.outcome` | `"selected"` or `"cancelled"` | |
 | `outcome.optionId` | `string` | Required when `selected` |
 
-**Cancellation rule**: if the client never answers and the turn is cancelled, the agent resolves all pending permission requests with `cancelled`. See [7.2 pitfall](/en/part-7/2-ide-plugin#pitfalls).
+**Cancellation rule**: if the client never answers and the turn is cancelled, the agent resolves all pending permission requests with `cancelled`. See [7.2 pitfall](/en/part-7/2-ide-plugin#⚠️-pitfalls).
 
 ## C.6 `session/cancel`
 

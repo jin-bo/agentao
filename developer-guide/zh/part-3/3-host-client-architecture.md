@@ -292,7 +292,7 @@ UI 线程 ──response (id=X)──▶ 写线程 ──▶ agent
 - **尊重 `options`**：agent 会告诉你允许的回复值（`allow_once`、`reject_once`…）。别自造
 - **用户关窗**：回 `{"outcome":{"outcome":"cancelled"}}`，不要默不作声
 
-完整 schema 见[附录 C.6](/zh/appendix/c-acp-messages#c-6-session-request-permission)。
+完整 schema 见[附录 C.6](/zh/appendix/c-acp-messages#c-5-session-request-permission-⇠-通知)。
 
 ## 3.3.7 错误处理与重连
 

@@ -112,7 +112,7 @@ Zed **每个 agent 实例起一个 `agentao` 子进程**，每个项目通过 `s
 2. 在 stdio 上讲 NDJSON JSON-RPC 2.0
 3. `session/update` → UI，`session/request_permission` → 模态
 
-使用 [3.3.4](./3-host-client-architecture#3-3-4-typescript-node-参考实现) 里 TS `ACPClient` 的 VS Code 插件见[蓝图 B](/zh/part-7/2-ide-plugin)。
+使用 [3.3.4](./3-host-client-architecture#_3-3-4-typescript-node-参考实现) 里 TS `ACPClient` 的 VS Code 插件见[蓝图 B](/zh/part-7/2-ide-plugin)。
 
 ### JetBrains / IntelliJ
 

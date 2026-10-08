@@ -45,7 +45,7 @@ uv add 'agentao[all]'
 三个可能原因：
 
 1. **工具死循环** —— 撞到 `max_iterations`。调低上限或接 `on_max_iterations`（[4.6](/zh/part-4/6-max-iterations)）
-2. **工具卡住** —— 自定义工具无超时。用 `timeout=` 包住子进程/HTTP 调用（[6.7](/zh/part-6/7-resource-concurrency#控制-4-工具超时)）
+2. **工具卡住** —— 自定义工具无超时。用 `timeout=` 包住子进程/HTTP 调用（[6.7](/zh/part-6/7-resource-concurrency#控制点-4-·-工具超时)）
 3. **需要用户输入** —— 默认 `ask_user` 在无头模式会永久等待。用 `SdkTransport(ask_user=…)` override
 
 宿主侧硬兜底：
@@ -90,7 +90,7 @@ agent.memory.clear(scope="project")
 两处要修：
 
 - **SDK**：自己序列化 `agent.messages`；重启后 `agent.messages = saved_messages`
-- **ACP**：用 `session/load` + 存好的 `sessionId`——agent 必须声明 `loadSession: true`（[7.2 模式](/zh/part-7/2-ide-plugin#3-ide-重启后的会话恢复)）
+- **ACP**：用 `session/load` + 存好的 `sessionId`——agent 必须声明 `loadSession: true`（[7.2 模式](/zh/part-7/2-ide-plugin#_3-·-ide-重启后的会话恢复)）
 
 ## F.4 MCP
 
@@ -128,7 +128,7 @@ agent.memory.clear(scope="project")
 
 ### "生产上有人把沙箱关了——如何强制"
 
-沙箱配置是合并的：项目 `.agentao/sandbox.json` 覆盖用户。容器里把项目配置以只读挂载，LLM 改不了持久化。见 [7.4 陷阱表](/zh/part-7/4-data-workbench#陷阱)。
+沙箱配置是合并的：项目 `.agentao/sandbox.json` 覆盖用户。容器里把项目配置以只读挂载，LLM 改不了持久化。见 [7.4 陷阱表](/zh/part-7/4-data-workbench#⚠️-陷阱)。
 
 ### "Agent 试图抓 169.254.169.254"
 
@@ -138,7 +138,7 @@ agent.memory.clear(scope="project")
 
 ### initialize 时报 `handshake_fail`
 
-多半是版本不匹配。Agentao v0.2.x 讲 `protocolVersion: 1`（整数）。如果你的客户端发 `"2025-09-01"` 这样的字符串，服务器会拒。见 [3.1](/zh/part-3/1-acp-tour)。如果错误到你手里是 `AcpRpcError`（不是带 `code=HANDSHAKE_FAIL` 的 `AcpClientError`），则握手阶段信号在 `details["phase"] == "handshake"`——完整分类规则见[附录 D §D.7](./d-error-codes#d-7-识别握手阶段失败规范写法)。
+多半是版本不匹配。Agentao v0.2.x 讲 `protocolVersion: 1`（整数）。如果你的客户端发 `"2025-09-01"` 这样的字符串，服务器会拒。见 [3.1](/zh/part-3/1-acp-tour)。如果错误到你手里是 `AcpRpcError`（不是带 `code=HANDSHAKE_FAIL` 的 `AcpClientError`），则握手阶段信号在 `details["phase"] == "handshake"`——完整分类规则见[附录 D §D.7](./d-error-codes#d-7-识别握手阶段失败-规范写法)。
 
 ### `prompt_once` 报 `server_busy`
 
@@ -148,7 +148,7 @@ Fail-fast 语义——已有别人在 turn 里。两条路：
 - 可排队的场景改用会话式 API（`send_prompt`）
 - 或每租户独立子进程
 
-见 [附录 D.5](./d-error-codes#d-5-重试策略)。
+见 [附录 D.5](./d-error-codes#d-6-重试策略)。
 
 ### "session/cancel 停不下我的长工具"
 
@@ -170,7 +170,7 @@ if mgr.is_ready("my-server"):
 
 ### "为什么上一次 turn 成功了，`last_error` 还在？"
 
-这是有意设计。`last_error` / `last_error_at` 是**粘性诊断字段**——每分钟轮询一次的 host 仍然应该看到"最近一次失败是什么"。消费顺序：先看 `state`（或 `readiness()`）决定是否放行，再把 `last_error` 当作历史诊断读。需要显式清空调 `reset_last_error(name)`。见 [附录 D.5](./d-error-codes#d-5-状态与错误合约headless)。
+这是有意设计。`last_error` / `last_error_at` 是**粘性诊断字段**——每分钟轮询一次的 host 仍然应该看到"最近一次失败是什么"。消费顺序：先看 `state`（或 `readiness()`）决定是否放行，再把 `last_error` 当作历史诊断读。需要显式清空调 `reset_last_error(name)`。见 [附录 D.5](./d-error-codes#d-5-状态与错误合约-headless)。
 
 ### "`last_error_at` 是 raise 时刻吗？"
 
@@ -184,7 +184,7 @@ Week 3 把历史裸字符串形式下掉了。新形态是结构化对象：
 "nonInteractivePolicy": { "mode": "reject_all" }
 ```
 
-错误是在**配置加载阶段**（`AcpClientConfig.from_dict` / `load_acp_client_config`）炸的，不会等到 `send_prompt` 再暴露——目的就是不让配置漂移悄悄上线。如果只是想单次调用覆盖，不用改配置，直接在 `send_prompt` / `prompt_once` 上传 `interaction_policy=`。完整迁移见 [附录 E.7](./e-migration#e-7-headless-运行时noninteractivepolicy-形态变更week-3)。
+错误是在**配置加载阶段**（`AcpClientConfig.from_dict` / `load_acp_client_config`）炸的，不会等到 `send_prompt` 再暴露——目的就是不让配置漂移悄悄上线。如果只是想单次调用覆盖，不用改配置，直接在 `send_prompt` / `prompt_once` 上传 `interaction_policy=`。完整迁移见 [附录 E.7](./e-migration#e-7-headless-运行时——noninteractivepolicy-形态变更-week-3)。
 
 ### "server 中途挂了，怎么恢复？"
 
@@ -213,11 +213,11 @@ Week 3 把历史裸字符串形式下掉了。新形态是结构化对象：
 
 ### "K8s pod 重启后会话丢了"
 
-用 `StatefulSet`（不是 `Deployment`），`/data` 挂 PVC。Service 设 `sessionAffinity: ClientIP`。见 [6.8](/zh/part-6/8-deployment#kubernetes-要点)。
+用 `StatefulSet`（不是 `Deployment`），`/data` 挂 PVC。Service 设 `sessionAffinity: ClientIP`。见 [6.8](/zh/part-6/8-deployment#kubernetes-注意事项)。
 
 ### "每租户怎么控 token 花销"
 
-`TokenBudget` 模式——见 [6.7](/zh/part-6/7-resource-concurrency#token-预算)。要精确计数装 `agentao[tokenizer]`（拉 `tiktoken`）。
+`TokenBudget` 模式——见 [6.7](/zh/part-6/7-resource-concurrency#令牌预算)。要精确计数装 `agentao[tokenizer]`（拉 `tiktoken`）。
 
 ### 成本一夜翻倍
 
@@ -227,7 +227,7 @@ Week 3 把历史裸字符串形式下掉了。新形态是结构化对象：
 - 技能改了导致每轮调的工具变多
 - 上下文压缩触发更频繁——查 `max_context_tokens`
 
-对比昨天 vs 今天的 `LLM_TEXT` 事件 token 数。Session replay（[6.6](/zh/part-6/6-observability#维度三session-replay)）让这件事可行。
+对比昨天 vs 今天的 `LLM_TEXT` 事件 token 数。Session replay（[6.6](/zh/part-6/6-observability#维度三-session-replay)）让这件事可行。
 
 ## F.8 开发与测试
 
