@@ -349,4 +349,7 @@ def test_load_rejects_an_unusable_file_without_echoing_values(tmp_path, content,
 
     with pytest.raises(LLMConfigError, match=match) as info:
         load_user_llm_config(path)
-    assert "42" not in str(info.value)
+    # The message names the file on purpose; drop that first, or a tmp path
+    # containing "42" (pytest-42, pytest-1420…) reads as an echoed value.
+    message = str(info.value).replace(str(path), "<path>")
+    assert "42" not in message
