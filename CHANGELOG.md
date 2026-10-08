@@ -25,6 +25,10 @@ _Targeting 0.5.12. Add entries under the relevant heading as work lands._
 - **`TurnOutcome` is defined in `agentao.outcome`**, a standard-library-only module, and exported from `agentao.host`. `agentao.TurnOutcome` and `agentao.runtime.outcome.TurnOutcome` are the same class. `from agentao import TurnOutcome` no longer loads the chat loop and the LLM client, which the comment beside it had always claimed.
 - **Stricter types for two `Agentao` members** (runtime behaviour unchanged; a strict host may see new mypy errors). `compact(reason=)` is typed as `ManualCompactionReason` (`agentao.compaction.types`, new): `Literal["manual_cli", "api_overflow", "compression_threshold"]`, the three reasons it documents, rather than `str`, so a plain `str` variable or a reason that belongs to another rung no longer type-checks there. The `agent.transport` attribute is now typed `CoreTransport` as well (it was `Any`), so a strict host that subscribes calls `subscribe()` on the transport object it constructed, whose class it knows, rather than through `agent.transport`. An `isinstance(t, Transport)` check would satisfy the type checker but proves nothing at runtime: it passes for a `ReplayAdapter` (what `agent.transport` is with replay enabled), whose `subscribe()` registers nothing when the transport it wraps has none, and for a class that subclasses `Transport` explicitly without defining `subscribe()`, which inherits the protocol's no-op stub.
 
+### Deprecated
+
+- **`Agentao.add_event_observer` / `Agentao.remove_event_observer`.** Both now emit `DeprecationWarning`; use `add_host_event_observer` / `remove_host_event_observer`, which they already forwarded to. Behaviour is otherwise unchanged, and they will be removed in a later minor release. `agentao run` no longer calls them.
+
 ### Fixed
 
 - **Replay inspection keeps valid records when a crash truncates a UTF-8 character.** Decode each JSONL record independently, so an incomplete or invalid UTF-8 record is skipped without losing earlier or later events in listings and readers.

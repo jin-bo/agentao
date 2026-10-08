@@ -6,6 +6,7 @@ import os
 import concurrent.futures
 import contextvars
 import threading
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterable, List, Optional, Sequence, Set, TypeVar, Union, TYPE_CHECKING
@@ -1187,11 +1188,29 @@ class Agentao:
         return self._host_events.remove_observer(callback)
 
     def add_event_observer(self, callback: _ObserverT) -> _ObserverT:
-        """Backward-compatible alias for :meth:`add_host_event_observer`."""
+        """Deprecated alias for :meth:`add_host_event_observer`.
+
+        Emits ``DeprecationWarning``; to be removed in a later minor release.
+        """
+        warnings.warn(
+            "Agentao.add_event_observer is deprecated; "
+            "use add_host_event_observer",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.add_host_event_observer(callback)
 
     def remove_event_observer(self, callback: Callable[["HostEvent"], object]) -> bool:
-        """Backward-compatible alias for :meth:`remove_host_event_observer`."""
+        """Deprecated alias for :meth:`remove_host_event_observer`.
+
+        Emits ``DeprecationWarning``; to be removed in a later minor release.
+        """
+        warnings.warn(
+            "Agentao.remove_event_observer is deprecated; "
+            "use remove_host_event_observer",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.remove_host_event_observer(callback)
 
     def events(self, session_id: Optional[str] = None) -> AsyncGenerator["HostEvent", None]:
