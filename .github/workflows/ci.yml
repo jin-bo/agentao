@@ -105,13 +105,15 @@ jobs:
   # on pushes to main, so a PR that breaks it is found after the merge. It is
   # built with `ignoreDeadLinks: true`, and VitePress never checks anchors, so
   # a broken `#anchor` deploys cleanly: 90 had accumulated before #452/#453.
-  # The check reads the built HTML, so the slugs are VitePress's own.
+  # So had 34 links to pages the site lacks, most of them relative links out
+  # of the site (`../../../docs/…`) that work only when read on GitHub. The
+  # check reads the built HTML, so the slugs are VitePress's own.
   #
   # On every PR, with no `paths:` filter: about 40 s of runner time in
   # parallel with jobs that take two to three minutes, and a path-filtered
   # job that is later made required leaves PRs it skipped waiting forever.
   guide-anchors:
-    name: Developer guide · build + anchors
+    name: Developer guide · build + links
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -134,7 +136,7 @@ jobs:
         run: npm run docs:build
 
       # Standard library only: the runner's python3, no project install.
-      - name: Check every #anchor link against the built site
+      - name: Check every page and #anchor link against the built site
         run: python3 ../scripts/check_guide_anchors.py .
 
   # ─────────────────────────────────────────────────────────────

@@ -34,7 +34,7 @@ uv run python -m pytest tests/       # Default suite
 uv run python -m pytest tests/ -n logical  # Same, in parallel (pytest-xdist) — how CI runs it on Windows, and on Linux for PRs (pushes to main stay serial: the fixed-order run)
 uv run python -m pytest -m slow      # Clean-install smoke tests
 uv run ruff check .                  # Lint gate — required CI check
-(cd developer-guide && npm ci && npm run docs:build) && python3 scripts/check_guide_anchors.py developer-guide  # Guide anchors — CI job
+(cd developer-guide && npm ci && npm run docs:build) && python3 scripts/check_guide_anchors.py developer-guide  # Guide pages + anchors — CI job
 ```
 
 The `slow` marker is excluded by default (`pyproject.toml :: tool.pytest.ini_options.addopts = "--tb=short -m 'not slow'"`). CI runs it in the **build** job on Python 3.12, right after `uv build` — the only job with a `dist/*.whl` to install — so `-m slow` is a required check too, and it needs `uv build` locally first.

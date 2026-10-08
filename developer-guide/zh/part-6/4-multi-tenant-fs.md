@@ -223,7 +223,7 @@ agent = Agentao(
 
 所有内置写工具共用同一个 wrapper 实例，所以 `set_policy(...)` 对已经注册的工具也生效。给 `agent.filesystem` 赋一个新 wrapper 则不会生效，因为每个工具保留的是注册时拿到的那个实例。
 
-这个 wrapper 只能**收紧**。它不能让原生 `write_file` 写到 `working_directory` 之外的根，因为工具自己的单根检查在 wrapper 之前就拒绝了那个路径。shell 命令和 `mcp_*` 工具根本不经过 `filesystem`。背景与其余设计见 [`docs/design/host-fs-policy.md`](../../../docs/design/host-fs-policy.md)。`tests/test_fs_policy_wrapper_recipe.py` 用真实的写工具运行这段示例。
+这个 wrapper 只能**收紧**。它不能让原生 `write_file` 写到 `working_directory` 之外的根，因为工具自己的单根检查在 wrapper 之前就拒绝了那个路径。shell 命令和 `mcp_*` 工具根本不经过 `filesystem`。背景与其余设计见 [`docs/design/host-fs-policy.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/host-fs-policy.md)。`tests/test_fs_policy_wrapper_recipe.py` 用真实的写工具运行这段示例。
 
 ### 动态生成规则
 
