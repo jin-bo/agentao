@@ -258,12 +258,20 @@ Hook 留下的痕迹分两层：实时事件流（给 UI / 审计）和 replay �
 每次 hook 派发完——只要 `matched_rule_count > 0`——运行时会发一条 `PLUGIN_HOOK_FIRED` 到 transport：
 
 ```python
-async for ev in agent.events_async():
+from agentao import Agentao
+from agentao.transport import SdkTransport
+from agentao.transport.events import EventType
+
+def on_event(ev):
     if ev.type == EventType.PLUGIN_HOOK_FIRED:
         hook_name = ev.data["hook_name"]
         outcome = ev.data["outcome"]
         # ... 按 hook_name 分支处理
+
+agent = Agentao(..., transport=SdkTransport(on_event=on_event))
 ```
+
+它是 transport 事件，不是 `HostEvent`：`agent.events()` 里没有它，要从 transport 的 `on_event` 读取；`on_event` 在发出事件的线程上同步调用。`EventType` 是内部类型，载荷字段可能随版本变化。
 
 不同 `hook_name` 携带不同字段（emit shape 在 chat-loop 里固定）：
 
