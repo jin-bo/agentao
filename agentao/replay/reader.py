@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Set
 
 from .events import EventKind
+from ._files import replay_files_oldest_first
 from .meta import ReplayMeta
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ def list_replays(project_root: Optional[Path] = None) -> List[ReplayMeta]:
     if not dir_.exists():
         return []
     metas: List[ReplayMeta] = []
-    for path in sorted(dir_.glob("*.jsonl"), key=lambda p: p.stat().st_mtime):
+    for path in replay_files_oldest_first(dir_):
         meta = _summarize(path)
         if meta is not None:
             metas.append(meta)
@@ -65,9 +66,7 @@ def open_replay(
         if not path.exists():
             return None
         return ReplayReader(path)
-    candidates = sorted(
-        dir_.glob(f"{safe_sid}.*.jsonl"), key=lambda p: p.stat().st_mtime
-    )
+    candidates = replay_files_oldest_first(dir_, f"{safe_sid}.*.jsonl")
     if not candidates:
         return None
     return ReplayReader(candidates[-1])

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .config import REPLAY_DEFAULTS
+from ._files import replay_files_oldest_first
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ class ReplayRetentionPolicy:
         # Sort oldest first so the slice-to-delete contains the oldest
         # files. mtime is "good enough" and cheap; instance_id is random
         # so lexical order would not match creation order.
-        files = sorted(dir_.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+        files = replay_files_oldest_first(dir_)
         if len(files) <= self.max_instances:
             return []
         to_delete = files[: len(files) - self.max_instances]
