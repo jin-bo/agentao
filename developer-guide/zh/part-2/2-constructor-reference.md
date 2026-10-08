@@ -1,8 +1,9 @@
 # 2.2 构造器完整参数表
 
 > **本节你会学到**
-> - **必传的 3 个参数**及为什么必传
-> - **生产环境通常会用到的 8 个参数**（transport / permissions / MCP …）
+> - **能跑起来的最小调用**：四个参数，或者传预构造的 `llm_client=` 时两个
+> - **一张图看全 33 个参数**，按配置对象分组
+> - **生产环境通常会用到的参数**（transport / permissions / MCP …）
 > - 给需要完全控制的宿主用的**高级注入面**
 > - 两种工厂路径（直接 `Agentao(...)` vs `build_from_environment(...)`）以及如何选
 
@@ -17,9 +18,30 @@
 
 ---
 
-## 第 1 档 · 最少必备（3 个参数）
+## 33 个参数一览
 
-**这 3 个必须传，其他都有合理默认。**
+`Agentao.__init__` 共 33 个参数，只有 `working_directory` 没有默认值。前五个（`api_key`、`base_url`、`model`、`temperature`、`max_tokens`）可以按位置传，其余都只能按关键字传。下面按配置对象分组，用不到的组可以直接跳过。
+
+| 分组 | 参数 | 讲解位置 |
+|------|------|----------|
+| **会话根目录**（必填） | `working_directory` | 第 1 档 |
+| **模型**，原始设置 | `api_key`、`base_url`、`model`（不传 `llm_client` 时三个都必填）；`temperature`、`max_tokens`、`api_format`、`extra_body`、`prompt_cache`、`prompt_cache_ttl` | 第 1–3 档 |
+| **模型**，预构造 | `llm_client`（取代整行原始设置；两者同时传抛 `ValueError`） | 第 2 档 |
+| **权限与交互** | `transport`、`permission_mode` *或* `permission_engine`、`plan_session` | 第 2–3 档 |
+| **上下文与压缩** | `max_context_tokens`、`compaction_controller` | 第 2–3 档 |
+| **工具** | `extra_tools`、`disable_tools` *或* `enabled_tools` | 第 2 档 |
+| **MCP** | `mcp_manager`，*或* `extra_mcp_servers` 与 `mcp_registry`（这两个可以一起传） | 第 2–3 档 |
+| **提示词** | `project_instructions` | 第 2 档 |
+| **自带对象** | `logger`、`memory_manager`、`skill_manager`、`filesystem`、`shell` | 第 3 档 |
+| **可选子系统**（默认关闭） | `bg_store`、`sandbox_policy`、`replay_config`、`enable_builtin_agents` | 第 3 档 |
+
+用*或*连接的参数、以及两行"模型"，彼此互斥：两边都传会抛 `ValueError`；见[互斥规则](#互斥规则)。
+
+---
+
+## 第 1 档 · 能跑起来的最小调用
+
+**四个参数**，其他都有默认值。
 
 ```python
 from pathlib import Path
@@ -27,18 +49,20 @@ from agentao import Agentao
 
 agent = Agentao(
     api_key="sk-...",
+    base_url="https://api.openai.com/v1",
     model="gpt-5.4",
     working_directory=Path("/tmp/my-session"),
 )
 ```
 
-| 参数 | 类型 | 为什么必传 |
-|------|------|----------|
-| `api_key` | `str` | LLM 凭据。也可以走 env `OPENAI_API_KEY`，或传入预构造的 `llm_client=` |
-| `model` | `str` | 模型 ID。也可以走 env `OPENAI_MODEL` |
+| 参数 | 类型 | 为什么 |
+|------|------|--------|
+| `api_key` | `str` | LLM 凭据 |
+| `base_url` | `str` | 端点：OpenAI、DeepSeek、Gemini gateway、vLLM …… 没有内置默认值 |
+| `model` | `str` | 模型 ID |
 | `working_directory` | `Path` | 这个会话的项目根目录。**构造时冻结**——文件 / Shell / 记忆全部相对它 |
 
-> 端点不是 OpenAI 时（DeepSeek / Gemini gateway / vLLM …）还要传 `base_url`，或走 env `OPENAI_BASE_URL`。
+不传 `llm_client=` 时，`api_key`、`base_url`、`model` 少任何一个都会抛 `ValueError`。直接调用 `Agentao(...)` **不读任何环境变量**：`OPENAI_API_KEY` 等只由 `build_from_environment()` 读取（见[工厂路径](#工厂路径-build-from-environment)）。另一种最小调用是 `Agentao(llm_client=my_client, working_directory=...)`，凭据放在 client 上。
 
 ::: warning 千万别省略 `working_directory`
 Web 服务 / 多租户进程里 `Path.cwd()` 是**进程全局**——并发会话会互相污染。0.3.0 起这个关键字必传，不传会从 Python 签名分派直接抛 `TypeError`。
@@ -46,7 +70,7 @@ Web 服务 / 多租户进程里 `Path.cwd()` 是**进程全局**——并发会�
 
 ---
 
-## 第 2 档 · 生产常用（再加 8 个）
+## 第 2 档 · 生产常用
 
 这套搭配能覆盖大多数生产嵌入：
 
@@ -73,13 +97,15 @@ agent = Agentao(
 )
 ```
 
+`PermissionEngine(project_root=workdir)` 不传 `rules=` 也不传 `user_root=` 时，不加载任何规则文件：`<workdir>/.agentao/permissions.json` 从不加载，只会发警告。所以上面构造 `engine` 的两行，与不传 `permission_engine=engine`、改传 `permission_mode="workspace-write"` 得到的规则相同。有规则要加载时才自己构造引擎：`rules=[...]`，或用 `user_root=` 加载 `<user_root>/permissions.json`。
+
 | 参数 | 类型 | 默认 | 作用 |
 |------|------|------|------|
-| `base_url` | `str` | OpenAI 默认 | 切换到任意 OpenAI 兼容端点 |
+| `max_tokens` | `int \| None` | `None`——用 client 的 65,536 | 每次调用的输出上限 |
 | `temperature` | `float \| None` | `None` | 采样温度。`None` 表示不发送 `temperature`，由 provider 默认值决定（0.5.7；此前为 `0.2`） |
 | `extra_body` | `Dict[str,Any]` | `None` | 原样转发给 LLM `.create()` 的 SDK `extra_body` —— 封闭请求构建够不到的参数的逃生舱（`reasoning_effort` / `top_p` / `seed` / `response_format` / provider 专有字段）。**仅关键字。** 子 agent 继承;日志中凭据键脱敏。**与 `llm_client` 互斥**。详见下文 |
 | `api_format` | `str` | `"openai-completions"` | 对 `base_url` 说哪种线路协议（0.5.0）：`"openai-completions"`、`"anthropic-messages"`（Anthropic 的 Messages API，走官方 SDK）或 `"openai-responses"`（OpenAI 的 Responses API，0.5.3）。**仅关键字**；显式配置，从不根据 URL 或模型名推断；之后只能由 `set_provider(..., api_format=)` 改变；子代理继承；**与 `llm_client=` 互斥**。未知值抛 `ValueError`。在 `anthropic-messages` 上，`base_url` 是 API 根，不发送 `temperature`，扩展思考走 `extra_body`。环境变量等价物：`{PROVIDER}_API_FORMAT` —— 见[附录 B](/zh/appendix/b-config-keys) |
-| `transport` | `Transport` | `NullTransport()` | UI 桥：事件流 + 工具确认 + ask_user + 最大迭代回调，详见 [第 4 部分](/zh/part-4/) |
+| `transport` | `CoreTransport` | `NullTransport()` | UI 桥：事件流 + 工具确认 + ask_user + 最大迭代回调，详见 [第 4 部分](/zh/part-4/) |
 | `permission_engine` | `PermissionEngine` | `None`——没有引擎，不执行任何规则（`build_from_environment` 会建一个根在 `working_directory` 的） | 规则级权限引擎；权限模式和 `set_permission_mode` 都需要它，详见 [5.4](/zh/part-5/4-permissions) |
 | `permission_mode` | `str` | `None`——什么都不建 | `"read-only"` / `"workspace-write"` / `"full-access"`（不接受 `"plan"`）：以该模式构造 `PermissionEngine(project_root=working_directory, rules=[])`，不读取任何规则文件，并以该模式启动、不发事件。与 `permission_engine` 互斥。详见 [5.4](/zh/part-5/4-permissions) |
 | `max_context_tokens` | `int` | `200_000` | 超过即触发对话压缩 |
@@ -87,7 +113,7 @@ agent = Agentao(
 | `extra_tools` | `Sequence[Tool]` | `None` | 注入 / 替换工具（实例；最后注册，同名覆盖内置）。见 [5.1](/zh/part-5/1-custom-tools) |
 | `disable_tools` | `Iterable[str]` | `None` | 按名跳过这些内置工具（未知名 → `ValueError`）。**与 `enabled_tools` 互斥** |
 | `enabled_tools` | `Iterable[str]` | `None` | 保留的 agentao 自有工具白名单；`None`=关，任意可迭代含 `set()`=开。**与 `disable_tools` 互斥** |
-| `llm_client` | `LLMClient` | （由凭据自动构造） | 注入预构造客户端，完全控制 logger / 日志文件。**与 `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` 互斥**（自带 client 的 host 把 `extra_body=` 直接传给该 client） |
+| `llm_client` | `LLMClient` | （由凭据自动构造） | 注入预构造客户端，完全控制 logger / 日志文件。**与所有原始模型设置互斥**：`api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` / `prompt_cache` / `prompt_cache_ttl` / `api_format`（自带 client 的 host 把它们传给该 client） |
 | `project_instructions` | `str` | （从 `<wd>/AGENTAO.md` 读） | 直接传 AGENTAO.md 内容，跳过磁盘读 |
 
 ::: tip 异步宿主走 `arun()`
@@ -140,19 +166,20 @@ agent = Agentao(
 
 | 参数 | 替代的默认行为 |
 |------|--------------|
-| `memory_manager` | 默认会打开 `<wd>/.agentao/memory.db` 的 `MemoryManager` |
+| `memory_manager` | 默认会打开 `<wd>/.agentao/memory.db` 的 `MemoryManager`。由你关闭：`agent.close()` 不关它 |
 | `skill_manager` | 自带技能扫描 |
-| `mcp_manager` | `.agentao/mcp.json` 发现 + 生命周期。**与 `extra_mcp_servers=` 和 `mcp_registry=` 互斥** |
+| `mcp_manager` | `.agentao/mcp.json` 发现 + 生命周期。由你断开：`agent.close()` 不断开它。**与 `extra_mcp_servers=` 和 `mcp_registry=` 互斥** |
 | `mcp_registry` | `load_mcp_config(...)` 配置源。要程序化注册就传 `InMemoryMCPRegistry`。**与 `mcp_manager=` 互斥** |
 :::
 
-::: details 可选启用的子系统 — `bg_store` / `sandbox_policy` / `replay_config`
-**默认 `None` = 完全禁用**。不用就不付任何代价。
+::: details 可选启用的子系统 — `bg_store` / `sandbox_policy` / `replay_config` / `enable_builtin_agents`
+**默认 `None`（或 `False`）= 完全禁用**。不用就不付任何代价。
 
 | 参数 | `None` 时 |
 |------|----------|
 | `bg_store` | 后台任务工具（`check_background_agent` / `cancel_background_agent`）不注册；子 agent 的工具 schema 抠掉 `run_in_background` 字段；`/agent bg\|dashboard\|cancel\|delete\|logs\|result` 等 CLI 子命令 no-op + 警告 |
 | `sandbox_policy` | Shell 不套 macOS `sandbox-exec` |
+| `enable_builtin_agents`（`False`） | 内置子代理（`codebase-investigator`、`generalist`）不注册为委派工具。工厂会读 `settings.json` 里的 `agents.enable_builtin` |
 | `replay_config` | 构造时不读 `<wd>/.agentao/settings.json` 里的 `replay` 块；在 `start_replay()` / `reload_replay_config()` 创建 `ReplayManager` 之前不挂它。单独调 `start_replay()` 创建的是关闭 replay 的管理器（返回 `None`）；`reload_replay_config()` 才读这个块，但它本身不开始记录：之后再调 `start_replay()`，且只有其中 `enabled` 为真时才记录 |
 :::
 
@@ -186,6 +213,15 @@ agent = Agentao(
 `extra_headers` 与 `settings.json` 文件层有意延后；见 `docs/design/host-llm-extra-params.md`。
 :::
 
+::: details 很少设置的 — `prompt_cache` / `prompt_cache_ttl` / `compaction_controller` / `plan_session`
+| 参数 | 默认 | 作用 |
+|------|------|------|
+| `prompt_cache` | `None`（关） | `"anthropic"` 会在每个请求上放显式的提示缓存断点（最多 3 个）。默认关闭，因为端点是否支持未经验证。从不根据 URL 或模型名推断。环境变量等价物：`LLM_PROMPT_CACHE`，只由工厂读取 |
+| `prompt_cache_ttl` | `None`（provider 默认，`"5m"`） | `"5m"` 或 `"1h"`。`prompt_cache` 关闭时忽略。环境变量等价物：`LLM_PROMPT_CACHE_TTL` |
+| `compaction_controller` | `None` | 一个同步可调用对象，决定允许、取消压缩，或提供摘要。失败即放行：抛异常按允许处理。见 [`host-api.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/host-api.zh.md) |
+| `plan_session` | `None`（新建一个 `PlanSession`） | 计划模式状态。CLI 会传自己的；嵌入宿主一般不用管 |
+:::
+
 ::: details 8 个 legacy 回调（已于 0.5.0 移除）
 0.2.10 之前的接口。它们在 0.4.x 期间一直告警，现在**不再是参数**：传入任何一个都会抛 `TypeError`。要么直接走 Transport，要么保留回调、包一层 —— `agentao.embedding.compat.build_compat_transport(...)` 接受同样的八个名字，且没有被废弃：`Agentao(transport=build_compat_transport(confirmation_callback=...), ...)`。
 
@@ -211,7 +247,7 @@ agent = Agentao(
 
 | 不能同时传 | 原因 |
 |------------|------|
-| `llm_client=` + 任意 `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` | 注入的 client 已经是凭据源 —— 改为把 `extra_body=` 直接传给该 client |
+| `llm_client=` + 任意 `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` / `prompt_cache` / `prompt_cache_ttl` / `api_format` | 注入的 client 已经是凭据源 —— 改为把这些直接传给该 client |
 | `mcp_manager=` + `extra_mcp_servers=` | 会话级合并需要 Agentao 自己构造的 manager |
 | `mcp_manager=` + `mcp_registry=` | Registry 是配置源，manager 是构造结果 |
 | `permission_engine=` + `permission_mode=` | 一个是引擎，一个会构造引擎——在你自己的引擎上设置模式，或在构造后调用 `set_permission_mode()` |
@@ -272,7 +308,7 @@ def make_agent_for_session(
 
     return Agentao(
         api_key=os.environ["OPENAI_API_KEY"],
-        base_url=os.environ.get("OPENAI_BASE_URL"),
+        base_url=os.environ["OPENAI_BASE_URL"],
         model="gpt-5.4",
         temperature=0.1,
         transport=transport,
@@ -316,9 +352,10 @@ agent = build_from_environment(
 
 ## TL;DR
 
-- **必传 3 个**：`api_key`、`model`、`working_directory`（`Path`，构造时冻结）。
-- **生产常用 8 个**：+ `base_url`、`temperature`、`transport`、`permission_engine`、`max_context_tokens`、`extra_mcp_servers`、`llm_client`、`project_instructions`。
-- **其他全部是可选 / 高级** —— 能力协议、自定义管理器、沙箱 / replay / 后台子系统。
+- **33 个参数，只有一个必填**：`working_directory`（`Path`，构造时冻结）。[上面的一览表](#_33-个参数一览)按用途给其余参数分了组。
+- **能跑起来的最小调用**：`api_key` + `base_url` + `model` + `working_directory`，或 `llm_client` + `working_directory`。直接调用 `Agentao(...)` 不读环境变量。
+- **生产环境常加的**：`transport`、`permission_mode`（或 `permission_engine`）、`max_context_tokens`、`extra_mcp_servers`、`project_instructions`、`temperature`。
+- **其他全部是可选 / 高级** —— 能力协议、自定义管理器、提示缓存、压缩控制、沙箱 / replay / 后台 / 子代理子系统。
 - **两条工厂**：`build_from_environment()` 走 CLI 约定；直接 `Agentao(...)` 走显式控制。**不要混用。**
 
 → 下一节：[2.3 生命周期管理](./3-lifecycle)

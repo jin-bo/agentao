@@ -13,7 +13,7 @@
 - `from agentao.memory.manager import MemoryManager`
 - `from agentao.cancellation import ...` → `CancellationToken`、`AgentCancelledError`（`CancellationToken` 也从 `agentao.host` 导出——同一个类，是宿主应使用的稳定路径）
 - `from agentao.acp_client import ...` → `ACPManager`、`ACPClient`、`AcpClientError`、`AcpErrorCode`、`AcpRpcError`、`AcpInteractionRequiredError`、`AcpClientConfig`、`AcpServerConfig`、`AcpConfigError`、`PromptResult`、`ServerState`、`load_acp_client_config`（以及更底层的 re-export——哪些属于"稳定嵌入面"、哪些属于"实现细节"请参考 `agentao.acp_client.__init__.py` 的 docstring）
-- `from agentao.host import ...` → `ActivePermissions`、`EventStream`、`StreamSubscribeError`、`HostEvent`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`SubagentUsage`、`PermissionDecisionEvent`、`RFC3339UTCString`、`export_host_event_json_schema`、`export_host_acp_json_schema`、`CancellationToken`、`Tool`、`AsyncToolBase`、`RegistrableTool`、`TextDelta`、`TurnOutcome` —— 宿主面 harness 合约，详见 [A.10](#a-10-嵌入-harness-合约)
+- `from agentao.host import ...` → `ActivePermissions`、`EventStream`、`StreamSubscribeError`、`HostEvent`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`SubagentUsage`、`PermissionDecisionEvent`、`RFC3339UTCString`、`export_host_event_json_schema`、`export_host_acp_json_schema`、`CancellationToken`、`Tool`、`AsyncToolBase`、`RegistrableTool`、`TextDelta`、`TurnOutcome` —— 宿主面 harness 合约，详见 [A.10](#a-10-嵌入-host-合约)
 
 ## A.1 `Agentao`
 
@@ -21,7 +21,7 @@
 
 ### 构造器
 
-完整参数表见 [Part 2.2](/zh/part-2/2-constructor-reference)。**0.3.0 起**，不传 `working_directory=` 调用 `Agentao()` 会从 Python 签名分派直接抛 `TypeError`——软废弃周期已结束。完整嵌入式接入实践见 [`docs/guides/embedding.md`](../../../docs/guides/embedding.md)。
+完整参数表见 [Part 2.2](/zh/part-2/2-constructor-reference)。**0.3.0 起**，不传 `working_directory=` 调用 `Agentao()` 会从 Python 签名分派直接抛 `TypeError`——软废弃周期已结束。完整嵌入式接入实践见 [`docs/guides/embedding.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md)。
 
 ```python
 Agentao(
@@ -101,13 +101,13 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 | `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | 异步接口——通过 `loop.run_in_executor` 桥到 `chat()`。取消、replay、`max_iterations`、`images` 语义与同步版完全一致 |
 | `astream` | `astream(user_message: str, *, max_iterations: int = 100, images: list[dict] | None = None, cancellation_token: CancellationToken | None = None) -> AsyncGenerator[TextDelta | TurnOutcome, None]` | 跑一轮并流式输出：先产出 `TextDelta`，最后一项是本轮的 `TurnOutcome`。增量用于显示，结果以 outcome 为准——回答取 `TurnOutcome.text`，并先用 `.is_answer` 检查。用 `contextlib.aclosing(...)` 包住——关闭它（或取消消费方）会取消本轮。订阅 agent 的 transport，从不替换它。见 [4.7](/zh/part-4/7-host-contract#streaming-text-agent-astream) |
 | `clear_history` | `clear_history() -> None` | 清 `self.messages`、已激活 skills、todos 与 token 计数；不影响 memory DB。后台 agent 继续运行，但完成通知不再进入历史（用 `check_background_agent` 查看） |
-| `close` | `close() -> None` | 关 MCP 子进程与 DB handle；可重复调用。请放 `finally:`，或用 `with` |
+| `close` | `close() -> None` | 关 agent 自己打开的 MCP 子进程与 DB handle（注入的 `mcp_manager=` / `memory_manager=` 由你释放）；可重复调用。请放 `finally:`，或用 `with` |
 | `aclose` | `async aclose() -> None` | 在独立线程上运行 `close()`，不阻塞事件循环。先结束 agent 的轮次；它不会等待或取消正在进行的轮次 |
 | `__enter__` / `__exit__`、`__aenter__` / `__aexit__` | `with Agentao(...) as agent:` / `async with ... as agent:` | context manager：返回 agent 本身；退出时调用 `close()`（同步）或 `aclose()`（异步）。块内的异常照常抛出 |
 | `set_provider` | `set_provider(api_key, base_url=None, model=None, *, api_format=None) -> None` | 运行时换 LLM。`api_format`（0.5.0）指明新 provider 的线路协议；`None` 保持当前线路 |
 | `set_model` | `set_model(model: str) -> str` | 只换模型；返回旧 id |
-| `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncGenerator[HostEvent, None]` | 订阅公共 harness 事件（工具/子 Agent/权限决定生命周期）。无 replay；有界背压。详见 [A.10](#a-10-嵌入-harness-合约) |
-| `active_permissions` (0.3.1+) | `active_permissions() -> ActivePermissions` | 当前权限策略快照（`mode`、`rules`、`loaded_sources`），JSON-safe。详见 [A.10](#a-10-嵌入-harness-合约) |
+| `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncGenerator[HostEvent, None]` | 订阅公共 harness 事件（工具/子 Agent/权限决定生命周期）。无 replay；有界背压。详见 [A.10](#a-10-嵌入-host-合约) |
+| `active_permissions` (0.3.1+) | `active_permissions() -> ActivePermissions` | 当前权限策略快照（`mode`、`rules`、`loaded_sources`），JSON-safe。详见 [A.10](#a-10-嵌入-host-合约) |
 | `add_tool` | `add_tool(tool: RegistrableTool, *, replace: bool = False) -> None` | 构造后注册工具；与 `extra_tools=` 同样的校验 + 能力绑定。名字冲突且未传 `replace=True` 时抛异常（比 `tools.register` 更严）。保留名（`mcp_`、plan 工具）拒绝。下一次 `chat()`/`arun()` 可见。见 [5.1](/zh/part-5/1-custom-tools) |
 | `remove_tool` | `remove_tool(name: str) -> bool` | 构造后移除工具；返回是否存在过（缺失 → `False`，不抛）。`mcp_` / plan 工具会抛异常。下一次 `chat()`/`arun()` 消失 |
 
@@ -507,7 +507,7 @@ Week 2 字段语义要点：
   调用方侧信号，不是服务端状态。
 
 完整 state-vs-error 合约和 readiness 分级见
-[`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)。
+[`docs/guides/headless-runtime.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md)。
 
 ### 异常类
 
@@ -552,7 +552,7 @@ load_acp_client_config(project_root: Path | None = None) -> AcpClientConfig
 
 > **命名说明。** "Harness" 仍然指 *Agentao 自身嵌入在宿主应用中运行* 这一概念（见 `docs/design/embedded-host-contract.md` 设计语境）；合约包重命名为 `agentao.host` 是为了让 `from agentao.host import HostEvent` 读起来自洽。旧的 `agentao.harness` 导入路径以及旧符号名（`HarnessEvent`、`HarnessReplaySink`、`export_harness_*`）自 0.4.2 起告警，**已于 0.5.0 移除** —— 把 `harness` / `Harness` 换成 `host` / `Host` 即可。
 
-完整参考：[`docs/reference/host-api.md`](../../../docs/reference/host-api.md) · [`docs/reference/host-api.zh.md`](../../../docs/reference/host-api.zh.md)。设计动机：[`docs/design/embedded-host-contract.md`](../../../docs/design/embedded-host-contract.md)。
+完整参考：[`docs/reference/host-api.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/host-api.md) · [`docs/reference/host-api.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/host-api.zh.md)。设计动机：[`docs/design/embedded-host-contract.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/embedded-host-contract.md)。
 
 ### 公共导出
 
@@ -643,8 +643,8 @@ snap = agent.active_permissions()
 
 每个发布版都附带 check-in 的 JSON schema 快照：
 
-- [`docs/schema/host.events.v1.json`](../../../docs/schema/host.events.v1.json) —— 事件 + 权限面
-- [`docs/schema/host.acp.v1.json`](../../../docs/schema/host.acp.v1.json) —— 宿主面 ACP 载荷
+- [`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json) —— 事件 + 权限面
+- [`docs/schema/host.acp.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.acp.v1.json) —— 宿主面 ACP 载荷
 
 `tests/test_host_schema.py` 会从 Pydantic 模型重新生成 schema，并与快照做字节相等比对。任何改变 wire form 的 model 变更必须在同一 PR 内同时更新模型与快照。新增 optional 字段向后兼容；删除/重命名需要 schema 版本号 bump。
 

@@ -5,7 +5,7 @@ It speaks just enough MCP to connect, list three tools (``slow_a``, ``slow_b``,
 needs to observe is a file in its ``marks`` directory:
 
 - ``started-<pid>`` for every launch;
-- ``called-<tool>`` when a call arrives;
+- ``called-<tool>`` when a call arrives, once it is in ``calls``;
 - ``overlap`` when two calls are in flight at once;
 - ``eof-<pid>`` when its stdin closes;
 - ``calls``, one line per tool call it has run, across launches.
@@ -62,9 +62,14 @@ SCRIPT = textwrap.dedent('''
             active[0] += 1
             if active[0] >= 2:
                 (marks / "overlap").touch()
+            # Under the lock: an append on Windows is a seek to the end and a
+            # write, so two threads appending at once can land on one offset
+            # and lose a line. Before the marker: a test that waits for
+            # ``called-<tool>`` and then kills the server must find the call
+            # in the log.
+            with open(marks / "calls", "a") as log:
+                log.write(name + "\\n")
         (marks / f"called-{name}").touch()
-        with open(marks / "calls", "a") as log:
-            log.write(name + "\\n")
         if (marks / "die").exists():
             os._exit(0)  # the call ran; its answer never leaves
         if (marks / "hang").exists():

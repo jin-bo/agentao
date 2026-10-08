@@ -740,7 +740,7 @@ def _run_pipeline(
         elif event.outcome == "prompt":
             transport.queue_ask(event.tool_name, event.tool_call_id)
 
-    agent.add_event_observer(_on_event)
+    agent.add_host_event_observer(_on_event)
 
     pre_prompt = agent.llm.total_prompt_tokens
     pre_completion = agent.llm.total_completion_tokens
@@ -814,7 +814,7 @@ def _run_pipeline(
     except Exception as exc:
         runtime_error = exc
     finally:
-        agent.remove_event_observer(_on_event)
+        agent.remove_host_event_observer(_on_event)
         transport_unsubscribe()
         _restore_signal_handlers(prev_sigint, prev_sigterm)
 

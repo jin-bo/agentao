@@ -34,9 +34,9 @@ Save as `hello.py`:
 
 ```python
 from pathlib import Path
-from agentao import Agentao
+from agentao.embedding import build_from_environment
 
-agent = Agentao(working_directory=Path.cwd())
+agent = build_from_environment(working_directory=Path.cwd())
 print(agent.chat("List the 3 largest files under the current directory."))
 agent.close()
 ```
@@ -56,7 +56,7 @@ The three largest files under the current directory are:
 
 ## What just happened
 
-- `Agentao(...)` created **one stateful session** — history, tools, and memory are bound to this instance
+- `build_from_environment(...)` read the three variables from Step 2 and built an `Agentao` — **one stateful session**, with history, tools, and memory bound to this instance. It reads the environment, `.env` and `.agentao/` files the way the CLI does; a direct `Agentao(...)` reads none of them and needs `api_key=`, `base_url=` and `model=` passed in ([2.2](/en/part-2/2-constructor-reference))
 - `chat()` ran the full LLM loop: think → call tool → observe → think → answer
 - `working_directory` rooted file/shell tools at the current dir. **Always pass an explicit `Path` in production** so concurrent instances don't share `Path.cwd()`
 - `close()` released MCP subprocesses and DB handles — wrap in `try/finally` in real code
@@ -65,14 +65,14 @@ The three largest files under the current directory are:
 
 ```python
 from pathlib import Path
-from agentao import Agentao
+from agentao.embedding import build_from_environment
 from agentao.transport import SdkTransport
 
 def stream(ev):
     if ev.type.name == "LLM_TEXT":
         print(ev.data["chunk"], end="", flush=True)
 
-agent = Agentao(
+agent = build_from_environment(
     working_directory=Path.cwd(),
     transport=SdkTransport(on_event=stream),
 )
@@ -82,14 +82,14 @@ agent.close()
 
 `LLM_TEXT` is an internal event whose fields may change between releases. In async code, the stable way to stream the text is `agent.astream(...)` — see [4.4](/en/part-4/4-streaming-ui).
 
-That's the whole pattern. Tool confirmations, custom tools, permissions, memory — every other feature extends from these two calls (`Agentao(...)` + `chat(...)`).
+That's the whole pattern. Tool confirmations, custom tools, permissions, memory — every other feature extends from these two calls (building the agent + `chat(...)`).
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---------|--------------|
 | `ImportError: cannot import name 'Agentao'` | Forgot `pip install agentao`, or imported from `agentao.agent` (not the public path) |
-| `ValueError: OPENAI_API_KEY is not set` | All three of `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` are required |
+| `ValueError: Agentao(): api_key, base_url, and model are required…` | One of `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` is unset, or the agent was built with `Agentao(...)`, which reads no environment variables — see [Appendix F.1](/en/appendix/f-faq#f-1-setup-startup) |
 | Agent says `Tool execution declined` | Default permissions denied a write — see [5.4](/en/part-5/4-permissions) |
 | `chat()` never returns | Likely tool loop or no `ask_user` callback — see [Appendix F.2](/en/appendix/f-faq#f-2-runtime-behavior) |
 

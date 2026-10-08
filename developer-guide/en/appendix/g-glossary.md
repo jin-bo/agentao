@@ -37,7 +37,7 @@ Canonical EN ↔ ZH terms used in this guide. If you find a translation that doe
 | Sandbox | 沙箱 | macOS `sandbox-exec` profile wrapping the shell tool |
 | Skill activation | 激活技能 | Turning a skill on for the current agent so its prompt text is injected |
 | Plugin Hook | 插件 Hook | Control-plane extension: intercept, inject, or continue at agent lifecycle points (`UserPromptSubmit` / `PreToolUse` / `Stop`, …) — see [§5.7](/en/part-5/7-plugin-hooks) |
-| Hook Rule | Hook 规则 | A single `ParsedHookRule` in `hooks.json` (`event` + `type` + `command|prompt` + optional `matcher`/`timeout`) — see [§5.7.3](/en/part-5/7-plugin-hooks#5-7-3-writing-a-rule) |
+| Hook Rule | Hook 规则 | A single `ParsedHookRule` in `hooks.json` (`event` + `type` + `command|prompt` + optional `matcher`/`timeout`) — see [§5.7.3](/en/part-5/7-plugin-hooks#_5-7-3-writing-a-rule) |
 
 ## G.3 ACP terms
 
@@ -65,7 +65,7 @@ Canonical EN ↔ ZH terms used in this guide. If you find a translation that doe
 | TTL eviction | TTL 驱逐 | Removing pool entries idle beyond a time-to-live |
 | LRU eviction | LRU 驱逐 | Removing the least-recently-used pool entry when capacity is hit |
 | `prompt_once` | 一次性提示 | `ACPManager.prompt_once()` — single-turn fire-and-forget API |
-| Headless runtime | 无头运行时 | Running Agentao as a non-interactive embedding target — `ACPManager` driving ACP servers with typed `get_status()` snapshots and no human in the loop. See [`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md). |
+| Headless runtime | 无头运行时 | Running Agentao as a non-interactive embedding target — `ACPManager` driving ACP servers with typed `get_status()` snapshots and no human in the loop. See [`docs/guides/headless-runtime.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md). |
 | Tenant | 租户 | The top-level isolation unit in multi-tenant SaaS — each tenant has its own working directory + memory |
 | Canary | 灰度 | Rolling out a change to a small traffic % before full deployment |
 

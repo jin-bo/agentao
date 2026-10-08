@@ -38,7 +38,7 @@ The harness contract types the **observability**, **policy**, and **wire-schema*
 |---------|---------------|-------------------|---------|
 | **Events** | `agent.events()` async iterator | A stream of `HostEvent` (tool / sub-agent / permission lifecycle) | Audit pipelines, observability, real-time UI |
 | **Policy snapshot** | `agent.active_permissions()` | A JSON-safe `ActivePermissions` (mode + rules + sources) | Settings UI, audit-log enrichment, compliance reports |
-| **Capability protocols** | `from agentao.host.protocols import FileSystem, ShellExecutor, MCPRegistry, MemoryStore` | Runtime-checkable Protocols you implement to inject Docker / virtual FS / audit proxies / programmatic MCP / remote memory backends | See [2.2 Tier 3 · capability protocols](/en/part-2/2-constructor-reference#tier-3-advanced-injections) and [6.4](/en/part-6/4-multi-tenant-fs); end-to-end demo [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection) |
+| **Capability protocols** | `from agentao.host.protocols import FileSystem, ShellExecutor, MCPRegistry, MemoryStore` | Runtime-checkable Protocols you implement to inject Docker / virtual FS / audit proxies / programmatic MCP / remote memory backends | See [2.2 Tier 3 · capability protocols](/en/part-2/2-constructor-reference#tier-3-·-advanced-injections) and [6.4](/en/part-6/4-multi-tenant-fs); end-to-end demo [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection) |
 
 Streaming a turn's assistant text has a stable path too, `agent.astream()` — see [Streaming text](#streaming-text-agent-astream) in 4.7.4.
 

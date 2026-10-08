@@ -2,7 +2,7 @@
 
 `/context` 显示 token 用量并能调上限。`/status` 是会话状态的一屏快照。两者合在一起就是仪表盘。
 
-`/status` 在 [1. 起步](./1-getting-started#status-我现在是什么状态) 已讲过；本页聚焦 `/context` 和"为什么这次会话越用越贵"这个更大的问题。
+`/status` 在 [1. 起步](./1-getting-started#status-—-我现在是什么状态) 已讲过；本页聚焦 `/context` 和"为什么这次会话越用越贵"这个更大的问题。
 
 ## `/context` — token 预算仪表盘
 

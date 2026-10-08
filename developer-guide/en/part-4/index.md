@@ -8,7 +8,7 @@ The only interface between the agent runtime and your UI is the **Transport**. T
 - **HostEvent** — Pydantic-typed lifecycle event (tool / permission / subagent); **stable**, with schema snapshots · [§4.7](/en/part-4/7-host-contract), [G.1](/en/appendix/g-glossary#g-1-core-concepts)
 - **`agent.events()`** — async pull iterator on the *stable* `agentao.host` surface; use for audit / SIEM / billing · [§4.7](/en/part-4/7-host-contract)
 - **`agent.astream()`** — *stable* way to stream a turn's assistant text: `TextDelta` items, then the `TurnOutcome`; deltas are for display, the outcome is the answer · [§4.4](/en/part-4/4-streaming-ui), [§4.7](/en/part-4/7-host-contract#streaming-text-agent-astream)
-- **`active_permissions()`** — JSON-safe snapshot of the effective policy; use for "who can do what" UIs · [§4.7](/en/part-4/7-host-contract#the-active-permissions-snapshot), [G.5](/en/appendix/g-glossary#g-5-security-vocabulary)
+- **`active_permissions()`** — JSON-safe snapshot of the effective policy; use for "who can do what" UIs · [§4.7](/en/part-4/7-host-contract#_4-7-6-agent-active-permissions-—-policy-snapshots), [G.5](/en/appendix/g-glossary#g-5-security-vocabulary)
 :::
 
 ## Coverage

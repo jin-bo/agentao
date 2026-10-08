@@ -41,7 +41,7 @@ Agent 是"长尾出 bug"的典型——90% 时间好好的，10% 出现让你无
 
 1. 把它挂到持久化卷（容器重启不丢）
 2. 按天切分 + 保留 7-30 天
-3. 做[脱敏](./5-secrets-injection#四日志脱敏)
+3. 做[脱敏](./5-secrets-injection#四-日志脱敏)
 4. 按租户分文件（`working_directory` 天然分）
 
 ### 接管 Agentao 的 logger
