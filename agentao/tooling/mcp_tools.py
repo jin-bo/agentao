@@ -112,12 +112,23 @@ def init_mcp(agent: "Agentao") -> Optional["McpClientManager"]:
     _ensure_mcp_classes()
 
     manager = McpClientManager(configs)
+    # The manager is not returned yet, so nothing else can release it: a
+    # failed registration, or an interrupt (Ctrl-C) while servers are still
+    # connecting, disconnects it here, then propagates as before.
     try:
-        manager.connect_all()
-    except Exception as e:
-        agent.llm.logger.warning(f"MCP connection error: {e}")
-
-    register_mcp_tools(agent, manager)
+        try:
+            manager.connect_all()
+        except Exception as e:
+            agent.llm.logger.warning(f"MCP connection error: {e}")
+        register_mcp_tools(agent, manager)
+    except BaseException:
+        try:
+            manager.disconnect_all()
+        except Exception as e:
+            agent.llm.logger.warning(
+                f"MCP disconnect after a failed tool registration: {e}"
+            )
+        raise
     return manager
 
 

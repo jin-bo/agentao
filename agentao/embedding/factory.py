@@ -285,35 +285,6 @@ def build_from_environment(
             loaded_sources=permission_config.sources,
         )
 
-    memory_manager = overrides.pop("memory_manager", None)
-    if memory_manager is None:
-        # Project store always succeeds — degrades to ``:memory:`` on disk
-        # error (matches the pre-#16 behavior in restricted environments
-        # like ACP subprocess launches). User store is optional and
-        # disabled with a warning if it cannot be opened, since user-scope
-        # memory is cross-project state and silently re-routing to project
-        # would conflate the scopes.
-        project_store = SQLiteMemoryStore.open_or_memory(
-            wd / ".agentao" / "memory.db"
-        )
-        user_store: Optional[SQLiteMemoryStore] = None
-        user = user_root()
-        if user is not None:
-            try:
-                user_store = SQLiteMemoryStore.open(user / "memory.db")
-            except (OSError, sqlite3.Error) as exc:
-                logger.warning(
-                    "User memory store at %s unavailable (%s: %s); "
-                    "user-scope memory disabled for this session.",
-                    user / "memory.db",
-                    type(exc).__name__,
-                    exc,
-                )
-        memory_manager = MemoryManager(
-            project_store=project_store,
-            user_store=user_store,
-        )
-
     # Wire CLI defaults for the opt-in subsystems. Caller can disable
     # any of them by passing an explicit ``None`` — the ``in overrides``
     # check sees the key, skips the default, and forwards ``None``.
@@ -344,6 +315,41 @@ def build_from_environment(
             user_root=user_root(),
         )
 
+    memory_manager = overrides.pop("memory_manager", None)
+    # Built here, so released here if ``Agentao(...)`` raises: to the
+    # constructor it is an injected manager, which it leaves to its owner.
+    # Built last, after the subsystem defaults above, so nothing between
+    # opening the stores and the ``try`` below can raise and strand them.
+    built_memory_manager: Optional[MemoryManager] = None
+    if memory_manager is None:
+        # Project store always succeeds — degrades to ``:memory:`` on disk
+        # error (matches the pre-#16 behavior in restricted environments
+        # like ACP subprocess launches). User store is optional and
+        # disabled with a warning if it cannot be opened, since user-scope
+        # memory is cross-project state and silently re-routing to project
+        # would conflate the scopes.
+        project_store = SQLiteMemoryStore.open_or_memory(
+            wd / ".agentao" / "memory.db"
+        )
+        user_store: Optional[SQLiteMemoryStore] = None
+        user = user_root()
+        if user is not None:
+            try:
+                user_store = SQLiteMemoryStore.open(user / "memory.db")
+            except (OSError, sqlite3.Error) as exc:
+                logger.warning(
+                    "User memory store at %s unavailable (%s: %s); "
+                    "user-scope memory disabled for this session.",
+                    user / "memory.db",
+                    type(exc).__name__,
+                    exc,
+                )
+        memory_manager = MemoryManager(
+            project_store=project_store,
+            user_store=user_store,
+        )
+        built_memory_manager = memory_manager
+
     # When the caller supplied an ``llm_client``, do not surface the
     # factory-discovered raw provider kwargs — the constructor would
     # reject the combination as a programmer error.
@@ -356,11 +362,27 @@ def build_from_environment(
         kwargs.update(discovered_llm)
     kwargs.update(overrides)
 
-    agent = Agentao(**kwargs)
-    if initial_mode is not None:
-        # Same silent start as ``Agentao(permission_mode=)``; the engine is
-        # the file-loaded one, so the user's rules stay.
-        from ..runtime.permission_mode import _set_initial_permission_mode
+    try:
+        agent = Agentao(**kwargs)
+        if initial_mode is not None:
+            # Same silent start as ``Agentao(permission_mode=)``; the engine is
+            # the file-loaded one, so the user's rules stay.
+            from ..runtime.permission_mode import _set_initial_permission_mode
 
-        _set_initial_permission_mode(agent, initial_mode)
+            try:
+                _set_initial_permission_mode(agent, initial_mode)
+            except BaseException:
+                # Not ``close()``: that also disconnects an ``mcp_manager=``
+                # and closes a ``memory_manager=`` the caller passed in.
+                agent._release_failed_construction()
+                raise
+    except BaseException:
+        if built_memory_manager is not None:
+            try:
+                built_memory_manager.close()
+            except Exception:
+                logger.warning(
+                    "memory close after a failed construction", exc_info=True
+                )
+        raise
     return agent

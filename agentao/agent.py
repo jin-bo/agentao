@@ -405,61 +405,99 @@ class Agentao:
             api_format=api_format,
             logger=logger,
         )
-        self._init_skill_and_memory(skill_manager, memory_manager)
-        self._last_user_message: str = ""
-        self._stable_block_chars: int = 0  # size of last rendered <memory-stable> block
-        # Ids rendered in the last <memory-stable> block. The volatile tail's
-        # dynamic-recall pass excludes them; the two are built by separate
-        # calls, so the set is handed over on the agent (see prompts/builder.py).
-        self._stable_memory_ids: Set[str] = set()
-        self.todo_tool = TodoWriteTool()
-        if initial_mode is not None:
-            # ``rules=[]``, never ``None``: ``None`` makes the engine run the
-            # permission-file loader. ``permission_mode=`` asks for a preset,
-            # not for whatever policy file this machine happens to hold.
-            permission_engine = PermissionEngine(
-                project_root=self._working_directory, rules=[],
+        # What this constructor builds itself, so a failure below can release
+        # it: the caller never receives the object, so cannot call close().
+        # Injected managers are the caller's and are left alone.
+        self._built_memory_manager: Optional["MemoryManager"] = None
+        self._built_mcp_manager: Optional["McpClientManager"] = None
+        try:
+            self._init_skill_and_memory(skill_manager, memory_manager)
+            self._last_user_message: str = ""
+            self._stable_block_chars: int = 0  # size of last rendered <memory-stable> block
+            # Ids rendered in the last <memory-stable> block. The volatile tail's
+            # dynamic-recall pass excludes them; the two are built by separate
+            # calls, so the set is handed over on the agent (see prompts/builder.py).
+            self._stable_memory_ids: Set[str] = set()
+            self.todo_tool = TodoWriteTool()
+            if initial_mode is not None:
+                # ``rules=[]``, never ``None``: ``None`` makes the engine run the
+                # permission-file loader. ``permission_mode=`` asks for a preset,
+                # not for whatever policy file this machine happens to hold.
+                permission_engine = PermissionEngine(
+                    project_root=self._working_directory, rules=[],
+                )
+            self.permission_engine = permission_engine
+
+            # An explicit transport, or the silent headless default.
+            self.transport: "CoreTransport" = (
+                transport if transport is not None else NullTransport()
             )
-        self.permission_engine = permission_engine
 
-        # An explicit transport, or the silent headless default.
-        self.transport: "CoreTransport" = (
-            transport if transport is not None else NullTransport()
-        )
-
-        # Initialize context manager
-        self.context_manager = ContextManager(
-            llm_client=self.llm,
-            memory_tool=self.memory_tool,
-            max_tokens=max_context_tokens,
-            memory_manager=self._memory_manager,
-        )
-        # Built on first use — see :attr:`compaction_coordinator`. Held
-        # rather than rebuilt per call because it is where per-turn
-        # compaction state lives.
-        self._compaction_coordinator: Optional["CompactionCoordinator"] = None
-        self.compaction_controller = compaction_controller
-
-        # Session-scoped state (session id, host event stream, conversation
-        # history, plan session, project instructions) must land before
-        # ``_wire_tooling`` — the host emitters built there capture
-        # ``self._host_events`` / ``self._session_id``.
-        self._init_session_state(plan_session, project_instructions)
-        self._init_replay(replay_config)
-        self._wire_tooling(
-            mcp_manager=mcp_manager,
-            bg_store=bg_store,
-            sandbox_policy=sandbox_policy,
-            enable_builtin_agents=enable_builtin_agents,
-        )
-        if initial_mode is not None:
-            # Both read-only switches, silently: a starting state is not a
-            # switch, and an event here would reach the host's transport
-            # before this constructor has returned. Needs ``tool_runner``,
-            # hence after wiring.
-            _runtime_permission_mode._set_initial_permission_mode(
-                self, initial_mode,
+            # Initialize context manager
+            self.context_manager = ContextManager(
+                llm_client=self.llm,
+                memory_tool=self.memory_tool,
+                max_tokens=max_context_tokens,
+                memory_manager=self._memory_manager,
             )
+            # Built on first use — see :attr:`compaction_coordinator`. Held
+            # rather than rebuilt per call because it is where per-turn
+            # compaction state lives.
+            self._compaction_coordinator: Optional["CompactionCoordinator"] = None
+            self.compaction_controller = compaction_controller
+
+            # Session-scoped state (session id, host event stream, conversation
+            # history, plan session, project instructions) must land before
+            # ``_wire_tooling`` — the host emitters built there capture
+            # ``self._host_events`` / ``self._session_id``.
+            self._init_session_state(plan_session, project_instructions)
+            self._init_replay(replay_config)
+            self._wire_tooling(
+                mcp_manager=mcp_manager,
+                bg_store=bg_store,
+                sandbox_policy=sandbox_policy,
+                enable_builtin_agents=enable_builtin_agents,
+            )
+            if initial_mode is not None:
+                # Both read-only switches, silently: a starting state is not a
+                # switch, and an event here would reach the host's transport
+                # before this constructor has returned. Needs ``tool_runner``,
+                # hence after wiring.
+                _runtime_permission_mode._set_initial_permission_mode(
+                    self, initial_mode,
+                )
+        except BaseException:
+            self._release_failed_construction()
+            raise
+
+    def _release_failed_construction(self) -> None:
+        """Release what ``__init__`` built before it raised.
+
+        Only the MCP manager and memory manager this constructor created:
+        an ``mcp_manager=`` / ``memory_manager=`` the caller passed in is
+        still the caller's, since it never got an agent to hand it to. Each
+        release is best effort, so the constructor's own exception is the
+        one that propagates.
+        """
+        mcp = self._built_mcp_manager
+        try:
+            if mcp is not None:
+                try:
+                    mcp.disconnect_all()
+                except Exception:
+                    _logger.warning(
+                        "MCP disconnect after a failed construction", exc_info=True
+                    )
+        finally:
+            # Even when a second Ctrl-C cuts the (bounded) disconnect short.
+            memory = self._built_memory_manager
+            if memory is not None:
+                try:
+                    memory.close()
+                except Exception:
+                    _logger.warning(
+                        "memory close after a failed construction", exc_info=True
+                    )
 
     def _validate_construction_args(
         self,
@@ -778,6 +816,7 @@ class Agentao:
             register_mcp_tools(self, mcp_manager)
         else:
             self.mcp_manager = self._init_mcp()
+            self._built_mcp_manager = self.mcp_manager
 
         # Host emitter setup MUST run before ``_register_agent_tools``
         # so the sub-agent wrapper captures a live ``HostSubagentEmitter``
@@ -977,6 +1016,7 @@ class Agentao:
                     self.working_directory / ".agentao" / "memory.db"
                 ),
             )
+            self._built_memory_manager = self._memory_manager
         self.memory_tool = SaveMemoryTool(memory_manager=self._memory_manager)
         self.memory_retriever = MemoryRetriever(self._memory_manager)
         self.memory_renderer = MemoryPromptRenderer()
