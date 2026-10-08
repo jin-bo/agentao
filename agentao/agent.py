@@ -407,7 +407,11 @@ class Agentao:
         )
         # What this constructor builds itself, so a failure below can release
         # it: the caller never receives the object, so cannot call close().
-        # Injected managers are the caller's and are left alone.
+        # Injected managers are the caller's and are left alone. The LLM
+        # client is also released by ``close()``: it holds ``agentao.log`` open.
+        self._built_llm_client: Optional[LLMClient] = (
+            self.llm if llm_client is None else None
+        )
         self._built_memory_manager: Optional["MemoryManager"] = None
         self._built_mcp_manager: Optional["McpClientManager"] = None
         try:
@@ -473,11 +477,11 @@ class Agentao:
     def _release_failed_construction(self) -> None:
         """Release what ``__init__`` built before it raised.
 
-        Only the MCP manager and memory manager this constructor created:
-        an ``mcp_manager=`` / ``memory_manager=`` the caller passed in is
-        still the caller's, since it never got an agent to hand it to. Each
-        release is best effort, so the constructor's own exception is the
-        one that propagates.
+        Only the MCP manager, memory manager and LLM client this constructor
+        created: an ``mcp_manager=`` / ``memory_manager=`` / ``llm_client=``
+        the caller passed in is still the caller's, since it never got an
+        agent to hand it to. Each release is best effort, so the
+        constructor's own exception is the one that propagates.
         """
         mcp = self._built_mcp_manager
         try:
@@ -491,13 +495,26 @@ class Agentao:
         finally:
             # Even when a second Ctrl-C cuts the (bounded) disconnect short.
             memory = self._built_memory_manager
-            if memory is not None:
-                try:
-                    memory.close()
-                except Exception:
-                    _logger.warning(
-                        "memory close after a failed construction", exc_info=True
-                    )
+            try:
+                if memory is not None:
+                    try:
+                        memory.close()
+                    except Exception:
+                        _logger.warning(
+                            "memory close after a failed construction",
+                            exc_info=True,
+                        )
+            finally:
+                self._close_built_llm_client()
+
+    def _close_built_llm_client(self) -> None:
+        """Release the ``agentao.log`` handle of an LLM client built here."""
+        llm = self._built_llm_client
+        if llm is not None:
+            try:
+                llm.close()
+            except Exception:
+                _logger.warning("LLM client close failed", exc_info=True)
 
     def _validate_construction_args(
         self,
@@ -1287,9 +1304,13 @@ class Agentao:
         them, to avoid double-firing there, so neither does ``with`` /
         ``async with`` / :meth:`aclose` for an embedded host.
 
+        Also closes ``<working_directory>/agentao.log`` when the agent built
+        its own LLM client and no ``logger=`` was passed; an injected
+        ``llm_client=`` is left to the caller.
+
         Safe to call more than once, and from more than one thread: calls
         are serialized. A later call skips the MCP disconnect and repeats the
-        replay end and the memory-store close, both of which are no-ops then.
+        replay end, the memory-store close and the log close, all no-ops then.
         A call re-entered on the closing thread (a signal handler during the
         teardown) returns at once.
         """
@@ -1321,6 +1342,10 @@ class Agentao:
                         memory_manager.close()
                     except Exception as e:
                         self.llm.logger.warning(f"Error closing memory stores: {e}")
+                # Last, so the warnings above still reach ``agentao.log``. Its
+                # open handle is what kept a host from deleting the working
+                # directory on Windows (WinError 32).
+                self._close_built_llm_client()
             finally:
                 self._closing = False
 

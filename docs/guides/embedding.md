@@ -330,6 +330,16 @@ emit at DEBUG into whatever handlers are attached upstream. Hosts that
 care about not having their root logger touched at all must pass
 `logger=`.
 
+`agent.close()` (and `with` / `async with` / `aclose()`) detaches and
+closes the file handler the agent's own `LLMClient` attached, so a host
+can delete the working directory afterwards, Windows included. A client
+you built yourself and passed as `llm_client=` is yours to close:
+`llm.close()` does the same for it. The handler lives on the shared
+`"agentao"` logger and each new `LLMClient` replaces the previous one's,
+so with several agents in one process `agentao.log` follows the most
+recently built client, and closing that agent stops file logging for the
+others too.
+
 The rest of the package — `getLogger("agentao.tools.web")`,
 `getLogger("agentao.acp_client")`, `getLogger("agentao.mcp")`, etc. —
 never attaches its own handlers. With a host-supplied `logger=`, those
