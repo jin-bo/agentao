@@ -113,11 +113,11 @@ def stub_pipeline(monkeypatch, tmp_path):
             captured["cancellation_token"] = cancellation_token
             return "stub final text"
 
-        def add_event_observer(self, cb):
+        def add_host_event_observer(self, cb):
             captured.setdefault("observers", []).append(cb)
             return cb
 
-        def remove_event_observer(self, cb):
+        def remove_host_event_observer(self, cb):
             obs = captured.get("observers", [])
             if cb in obs:
                 obs.remove(cb)
