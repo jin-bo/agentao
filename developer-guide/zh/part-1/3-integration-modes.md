@@ -114,7 +114,7 @@ Agentao 提供**两条稳定的嵌入路径**。选哪条取决于你的宿主�
 - 同一 server 同一时间只允许一个活跃 turn；撞车就是 `SERVER_BUSY`
 - 先看 `get_status()` / `readiness()` 决定能不能发，再看 `last_error` 做诊断
 
-入口支持级别、类型化 `get_status()`、单服务器单活跃 turn 的并发合约、错误分类都冻结在 [`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)；可运行样板是 [`examples/headless_worker.py`](../../../examples/headless_worker.py)。
+入口支持级别、类型化 `get_status()`、单服务器单活跃 turn 的并发合约、错误分类都冻结在 [`docs/guides/headless-runtime.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md)；可运行样板是 [`examples/headless_worker.py`](https://github.com/jin-bo/agentao/blob/main/examples/headless_worker.py)。
 
 ## 本指南后续如何组织
 

@@ -30,7 +30,7 @@ A note on format: Agentao's hook system is **wire-compatible with Claude Code's 
 ::: warning This chapter is the **rule-author** view
 You'll learn how to write a hook rule, when it fires, what it can output.
 
-The host-side hooks list / disable / hot-reload API is **deliberately not exposed** — that surface is *out* of [4.7 The Embedded Harness Contract](/en/part-4/7-host-contract#4-7-8-whats-not-in-the-contract). If you're building a SaaS platform that wants to give tenants a "manage hooks" toggle, the answer today is: do it inside your own plugin-loading layer, **not** by reaching into `agentao.host`.
+The host-side hooks list / disable / hot-reload API is **deliberately not exposed** — that surface is *out* of [4.7 The Embedded Harness Contract](/en/part-4/7-host-contract#_4-7-8-what-s-not-in-the-contract). If you're building a SaaS platform that wants to give tenants a "manage hooks" toggle, the answer today is: do it inside your own plugin-loading layer, **not** by reaching into `agentao.host`.
 :::
 
 ## 5.7.2 The eight events at a glance
@@ -262,12 +262,20 @@ The traces hooks leave behind sit on two layers: a real-time event stream (for U
 After each hook dispatch — gated on `matched_rule_count > 0` — the runtime emits a `PLUGIN_HOOK_FIRED` on the transport:
 
 ```python
-async for ev in agent.events_async():
+from agentao import Agentao
+from agentao.transport import SdkTransport
+from agentao.transport.events import EventType
+
+def on_event(ev):
     if ev.type == EventType.PLUGIN_HOOK_FIRED:
         hook_name = ev.data["hook_name"]
         outcome = ev.data["outcome"]
         # ... branch on hook_name
+
+agent = Agentao(..., transport=SdkTransport(on_event=on_event))
 ```
+
+It is a transport event, not a `HostEvent`: `agent.events()` does not carry it, so read it from the transport's `on_event`, which is called synchronously on the thread that emitted it. `EventType` is internal, and its payload fields may change between releases.
 
 Different `hook_name`s carry different fields (emit shapes are fixed in the chat loop):
 
@@ -325,7 +333,7 @@ If you need full stdout in the replay log, flip the flag in `.agentao/settings.j
 - **Volume**: long stdout bloats replay files and slows replay-server load times.
 - **Secret scan still runs**: deep capture only bypasses length truncation (`ScanTruncate`); the secret scanner still runs — but it isn't a panacea, don't treat it as the only line of defense.
 
-Full flag table: [Appendix B · `replay.capture_flags`](/en/appendix/b-config-keys#replay-capture-flags). Observability overview: [6.6 Observability](/en/part-6/6-observability).
+Full flag table: [Appendix B · `replay.capture_flags`](/en/appendix/b-config-keys#b-3-5-settings-json). Observability overview: [6.6 Observability](/en/part-6/6-observability).
 :::
 
 ## 5.7.7 Boundaries
@@ -334,7 +342,7 @@ A consolidated answer to "can I extend X?" — these are the things deliberately
 
 ### Host-side APIs that aren't exposed
 
-The host-side hooks **list / disable / hot-reload API** is intentionally absent from [4.7 The Embedded Harness Contract](/en/part-4/7-host-contract#4-7-8-whats-not-in-the-contract).
+The host-side hooks **list / disable / hot-reload API** is intentionally absent from [4.7 The Embedded Harness Contract](/en/part-4/7-host-contract#_4-7-8-what-s-not-in-the-contract).
 
 - ❌ "Enumerate the hook rules currently in effect" — no public API
 - ❌ "Disable a rule at runtime" — no

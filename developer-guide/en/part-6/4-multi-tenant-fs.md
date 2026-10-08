@@ -222,7 +222,7 @@ agent = Agentao(
 
 Every built-in write tool shares the one wrapper instance, so `set_policy(...)` reaches tools that are already registered. Assigning a new wrapper to `agent.filesystem` does not, because each tool keeps the instance it was given at registration.
 
-The wrapper can only **restrict**. It does not let native `write_file` write to a root outside `working_directory`, because the tool's own single-root check rejects that path before the wrapper runs. Shell commands and `mcp_*` tools do not go through `filesystem` at all. Background and the remaining design: [`docs/design/host-fs-policy.md`](../../../docs/design/host-fs-policy.md). `tests/test_fs_policy_wrapper_recipe.py` runs this recipe against the real write tools.
+The wrapper can only **restrict**. It does not let native `write_file` write to a root outside `working_directory`, because the tool's own single-root check rejects that path before the wrapper runs. Shell commands and `mcp_*` tools do not go through `filesystem` at all. Background and the remaining design: [`docs/design/host-fs-policy.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/host-fs-policy.md). `tests/test_fs_policy_wrapper_recipe.py` runs this recipe against the real write tools.
 
 ### Dynamic rule generation
 

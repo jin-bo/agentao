@@ -18,15 +18,14 @@ uv add 'agentao[mcp]'          # or
 uv add 'agentao[all]'
 ```
 
-### "ValueError: OPENAI_API_KEY is not set"
+### "ValueError: Agentao(): api_key, base_url, and model are required…"
 
-Three resolution options:
+A direct `Agentao(...)` reads no environment variables, so it needs its credentials passed in. Two ways:
 
-1. `.env` at working-directory root, with `OPENAI_API_KEY=…`
-2. Process env: `export OPENAI_API_KEY=…`
-3. Constructor: `Agentao(api_key="sk-…")`
+1. Pass them: `Agentao(api_key=…, base_url=…, model=…, working_directory=…)`, or a pre-built `llm_client=` instead of the three.
+2. Build through the factory: `agentao.embedding.build_from_environment(working_directory=…)` reads `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` (or the `LLM_PROVIDER` block's `{PROVIDER}_*`) from the process environment and from `<working_directory>/.env`.
 
-Constructor wins over env, which wins over `.env`. See [Appendix B](./b-config-keys).
+On the factory path, a keyword argument wins over the process environment, which wins over `.env`. See [Appendix B](./b-config-keys).
 
 ### "Model 'gpt-5.4' not found" (custom endpoint)
 
@@ -46,7 +45,7 @@ You set `PermissionMode.READ_ONLY` (explicitly or by accident). Either:
 Three likely causes:
 
 1. **Infinite tool loop** — hit `max_iterations`. Lower the limit or wire `on_max_iterations` ([4.6](/en/part-4/6-max-iterations))
-2. **Tool hangs** — a custom tool has no timeout. Wrap subprocess / HTTP calls in `timeout=` ([6.7](/en/part-6/7-resource-concurrency#control-4-tool-timeout))
+2. **Tool hangs** — a custom tool has no timeout. Wrap subprocess / HTTP calls in `timeout=` ([6.7](/en/part-6/7-resource-concurrency#control-4-·-tool-timeout))
 3. **User prompt needs input** — the default `ask_user` waits forever in headless mode. Override via `SdkTransport(ask_user=…)`
 
 Enforce a hard limit at the host:
@@ -91,7 +90,7 @@ See [6.4](/en/part-6/4-multi-tenant-fs).
 Two-part fix:
 
 - **SDK**: serialize `agent.messages` yourself; on restart `agent.messages = saved_messages`
-- **ACP**: use `session/load` with a stored `sessionId` — agent must advertise `loadSession: true` ([7.2 pattern](/en/part-7/2-ide-plugin#3-persist-resume-across-ide-restart))
+- **ACP**: use `session/load` with a stored `sessionId` — agent must advertise `loadSession: true` ([7.2 pattern](/en/part-7/2-ide-plugin#_3-·-persist-resume-across-ide-restart))
 
 ## F.4 MCP
 
@@ -129,7 +128,7 @@ Open `agentao.log` — the exact denial reason is logged. Common fixes:
 
 ### "Sandbox disabled in production — how do I enforce it?"
 
-Sandbox config is merged: project `.agentao/sandbox.json` overrides user. Mount project config read-only in your container so LLM-led changes to sandbox settings can't persist. See [7.4 pitfall table](/en/part-7/4-data-workbench#pitfalls).
+Sandbox config is merged: project `.agentao/sandbox.json` overrides user. Mount project config read-only in your container so LLM-led changes to sandbox settings can't persist. See [7.4 pitfall table](/en/part-7/4-data-workbench#⚠️-pitfalls).
 
 ### "Agent tried to fetch 169.254.169.254"
 
@@ -149,7 +148,7 @@ Fail-fast semantics — someone else is already in a turn. Options:
 - Use the session-based API (`send_prompt`) if queueing is acceptable
 - Spawn a dedicated subprocess per tenant
 
-See [Appendix D.5](./d-error-codes#d-5-retry-guidance).
+See [Appendix D.5](./d-error-codes#d-6-retry-guidance).
 
 ### "session/cancel doesn't stop my long tool"
 
@@ -185,7 +184,7 @@ Week 3 dropped the legacy bare-string form. The new shape is a structured object
 "nonInteractivePolicy": { "mode": "reject_all" }
 ```
 
-The failure is deliberately loud and raised at config-load time (`AcpClientConfig.from_dict` / `load_acp_client_config`) — not at `send_prompt` time — so config drift cannot quietly ship to production. For a single-call override, don't touch the config at all — use `interaction_policy=` on `send_prompt` / `prompt_once`. Full migration in [Appendix E.7](./e-migration#e-7-headless-runtime--noninteractivepolicy-shape-change-week-3).
+The failure is deliberately loud and raised at config-load time (`AcpClientConfig.from_dict` / `load_acp_client_config`) — not at `send_prompt` time — so config drift cannot quietly ship to production. For a single-call override, don't touch the config at all — use `interaction_policy=` on `send_prompt` / `prompt_once`. Full migration in [Appendix E.7](./e-migration#e-7-headless-runtime-—-noninteractivepolicy-shape-change-week-3).
 
 ### "A server crashed mid-turn. How do I recover?"
 
@@ -198,7 +197,7 @@ To tune the retry cap, set `maxRecoverableRestarts` on the server config (defaul
 
 ### "Is `ensure_connected` safe to call after `cancel_turn`?"
 
-Yes. Week 4's cleanup guarantees (see [§7.1 of the headless runtime doc](../../../docs/guides/headless-runtime.md)):
+Yes. Week 4's cleanup guarantees (see [§7.1 of the headless runtime doc](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md)):
 
 1. The pending slot is dropped before `session/cancel` is sent.
 2. The turn slot and the per-server lock are released in `finally` blocks.

@@ -74,7 +74,7 @@ agent.set_permission_mode("read-only")                   # 返回 PermissionMode
 ```
 
 ::: warning 项目级文件被忽略
-`<cwd>/.agentao/permissions.json` **不会**被加载——引擎会打 warning 并跳过。一条 checked-in 的 `{"tool": "*", "action": "allow"}` 会因引擎首个命中即返回而**当场作废整个用户策略**，所以项目级文件不能授予任何能力。权限是用户/host 的事，不是 cwd 的事 —— 与 OS 权限模型、IDE workspace-trust 同构。如果确需项目感知策略，请由 host 注入：见 [4.7.6 active_permissions](/zh/part-4/7-host-contract#4-7-6-agent-active-permissions-策略快照)。
+`<cwd>/.agentao/permissions.json` **不会**被加载——引擎会打 warning 并跳过。一条 checked-in 的 `{"tool": "*", "action": "allow"}` 会因引擎首个命中即返回而**当场作废整个用户策略**，所以项目级文件不能授予任何能力。权限是用户/host 的事，不是 cwd 的事 —— 与 OS 权限模型、IDE workspace-trust 同构。如果确需项目感知策略，请由 host 注入：见 [4.7.6 active_permissions](/zh/part-4/7-host-contract#_4-7-6-agent-active-permissions-——-策略快照)。
 :::
 
 **基本结构**：
@@ -244,7 +244,7 @@ snap = agent.active_permissions()
 
 快照带缓存；缓存在 `set_mode()` 时失效，在 `add_loaded_source(...)` **传入新标签** 时失效（重复标签会被合并、不触发重建）。直接修改 `engine.rules` 不会让缓存失效 —— 原地改完后请补一次 `set_mode(engine.active_mode)`（同模式重设也会清缓存）或 `add_loaded_source("injected:<unique-name>")` 触发重建。
 
-同一份数据也驱动公共事件流上的 `PermissionDecisionEvent.loaded_sources`。**完整教学**（含审计流水线模式）见 **[4.7 嵌入式 Harness 合约](/zh/part-4/7-host-contract#4-7-6-agent-active-permissions-策略快照)**；密集字段速查见 [附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约)。
+同一份数据也驱动公共事件流上的 `PermissionDecisionEvent.loaded_sources`。**完整教学**（含审计流水线模式）见 **[4.7 嵌入式 Harness 合约](/zh/part-4/7-host-contract#_4-7-6-agent-active-permissions-——-策略快照)**；密集字段速查见 [附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-host-合约)。
 
 ## 典型配置模板
 

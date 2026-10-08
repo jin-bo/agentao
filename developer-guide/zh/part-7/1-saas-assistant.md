@@ -178,7 +178,7 @@ async def get_or_create_agent(session_id, workdir, tenant_id):
     return _pool[session_id]
 ```
 
-TTL + LRU 驱逐用 [6.7 Pattern B](/zh/part-6/7-resource-concurrency#pattern-b-会话池-ttl-驱逐) 里的完整 `AgentPool`。
+TTL + LRU 驱逐用 [6.7 Pattern B](/zh/part-6/7-resource-concurrency#模式-b-·-会话池-ttl-淘汰) 里的完整 `AgentPool`。
 
 ## 前端骨架
 
@@ -208,9 +208,9 @@ es.addEventListener("done", (e) => {
 |------------------|------|------|
 | 跨租户数据泄漏 | Tool 构造时捕获了 `tenant_id`，但会话池把 agent 复用给了另一个租户 | 每个 `(tenant_id, session_id)` 一个 agent，不跨租户复用 |
 | "我的任务不见了！" | SDK 重置时调了 `clear_history()`，但后端 memory DB 还保留了用户维度的笔记，污染到了另一个会话 | 只用 project 作用域；如果挂 user 作用域，必须用 `tenant_id+user_id` 做 key |
-| Agent 永远卡住 | 没有单轮超时 | 用 `asyncio.wait_for` 包 `chat()`（[6.7 控制 3](/zh/part-6/7-resource-concurrency#控制-3-单轮超时)） |
+| Agent 永远卡住 | 没有单轮超时 | 用 `asyncio.wait_for` 包 `chat()`（[6.7 控制 3](/zh/part-6/7-resource-concurrency#控制点-3-·-每轮超时)） |
 | SSE 流中断 | 前端重连缓冲不匹配，浏览器空闲断开 | 每 15 秒发 `: keep-alive\n\n` 心跳 |
-| 确认弹窗永远回不来 | `confirm_tool` 跑在了事件循环线程上 | 参考 [4.5 Web 模态](/zh/part-4/5-tool-confirmation-ui#模式-2-web-模态-asyncio-to-thread-桥接)，用 `asyncio.run_coroutine_threadsafe` |
+| 确认弹窗永远回不来 | `confirm_tool` 跑在了事件循环线程上 | 参考 [4.5 Web 模态](/zh/part-4/5-tool-confirmation-ui#模式-b-·-web-模态框-异步后端)，用 `asyncio.run_coroutine_threadsafe` |
 
 ## 可运行代码
 

@@ -219,7 +219,7 @@ print(result.stop_reason)
 |------------------|------|------|
 | 任务跑飞，把明天也堵死 | 没有单次超时 | `concurrencyPolicy: Forbid` + `asyncio.wait_for` 包 `chat()` |
 | 静默回归（一周 digest 都空） | 没人看日志，输出契约太松 | `items: 0` 或缺 `RESULT:` 行时告警 |
-| 一夜烧掉配额 | token 无上限 | `max_iterations` 上限 + `TokenBudget`（[6.7](/zh/part-6/7-resource-concurrency#token-预算)） |
+| 一夜烧掉配额 | token 无上限 | `max_iterations` 上限 + `TokenBudget`（[6.7](/zh/part-6/7-resource-concurrency#令牌预算)） |
 | 重试后同一份 digest 发两遍 | 不幂等 | 以日期打 tag；`/reports/<today>.md` 存在则拒绝重跑 |
 | 失败邮件里泄漏密钥 | traceback 带了 API key | stderr 走 scrub filter（[6.5](/zh/part-6/5-secrets-injection)） |
 

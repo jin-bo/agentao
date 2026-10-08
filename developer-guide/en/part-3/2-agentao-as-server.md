@@ -145,7 +145,7 @@ The store is keyed by the client-supplied `cwd`, so the lookup runs at request t
 
 - `cwd` sets this session's **working directory** — file tools, `AGENTAO.md`, `.agentao/` all resolve against it. Keep it unique per concurrent session
 - `mcpServers` accepts `"type":"stdio"`, `"type":"sse"`, or `"type":"http"` (`mcpCapabilities.http=true`); a bare `url` defaults to Streamable HTTP
-- Internally these map to the [`extra_mcp_servers` constructor param](/en/part-2/2-constructor-reference#session-scoped-mcp-servers)
+- Internally these map to the [`extra_mcp_servers` constructor param](/en/part-2/2-constructor-reference#tier-2-·-common-production-params)
 
 ## Sending a prompt `session/prompt`
 

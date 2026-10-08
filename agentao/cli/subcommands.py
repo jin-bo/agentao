@@ -351,12 +351,7 @@ def _load_and_register_plugins(agent) -> None:
     plugin_servers = {k: v for k, v in merge_result.servers.items() if k not in base_mcp}
     if plugin_servers:
         agent._extra_mcp_servers.update(plugin_servers)
-        if agent.mcp_manager is not None:
-            try:
-                agent.mcp_manager.disconnect_all()
-            except Exception:
-                pass
-        agent.mcp_manager = agent._init_mcp()
+        agent._reinit_mcp()
 
     from ..plugins.hooks import (
         ClaudeHookPayloadAdapter,

@@ -9,13 +9,13 @@
 
 ```python
 from pathlib import Path
-from agentao import Agentao
+from agentao.embedding import build_from_environment
 
-agent = Agentao(working_directory=Path.cwd())
+agent = build_from_environment(working_directory=Path.cwd())
 print(agent.chat("总结最近 5 次 commit"))
 ```
 
-最少就这几行。不需要 Web 服务器，不需要额外服务。同一份运行时还可以通过 **ACP** stdio JSON-RPC 协议被非 Python 宿主（IDE 插件、Node、Go、Rust）驱动，宿主不必重新造轮子：
+最少就这几行，模型凭据放在 `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` 环境变量里（见 [1.4](/zh/part-1/4-hello-agentao)）。在代码里直接传凭据的宿主改为直接调用 `Agentao(...)`（见 [2.2](/zh/part-2/2-constructor-reference)）。不需要 Web 服务器，不需要额外服务。同一份运行时还可以通过 **ACP** stdio JSON-RPC 协议被非 Python 宿主（IDE 插件、Node、Go、Rust）驱动，宿主不必重新造轮子：
 
 ```bash
 agentao --acp --stdio

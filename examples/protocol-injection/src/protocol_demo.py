@@ -453,6 +453,8 @@ def make_agent(
         filesystem=fs,
         shell=shell,
         mcp_registry=mcp,
+        # Injected, so the host's to close: ``agent.close()`` leaves it open.
+        # A dict-backed store holds nothing that needs releasing.
         memory_manager=MemoryManager(project_store=store),
     )
     return HostHandles(
