@@ -88,6 +88,7 @@ agent.close()
 必须调用。作用：
 - 断开所有 MCP 客户端连接
 - 关闭 MCP 管理器的事件循环线程
+- 关闭 `<working_directory>/agentao.log`：除非传了 `logger=` 或自己的 `llm_client=`，agent 会一直打开这个文件（Windows 不能删除打开着的文件，所以在 `close()` 之前删除临时工作目录会报 `WinError 32`）
 
 不调用会**泄漏 MCP 子进程和线程**。`Agentao` 本身就是 context manager，用 `with` 时，无论是否出错，退出时都会关闭：
 

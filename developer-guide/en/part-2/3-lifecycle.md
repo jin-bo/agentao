@@ -87,6 +87,7 @@ agent.close()
 Always call this. It:
 - Disconnects all MCP clients
 - Stops the MCP manager's event loop thread
+- Closes `<working_directory>/agentao.log`, which the agent holds open unless you passed `logger=` or your own `llm_client=` (Windows cannot delete an open file, so removing a temporary working directory before `close()` fails with `WinError 32`)
 
 Without it you **leak MCP subprocesses and threads**. `Agentao` is a context manager, so `with` closes it on the way out, error or not:
 

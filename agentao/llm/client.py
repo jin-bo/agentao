@@ -30,6 +30,7 @@ import random
 import sys
 import threading
 import time
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
@@ -122,6 +123,52 @@ class _RedactingFormatter(logging.Formatter):
             # Logging must never take down the caller. A scanner bug should
             # cost fidelity in the log, not the session.
             return formatted
+
+
+class _AgentaoLogFileHandler(logging.handlers.RotatingFileHandler):
+    """``agentao.log``'s handler: once closed, it stays closed.
+
+    A stock ``FileHandler`` reopens its file on the next ``emit`` after
+    ``close()``. A record already on its way through the handler when
+    ``LLMClient.close()`` runs (a background sub-agent's thread, the MCP
+    loop) would then recreate the file the host is about to delete — on
+    Windows, ``WinError 32`` again. ``handle()`` holds the handler lock
+    around ``emit``, and the flag is set under that lock, so an emission
+    waiting on it sees the flag and drops the record.
+    """
+
+    _released = False
+
+    def close(self) -> None:
+        self.acquire()
+        try:
+            self._released = True
+        finally:
+            self.release()
+        super().close()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if self._released:
+            return
+        super().emit(record)
+
+
+def _detach_handler(pkg_logger: logging.Logger, handler: logging.Handler) -> None:
+    """Remove ``handler`` from ``pkg_logger`` and close it, best effort."""
+    pkg_logger.removeHandler(handler)
+    try:
+        handler.close()
+    except Exception:
+        pass
+
+
+# The clients that attached an ``agentao.log`` handler and are not closed,
+# oldest first. Only the newest one's handler is attached (each new client
+# evicts the one before); when it closes, the file goes back to the newest
+# one left, so closing one agent does not end file logging for the others.
+# Weak, so a client dropped without ``close()`` is not given the file back.
+_log_owners: "List[weakref.ref[LLMClient]]" = []
+_log_owners_lock = threading.Lock()
 
 
 class LLMClient(_LoggingMixin):
@@ -256,6 +303,16 @@ class LLMClient(_LoggingMixin):
         # models (o1/o3/gpt-5, …) reject any non-default temperature.
         self.omit_temperature: bool = False
 
+        # The ``agentao.log`` handler this client attached, for ``close()``.
+        # ``None`` under an injected logger or ``log_file=None``. Replaced
+        # when the file is handed back to this client (see ``_log_owners``).
+        self._file_handler: Optional[logging.Handler] = None
+        # Absolute, so handing the file back later does not depend on the
+        # process cwd at that moment.
+        self._log_file: Optional[str] = (
+            str(Path.cwd() / log_file) if log_file and not Path(log_file).is_absolute()
+            else log_file
+        )
         # Injected logger → host owns the stack; skip package-root mutation.
         if logger is not None:
             self.logger = logger
@@ -264,24 +321,19 @@ class LLMClient(_LoggingMixin):
             pkg_logger = logging.getLogger("agentao")
             pkg_logger.setLevel(logging.DEBUG)
 
-            # Evict only our marker-tagged handlers so AcpServer's stderr
-            # guard (and any other outsider handler) survives reconstruction.
-            for h in list(pkg_logger.handlers):
-                if getattr(h, "_agentao_llm_file_handler", False):
-                    pkg_logger.removeHandler(h)
-                    try:
-                        h.close()
-                    except Exception:
-                        pass
+            with _log_owners_lock:
+                # Evict only our marker-tagged handlers so AcpServer's stderr
+                # guard (and any other outsider handler) survives reconstruction.
+                for h in list(pkg_logger.handlers):
+                    if getattr(h, "_agentao_llm_file_handler", False):
+                        _detach_handler(pkg_logger, h)
 
-            file_handler = self._build_file_handler(log_file) if log_file else None
-            if file_handler is not None:
-                file_handler.setLevel(logging.DEBUG)
-                file_handler.setFormatter(
-                    _RedactingFormatter("%(asctime)s %(message)s", datefmt="%H:%M:%S")
-                )
-                file_handler._agentao_llm_file_handler = True  # type: ignore[attr-defined]
-                pkg_logger.addHandler(file_handler)
+                if self._log_file:
+                    self._file_handler = self._attach_file_handler(
+                        pkg_logger, self._log_file
+                    )
+                if self._file_handler is not None:
+                    _log_owners.append(weakref.ref(self))
 
         # Request counter for tracking
         self.request_count = 0
@@ -315,8 +367,13 @@ class LLMClient(_LoggingMixin):
         # The adapter owns everything protocol-specific, the SDK client
         # included; ``self.client`` stays the live SDK object because
         # ``list_available_models`` and a good many tests reach for it.
-        self._adapter = self._make_adapter()
-        self.client = self._adapter.create_client()
+        try:
+            self._adapter = self._make_adapter()
+            self.client = self._adapter.create_client()
+        except BaseException:
+            # The caller never gets this client, so cannot close() it.
+            self.close()
+            raise
 
         self.logger.info(f"LLMClient initialized with model: {self.model}")
         if self.api_format != OPENAI_COMPLETIONS:
@@ -357,6 +414,61 @@ class LLMClient(_LoggingMixin):
             return OpenAIResponsesAdapter(self, _openai_client_cls)
         return OpenAICompletionsAdapter(self, _openai_client_cls)
 
+    def close(self) -> None:
+        """Detach and close the ``agentao.log`` handler this client attached.
+
+        The handler holds the file open; on Windows an open file cannot be
+        deleted, so a host removing the working directory after the agent is
+        done (a temporary directory) failed with ``WinError 32``. A handler a
+        later client has already evicted and closed is only forgotten here,
+        and one that a later client replaced is left alone: it is that
+        client's. When this client's handler is the attached one, the
+        package logger's file goes back to the newest client still open
+        (its own ``log_file``), so the other agents in the process keep
+        logging. Safe to call more than once. The client still works after
+        it; what it logs no longer reaches the file.
+        """
+        with _log_owners_lock:
+            handler = self._file_handler
+            self._file_handler = None
+            _log_owners[:] = [
+                ref for ref in _log_owners if ref() not in (None, self)
+            ]
+            if handler is None:
+                return
+            pkg_logger = logging.getLogger("agentao")
+            if handler not in pkg_logger.handlers:
+                return  # evicted and closed by a later client
+            _detach_handler(pkg_logger, handler)
+            for ref in reversed(_log_owners):
+                owner = ref()
+                if owner is None or not owner._log_file:
+                    continue
+                if not Path(owner._log_file).parent.is_dir():
+                    # Its working directory is gone; opening the file would
+                    # recreate it.
+                    continue
+                restored = self._attach_file_handler(pkg_logger, owner._log_file)
+                if restored is not None:
+                    owner._file_handler = restored
+                    return
+
+    @classmethod
+    def _attach_file_handler(
+        cls, pkg_logger: logging.Logger, log_file: str
+    ) -> Optional[logging.Handler]:
+        """Open ``log_file`` and attach it to ``pkg_logger`` as the tagged handler."""
+        file_handler = cls._build_file_handler(log_file)
+        if file_handler is None:
+            return None
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(
+            _RedactingFormatter("%(asctime)s %(message)s", datefmt="%H:%M:%S")
+        )
+        file_handler._agentao_llm_file_handler = True  # type: ignore[attr-defined]
+        pkg_logger.addHandler(file_handler)
+        return file_handler
+
     @staticmethod
     def _build_file_handler(log_file: str) -> Optional[logging.FileHandler]:
         """Open a FileHandler for ``log_file`` with an absolute path + fallback.
@@ -376,7 +488,7 @@ class LLMClient(_LoggingMixin):
 
         try:
             primary.parent.mkdir(parents=True, exist_ok=True)
-            return logging.handlers.RotatingFileHandler(
+            return _AgentaoLogFileHandler(
                 primary, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
             )
         except OSError as primary_err:
@@ -391,7 +503,7 @@ class LLMClient(_LoggingMixin):
                 return None
             try:
                 fallback.parent.mkdir(parents=True, exist_ok=True)
-                handler = logging.handlers.RotatingFileHandler(
+                handler = _AgentaoLogFileHandler(
                     fallback, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
                 )
                 print(
