@@ -2,7 +2,7 @@
 
 目标：跑通最小的 Python 嵌入示例，**不用写任何自定义代码**。
 
-> 想先尝鲜非 Python 路径？跳到 [3.1 ACP Quick Try](/zh/part-3/1-acp-tour#60-秒快速尝鲜)。
+> 想先尝鲜非 Python 路径？跳到 [3.1 ACP Quick Try](/zh/part-3/1-acp-tour#_60-秒快速尝鲜)。
 
 ::: tip ⚡ 端到端可跑（约 3 分钟）
 **产出** —— Agent 思考、调用 `glob` + `run_shell_command`，打印 cwd 下最大的 3 个文件。

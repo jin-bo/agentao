@@ -88,7 +88,7 @@ async for ev in agent.events():
         ...
 ```
 
-完整字段表：[附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约)。schema 文件：[`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json)。
+完整字段表：[附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-host-合约)。schema 文件：[`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json)。
 
 ## 4.7.4 `agent.events()` vs `Transport(on_event=…)` —— 怎么选
 
@@ -139,7 +139,7 @@ async with aclosing(agent.astream(prompt)) as stream:
 下面这套是 schema 稳定的代码骨架；任挑一个 example clone 下来 60 秒内就能看到真实输出。
 :::
 
-下面是完整模式。每个工具调用、权限决策、子 agent 动作都对应一行审计——schema 跨 Agentao 版本稳定。下面字段名都是 [`agentao/host/models.py`](https://github.com/jin-bo/agentao/blob/main/agentao/host/models.py) 真实定义的；完整类型签名见 [附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约)。
+下面是完整模式。每个工具调用、权限决策、子 agent 动作都对应一行审计——schema 跨 Agentao 版本稳定。下面字段名都是 [`agentao/host/models.py`](https://github.com/jin-bo/agentao/blob/main/agentao/host/models.py) 真实定义的；完整类型签名见 [附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-host-合约)。
 
 ```python
 """租户审计流水线。和 agent.arun() 并行运行。"""
@@ -311,7 +311,7 @@ Q: 我要消费 Agent 事件，用哪个表面？
 - **`isinstance` 分派 `HostEvent`** 把事件路由到对应 handler。三种事件是正交的生命周期事实，不是层级关系。
 - **30 行 + 一张数据库表**就能落出能扛住版本升级的租户审计流水线。
 
-→ 参考速查：[附录 A.10 · 嵌入 Harness 合约](/zh/appendix/a-api-reference#a-10-嵌入-harness-合约)
+→ 参考速查：[附录 A.10 · 嵌入 Harness 合约](/zh/appendix/a-api-reference#a-10-嵌入-host-合约)
 → Schema：[`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json)
 → 设计文档：[`docs/design/embedded-host-contract.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/embedded-host-contract.md)
 

@@ -36,7 +36,7 @@ Python 宿主的**最短集成路径**：直接 `from agentao import Agentao` �
 
 - [1.2 核心概念](/zh/part-1/2-core-concepts) — Agent / Tool / Transport / Working Directory 等名词
 - [1.3 两种集成模式](/zh/part-1/3-integration-modes) — 确认 Python SDK 是你的选择
-- [1.4 Hello Agentao](/zh/part-1/4-hello-agentao#示例-a-python-sdk-约-20-行) — 20 行可跑样板
+- [1.4 Hello Agentao](/zh/part-1/4-hello-agentao) — 20 行可跑样板
 
 ## 预备心智模型
 

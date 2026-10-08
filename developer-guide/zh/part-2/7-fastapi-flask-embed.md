@@ -378,7 +378,7 @@ uv run gunicorn --worker-class gthread --threads 8 --workers 2 \
 - **用内部事件，不用 `astream()`**：`astream()` 是异步的，所以这个 WSGI 模板转发的是内部 `AgentEvent` 流（字段可能随版本变化），走的是构造时设好的 transport。不要按请求给 `agent.transport` 赋值——工具事件和确认会留在旧 transport 上
 - **没断连检测**：WSGI 不给"客户端走了"的干净钩子。靠用户点取消 + 硬超时兜
 - **Worker 本地池**：每个 Gunicorn worker 有自己的 `_sessions`。多 worker 部署要把同一个 `session_id` 路由到同一个 worker（nginx `ip_hash`、cookie 路由、反代 sticky session）
-- **跨 worker 持久化**：要在 worker 之间共享会话，接 [2.4.3](./4-session-state#2-4-3-持久化-还原配方) 的 DB 落盘方案
+- **跨 worker 持久化**：要在 worker 之间共享会话，接 [2.4.3](./4-session-state#_2-4-3-存储-还原配方) 的 DB 落盘方案
 
 ## 2.7.3 怎么选
 

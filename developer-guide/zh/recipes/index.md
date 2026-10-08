@@ -50,7 +50,7 @@
 
 ### …用 Node / Go / Rust / IDE 驱动 Agentao
 
-→ **[第 3 部分 · ACP 协议](/zh/part-3/)** — 先看 [3.1 60 秒快速尝鲜](/zh/part-3/1-acp-tour#60-秒快速尝鲜)，再看 [3.3 宿主作为 ACP Client 的典型架构](/zh/part-3/3-host-client-architecture)（含 TS + Go 骨架）。
+→ **[第 3 部分 · ACP 协议](/zh/part-3/)** — 先看 [3.1 60 秒快速尝鲜](/zh/part-3/1-acp-tour#_60-秒快速尝鲜)，再看 [3.3 宿主作为 ACP Client 的典型架构](/zh/part-3/3-host-client-architecture)（含 TS + Go 骨架）。
 
 ### …让记忆按租户严格隔离
 

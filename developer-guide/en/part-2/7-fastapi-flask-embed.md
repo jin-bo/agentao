@@ -380,7 +380,7 @@ Default Gunicorn `sync` workers handle one request per worker — unsuitable for
 - **Internal events, not `astream()`**: `astream()` is async, so this WSGI template relays the internal `AgentEvent` stream (fields may change between releases), through a transport set once at construction. Don't assign `agent.transport` per request — tool events and confirmations would stay on the old one.
 - **No disconnect detection**: WSGI doesn't give you a clean "client gone" hook. Rely on user-triggered cancel + a hard timeout
 - **Worker-local pool**: each Gunicorn worker has its own `_sessions` dict. For multi-worker deployments, route the same `session_id` to the same worker (nginx `ip_hash`, cookie-based routing, or a reverse proxy with sticky sessions)
-- **Cross-worker message persistence**: if you need multi-worker session survival, plug in the DB-backed restore from [2.4.3](./4-session-state#2-4-3-persist-restore-recipe)
+- **Cross-worker message persistence**: if you need multi-worker session survival, plug in the DB-backed restore from [2.4.3](./4-session-state#_2-4-3-persist-restore-recipe)
 
 ## 2.7.3 Which should you pick
 

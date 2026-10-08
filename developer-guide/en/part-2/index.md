@@ -36,7 +36,7 @@ Make sure you've read:
 
 - [1.2 Core Concepts](/en/part-1/2-core-concepts) — Agent / Tool / Transport / Working Directory vocabulary
 - [1.3 Integration Modes](/en/part-1/3-integration-modes) — confirm Python SDK is the right pick
-- [1.4 Hello Agentao](/en/part-1/4-hello-agentao#example-a-python-sdk-20-lines) — 20-line runnable skeleton
+- [1.4 Hello Agentao](/en/part-1/4-hello-agentao) — 20-line runnable skeleton
 
 ## Mental model
 

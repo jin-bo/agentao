@@ -2,7 +2,7 @@
 
 `/context` shows token usage and lets you raise or lower the limit. `/status` is a one-screen snapshot of session state. Together they're your dashboard.
 
-`/status` was already covered in [1. Getting Started](./1-getting-started#status-what-state-am-i-in); this page focuses on `/context` and the broader question of "why is my session getting expensive."
+`/status` was already covered in [1. Getting Started](./1-getting-started#status-—-what-state-am-i-in); this page focuses on `/context` and the broader question of "why is my session getting expensive."
 
 ## `/context` — token-budget dashboard
 

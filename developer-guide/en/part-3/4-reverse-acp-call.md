@@ -70,7 +70,7 @@ inline-confirmation pipeline. Headless embedders should call
 [`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)
 for the authoritative support-level table.
 
-Full API details in [Appendix A · ACP Client](/en/appendix/a-api-reference#a-7-acp-client).
+Full API details in [Appendix A · ACP Client](/en/appendix/a-api-reference#a-8-acp-client).
 
 ## 3.4.3 `prompt_once()` — the 95% use case
 
@@ -248,7 +248,7 @@ config = add_server_entry("gemini", entry.config, project_root=Path("/app"))  # 
 mgr.add_server("gemini", config)
 ```
 
-Each step is separate — query, convert, write `acp.json`, register — so a host can stop after any of them. `entry_to_server_config` writes `autoStart: false` and `startupTimeoutMs: 120000` (the first launch downloads the package); `add_server_entry` refuses a name collision or an invalid existing file, and writes atomically. Scope and rules: [`docs/guides/acp-client.md`](../../../docs/guides/acp-client.md#adding-agents-from-the-acp-registry).
+Each step is separate — query, convert, write `acp.json`, register — so a host can stop after any of them. `entry_to_server_config` writes `autoStart: false` and `startupTimeoutMs: 120000` (the first launch downloads the package); `add_server_entry` refuses a name collision or an invalid existing file, and writes atomically. Scope and rules: [`docs/guides/acp-client.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/acp-client.md#adding-agents-from-the-acp-registry).
 
 ## 3.4.6 Long-lived vs. ephemeral clients
 

@@ -13,7 +13,7 @@
 - `from agentao.memory.manager import MemoryManager`
 - `from agentao.cancellation import ...` → `CancellationToken`、`AgentCancelledError`（`CancellationToken` 也从 `agentao.host` 导出——同一个类，是宿主应使用的稳定路径）
 - `from agentao.acp_client import ...` → `ACPManager`、`ACPClient`、`AcpClientError`、`AcpErrorCode`、`AcpRpcError`、`AcpInteractionRequiredError`、`AcpClientConfig`、`AcpServerConfig`、`AcpConfigError`、`PromptResult`、`ServerState`、`load_acp_client_config`（以及更底层的 re-export——哪些属于"稳定嵌入面"、哪些属于"实现细节"请参考 `agentao.acp_client.__init__.py` 的 docstring）
-- `from agentao.host import ...` → `ActivePermissions`、`EventStream`、`StreamSubscribeError`、`HostEvent`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`SubagentUsage`、`PermissionDecisionEvent`、`RFC3339UTCString`、`export_host_event_json_schema`、`export_host_acp_json_schema`、`CancellationToken`、`Tool`、`AsyncToolBase`、`RegistrableTool`、`TextDelta`、`TurnOutcome` —— 宿主面 harness 合约，详见 [A.10](#a-10-嵌入-harness-合约)
+- `from agentao.host import ...` → `ActivePermissions`、`EventStream`、`StreamSubscribeError`、`HostEvent`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`SubagentUsage`、`PermissionDecisionEvent`、`RFC3339UTCString`、`export_host_event_json_schema`、`export_host_acp_json_schema`、`CancellationToken`、`Tool`、`AsyncToolBase`、`RegistrableTool`、`TextDelta`、`TurnOutcome` —— 宿主面 harness 合约，详见 [A.10](#a-10-嵌入-host-合约)
 
 ## A.1 `Agentao`
 
@@ -106,8 +106,8 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 | `__enter__` / `__exit__`、`__aenter__` / `__aexit__` | `with Agentao(...) as agent:` / `async with ... as agent:` | context manager：返回 agent 本身；退出时调用 `close()`（同步）或 `aclose()`（异步）。块内的异常照常抛出 |
 | `set_provider` | `set_provider(api_key, base_url=None, model=None, *, api_format=None) -> None` | 运行时换 LLM。`api_format`（0.5.0）指明新 provider 的线路协议；`None` 保持当前线路 |
 | `set_model` | `set_model(model: str) -> str` | 只换模型；返回旧 id |
-| `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncGenerator[HostEvent, None]` | 订阅公共 harness 事件（工具/子 Agent/权限决定生命周期）。无 replay；有界背压。详见 [A.10](#a-10-嵌入-harness-合约) |
-| `active_permissions` (0.3.1+) | `active_permissions() -> ActivePermissions` | 当前权限策略快照（`mode`、`rules`、`loaded_sources`），JSON-safe。详见 [A.10](#a-10-嵌入-harness-合约) |
+| `events` (0.3.1+) | `events(session_id: str | None = None) -> AsyncGenerator[HostEvent, None]` | 订阅公共 harness 事件（工具/子 Agent/权限决定生命周期）。无 replay；有界背压。详见 [A.10](#a-10-嵌入-host-合约) |
+| `active_permissions` (0.3.1+) | `active_permissions() -> ActivePermissions` | 当前权限策略快照（`mode`、`rules`、`loaded_sources`），JSON-safe。详见 [A.10](#a-10-嵌入-host-合约) |
 | `add_tool` | `add_tool(tool: RegistrableTool, *, replace: bool = False) -> None` | 构造后注册工具；与 `extra_tools=` 同样的校验 + 能力绑定。名字冲突且未传 `replace=True` 时抛异常（比 `tools.register` 更严）。保留名（`mcp_`、plan 工具）拒绝。下一次 `chat()`/`arun()` 可见。见 [5.1](/zh/part-5/1-custom-tools) |
 | `remove_tool` | `remove_tool(name: str) -> bool` | 构造后移除工具；返回是否存在过（缺失 → `False`，不抛）。`mcp_` / plan 工具会抛异常。下一次 `chat()`/`arun()` 消失 |
 

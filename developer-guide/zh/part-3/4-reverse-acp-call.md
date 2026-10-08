@@ -70,7 +70,7 @@ mgr = ACPManager(config)
 [`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)
 为准。
 
-完整 API 见[附录 A · ACP 客户端](/zh/appendix/a-api-reference#a-7-acp-客户端)。
+完整 API 见[附录 A · ACP 客户端](/zh/appendix/a-api-reference#a-8-acp-客户端)。
 
 ## 3.4.3 `prompt_once()` — 95% 的情形
 
@@ -248,7 +248,7 @@ config = add_server_entry("gemini", entry.config, project_root=Path("/app"))  # 
 mgr.add_server("gemini", config)
 ```
 
-查询、转换、写 `acp.json`、登记是彼此独立的几步，宿主可以在任一步停下。`entry_to_server_config` 写入 `autoStart: false` 和 `startupTimeoutMs: 120000`（首次启动要下载包）；`add_server_entry` 拒绝重名或已损坏的现有文件，并原子写入。范围与规则见 [`docs/guides/acp-client.md`](../../../docs/guides/acp-client.md#adding-agents-from-the-acp-registry)。
+查询、转换、写 `acp.json`、登记是彼此独立的几步，宿主可以在任一步停下。`entry_to_server_config` 写入 `autoStart: false` 和 `startupTimeoutMs: 120000`（首次启动要下载包）；`add_server_entry` 拒绝重名或已损坏的现有文件，并原子写入。范围与规则见 [`docs/guides/acp-client.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/acp-client.md#adding-agents-from-the-acp-registry)。
 
 ## 3.4.6 长驻 vs 临时
 

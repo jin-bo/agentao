@@ -108,14 +108,14 @@ agentao doctor               # 额外覆盖插件诊断、ACP schema、可选依
 agentao doctor --json
 ```
 
-可以放进 CI、`make check` 目标，或刚改完上表里某个文件后跑一下。Error（JSON 损坏、MCP 单条非 object、`LLM_TEMPERATURE` 解析失败等）退出 **1**；warning（fresh clone 少 API key、user/project MCP 同名碰撞）保持退出 **0** 以免 CI 误绊。完整说明见[第 12 章](./12-non-interactive#agentao-doctor-健康快照)。
+可以放进 CI、`make check` 目标，或刚改完上表里某个文件后跑一下。Error（JSON 损坏、MCP 单条非 object、`LLM_TEMPERATURE` 解析失败等）退出 **1**；warning（fresh clone 少 API key、user/project MCP 同名碰撞）保持退出 **0** 以免 CI 误绊。完整说明见[第 12 章](./12-non-interactive#agentao-doctor-——-健康快照)。
 
 ## 接下来读什么
 
 | 想做的事 | 读 |
 |---|---|
 | 上面任意文件的完整 schema | [`docs/reference/configuration.zh.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md) |
-| 在 CI 中校验配置文件 | [12. 非交互入口 → `agentao config validate`](./12-non-interactive#agentao-config-validate-显式配置校验) |
+| 在 CI 中校验配置文件 | [12. 非交互入口 → `agentao config validate`](./12-non-interactive#agentao-config-validate-——-显式配置校验) |
 | 有意识地改默认权限规则 | [Part 5.4 · 权限引擎](/zh/part-5/4-permissions) |
 | 给项目写一份 `AGENTAO.md` | [Part 5.6 · 系统提示定制](/zh/part-5/6-system-prompt) |
 

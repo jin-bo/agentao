@@ -292,7 +292,7 @@ UI thread ──response (id=X)──▶ writer thread ──▶ agent
 - **Respect `options`**: the agent tells you the allowed reply values (`allow_once`, `reject_once`, …). Don't invent your own
 - **If the user closes the window**: respond `{"outcome":{"outcome":"cancelled"}}`, not silently
 
-See [Appendix C.6](/en/appendix/c-acp-messages#c-6-session-request-permission) for the full schema.
+See [Appendix C.6](/en/appendix/c-acp-messages#c-5-session-request-permission-⇠-notification) for the full schema.
 
 ## 3.3.7 Error handling & reconnection
 
