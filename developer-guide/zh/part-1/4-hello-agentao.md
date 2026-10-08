@@ -34,9 +34,9 @@ export OPENAI_MODEL="gpt-5.4"
 
 ```python
 from pathlib import Path
-from agentao import Agentao
+from agentao.embedding import build_from_environment
 
-agent = Agentao(working_directory=Path.cwd())
+agent = build_from_environment(working_directory=Path.cwd())
 print(agent.chat("列出当前目录下 3 个最大的文件。"))
 agent.close()
 ```
@@ -56,7 +56,7 @@ python hello.py
 
 ## 刚刚发生了什么
 
-- `Agentao(...)` 创建了**一个有状态的会话** —— 历史、工具、记忆都绑定到这个实例
+- `build_from_environment(...)` 读取了第 2 步设的三个变量，构造出一个 `Agentao` —— **一个有状态的会话**，历史、工具、记忆都绑定到这个实例。它像 CLI 一样读取环境变量、`.env` 和 `.agentao/` 下的文件；直接调用 `Agentao(...)` 则这些都不读，需要传入 `api_key=`、`base_url=`、`model=`（见 [2.2](/zh/part-2/2-constructor-reference)）
 - `chat()` 跑完了完整的 LLM 循环：思考 → 调工具 → 观察结果 → 再思考 → 回答
 - `working_directory` 把文件/Shell 工具锚定到当前目录。**生产环境务必显式传 `Path`**，多实例并发时不能共享 `Path.cwd()`
 - `close()` 释放 MCP 子进程和 DB 句柄。真实代码里要放在 `try/finally` 中
@@ -65,14 +65,14 @@ python hello.py
 
 ```python
 from pathlib import Path
-from agentao import Agentao
+from agentao.embedding import build_from_environment
 from agentao.transport import SdkTransport
 
 def stream(ev):
     if ev.type.name == "LLM_TEXT":
         print(ev.data["chunk"], end="", flush=True)
 
-agent = Agentao(
+agent = build_from_environment(
     working_directory=Path.cwd(),
     transport=SdkTransport(on_event=stream),
 )
@@ -82,16 +82,16 @@ agent.close()
 
 `LLM_TEXT` 是内部事件，字段可能随版本变化。在异步代码里，流式输出文本的稳定方式是 `agent.astream(...)`——见 [4.4](/zh/part-4/4-streaming-ui)。
 
-整个集成模式就这两步：`Agentao(...)` + `chat(...)`。工具确认、自定义工具、权限、记忆等所有其他能力都是从这两个调用扩展出来的。
+整个集成模式就这两步：构造 agent + `chat(...)`。工具确认、自定义工具、权限、记忆等所有其他能力都是从这两个调用扩展出来的。
 
 ## 常见问题
 
 | 现象 | 原因 |
 |------|------|
 | `ImportError: cannot import name 'Agentao'` | 没装包，或从 `agentao.agent`（非公开路径）导入 |
-| `ValueError: OPENAI_API_KEY is not set` | `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` 三者都必需 |
+| `ValueError: Agentao(): api_key, base_url, and model are required…` | `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` 有一个没设，或者是用 `Agentao(...)` 构造的——它不读环境变量。见 [附录 F.1](/zh/appendix/f-faq#f-1-安装与启动) |
 | Agent 一直回复 `Tool execution declined` | 默认权限拒绝了写操作，见 [5.4 权限引擎](/zh/part-5/4-permissions) |
-| `chat()` 永不返回 | 多半是工具死循环或缺 `ask_user` 回调，见 [附录 F.2](/zh/appendix/f-faq#f-2-runtime-behavior) |
+| `chat()` 永不返回 | 多半是工具死循环或缺 `ask_user` 回调，见 [附录 F.2](/zh/appendix/f-faq#f-2-运行时行为) |
 
 完整排错：[附录 F](/zh/appendix/f-faq)。
 

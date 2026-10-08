@@ -1,8 +1,9 @@
 # 2.2 Constructor Reference
 
 > **What you'll learn**
-> - The **3 parameters you must pass** and why each is required
-> - The **8 you'll typically pass in production** (transport, permissions, MCP, …)
+> - The **smallest call that works**: four parameters, or two with a pre-built `llm_client=`
+> - **All 33 parameters on one map**, grouped by what they configure
+> - The **ones you'll typically pass in production** (transport, permissions, MCP, …)
 > - The **advanced injection surface** for hosts that need full control
 > - The two factory paths (`Agentao(...)` direct vs. `build_from_environment(...)`) and when to pick each
 
@@ -17,9 +18,30 @@ Both produce an `Agentao` instance. Pick one — don't mix.
 
 ---
 
-## Tier 1 · The minimum (3 params)
+## All 33 parameters at a glance
 
-**You must pass these. Everything else has a sensible default.**
+`Agentao.__init__` takes 33 parameters. Only `working_directory` has no default. The first five (`api_key`, `base_url`, `model`, `temperature`, `max_tokens`) may be passed by position; every other one is keyword-only. Below they are grouped by what they configure, so you can skip the groups you don't need.
+
+| Group | Parameters | Covered in |
+|-------|------------|------------|
+| **Session root** (required) | `working_directory` | Tier 1 |
+| **Model**, raw settings | `api_key`, `base_url`, `model` (all three required without `llm_client`); `temperature`, `max_tokens`, `api_format`, `extra_body`, `prompt_cache`, `prompt_cache_ttl` | Tiers 1–3 |
+| **Model**, pre-built | `llm_client` (replaces the whole raw-settings row; passing both raises `ValueError`) | Tier 2 |
+| **Permissions and interaction** | `transport`, `permission_mode` *or* `permission_engine`, `plan_session` | Tiers 2–3 |
+| **Context and compaction** | `max_context_tokens`, `compaction_controller` | Tiers 2–3 |
+| **Tools** | `extra_tools`, `disable_tools` *or* `enabled_tools` | Tier 2 |
+| **MCP** | `mcp_manager`, *or* `extra_mcp_servers` and `mcp_registry` (these two combine) | Tiers 2–3 |
+| **Prompt** | `project_instructions` | Tier 2 |
+| **Bring your own object** | `logger`, `memory_manager`, `skill_manager`, `filesystem`, `shell` | Tier 3 |
+| **Opt-in subsystems** (off by default) | `bg_store`, `sandbox_policy`, `replay_config`, `enable_builtin_agents` | Tier 3 |
+
+Parameters joined by *or*, and the two Model rows, are mutually exclusive: passing both sides raises `ValueError`; see [Mutual-exclusion rules](#mutual-exclusion-rules).
+
+---
+
+## Tier 1 · The smallest call that works
+
+**Four parameters.** Everything else has a default.
 
 ```python
 from pathlib import Path
@@ -27,18 +49,20 @@ from agentao import Agentao
 
 agent = Agentao(
     api_key="sk-...",
+    base_url="https://api.openai.com/v1",
     model="gpt-5.4",
     working_directory=Path("/tmp/my-session"),
 )
 ```
 
-| Param | Type | Why required |
-|-------|------|--------------|
-| `api_key` | `str` | LLM credential. Or set env `OPENAI_API_KEY`, or pass a pre-built `llm_client=` |
-| `model` | `str` | Model id. Or env `OPENAI_MODEL` |
+| Param | Type | Why |
+|-------|------|-----|
+| `api_key` | `str` | LLM credential |
+| `base_url` | `str` | The endpoint: OpenAI, DeepSeek, a Gemini gateway, vLLM, … There is no built-in default |
+| `model` | `str` | Model id |
 | `working_directory` | `Path` | The session's project root. **Frozen at construction** — file / shell / memory all resolve against it |
 
-> Set `base_url` too if your endpoint isn't OpenAI (DeepSeek, Gemini gateway, vLLM, …). Or env `OPENAI_BASE_URL`.
+Without `llm_client=`, leaving out any of `api_key`, `base_url` or `model` raises `ValueError`. A direct `Agentao(...)` **reads no environment variables**: `OPENAI_API_KEY` and the rest are read only by `build_from_environment()` (see [Factory path](#factory-path-build-from-environment)). The other smallest call is `Agentao(llm_client=my_client, working_directory=...)`, with the credentials on the client.
 
 ::: warning Don't skip `working_directory`
 In a Web server / multi-tenant process, `Path.cwd()` is **process-global** — concurrent sessions would cross-contaminate. Since 0.3.0 the keyword is required; calls without it raise `TypeError` from Python signature dispatch.
@@ -46,7 +70,7 @@ In a Web server / multi-tenant process, `Path.cwd()` is **process-global** — c
 
 ---
 
-## Tier 2 · Common production params (8 more)
+## Tier 2 · Common production params
 
 These cover most production embeddings:
 
@@ -73,13 +97,15 @@ agent = Agentao(
 )
 ```
 
+`PermissionEngine(project_root=workdir)`, with no `rules=` and no `user_root=`, loads no rule file: a `<workdir>/.agentao/permissions.json` is never loaded, only warned about. So the two `engine` lines above give the same rules as passing `permission_mode="workspace-write"` instead of `permission_engine=engine`. Build an engine yourself when you have rules for it: `rules=[...]`, or `user_root=` to load `<user_root>/permissions.json`.
+
 | Param | Type | Default | What it does |
 |-------|------|---------|--------------|
-| `base_url` | `str` | OpenAI's | Switch to any OpenAI-compatible endpoint |
+| `max_tokens` | `int \| None` | `None` — the client's 65,536 | Per-call output cap |
 | `temperature` | `float \| None` | `None` | Sampling temperature. `None` sends no `temperature`, so the provider's default applies (0.5.7; was `0.2`) |
 | `extra_body` | `Dict[str,Any]` | `None` | Forwarded verbatim to the LLM `.create()` as the SDK's `extra_body` — the escape hatch for params the closed request build does not expose (`reasoning_effort` / `top_p` / `seed` / `response_format` / provider-specific fields). **Keyword-only.** Sub-agents inherit it; logged with credential keys redacted. **Mutually exclusive** with `llm_client`. See below |
 | `api_format` | `str` | `"openai-completions"` | The wire protocol spoken to `base_url` (0.5.0): `"openai-completions"`, `"anthropic-messages"` (Anthropic's Messages API over the official SDK) or `"openai-responses"` (OpenAI's Responses API, 0.5.3). **Keyword-only**, configured and never inferred from the URL or the model name, changed afterwards only by `set_provider(..., api_format=)`, inherited by sub-agents, and **mutually exclusive with `llm_client=`**. An unknown value raises `ValueError`. On `anthropic-messages`, `base_url` is the API root, `temperature` is not sent, and extended thinking goes through `extra_body`. Env equivalent: `{PROVIDER}_API_FORMAT` — see [Appendix B](/en/appendix/b-config-keys) |
-| `transport` | `Transport` | `NullTransport()` | UI bridge: events + confirm + ask_user + max-iter fallback. See [Part 4](/en/part-4/) |
+| `transport` | `CoreTransport` | `NullTransport()` | UI bridge: events + confirm + ask_user + max-iter fallback. See [Part 4](/en/part-4/) |
 | `permission_engine` | `PermissionEngine` | `None` — no engine, no rule evaluated (`build_from_environment` builds one rooted at `working_directory`) | Rule-based gating; modes and `set_permission_mode` need one. See [5.4](/en/part-5/4-permissions) |
 | `permission_mode` | `str` | `None` — builds nothing | `"read-only"` / `"workspace-write"` / `"full-access"` (`"plan"` is refused): builds `PermissionEngine(project_root=working_directory, rules=[])` in that mode, reading no rule file, and starts in it without emitting an event. Mutually exclusive with `permission_engine`. See [5.4](/en/part-5/4-permissions) |
 | `max_context_tokens` | `int` | `200_000` | Triggers conversation compression beyond this |
@@ -87,7 +113,7 @@ agent = Agentao(
 | `extra_tools` | `Sequence[Tool]` | `None` | Inject / replace tools (instances; register last, same name overrides a built-in). See [5.1](/en/part-5/1-custom-tools) |
 | `disable_tools` | `Iterable[str]` | `None` | Skip these built-ins by name (unknown name → `ValueError`). **Mutually exclusive with `enabled_tools`** |
 | `enabled_tools` | `Iterable[str]` | `None` | Allowlist of agentao-owned tools to keep; `None`=off, any iterable incl. `set()`=on. **Mutually exclusive with `disable_tools`** |
-| `llm_client` | `LLMClient` | (constructed from credentials) | Inject a pre-built client to fully control logger / log file. **Mutually exclusive** with `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` (a host with its own client passes `extra_body=` to that client) |
+| `llm_client` | `LLMClient` | (constructed from credentials) | Inject a pre-built client to fully control logger / log file. **Mutually exclusive** with every raw model setting: `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` / `prompt_cache` / `prompt_cache_ttl` / `api_format` (a host with its own client passes them to that client) |
 | `project_instructions` | `str` | (read from `<wd>/AGENTAO.md`) | Pass AGENTAO.md content directly — skips the disk read |
 
 ::: tip Async hosts use `arun()`
@@ -146,13 +172,14 @@ Inject pre-built managers when you don't want Agentao to construct them from def
 | `mcp_registry` | `load_mcp_config(...)` source. Use `InMemoryMCPRegistry` for programmatic registration. **Mutually exclusive with `mcp_manager=`** |
 :::
 
-::: details Opt-in subsystems — `bg_store`, `sandbox_policy`, `replay_config`
-**Default is `None` = fully disabled.** Pay zero cost if you don't use them.
+::: details Opt-in subsystems — `bg_store`, `sandbox_policy`, `replay_config`, `enable_builtin_agents`
+**Default is `None` (or `False`) = fully disabled.** Pay zero cost if you don't use them.
 
 | Param | When `None` |
 |-------|-------------|
 | `bg_store` | Background-task tools (`check_background_agent`, `cancel_background_agent`) are not registered; sub-agent tool schemas drop the `run_in_background` field; `/agent bg\|dashboard\|cancel\|delete\|logs\|result` CLI subcommands no-op with a warning |
 | `sandbox_policy` | Shell runs without macOS `sandbox-exec` wrapper |
+| `enable_builtin_agents` (`False`) | The built-in sub-agents (`codebase-investigator`, `generalist`) are not registered as delegation tools. The factory reads `agents.enable_builtin` from `settings.json` |
 | `replay_config` | The `replay` block of `<wd>/.agentao/settings.json` is not read at construction; no `ReplayManager` is attached until `start_replay()` / `reload_replay_config()` creates one. `start_replay()` alone creates it with replay off (it returns `None`); `reload_replay_config()` reads that block but starts nothing: a `start_replay()` after it records only if the block has `enabled` true |
 :::
 
@@ -186,6 +213,15 @@ agent = Agentao(
 `extra_headers` and a `settings.json` file layer are intentionally deferred; see `docs/design/host-llm-extra-params.md`.
 :::
 
+::: details Rarely set — `prompt_cache`, `prompt_cache_ttl`, `compaction_controller`, `plan_session`
+| Param | Default | What it does |
+|-------|---------|--------------|
+| `prompt_cache` | `None` (off) | `"anthropic"` puts explicit prompt-cache breakpoints on each request (at most 3). Off by default because endpoint support is not verified. Never inferred from the URL or model name. Env equivalent: `LLM_PROMPT_CACHE`, read only by the factory |
+| `prompt_cache_ttl` | `None` (provider default, `"5m"`) | `"5m"` or `"1h"`. Ignored while `prompt_cache` is off. Env equivalent: `LLM_PROMPT_CACHE_TTL` |
+| `compaction_controller` | `None` | A synchronous callable that allows, cancels, or supplies the summary for a compaction. Fail-open: a raise counts as allow. See [`host-api.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/host-api.md) |
+| `plan_session` | `None` (a fresh `PlanSession`) | Plan-mode state. The CLI passes its own; an embedded host normally leaves it alone |
+:::
+
 ::: details The 8 legacy callbacks (removed in 0.5.0)
 Pre-0.2.10 API. They warned through 0.4.x and are **no longer parameters**: passing one raises `TypeError`. Either go through `Transport`, or keep the callbacks and wrap them — `agentao.embedding.compat.build_compat_transport(...)` takes the same eight names and is not deprecated: `Agentao(transport=build_compat_transport(confirmation_callback=...), ...)`.
 
@@ -211,7 +247,7 @@ Violating any of these raises `ValueError` at construction:
 
 | Cannot combine | Reason |
 |----------------|--------|
-| `llm_client=` + any of `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` | The injected client is already the credential source — pass `extra_body=` to that client directly instead |
+| `llm_client=` + any of `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` / `prompt_cache` / `prompt_cache_ttl` / `api_format` | The injected client is already the credential source — pass those to that client directly instead |
 | `mcp_manager=` + `extra_mcp_servers=` | Per-session merge needs a manager Agentao constructs |
 | `mcp_manager=` + `mcp_registry=` | Registry is the config source; manager is the construction outcome |
 | `permission_engine=` + `permission_mode=` | One is an engine, the other builds one — set the mode on your engine, or call `set_permission_mode()` after construction |
@@ -272,7 +308,7 @@ def make_agent_for_session(
 
     return Agentao(
         api_key=os.environ["OPENAI_API_KEY"],
-        base_url=os.environ.get("OPENAI_BASE_URL"),
+        base_url=os.environ["OPENAI_BASE_URL"],
         model="gpt-5.4",
         temperature=0.1,
         transport=transport,
@@ -316,9 +352,10 @@ End-to-end embedding patterns: [`docs/guides/embedding.md`](https://github.com/j
 
 ## TL;DR
 
-- **3 you must pass**: `api_key`, `model`, `working_directory` (Path, frozen at construction).
-- **8 you'll typically pass**: + `base_url`, `temperature`, `transport`, `permission_engine`, `max_context_tokens`, `extra_mcp_servers`, `llm_client`, `project_instructions`.
-- **Everything else is opt-in or advanced** — capability protocols, custom managers, sandbox / replay / background subsystems.
+- **33 parameters, one required**: `working_directory` (Path, frozen at construction). The [map above](#all-33-parameters-at-a-glance) groups the rest by purpose.
+- **Smallest working call**: `api_key` + `base_url` + `model` + `working_directory`, or `llm_client` + `working_directory`. A direct `Agentao(...)` reads no environment variables.
+- **Typical production additions**: `transport`, `permission_mode` (or `permission_engine`), `max_context_tokens`, `extra_mcp_servers`, `project_instructions`, `temperature`.
+- **Everything else is opt-in or advanced** — capability protocols, custom managers, prompt caching, compaction control, sandbox / replay / background / sub-agent subsystems.
 - **Two factories**: `build_from_environment()` for CLI conventions; direct `Agentao(...)` for explicit control. Don't mix.
 
 → Next: [2.3 Lifecycle](./3-lifecycle)

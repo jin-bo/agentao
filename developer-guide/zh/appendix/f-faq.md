@@ -18,15 +18,14 @@ uv add 'agentao[mcp]'          # 或
 uv add 'agentao[all]'
 ```
 
-### "ValueError: OPENAI_API_KEY is not set"
+### "ValueError: Agentao(): api_key, base_url, and model are required…"
 
-三条解决路径：
+直接调用 `Agentao(...)` 不读任何环境变量，所以凭据必须传进去。两种做法：
 
-1. 工作目录根的 `.env`，写 `OPENAI_API_KEY=…`
-2. 进程环境变量：`export OPENAI_API_KEY=…`
-3. 构造器：`Agentao(api_key="sk-…")`
+1. 直接传：`Agentao(api_key=…, base_url=…, model=…, working_directory=…)`，或者用预构造的 `llm_client=` 代替这三个。
+2. 走工厂函数：`agentao.embedding.build_from_environment(working_directory=…)` 会从进程环境变量和 `<working_directory>/.env` 读取 `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`（或 `LLM_PROVIDER` 对应的 `{PROVIDER}_*`）。
 
-构造器 > env > `.env`。见 [附录 B](./b-config-keys)。
+走工厂时，关键字参数 > 进程环境变量 > `.env`。见 [附录 B](./b-config-keys)。
 
 ### "Model 'gpt-5.4' not found"（自建端点）
 

@@ -225,6 +225,7 @@
   - 仅限关键字已经限制了误用风险；
   - 拆成配置对象会牵动所有文档、示例和测试，却不修复任何缺陷；
   - 指南已经以其中一种写法为主。
+  - **文档调整（2026-10-07）。** 签名不变（加入 `permission_mode=` 后共 33 个参数）。开发者指南的构造器参数页（中英文，§2.2）现在开头先给出全部 33 个参数的分组一览，并补上了此前漏掉的六个（`max_tokens`、`prompt_cache`、`prompt_cache_ttl`、`compaction_controller`、`plan_session`、`enable_builtin_agents`）。同时更正了最小调用：不传 `llm_client=` 时，`api_key`、`base_url`、`model` 三个都必填，而且直接调用 `Agentao(...)` 不读任何环境变量，所以原来那个三参数示例会抛 `ValueError`。
 
 ### F7. 常见任务只应接触少量名字
 

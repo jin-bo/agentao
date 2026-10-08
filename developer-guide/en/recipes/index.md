@@ -42,7 +42,7 @@
 
 ### …give each tenant their own credentials or MCP token
 
-→ **[2.2 Constructor: extra_mcp_servers](/en/part-2/2-constructor-reference#tier-2-common-production-params-8-more)** for per-session MCP injection. **[6.4 Multi-Tenant & Filesystem](/en/part-6/4-multi-tenant-fs)** for the tenant isolation rules. **[7.1 SaaS Assistant](/en/part-7/1-saas-assistant)** ties them together.
+→ **[2.2 Constructor: extra_mcp_servers](/en/part-2/2-constructor-reference#tier-2-·-common-production-params)** for per-session MCP injection. **[6.4 Multi-Tenant & Filesystem](/en/part-6/4-multi-tenant-fs)** for the tenant isolation rules. **[7.1 SaaS Assistant](/en/part-7/1-saas-assistant)** ties them together.
 
 ### …block SSRF or lock down `web_fetch`
 
@@ -80,7 +80,7 @@ Two runnable starting points: [`examples/host_events.py`](https://github.com/jin
 
 ### …replace Agentao's IO surfaces (FS / shell / MCP / memory) with my own backend
 
-→ **[2.2 Capability protocols](/en/part-2/2-constructor-reference#tier-3-advanced-injections)** lists all four host→Agentao injection slots (`filesystem` / `shell` / `mcp_registry` / `memory_manager`) and how each is bound. **TL;DR**: import the Protocols from `agentao.host.protocols`, pass implementations into the `Agentao(...)` constructor — `None` falls back to local defaults, not "disabled". Runnable end-to-end shape: **[`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection)** replaces all four slots with small adapters and asserts each one is consulted (6 smoke tests, no API key).
+→ **[2.2 Capability protocols](/en/part-2/2-constructor-reference#tier-3-·-advanced-injections)** lists all four host→Agentao injection slots (`filesystem` / `shell` / `mcp_registry` / `memory_manager`) and how each is bound. **TL;DR**: import the Protocols from `agentao.host.protocols`, pass implementations into the `Agentao(...)` constructor — `None` falls back to local defaults, not "disabled". Runnable end-to-end shape: **[`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection)** replaces all four slots with small adapters and asserts each one is consulted (6 smoke tests, no API key).
 
 ## Don't see your task?
 

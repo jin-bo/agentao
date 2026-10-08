@@ -38,7 +38,7 @@
 |------|---------|---------|------|
 | **事件** | `agent.events()` 异步迭代器 | 一串 `HostEvent`（工具 / 子 agent / 权限三种生命周期） | 审计、可观测、实时 UI |
 | **策略快照** | `agent.active_permissions()` | JSON 安全的 `ActivePermissions`（mode + rules + sources） | 设置 UI、审计富化、合规报告 |
-| **能力协议** | `from agentao.host.protocols import FileSystem, ShellExecutor, MCPRegistry, MemoryStore` | 可注入 Docker / 虚拟 FS / 审计代理 / 程序化 MCP / 远程记忆后端的运行时 Protocol | 见 [2.2 第 3 档 · 能力协议](/zh/part-2/2-constructor-reference#第-3-档-高级注入) 与 [6.4](/zh/part-6/4-multi-tenant-fs)；端到端示例 [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection) |
+| **能力协议** | `from agentao.host.protocols import FileSystem, ShellExecutor, MCPRegistry, MemoryStore` | 可注入 Docker / 虚拟 FS / 审计代理 / 程序化 MCP / 远程记忆后端的运行时 Protocol | 见 [2.2 第 3 档 · 能力协议](/zh/part-2/2-constructor-reference#第-3-档-·-高级注入) 与 [6.4](/zh/part-6/4-multi-tenant-fs)；端到端示例 [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection) |
 
 流式输出一轮的 assistant 文本也有稳定路径：`agent.astream()`——见 4.7.4 里的[流式文本](#streaming-text-agent-astream)。
 

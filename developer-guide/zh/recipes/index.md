@@ -42,7 +42,7 @@
 
 ### …给每个租户独立的凭据或 MCP token
 
-→ **[2.2 构造器 · extra_mcp_servers](/zh/part-2/2-constructor-reference#第-2-档-生产常用-再加-8-个)** 做会话级 MCP 注入；**[6.4 多租户与文件系统](/zh/part-6/4-multi-tenant-fs)** 给租户隔离规则；**[7.1 SaaS 内置助手](/zh/part-7/1-saas-assistant)** 把这些串起来。
+→ **[2.2 构造器 · extra_mcp_servers](/zh/part-2/2-constructor-reference#第-2-档-·-生产常用)** 做会话级 MCP 注入；**[6.4 多租户与文件系统](/zh/part-6/4-multi-tenant-fs)** 给租户隔离规则；**[7.1 SaaS 内置助手](/zh/part-7/1-saas-assistant)** 把这些串起来。
 
 ### …阻断 SSRF 或锁紧 `web_fetch`
 
@@ -80,7 +80,7 @@
 
 ### …把 Agentao 的 IO 面（FS / shell / MCP / memory）替换成自己的后端
 
-→ **[2.2 能力协议](/zh/part-2/2-constructor-reference#第-3-档-高级注入)** 列了四个 host→Agentao 注入槽（`filesystem` / `shell` / `mcp_registry` / `memory_manager`）以及每个的绑定时机。**TL;DR**：从 `agentao.host.protocols` 导入 Protocol，把实现传给 `Agentao(...)` 构造器——传 `None` 是回退到本地默认，**不是**禁用。可运行端到端形态：**[`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection)** 用四个小适配器替换全部槽位，并用 6 条 smoke 测试断言每个槽位被实际调用（无需 API key）。
+→ **[2.2 能力协议](/zh/part-2/2-constructor-reference#第-3-档-·-高级注入)** 列了四个 host→Agentao 注入槽（`filesystem` / `shell` / `mcp_registry` / `memory_manager`）以及每个的绑定时机。**TL;DR**：从 `agentao.host.protocols` 导入 Protocol，把实现传给 `Agentao(...)` 构造器——传 `None` 是回退到本地默认，**不是**禁用。可运行端到端形态：**[`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection)** 用四个小适配器替换全部槽位，并用 6 条 smoke 测试断言每个槽位被实际调用（无需 API key）。
 
 ## 没找到你的任务？
 
