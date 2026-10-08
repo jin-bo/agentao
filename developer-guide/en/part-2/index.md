@@ -8,7 +8,7 @@ Five vocabulary items you'll see throughout — bookmark [Appendix G](/en/append
 - **Working directory (cwd)** — file-tool root, MCP cwd, `AGENTAO.md` lookup; frozen at construction · [§2.2](/en/part-2/2-constructor-reference), [G.1](/en/appendix/g-glossary#g-1-core-concepts)
 - **Transport** — push-style callback (`emit(event)`) for streaming UI · [§2.7](/en/part-2/7-fastapi-flask-embed), [G.2](/en/appendix/g-glossary#g-2-extension-points)
 - **CancellationToken** — host-side handle to abort an in-flight `chat()` · [§2.6](/en/part-2/6-cancellation-timeouts), [G.1](/en/appendix/g-glossary#g-1-core-concepts)
-- **extra_mcp_servers** — per-session MCP injection (different tenants → different tokens) · [§2.2](/en/part-2/2-constructor-reference#tier-2-common-production-params-8-more)
+- **extra_mcp_servers** — per-session MCP injection (different tenants → different tokens) · [§2.2](/en/part-2/2-constructor-reference#tier-2-·-common-production-params)
 :::
 
 ## Coverage
@@ -36,7 +36,7 @@ Make sure you've read:
 
 - [1.2 Core Concepts](/en/part-1/2-core-concepts) — Agent / Tool / Transport / Working Directory vocabulary
 - [1.3 Integration Modes](/en/part-1/3-integration-modes) — confirm Python SDK is the right pick
-- [1.4 Hello Agentao](/en/part-1/4-hello-agentao#example-a-python-sdk-20-lines) — 20-line runnable skeleton
+- [1.4 Hello Agentao](/en/part-1/4-hello-agentao) — 20-line runnable skeleton
 
 ## Mental model
 

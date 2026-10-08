@@ -145,7 +145,7 @@ ACP 是客户端驱动的——server 不能自己开会话——所以 `--resum
 
 - `cwd` 决定了这个会话的**工作目录**——文件工具、`AGENTAO.md`、`.agentao/` 全部相对它。多会话并发时务必不同
 - `mcpServers` 接受 `"type":"stdio"`、`"type":"sse"` 或 `"type":"http"`（`mcpCapabilities.http=true`）；裸 `url` 默认走 Streamable HTTP
-- 这些 MCP 配置被内部映射为 [`extra_mcp_servers` 参数](/zh/part-2/2-constructor-reference#会话级-mcp-服务器)
+- 这些 MCP 配置被内部映射为 [`extra_mcp_servers` 参数](/zh/part-2/2-constructor-reference#第-2-档-·-生产常用)
 
 ## 发送提示 `session/prompt`
 

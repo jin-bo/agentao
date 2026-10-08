@@ -30,7 +30,7 @@ agentao -p "总结 README"
 cat issue.md | agentao --print "根据下面内容生成修复计划"
 ```
 
-从 0.4.x 起，`-p` 是 `agentao run --format text --prompt …` 的薄壳，两者共用下文 [`agentao run`](#agentao-run-自动化结构化入口) 一节里的统一退出码表。
+从 0.4.x 起，`-p` 是 `agentao run --format text --prompt …` 的薄壳，两者共用下文 [`agentao run`](#agentao-run-—-自动化结构化入口) 一节里的统一退出码表。
 
 > **升级提示（0.3.x → 0.4.x）：** 旧版 `-p` 把"达到最大工具迭代数"映射为退出码 `2`。0.4.x 起这种情况是 `4`；`2` 现在表示"用法或 spec 校验失败"。
 

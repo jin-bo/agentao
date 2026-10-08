@@ -21,7 +21,7 @@ The core class — see [Part 2.2](/en/part-2/2-constructor-reference) for the fu
 
 ### Constructor
 
-See [Part 2.2](/en/part-2/2-constructor-reference) for the full parameter table. **Since 0.3.0**, `Agentao()` without `working_directory=` raises `TypeError` from Python signature dispatch — the soft-deprecation cycle ended. End-to-end embedding patterns live in [`docs/guides/embedding.md`](../../../docs/guides/embedding.md).
+See [Part 2.2](/en/part-2/2-constructor-reference) for the full parameter table. **Since 0.3.0**, `Agentao()` without `working_directory=` raises `TypeError` from Python signature dispatch — the soft-deprecation cycle ended. End-to-end embedding patterns live in [`docs/guides/embedding.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md).
 
 ```python
 Agentao(
@@ -101,7 +101,7 @@ CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars
 | `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | Async surface — bridges `chat()` through `loop.run_in_executor`. Same semantics for cancellation, replay, max_iterations, images. |
 | `astream` | `astream(user_message: str, *, max_iterations: int = 100, images: list[dict] | None = None, cancellation_token: CancellationToken | None = None) -> AsyncGenerator[TextDelta | TurnOutcome, None]` | Run one turn and stream it: yields `TextDelta` items, then the turn's `TurnOutcome` as the last item. Deltas are for display; the answer is `TurnOutcome.text`, checked with `.is_answer`. Wrap in `contextlib.aclosing(...)` — closing it (or cancelling the consumer) cancels the turn. Subscribes to the agent's transport, never replaces it. See [4.7](/en/part-4/7-host-contract#streaming-text-agent-astream). |
 | `clear_history` | `clear_history() -> None` | Reset `self.messages`, active skills, todos and token counters; does not touch memory DB. Background agents keep running, but their completion notifications no longer reach the history (read them via `check_background_agent`). |
-| `close` | `close() -> None` | Release MCP subprocesses, close DB handles. Safe to call more than once. Call in `finally:`, or use `with`. |
+| `close` | `close() -> None` | Release the MCP subprocesses and DB handles the agent opened itself (an injected `mcp_manager=` / `memory_manager=` is yours to release). Safe to call more than once. Call in `finally:`, or use `with`. |
 | `aclose` | `async aclose() -> None` | `close()` on a thread of its own, so the event loop keeps running. End the agent's turns first; it does not wait for or cancel one. |
 | `__enter__` / `__exit__`, `__aenter__` / `__aexit__` | `with Agentao(...) as agent:` / `async with ... as agent:` | Context manager: returns the agent itself; on exit calls `close()` (sync) or `aclose()` (async). Exceptions from the block propagate. |
 | `set_provider` | `set_provider(api_key: str, base_url: str | None = None, model: str | None = None, *, api_format: str | None = None) -> None` | Runtime LLM swap. `api_format` (0.5.0) names the new provider's wire protocol; `None` keeps the current one. |
@@ -509,7 +509,7 @@ Week 2 field notes:
 - `SERVER_BUSY` and `SERVER_NOT_FOUND` are **not** recorded — they are
   caller-side signals.
 
-See [`docs/guides/headless-runtime.md`](../../../docs/guides/headless-runtime.md)
+See [`docs/guides/headless-runtime.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md)
 for the full state-vs-error contract and the readiness classifier.
 
 ### Exception classes
@@ -555,7 +555,7 @@ The `agentao.host` package is the **stable host-facing API surface** for embeddi
 
 > **Naming.** "Harness" still refers to *Agentao itself running embedded in a host application* (the conceptual framing in `docs/design/embedded-host-contract.md`); the contract package was renamed to `agentao.host` to make `from agentao.host import HostEvent` read consistently. The old `agentao.harness` import path and old symbol names (`HarnessEvent`, `HarnessReplaySink`, `export_harness_*`) warned from 0.4.2 and were **removed in 0.5.0** — replace `harness` / `Harness` with `host` / `Host`.
 
-Full reference: [`docs/reference/host-api.md`](../../../docs/reference/host-api.md). Design rationale: [`docs/design/embedded-host-contract.md`](../../../docs/design/embedded-host-contract.md).
+Full reference: [`docs/reference/host-api.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/host-api.md). Design rationale: [`docs/design/embedded-host-contract.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/embedded-host-contract.md).
 
 ### Public exports
 
@@ -646,8 +646,8 @@ Hosts that layer policy on top of the engine call `agent.permission_engine.add_l
 
 Each release ships checked-in JSON schema snapshots:
 
-- [`docs/schema/host.events.v1.json`](../../../docs/schema/host.events.v1.json) — events + permissions surface
-- [`docs/schema/host.acp.v1.json`](../../../docs/schema/host.acp.v1.json) — host-facing ACP payloads
+- [`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json) — events + permissions surface
+- [`docs/schema/host.acp.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.acp.v1.json) — host-facing ACP payloads
 
 `tests/test_host_schema.py` regenerates the schemas from the Pydantic models and asserts byte-equality. A model change that shifts the wire form must update both the model and the snapshot in the same PR. Adding an optional field is backwards-compatible; removing or renaming requires a schema version bump.
 

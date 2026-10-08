@@ -33,7 +33,7 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 
 | 字段 | 值 | 含义 |
 |------|-----|------|
-| `loadSession` | `true` | 支持 `session/load`——见 [7.2](/zh/part-7/2-ide-plugin#3-ide-重启后的会话恢复) |
+| `loadSession` | `true` | 支持 `session/load`——见 [7.2](/zh/part-7/2-ide-plugin#_3-·-ide-重启后的会话恢复) |
 | `promptCapabilities.image` | `true` | 0.4.8+：内联 `{data, mimeType}` 图片块；非视觉模型的退化行为见 [A.1](/zh/appendix/a-api-reference#图片输入与视觉退化) |
 | `promptCapabilities.audio` | `false` | |
 | `promptCapabilities.embeddedContext` | `false` | |
@@ -164,7 +164,7 @@ ACP v1 还有第三种 `terminal`。Agentao 从不发它：它不调用 `termina
 | `outcome.outcome` | `"selected"` 或 `"cancelled"` | |
 | `outcome.optionId` | `string` | 当 `selected` 时必填 |
 
-**取消规则**：如果客户端一直不回，而整轮被取消，agent 会把所有挂起的权限请求以 `cancelled` 解决。见 [7.2 陷阱](/zh/part-7/2-ide-plugin#陷阱)。
+**取消规则**：如果客户端一直不回，而整轮被取消，agent 会把所有挂起的权限请求以 `cancelled` 解决。见 [7.2 陷阱](/zh/part-7/2-ide-plugin#⚠️-陷阱)。
 
 ## C.6 `session/cancel`
 

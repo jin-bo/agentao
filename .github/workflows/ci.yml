@@ -101,6 +101,44 @@ jobs:
       - name: ruff check
         run: uv run --locked --python 3.12 --only-group dev ruff check .
 
+  # The developer guide is otherwise built only by deploy-developer-guide.yml,
+  # on pushes to main, so a PR that breaks it is found after the merge. It is
+  # built with `ignoreDeadLinks: true`, and VitePress never checks anchors, so
+  # a broken `#anchor` deploys cleanly: 90 had accumulated before #452/#453.
+  # So had 34 links to pages the site lacks, most of them relative links out
+  # of the site (`../../../docs/…`) that work only when read on GitHub. The
+  # check reads the built HTML, so the slugs are VitePress's own.
+  #
+  # On every PR, with no `paths:` filter: about 40 s of runner time in
+  # parallel with jobs that take two to three minutes, and a path-filtered
+  # job that is later made required leaves PRs it skipped waiting forever.
+  guide-anchors:
+    name: Developer guide · build + links
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: developer-guide
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: developer-guide/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build VitePress site
+        run: npm run docs:build
+
+      # Standard library only: the runner's python3, no project install.
+      - name: Check every page and #anchor link against the built site
+        run: python3 ../scripts/check_guide_anchors.py .
+
   # ─────────────────────────────────────────────────────────────
   # Job 1 · Unit tests across Python 3.10 / 3.11 / 3.12
   # ─────────────────────────────────────────────────────────────

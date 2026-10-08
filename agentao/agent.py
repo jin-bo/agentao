@@ -6,6 +6,7 @@ import os
 import concurrent.futures
 import contextvars
 import threading
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterable, List, Optional, Sequence, Set, TypeVar, Union, TYPE_CHECKING
@@ -405,61 +406,153 @@ class Agentao:
             api_format=api_format,
             logger=logger,
         )
-        self._init_skill_and_memory(skill_manager, memory_manager)
-        self._last_user_message: str = ""
-        self._stable_block_chars: int = 0  # size of last rendered <memory-stable> block
-        # Ids rendered in the last <memory-stable> block. The volatile tail's
-        # dynamic-recall pass excludes them; the two are built by separate
-        # calls, so the set is handed over on the agent (see prompts/builder.py).
-        self._stable_memory_ids: Set[str] = set()
-        self.todo_tool = TodoWriteTool()
-        if initial_mode is not None:
-            # ``rules=[]``, never ``None``: ``None`` makes the engine run the
-            # permission-file loader. ``permission_mode=`` asks for a preset,
-            # not for whatever policy file this machine happens to hold.
-            permission_engine = PermissionEngine(
-                project_root=self._working_directory, rules=[],
+        # What this agent owns: what this constructor builds itself (and what
+        # ``_adopt_memory_manager`` hands it). ``close()`` releases these and
+        # only these, and so does a failure below, since the caller never
+        # receives the object. Injected managers are the caller's and are
+        # left alone; so is a manager a host assigns over the attribute
+        # later, while the one built here is still released. The LLM client
+        # is released too: it holds ``agentao.log`` open.
+        self._built_llm_client: Optional[LLMClient] = (
+            self.llm if llm_client is None else None
+        )
+        self._built_memory_manager: Optional["MemoryManager"] = None
+        self._built_mcp_manager: Optional["McpClientManager"] = None
+        try:
+            self._init_skill_and_memory(skill_manager, memory_manager)
+            self._last_user_message: str = ""
+            self._stable_block_chars: int = 0  # size of last rendered <memory-stable> block
+            # Ids rendered in the last <memory-stable> block. The volatile tail's
+            # dynamic-recall pass excludes them; the two are built by separate
+            # calls, so the set is handed over on the agent (see prompts/builder.py).
+            self._stable_memory_ids: Set[str] = set()
+            self.todo_tool = TodoWriteTool()
+            if initial_mode is not None:
+                # ``rules=[]``, never ``None``: ``None`` makes the engine run the
+                # permission-file loader. ``permission_mode=`` asks for a preset,
+                # not for whatever policy file this machine happens to hold.
+                permission_engine = PermissionEngine(
+                    project_root=self._working_directory, rules=[],
+                )
+            self.permission_engine = permission_engine
+
+            # An explicit transport, or the silent headless default.
+            self.transport: "CoreTransport" = (
+                transport if transport is not None else NullTransport()
             )
-        self.permission_engine = permission_engine
 
-        # An explicit transport, or the silent headless default.
-        self.transport: "CoreTransport" = (
-            transport if transport is not None else NullTransport()
-        )
-
-        # Initialize context manager
-        self.context_manager = ContextManager(
-            llm_client=self.llm,
-            memory_tool=self.memory_tool,
-            max_tokens=max_context_tokens,
-            memory_manager=self._memory_manager,
-        )
-        # Built on first use — see :attr:`compaction_coordinator`. Held
-        # rather than rebuilt per call because it is where per-turn
-        # compaction state lives.
-        self._compaction_coordinator: Optional["CompactionCoordinator"] = None
-        self.compaction_controller = compaction_controller
-
-        # Session-scoped state (session id, host event stream, conversation
-        # history, plan session, project instructions) must land before
-        # ``_wire_tooling`` — the host emitters built there capture
-        # ``self._host_events`` / ``self._session_id``.
-        self._init_session_state(plan_session, project_instructions)
-        self._init_replay(replay_config)
-        self._wire_tooling(
-            mcp_manager=mcp_manager,
-            bg_store=bg_store,
-            sandbox_policy=sandbox_policy,
-            enable_builtin_agents=enable_builtin_agents,
-        )
-        if initial_mode is not None:
-            # Both read-only switches, silently: a starting state is not a
-            # switch, and an event here would reach the host's transport
-            # before this constructor has returned. Needs ``tool_runner``,
-            # hence after wiring.
-            _runtime_permission_mode._set_initial_permission_mode(
-                self, initial_mode,
+            # Initialize context manager
+            self.context_manager = ContextManager(
+                llm_client=self.llm,
+                memory_tool=self.memory_tool,
+                max_tokens=max_context_tokens,
+                memory_manager=self._memory_manager,
             )
+            # Built on first use — see :attr:`compaction_coordinator`. Held
+            # rather than rebuilt per call because it is where per-turn
+            # compaction state lives.
+            self._compaction_coordinator: Optional["CompactionCoordinator"] = None
+            self.compaction_controller = compaction_controller
+
+            # Session-scoped state (session id, host event stream, conversation
+            # history, plan session, project instructions) must land before
+            # ``_wire_tooling`` — the host emitters built there capture
+            # ``self._host_events`` / ``self._session_id``.
+            self._init_session_state(plan_session, project_instructions)
+            self._init_replay(replay_config)
+            self._wire_tooling(
+                mcp_manager=mcp_manager,
+                bg_store=bg_store,
+                sandbox_policy=sandbox_policy,
+                enable_builtin_agents=enable_builtin_agents,
+            )
+            if initial_mode is not None:
+                # Both read-only switches, silently: a starting state is not a
+                # switch, and an event here would reach the host's transport
+                # before this constructor has returned. Needs ``tool_runner``,
+                # hence after wiring.
+                _runtime_permission_mode._set_initial_permission_mode(
+                    self, initial_mode,
+                )
+        except BaseException:
+            self._release_failed_construction()
+            raise
+
+    def _release_failed_construction(self) -> None:
+        """Release what ``__init__`` built before it raised.
+
+        Only the MCP manager, memory manager and LLM client this constructor
+        created: an ``mcp_manager=`` / ``memory_manager=`` / ``llm_client=``
+        the caller passed in is still the caller's, since it never got an
+        agent to hand it to. Each release is best effort, so the
+        constructor's own exception is the one that propagates.
+        """
+        mcp = self._built_mcp_manager
+        try:
+            if mcp is not None:
+                try:
+                    mcp.disconnect_all()
+                except Exception:
+                    _logger.warning(
+                        "MCP disconnect after a failed construction", exc_info=True
+                    )
+        finally:
+            # Even when a second Ctrl-C cuts the (bounded) disconnect short.
+            memory = self._built_memory_manager
+            try:
+                if memory is not None:
+                    try:
+                        memory.close()
+                    except Exception:
+                        _logger.warning(
+                            "memory close after a failed construction",
+                            exc_info=True,
+                        )
+            finally:
+                self._close_built_llm_client()
+
+    def _adopt_memory_manager(self, manager: "MemoryManager") -> None:
+        """Take ownership of ``manager``, passed in as ``memory_manager=``.
+
+        For a caller that built the manager only for this agent and has no
+        later point at which to close it — ``build_from_environment`` and
+        the sub-agent factory: ``close()`` then releases it like one the
+        constructor built. Call it only after construction succeeded; before
+        that, a failure leaves the manager with the caller.
+        """
+        self._built_memory_manager = manager
+
+    def _reinit_mcp(self) -> None:
+        """Rebuild the MCP manager from the current server set (a plugin
+        added servers), disconnecting the one this agent built.
+
+        The new manager is the agent's own, so ``close()`` releases it. An
+        injected ``mcp_manager=`` is left connected: it is the caller's.
+        """
+        old = self._built_mcp_manager
+        if old is not None:
+            try:
+                old.disconnect_all()
+            except Exception:
+                _logger.warning("MCP disconnect before a rebuild", exc_info=True)
+            # After the disconnect returns, as in ``close()``: an interrupted
+            # one leaves the manager owned, for ``close()`` to finish.
+            self._built_mcp_manager = None
+            # A rebuild that raises must not leave the agent holding the
+            # manager just closed.
+            if self.mcp_manager is old:
+                self.mcp_manager = None
+        self.mcp_manager = self._init_mcp()
+        self._built_mcp_manager = self.mcp_manager
+
+    def _close_built_llm_client(self) -> None:
+        """Release the ``agentao.log`` handle of an LLM client built here."""
+        llm = self._built_llm_client
+        if llm is not None:
+            try:
+                llm.close()
+            except Exception:
+                _logger.warning("LLM client close failed", exc_info=True)
 
     def _validate_construction_args(
         self,
@@ -778,6 +871,7 @@ class Agentao:
             register_mcp_tools(self, mcp_manager)
         else:
             self.mcp_manager = self._init_mcp()
+            self._built_mcp_manager = self.mcp_manager
 
         # Host emitter setup MUST run before ``_register_agent_tools``
         # so the sub-agent wrapper captures a live ``HostSubagentEmitter``
@@ -977,6 +1071,7 @@ class Agentao:
                     self.working_directory / ".agentao" / "memory.db"
                 ),
             )
+            self._built_memory_manager = self._memory_manager
         self.memory_tool = SaveMemoryTool(memory_manager=self._memory_manager)
         self.memory_retriever = MemoryRetriever(self._memory_manager)
         self.memory_renderer = MemoryPromptRenderer()
@@ -1093,11 +1188,29 @@ class Agentao:
         return self._host_events.remove_observer(callback)
 
     def add_event_observer(self, callback: _ObserverT) -> _ObserverT:
-        """Backward-compatible alias for :meth:`add_host_event_observer`."""
+        """Deprecated alias for :meth:`add_host_event_observer`.
+
+        Emits ``DeprecationWarning``; to be removed in a later minor release.
+        """
+        warnings.warn(
+            "Agentao.add_event_observer is deprecated; "
+            "use add_host_event_observer",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.add_host_event_observer(callback)
 
     def remove_event_observer(self, callback: Callable[["HostEvent"], object]) -> bool:
-        """Backward-compatible alias for :meth:`remove_host_event_observer`."""
+        """Deprecated alias for :meth:`remove_host_event_observer`.
+
+        Emits ``DeprecationWarning``; to be removed in a later minor release.
+        """
+        warnings.warn(
+            "Agentao.remove_event_observer is deprecated; "
+            "use remove_host_event_observer",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.remove_host_event_observer(callback)
 
     def events(self, session_id: Optional[str] = None) -> AsyncGenerator["HostEvent", None]:
@@ -1247,9 +1360,18 @@ class Agentao:
         them, to avoid double-firing there, so neither does ``with`` /
         ``async with`` / :meth:`aclose` for an embedded host.
 
+        Releases what the agent built itself: the MCP manager (when no
+        ``mcp_manager=`` was passed), the memory manager (when no
+        ``memory_manager=`` was passed) and ``<working_directory>/agentao.log``
+        (when it built its own LLM client and no ``logger=`` was passed). An
+        injected ``mcp_manager=``, ``memory_manager=`` or ``llm_client=`` is
+        the caller's to release, and so is a manager the caller assigns to
+        ``mcp_manager`` / ``memory_manager`` afterwards; the one the agent
+        built is still released.
+
         Safe to call more than once, and from more than one thread: calls
         are serialized. A later call skips the MCP disconnect and repeats the
-        replay end and the memory-store close, both of which are no-ops then.
+        replay end, the memory-store close and the log close, all no-ops then.
         A call re-entered on the closing thread (a signal handler during the
         teardown) returns at once.
         """
@@ -1266,21 +1388,34 @@ class Agentao:
                         self.replay_manager.end()
                     except Exception:
                         pass
-                if self.mcp_manager is not None:
+                # Only what this agent built: an ``mcp_manager=`` /
+                # ``memory_manager=`` the host passed in is the host's to
+                # release, and may be shared with other agents.
+                mcp_manager = self._built_mcp_manager
+                if mcp_manager is not None:
                     try:
-                        self.mcp_manager.disconnect_all()
+                        mcp_manager.disconnect_all()
                     except Exception as e:
                         self.llm.logger.warning(f"Error disconnecting MCP: {e}")
-                    self.mcp_manager = None
+                    # Only once the disconnect has returned: a Ctrl-C inside it
+                    # leaves the manager owned, so a later ``close()`` runs the
+                    # disconnect again, which waits for the first one to finish.
+                    self._built_mcp_manager = None
+                    if self.mcp_manager is mcp_manager:
+                        self.mcp_manager = None
                 # The memory stores hold no connection between calls on a file backing,
                 # but a transient ``:memory:`` store does, and a host that is done with an
                 # agent should not have to wait for the collector to get it back.
-                memory_manager = getattr(self, "memory_manager", None)
+                memory_manager = self._built_memory_manager
                 if memory_manager is not None:
                     try:
                         memory_manager.close()
                     except Exception as e:
                         self.llm.logger.warning(f"Error closing memory stores: {e}")
+                # Last, so the warnings above still reach ``agentao.log``. Its
+                # open handle is what kept a host from deleting the working
+                # directory on Windows (WinError 32).
+                self._close_built_llm_client()
             finally:
                 self._closing = False
 

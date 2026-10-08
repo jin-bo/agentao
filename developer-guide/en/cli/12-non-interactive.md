@@ -30,7 +30,7 @@ agentao -p "Summarize README"
 cat issue.md | agentao --print "Create a fix plan from the content below"
 ```
 
-Since 0.4.x, `-p` is a thin shim over `agentao run --format text --prompt …`, so both surfaces share the unified exit-code table documented under [`agentao run`](#agentao-run-structured-automation-surface) below.
+Since 0.4.x, `-p` is a thin shim over `agentao run --format text --prompt …`, so both surfaces share the unified exit-code table documented under [`agentao run`](#agentao-run-—-structured-automation-surface) below.
 
 > **Migration note (0.3.x → 0.4.x):** under `-p`, `max_iterations` was previously exit `2`. It is now `4`; `2` means "invalid usage / spec validation failed".
 
