@@ -297,10 +297,15 @@ def test_closing_early_cancels_the_turn_and_unsubscribes() -> None:
     many = [f"c{i} " for i in range(500)]
 
     def flood(emit: Callable[[str], None], token: Optional[CancellationToken]) -> Any:
+        assert token is not None
         for c in many:
-            if token is not None and token.is_cancelled:
+            if token.is_cancelled:
                 break
             emit(c)
+        # Keep the fake turn open until the consumer closes it. Otherwise a
+        # delayed consumer can see a normally completed turn before cancellation.
+        while not token.is_cancelled:
+            time.sleep(0.001)
         return _response("".join(many))
 
     _script(agent, flood)
