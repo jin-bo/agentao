@@ -262,12 +262,20 @@ The traces hooks leave behind sit on two layers: a real-time event stream (for U
 After each hook dispatch — gated on `matched_rule_count > 0` — the runtime emits a `PLUGIN_HOOK_FIRED` on the transport:
 
 ```python
-async for ev in agent.events_async():
+from agentao import Agentao
+from agentao.transport import SdkTransport
+from agentao.transport.events import EventType
+
+def on_event(ev):
     if ev.type == EventType.PLUGIN_HOOK_FIRED:
         hook_name = ev.data["hook_name"]
         outcome = ev.data["outcome"]
         # ... branch on hook_name
+
+agent = Agentao(..., transport=SdkTransport(on_event=on_event))
 ```
+
+It is a transport event, not a `HostEvent`: `agent.events()` does not carry it, so read it from the transport's `on_event`, which is called synchronously on the thread that emitted it. `EventType` is internal, and its payload fields may change between releases.
 
 Different `hook_name`s carry different fields (emit shapes are fixed in the chat loop):
 
