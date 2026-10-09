@@ -33,10 +33,15 @@ def _is_llm_env_key(key: str) -> bool:
     names, so the provider-prefixed keys are matched by suffix. The ``openai``
     and ``anthropic`` SDKs read their own ``OPENAI_*`` / ``ANTHROPIC_*``
     (``OPENAI_ORG_ID``, ``ANTHROPIC_AUTH_TOKEN``) when a client gets ``None``.
+    ``AGENTAO_CONTEXT_TOKENS`` sizes the CLI's context window and goes through
+    ``int()`` there. The ``_API_KEY`` suffix also takes the web tools' keys
+    (``JINA_API_KEY``, ``BOCHA_API_KEY``), which no test should read from the
+    shell either.
     """
     return (
         key.startswith(("LLM_", "OPENAI_", "ANTHROPIC_"))
         or key.endswith(("_API_KEY", "_BASE_URL", "_MODEL", "_API_FORMAT"))
+        or key == "AGENTAO_CONTEXT_TOKENS"
     )
 
 
