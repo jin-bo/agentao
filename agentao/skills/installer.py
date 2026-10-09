@@ -13,6 +13,7 @@ from agentao.frontmatter import match_frontmatter, parse_frontmatter
 from .registry import (
     InstalledSkillRecord,
     SkillRegistry,
+    SkillRegistryWriteError,
     install_dir_for_scope,
 )
 from .sources import SkillSource
@@ -89,6 +90,7 @@ class SkillInstaller:
             spec = self._source.resolve(ref)
         except ValueError as exc:
             raise SkillInstallError(str(exc)) from exc
+        self._ensure_registry_writable()
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="agentao-skill-"))
         try:
@@ -140,13 +142,22 @@ class SkillInstaller:
                 source_ref=full_ref,
                 installed_at=datetime.now(timezone.utc).isoformat(),
                 install_scope=self._scope,
-                install_dir=str(target_dir),
+                # Absolute: the registry skips a relative install_dir on load,
+                # and a relative ``cwd`` with no project marker yields one.
+                install_dir=str(target_dir.absolute()),
                 version=result.version,
                 revision=result.revision,
                 etag=result.etag,
             )
             self._registry.add(record)
-            self._registry.save()
+            try:
+                self._registry.save()
+            except SkillRegistryWriteError as exc:
+                raise SkillInstallError(
+                    f"Installed '{skill_name}' into {target_dir}, but could not "
+                    f"record it: {exc}. The directory is unmanaged until it is "
+                    f"reinstalled with --force."
+                ) from exc
             return record
 
         finally:
@@ -157,6 +168,7 @@ class SkillInstaller:
         record = self._registry.get(name)
         if record is None:
             raise SkillInstallError(f"Skill '{name}' not found in registry.")
+        self._ensure_registry_writable()
 
         try:
             info = self._source.check_update(record.source_ref, record.etag)
@@ -205,11 +217,25 @@ class SkillInstaller:
             record.version = result.version or record.version
             record.installed_at = datetime.now(timezone.utc).isoformat()
             self._registry.add(record)
-            self._registry.save()
+            try:
+                self._registry.save()
+            except SkillRegistryWriteError as exc:
+                raise SkillInstallError(
+                    f"Updated '{name}' in {target_dir}, but could not record "
+                    f"the new revision: {exc}. The registry still lists the "
+                    f"previous one, so the next update fetches it again."
+                ) from exc
             return record
 
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _ensure_registry_writable(self) -> None:
+        """Refuse before fetching, so an unwritable registry changes no directory."""
+        try:
+            self._registry.ensure_writable()
+        except SkillRegistryWriteError as exc:
+            raise SkillInstallError(f"{exc}. No skill was installed or changed.") from exc
 
     # ------------------------------------------------------------------
     # Package discovery
