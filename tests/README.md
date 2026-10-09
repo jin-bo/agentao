@@ -30,7 +30,7 @@ before, which is how the dependency baseline drifted unnoticed since June.
 | `tests/cli/` | Slash-command and `agentao run` argument handling. |
 | `tests/support/` | Shared scaffolding — fake servers, agent doubles, param builders. See its own README. |
 | `tests/data/` | Static fixtures (e.g. `full_extras_baseline.txt` — the `[full]` closure as PEP 503 *names*; versions float by design and are not compared). |
-| `tests/conftest.py` | Two autouse credential fixtures and an autouse `.env`-discovery guard, plus opt-in `isolated_cwd` / `isolated_skill_dirs` (keep agentao's cwd writes and skill discovery under `tmp_path`) and `search_tool` / `capture_subprocess_run`. |
+| `tests/conftest.py` | Autouse: the LLM-environment scrub, two credential fixtures and a `.env`-discovery guard. Opt-in: `live_llm_env` (the shell's LLM settings, for gated live tests), `isolated_cwd` / `isolated_skill_dirs` (keep agentao's cwd writes and skill discovery under `tmp_path`), and `search_tool` / `capture_subprocess_run`. |
 
 ## Conventions
 
@@ -39,9 +39,17 @@ sets `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`, and
 `_agentao_env_default_credentials` backfills them onto direct
 `Agentao(working_directory=...)` construction — mirroring what
 `build_from_environment` does, so production code never sees an implicit env
-read from `Agentao.__init__`. Note both fixtures *defer to a real exported
-value* (`os.environ.get(key, default)`); a test that reaches the network will
-use a developer's real key.
+read from `Agentao.__init__`.
+
+**The shell's LLM settings never reach a test** (#470).
+`conftest.py::_scrub_llm_env` removes every `LLM_*`, `OPENAI_*`, `ANTHROPIC_*`
+and `*_API_KEY` / `*_BASE_URL` / `*_MODEL` / `*_API_FORMAT` variable, and
+`AGENTAO_CONTEXT_TOKENS`, before each test (the `_API_KEY` suffix takes the web
+tools' `JINA_API_KEY` / `BOCHA_API_KEY` too), so the stubs above are what a
+test sees, whatever the developer exported. Before, `LLM_PROVIDER` in the shell handed tests that provider's real
+key, and a malformed `LLM_TEMPERATURE` failed them on that machine only. A test
+that needs one of these sets it with `monkeypatch`. The one way back to the
+shell's values is the `live_llm_env` fixture, for a test behind a live gate.
 
 **Do not reach the network by default.** The two tests that legitimately call
 a live model gate themselves on an env var:
@@ -58,7 +66,9 @@ the request is sent is no gate: `test_multi_turn.py` used to reach the
 provider on every run and pass on the 401 (#468).
 
 Both are pinned to `0` in `.github/workflows/publish*.yml`. A new test that
-talks to a provider needs the same gate, and the behaviour it checks needs an
+talks to a provider needs the same gate and requests `live_llm_env` behind it
+(`request.getfixturevalue("live_llm_env")` when the gate is checked at run
+time, as in `test_model_command.py`), and the behaviour it checks needs an
 offline test too: script the provider with the wire fakes in `tests/support/`
 (`test_multi_turn.py` drives two tool rounds and a second turn through
 `openai_responses_wire.py`). A live test asserts success; it does not accept an

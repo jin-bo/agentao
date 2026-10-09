@@ -31,18 +31,21 @@ def _build_agent() -> Agentao:
     return Agentao(working_directory=Path.cwd())
 
 
-def test_model_switching_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_model_switching_flow(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
+    live = _use_live_models()
+    if live:
+        request.getfixturevalue("live_llm_env")
     agent = _build_agent()
     expected_models = ["claude-sonnet-4-5", "gpt-3.5-turbo", "gpt-4"]
 
-    if not _use_live_models():
+    if not live:
         monkeypatch.setattr(agent, "list_available_models", lambda: expected_models)
 
     models = agent.list_available_models()
     assert isinstance(models, list)
     assert models
 
-    if not _use_live_models():
+    if not live:
         assert models == expected_models
 
     original_model = agent.get_current_model()
