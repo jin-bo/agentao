@@ -197,3 +197,48 @@ def test_new_command_resets_staged_images():
     """/new must drop staged images so they don't leak into the fresh session."""
     cli = _run_loop_once(["/new", "/exit"])
     assert cli._staged_images == []
+
+
+def test_image_filename_markup_is_rendered_literally(tmp_path, monkeypatch):
+    import io
+    from rich.console import Console
+    from agentao.cli.commands import image as image_mod
+
+    output = io.StringIO()
+    monkeypatch.setattr(image_mod, "console", Console(file=output, color_system=None, width=200))
+    image = tmp_path / "[red]shot.png"
+    image.write_bytes(_PNG_BYTES)
+    cli = _cli()
+    handle_image_command(cli, str(image))
+    assert image.name in output.getvalue()
+    output.seek(0)
+    output.truncate(0)
+    handle_image_command(cli, "")
+    assert image.name in output.getvalue()
+
+
+def test_missing_image_filename_cannot_close_rich_markup(tmp_path, monkeypatch):
+    import io
+    from rich.console import Console
+    from agentao.cli.commands import image as image_mod
+
+    output = io.StringIO()
+    monkeypatch.setattr(image_mod, "console", Console(file=output, color_system=None, width=200))
+    image = tmp_path / "[" / "error].png"
+    # The path contains [/error], even though neither component exists.
+    handle_image_command(_cli(), str(image))
+    assert str(image) in output.getvalue()
+
+
+def test_image_listing_preserves_windows_backslash_before_bracket(monkeypatch):
+    import io
+    from rich.console import Console
+    from agentao.cli.commands import image as image_mod
+
+    output = io.StringIO()
+    monkeypatch.setattr(image_mod, "console", Console(file=output, color_system=None, width=200))
+    label = r"C:\images\[\error].png"
+    cli = _cli()
+    cli._staged_images = [{"_label": label, "data": "abcd", "mimeType": "image/png"}]
+    handle_image_command(cli, "")
+    assert label in output.getvalue()
