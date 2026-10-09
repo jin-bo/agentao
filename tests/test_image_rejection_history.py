@@ -349,12 +349,9 @@ def test_a_rejection_on_the_retry_after_compaction_is_handled_too():
 
 @pytest.mark.parametrize("name", ["qwen-format", "qwen-too-small"])
 def test_a_qwen_image_rejection_is_not_treated_as_an_overflow(name):
-    """DashScope uses one generic code for overflows and refused images; the
-    overflow table matches the code, so a refused image used to run both
-    compaction rungs before failing anyway."""
-    from agentao.context_manager import is_context_too_long_error
-
-    assert is_context_too_long_error(REJECTIONS[name]())  # the misreading this guards
+    """DashScope uses one generic code for overflows and refused images; while
+    the overflow table matched the code, a refused image ran both compaction
+    rungs before failing anyway."""
     agent = _make_agent()
     sent = _sends(agent, REJECTIONS[name]())
     agent.compaction_coordinator.run = Mock(side_effect=AssertionError("compaction ran"))
@@ -363,6 +360,21 @@ def test_a_qwen_image_rejection_is_not_treated_as_an_overflow(name):
     assert len(sent) == 1
     assert "history was removed" in out
     assert not _has_image(agent.messages)
+
+
+def test_a_qwen_parameter_error_is_not_treated_as_an_overflow():
+    """#484: DashScope's generic code also heads every invalid-parameter 400.
+    Read as an overflow, a bad temperature ran both compaction rungs, an LLM
+    summarisation that rewrote history, and then failed anyway."""
+    agent = _make_agent()
+    sent = _sends(agent, _openai_error(
+        400, "<400> InternalError.Algo.InvalidParameter: Temperature should be in "
+        "[0.0, 2.0)", code="invalid_parameter_error"))
+    agent.compaction_coordinator.run = Mock(side_effect=AssertionError("compaction ran"))
+
+    out = agent.chat("hello")
+    assert len(sent) == 1
+    assert out.startswith("[LLM API error:") and "Temperature should be" in out
 
 
 def test_removal_drops_the_stale_token_anchor():
@@ -414,18 +426,6 @@ def test_a_real_overflow_that_mentions_images_still_compacts():
     assert agent.chat("what is this?", images=[{"data": _PNG_B64, "mimeType": "image/png"}]) == "ok"
     assert len(runs) == 1 and len(sent) == 2
     assert _has_image(agent.messages)
-
-
-def test_dashscope_generic_code_counts_as_overflow_only_by_default():
-    from agentao.context_manager import is_context_too_long_error
-
-    refused = REJECTIONS["qwen-format"]()
-    assert is_context_too_long_error(refused)
-    assert not is_context_too_long_error(refused, generic_codes=False)
-    real_overflow = _openai_error(
-        400, "<400> InternalError.Algo.InvalidParameter: Range of input length should "
-        "be [1, 30720]", code="invalid_parameter_error")
-    assert is_context_too_long_error(real_overflow, generic_codes=False)
 
 
 @pytest.mark.parametrize("error", [

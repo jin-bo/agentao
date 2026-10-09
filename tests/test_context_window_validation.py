@@ -86,7 +86,11 @@ UNPARSEABLE = [
     ("lm_studio", "tokens to keep from the initial prompt is greater than the "
                   "context length"),
     ("bedrock", "input is too long for requested model"),
-    ("dashscope", "Range of input length should be ..."),
+    # The measured form carries a bound on input tokens, which looks like the
+    # window minus a reserved output (qwen-max 30720 = 32768 - 2048). Reading
+    # it is undecided, so for now the parse adopts nothing (#484).
+    ("dashscope", "<400> InternalError.Algo.InvalidParameter: Range of input "
+                  "length should be [1, 983616]"),
     ("anthropic_413", '413 {"error":{"type":"request_too_large"}}'),
     ("zai_glm", "tokens in request more than max tokens allowed"),
 ]
