@@ -595,3 +595,60 @@ def test_an_image_url_the_wire_cannot_send_does_not_stick_the_session():
     for request in wire.requests:
         assert UNSENDABLE_IMAGE_NOTE in json.dumps(request)
     assert host_part in agent.messages[0]["content"]
+
+
+# ---------------------------------------------------------------------------
+# An "image" the error only echoes back (#486)
+# ---------------------------------------------------------------------------
+
+# Constructed, as in #486: no gateway has been seen doing this.
+_ECHO_400 = lambda: _openai_error(  # noqa: E731
+    400, "invalid tool_call_id 'call_9' in messages[3]: {content: 'please describe this image'}")
+
+_EVERYDAY_PROMPTS = [
+    "what is this?", "describe this image", "please describe this image",
+    "Can you see the image?", "is this a valid image?", "what's in these images",
+    "the image appears blurry", "process image files in the folder",
+]
+
+
+def test_an_error_that_only_echoes_the_users_words_is_not_a_rejection():
+    assert _is_image_rejection(_ECHO_400())  # the misreading this guards
+    assert not _is_image_rejection(_ECHO_400(), ["please describe this image"])
+
+
+@pytest.mark.parametrize("name", sorted(REJECTIONS))
+def test_every_measured_rejection_survives_everyday_wording(name):
+    """The provider's own "image" sits in words the user does not send."""
+    assert _is_image_rejection(REJECTIONS[name](), _EVERYDAY_PROMPTS) is True
+
+
+def test_one_unexplained_image_keeps_it_a_rejection():
+    """An echo beside the provider's own refusal is still a refusal."""
+    both = _openai_error(400, "Could not process image. Request: {content: 'describe this image'}")
+    assert _is_image_rejection(both, ["describe this image"])
+
+
+def test_an_echo_keeps_the_images():
+    agent = _make_agent()
+    sent = _sends(agent, _ECHO_400())
+    out = agent.chat("please describe this image",
+                     images=[{"data": _PNG_B64, "mimeType": "image/png"}])
+    assert out.startswith("[LLM API error:") and "history was removed" not in out
+    assert len(sent) == 1
+    assert _has_image(agent.messages)
+    assert not _note_texts(agent)
+
+
+def test_a_repeated_rejection_is_not_explained_by_the_earlier_error_reply():
+    """The first refusal's ``[LLM API error: …]`` reply quotes it word for
+    word. Counting assistant text would read the second, identical refusal
+    of a re-attached image as an echo, and the image would stick."""
+    agent = _make_agent()
+    _sends(agent, REJECTIONS["anthropic-not-an-image"](), REJECTIONS["anthropic-not-an-image"]())
+    image = [{"data": _PNG_B64, "mimeType": "image/png"}]
+    assert "history was removed" in agent.chat("what is this?", images=image)
+    assert "Could not process image" in agent.messages[-1]["content"]
+
+    assert "history was removed" in agent.chat("try this one", images=image)
+    assert not _has_image(agent.messages)

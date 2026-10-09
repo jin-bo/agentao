@@ -26,7 +26,7 @@ import importlib
 import random
 import re
 import time
-from typing import Any, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
 
 # OpenAI SDK's built-in retry is disabled (max_retries=0) so this layer owns
@@ -307,7 +307,53 @@ def _is_tool_schema_error(text: str) -> bool:
     return _TOOL_SCHEMA_WORDS.search(text) is not None
 
 
-def _is_image_rejection(exc: BaseException) -> bool:
+#: One word of text, for the echo check: letters and digits, so an
+#: ``_IMAGE_WORD`` match is always exactly one of these.
+_ECHO_TOKEN = re.compile(r"[^\W_]+")
+
+#: Words in an echo window: the "image" and its neighbours. Three is enough
+#: to tell "describe this image" from "could not process image", and short
+#: enough that a gateway's escaping or truncation of the echo rarely
+#: splits one.
+_ECHO_WINDOW = 3
+
+
+def _echo_windows(text: str, start: int) -> list:
+    """The word windows around the ``_IMAGE_WORD`` match starting at ``start``."""
+    tokens = [(m.start(), m.group().lower()) for m in _ECHO_TOKEN.finditer(text)]
+    index = next((i for i, (pos, _) in enumerate(tokens) if pos == start), None)
+    if index is None:  # not on a word boundary: nothing explains it
+        return []
+    words = [word for _, word in tokens]
+    lo = max(0, index - _ECHO_WINDOW + 1)
+    hi = min(index, len(words) - _ECHO_WINDOW)
+    return [" ".join(words[i:i + _ECHO_WINDOW]) for i in range(lo, hi + 1)]
+
+
+def _echoes_sent_text(text: str, sent_texts: Iterable[str]) -> bool:
+    """True when every "image" in ``text`` sits in words the request sent.
+
+    A gateway or validating proxy may echo part of the request in an
+    unrelated 400, the user's own words included ("…{content: 'please
+    describe this image'}", #486). Such an "image" is explained when some
+    window of words around it appears, in order, in a text the request
+    carried. One unexplained "image" (the provider's own "could not process
+    image") keeps the error an image rejection.
+    """
+    normalised = [
+        " " + " ".join(m.group().lower() for m in _ECHO_TOKEN.finditer(t)) + " "
+        for t in sent_texts if isinstance(t, str)
+    ]
+    if not normalised:
+        return False
+    for match in _IMAGE_WORD.finditer(text):
+        windows = _echo_windows(text, match.start())
+        if not any(f" {w} " in sent for w in windows for sent in normalised):
+            return False
+    return True
+
+
+def _is_image_rejection(exc: BaseException, sent_texts: Iterable[str] = ()) -> bool:
     """True when a provider refused a request because of an image in it.
 
     A heuristic, measured against real rejections (#480): of 17 image
@@ -319,11 +365,18 @@ def _is_image_rejection(exc: BaseException) -> bool:
 
     The status is read off the SDK exception and type-checked: an object that
     merely answers ``status_code`` (a ``MagicMock``) is not a 400.
+
+    ``sent_texts`` is the text the request carried. An error whose every
+    "image" is an echo of it is not a rejection (:func:`_echoes_sent_text`).
     """
     if not _is_input_rejection_status(exc):
         return False
     text = str(exc)
-    return _IMAGE_WORD.search(text) is not None and not _is_tool_schema_error(text)
+    return (
+        _IMAGE_WORD.search(text) is not None
+        and not _is_tool_schema_error(text)
+        and not _echoes_sent_text(text, sent_texts)
+    )
 
 
 def _compute_backoff_delay(attempt: int, retry_after_header: Optional[str] = None) -> float:
