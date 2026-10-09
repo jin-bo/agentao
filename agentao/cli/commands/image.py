@@ -11,9 +11,13 @@ Subcommands:
 - ``/image``         — list currently staged images.
 - ``/image clear``   — discard all staged images.
 
-Only image files are accepted — the MIME type is inferred from the
-extension via :func:`mimetypes.guess_type` and must start with
-``image/``. Errors (missing file, non-image, unreadable) are surfaced,
+Only PNG, JPEG, GIF and WEBP are accepted — the formats every supported
+wire takes inline. The file name is a pre-filter only (its
+:func:`mimetypes.guess_type` type must start with ``image/``); the MIME
+type that is staged comes from the file's leading bytes
+(:func:`agentao.media_limits.sniff_image_mime`), so a misnamed or
+compressed file is refused instead of staged with a wrong label. Errors
+(missing file, non-image, unsupported format, unreadable) are surfaced,
 never silently swallowed.
 """
 
@@ -29,11 +33,30 @@ from typing import TYPE_CHECKING
 from ...media_limits import (
     MAX_IMAGE_BYTES as _MAX_IMAGE_BYTES,
     MAX_IMAGES_PER_TURN as _MAX_STAGED_IMAGES,
+    SUPPORTED_IMAGE_FORMATS,
+    sniff_image_mime,
 )
 from .._globals import console
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
+
+# Compression signatures, checked only to word the refusal: a ``.png.gz``
+# is an image the user can fix by decompressing it.
+_COMPRESSION_MAGIC = (
+    (b"\x1f\x8b", "gzip"),
+    (b"BZh", "bzip2"),
+    (b"\xfd7zXZ\x00", "xz"),
+    (b"\x28\xb5\x2f\xfd", "zstd"),
+    (b"\x1f\x9d", "compress"),
+)
+
+
+def _compression_of(data: bytes) -> str | None:
+    for magic, name in _COMPRESSION_MAGIC:
+        if data.startswith(magic):
+            return name
+    return None
 
 
 def _format_size(num_bytes: int) -> str:
@@ -92,11 +115,17 @@ def handle_image_command(cli: "AgentaoCLI", args: str) -> None:
         console.print(Text(f"\nNot a file: {path}\n", style="error"))
         return
 
-    mime_type, _ = mimetypes.guess_type(str(path))
-    if mime_type is None or not mime_type.startswith("image/"):
+    # The name is a cheap pre-filter only, so ``notes.txt`` is refused before
+    # it is read; the staged type comes from the bytes below.
+    named_type, named_encoding = mimetypes.guess_type(str(path))
+    if named_type is None and path.suffix.lower() == ".webp":
+        # Python's built-in table learned ``.webp`` only in 3.13; without a
+        # system mime.types entry a supported format would be refused here.
+        named_type = "image/webp"
+    if named_type is None or not named_type.startswith("image/"):
         console.print(Text.assemble(
             (f"\nNot a recognized image file: {path} ", "error"),
-            (f"(got {mime_type or 'unknown type'})\n", "dim"),
+            (f"(got {named_type or 'unknown type'})\n", "dim"),
         ))
         return
 
@@ -145,6 +174,30 @@ def handle_image_command(cli: "AgentaoCLI", args: str) -> None:
             f"\n[error]Image too large: {_format_size(len(raw_bytes))}[/error] "
             f"[dim](limit {_MAX_IMAGE_BYTES // (1024 * 1024)} MB)[/dim]\n"
         )
+        return
+
+    # Label the image by what its bytes are, not what it is called: a
+    # ``shot.png`` holding JPEG bytes, or a gzip of a PNG, would otherwise go
+    # out under a wrong media type and the provider would reject the request.
+    mime_type = sniff_image_mime(raw_bytes)
+    if mime_type is None:
+        # Brotli has no magic number, so for it alone fall back to what the
+        # name says (``shot.png.br`` → ``br``). Every other encoding has a
+        # signature: a ``.gz`` name over bytes that are not gzip is not a
+        # compressed file, and must not be told to decompress.
+        compression = _compression_of(raw_bytes) or (
+            "br" if named_encoding == "br" else None
+        )
+        if compression is not None:
+            console.print(Text.assemble(
+                (f"\nCompressed file: {path} ", "error"),
+                (f"({compression}; decompress it before attaching)\n", "dim"),
+            ))
+        else:
+            console.print(Text.assemble(
+                (f"\nUnsupported image content: {path} ", "error"),
+                (f"(supported: {', '.join(SUPPORTED_IMAGE_FORMATS)})\n", "dim"),
+            ))
         return
 
     data = base64.b64encode(raw_bytes).decode("ascii")
