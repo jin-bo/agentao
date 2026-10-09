@@ -447,23 +447,28 @@ def test_earlier_images_survive_a_non_input_error_that_mentions_vision(error):
     assert not _note_texts(agent)
 
 
-_TOO_LARGE = lambda: _openai_error(  # noqa: E731
-    413, "request_too_large: the image in this request is too large to process.",
-    cls=openai.APIStatusError)
+_OVERFLOW_WITH_IMAGES = lambda: _openai_error(  # noqa: E731
+    400, "Maximum context length exceeded: 140000 tokens including 3 images.",
+    code="context_length_exceeded")
 
 
-@pytest.mark.parametrize("statuses", [
-    ("cancelled",),               # the host declined the overflow compaction
-    ("success", "skipped"),       # compacted, still too large, no smaller cut
-], ids=["overflow-compaction-cancelled", "minimal-history-no-cut"])
-def test_an_image_overflow_that_compaction_cannot_fix_removes_the_image(statuses):
-    """An error both tables match compacts first. When that cannot shrink
-    history, the image is what is left to remove, or every later turn fails."""
+@pytest.mark.parametrize("script", [
+    (("cancelled",), 1),                    # the host declined the overflow compaction
+    (("success", "skipped"), 2),            # compacted, still too long, no smaller cut
+    (("success", "success"), 3),            # minimal history, and it still overflows
+], ids=["overflow-compaction-cancelled", "minimal-history-no-cut", "still-overflowing"])
+def test_a_genuine_overflow_that_mentions_images_keeps_them_on_every_exit(script):
+    """Codex review: an overflow that says "including 3 images" refuses no
+    image. Every overflow exit returns the context-length error with history
+    untouched, as a declined overflow always has."""
     from agentao.context_manager import is_context_too_long_error
 
-    assert is_context_too_long_error(_TOO_LARGE()) and _is_image_rejection(_TOO_LARGE())
-    agent = _make_agent()
-    _sends(agent, _TOO_LARGE(), _TOO_LARGE())
+    assert is_context_too_long_error(_OVERFLOW_WITH_IMAGES())
+    assert _is_image_rejection(_OVERFLOW_WITH_IMAGES())  # the overlap this guards
+    statuses, sends = script
+    transport = _Recording()
+    agent = _make_agent(transport)
+    sent = _sends(agent, *[_OVERFLOW_WITH_IMAGES() for _ in range(sends)])
     queue = list(statuses)
 
     def fake_run(request, *, system_prompt, messages_with_system=None, **_):
@@ -475,8 +480,11 @@ def test_an_image_overflow_that_compaction_cannot_fix_removes_the_image(statuses
     agent.compaction_coordinator.run = fake_run
 
     out = agent.chat("what is this?", images=[{"data": _PNG_B64, "mimeType": "image/png"}])
-    assert "history was removed" in out
-    assert not _has_image(agent.messages)
+    assert len(sent) == sends
+    assert out.startswith("[LLM API error:") and "Maximum context length" in out
+    assert "history was removed" not in out
+    assert _has_image(agent.messages)
+    assert not [e for e in transport.events if e.type == EventType.IMAGES_REMOVED]
 
 
 def test_an_echoed_data_url_is_cut_from_the_saved_error():

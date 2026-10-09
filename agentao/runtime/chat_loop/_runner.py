@@ -1533,19 +1533,23 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         the turn then stops rather than retrying, since the user asked about
         an image the model can no longer see.
 
-        The overflow exits come here too: an error the overflow table also
-        matches compacts first, and only when that could not shrink history
-        is it treated as the image rejection it may be (a single image too
-        large for the request, say). ``log_prefix=None`` means the caller has
-        already logged. A ``data:`` URL the provider echoed back is cut from
-        the saved text, which otherwise kept the image's base64 in history.
+        A genuine context overflow never removes images, on any exit — the
+        host declining the overflow compaction, minimal history that could not
+        shrink, or a retry that still overflows. Such a message may say
+        "including 3 images" without refusing any of them, and a declined
+        overflow returns the provider's context-length error with history
+        untouched. Only DashScope's generic code is not taken as an overflow
+        for an image rejection (:meth:`_is_overflow`). ``log_prefix=None``
+        means the caller has already logged. A ``data:`` URL the provider
+        echoed back is cut from the saved text, which otherwise kept the
+        image's base64 in history.
         """
         agent = self._agent
         err_text = _DATA_URL_IN_TEXT.sub(_elide_data_url, str(e))
         err_msg = "[LLM API error: " + err_text + "]"
         if log_prefix is not None:
             agent.llm.logger.error(f"{log_prefix}: {err_text}")
-        if self._is_history_image_rejection(e):
+        if self._is_history_image_rejection(e) and not self._is_overflow(e):
             removed = self._remove_history_images("provider_rejected")
             agent.llm.logger.warning(
                 f"Provider rejected an image; removed {removed} image(s) "
