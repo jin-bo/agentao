@@ -7,8 +7,9 @@ byte cap and per-turn image count. Centralizing the limits here keeps the
 two from drifting apart (a divergence would let one surface accept an image
 the other rejects). Importing this module is cheap (no side effects).
 
-:func:`sniff_image_mime` reads the format from the bytes themselves; today
-only ``/image`` uses it (ACP still trusts the client's ``mimeType``).
+:func:`sniff_image_mime` reads the format from the bytes themselves; both
+entry points use it to refuse unsupported content and to label what they
+forward by what it is.
 """
 
 from __future__ import annotations
