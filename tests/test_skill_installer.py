@@ -17,6 +17,19 @@ from agentao.skills.sources import FetchResult, SkillSource, SourceSpec, UpdateI
 from agentao.skills.sources import GitHubSkillSource
 
 
+@pytest.fixture(autouse=True)
+def _project_root_at_tmp_path(tmp_path):
+    """Make ``tmp_path`` the project root every ``"project"``-scope install resolves to.
+
+    ``install_dir_for_scope`` walks *up* from ``cwd`` to the nearest project marker, so
+    without one in ``tmp_path`` a marker in any ancestor (a stray ``/tmp/.agentao``, the
+    real ``~/.agentao`` once ``HOME`` points elsewhere, a ``--basetemp`` inside a
+    checkout) wins, and the install lands there: outside ``tmp_path``, and left behind
+    for the next run to conflict with (#463).
+    """
+    (tmp_path / ".git").mkdir()
+
+
 # ------------------------------------------------------------------
 # Fake source for testing (no network)
 # ------------------------------------------------------------------
@@ -268,6 +281,7 @@ class TestInstall:
 
         # Verify on disk
         installed = Path(record.install_dir)
+        assert installed == tmp_path.resolve() / ".agentao" / "skills" / "my-skill"
         assert installed.exists()
         assert (installed / "SKILL.md").exists()
 

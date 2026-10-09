@@ -337,6 +337,8 @@ class SkillRegistry:
 # ------------------------------------------------------------------
 
 _PROJECT_MARKERS = (".git", "pyproject.toml", "package.json", ".agentao")
+# Markers that are ambiguous at $HOME (config dirs / bare repos).
+_HOME_SKIP = frozenset({".agentao", ".git"})
 
 
 def _find_project_root(start: Optional[Path] = None) -> Optional[Path]:
@@ -352,8 +354,6 @@ def _find_project_root(start: Optional[Path] = None) -> Optional[Path]:
     """
     home = user_home().resolve()
     current = (start or Path.cwd()).resolve()
-    # Markers that are ambiguous at $HOME (config dirs / bare repos).
-    _HOME_SKIP = {".agentao", ".git"}
     while True:
         markers = (
             (m for m in _PROJECT_MARKERS if m not in _HOME_SKIP)

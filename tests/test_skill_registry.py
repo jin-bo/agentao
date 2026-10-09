@@ -388,6 +388,17 @@ class TestResolveDefaultScope:
         assert resolve_default_scope(tmp_path) == "project"
 
     def test_global_when_empty(self, tmp_path):
+        # The walk-up reaches the filesystem root, so "no marker anywhere" depends on
+        # the machine: a stray /tmp/.agentao, or a --basetemp inside a checkout, makes
+        # the answer "project" whatever tmp_path holds (#463). Look for one without
+        # going through the function under test, and say which one when skipping.
+        home = registry_mod.user_home().resolve()
+        for parent in tmp_path.resolve().parents:
+            for marker in registry_mod._PROJECT_MARKERS:
+                if parent == home and marker in registry_mod._HOME_SKIP:
+                    continue
+                if (parent / marker).exists():
+                    pytest.skip(f"an ancestor of tmp_path is a project root: {parent / marker}")
         assert resolve_default_scope(tmp_path) == "global"
 
 
