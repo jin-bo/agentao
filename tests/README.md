@@ -30,7 +30,7 @@ before, which is how the dependency baseline drifted unnoticed since June.
 | `tests/cli/` | Slash-command and `agentao run` argument handling. |
 | `tests/support/` | Shared scaffolding — fake servers, agent doubles, param builders. See its own README. |
 | `tests/data/` | Static fixtures (e.g. `full_extras_baseline.txt` — the `[full]` closure as PEP 503 *names*; versions float by design and are not compared). |
-| `tests/conftest.py` | Two autouse credential fixtures plus `search_tool` / `capture_subprocess_run`. |
+| `tests/conftest.py` | Two autouse credential fixtures, plus opt-in `isolated_cwd` / `isolated_skill_dirs` (keep agentao's cwd writes and skill discovery under `tmp_path`) and `search_tool` / `capture_subprocess_run`. |
 
 ## Conventions
 

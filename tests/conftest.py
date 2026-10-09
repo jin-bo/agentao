@@ -117,6 +117,22 @@ def isolated_cwd(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
 
+@pytest.fixture
+def isolated_skill_dirs(tmp_path, monkeypatch):
+    """Keep skill discovery off the developer's home.
+
+    ``_GLOBAL_SKILLS_DIR`` and ``_BUNDLED_SKILLS_DIR`` are module constants bound at
+    import time, so a redirected ``HOME`` does not move them: left alone, ``Agentao(...)``
+    scans the real ``~/.agentao/skills`` and ``_bootstrap_bundled_skills`` copies this
+    repo's ``skills/`` into it, which also makes any catalogue assertion depend on
+    whatever that machine happens to hold.
+    """
+    from agentao.skills import manager as skills_manager
+
+    monkeypatch.setattr(skills_manager, "_GLOBAL_SKILLS_DIR", tmp_path / "home" / "skills")
+    monkeypatch.setattr(skills_manager, "_BUNDLED_SKILLS_DIR", tmp_path / "no-bundled-skills")
+
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 #: What agentao writes to its cwd unless told otherwise.
 _CWD_ARTIFACTS = (".agentao", "agentao.log")

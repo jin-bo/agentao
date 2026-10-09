@@ -19,22 +19,8 @@ from tests.support.openai_responses_wire import (
 )
 
 # Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
-pytestmark = pytest.mark.usefixtures("isolated_cwd")
-
-
-@pytest.fixture(autouse=True)
-def _skills_inside_tmp_path(tmp_path, monkeypatch):
-    """Keep skill discovery off the developer's home.
-
-    Both directories are module constants bound at import time, so a
-    redirected ``HOME`` does not move them: left alone, ``Agentao(...)`` scans
-    the real ``~/.agentao/skills`` and ``_bootstrap_bundled_skills`` copies this
-    repo's ``skills/`` into it (see ``test_skills_prompt._agent_with_a_skill``).
-    """
-    from agentao.skills import manager as skills_manager
-
-    monkeypatch.setattr(skills_manager, "_GLOBAL_SKILLS_DIR", tmp_path / "home" / "skills")
-    monkeypatch.setattr(skills_manager, "_BUNDLED_SKILLS_DIR", tmp_path / "no-bundled-skills")
+# ``isolated_skill_dirs`` keeps skill discovery off the developer's home.
+pytestmark = pytest.mark.usefixtures("isolated_cwd", "isolated_skill_dirs")
 
 
 def _live_llm_opted_in() -> bool:
@@ -51,6 +37,12 @@ def _answer(text: str) -> bytes:
     return stream_of(created(), text_events(0, text), completed([message_item(text)]))
 
 
+def _demo_skill(root: Path) -> None:
+    skill = root / "skills" / "demo"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: demo\n---\nDemo skill body.\n", encoding="utf-8")
+
+
 def _outputs(request: dict) -> dict:
     """``call_id`` -> output for every tool result the request sends back."""
     return {item["call_id"]: item["output"] for item in request["input"]
@@ -58,9 +50,7 @@ def _outputs(request: dict) -> dict:
 
 
 def test_tool_results_carry_across_rounds_and_turns(tmp_path: Path):
-    skill = tmp_path / "skills" / "demo"
-    skill.mkdir(parents=True)
-    (skill / "SKILL.md").write_text("---\nname: demo\n---\nDemo skill body.\n", encoding="utf-8")
+    _demo_skill(tmp_path)
 
     agent = Agentao(api_key="k", base_url="http://wire.test/v1", model="gpt-test",
                     api_format="openai-responses", working_directory=tmp_path)
@@ -85,7 +75,7 @@ def test_tool_results_carry_across_rounds_and_turns(tmp_path: Path):
 
         # History keeps ``call_id|fc_…`` on this wire (``llm/_tool_ids.py``).
         tool_messages = [m for m in agent.messages if m.get("role") == "tool"]
-        assert [m["tool_call_id"].split("|")[0] for m in tool_messages] == ["call_ls", "call_read"]
+        assert [m["tool_call_id"] for m in tool_messages] == ["call_ls|fc_ls", "call_read|fc_read"]
     finally:
         agent.close()
 
@@ -93,9 +83,7 @@ def test_tool_results_carry_across_rounds_and_turns(tmp_path: Path):
 @pytest.mark.skipif(not _live_llm_opted_in(), reason="live LLM test; set AGENTAO_TEST_LIVE_LLM=1")
 def test_multi_turn_tool_calls_live(tmp_path: Path):
     """The model drives real tool calls against the configured provider."""
-    skill = tmp_path / "skills" / "demo"
-    skill.mkdir(parents=True)
-    (skill / "SKILL.md").write_text("---\nname: demo\n---\nDemo skill body.\n", encoding="utf-8")
+    _demo_skill(tmp_path)
 
     agent = Agentao(working_directory=tmp_path)
     try:
