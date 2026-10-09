@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 
 import pytest
-from dotenv import load_dotenv
 
 from agentao import Agentao
 
@@ -24,8 +23,6 @@ pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 def test_skills_in_system_prompt():
     """Test that available skills are listed in the system prompt."""
-    load_dotenv()
-
     agent = Agentao(
         api_key=os.getenv("OPENAI_API_KEY"),
         base_url=os.getenv("OPENAI_BASE_URL"),
