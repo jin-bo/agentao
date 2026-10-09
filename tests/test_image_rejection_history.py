@@ -114,8 +114,12 @@ def test_every_measured_rejection_is_classified(name):
     # A validating proxy echoing the request's data URL in an unrelated 400.
     _openai_error(400, "1 validation error: temperature must be <= 2 "
                        "(input: {'url': 'data:image/png;base64,iVBORw0K'})"),
+    # A tool whose schema has a parameter called "image".
+    _anthropic_error("tools.0.input_schema.properties.image: Input should be a valid dictionary"),
+    _openai_error(400, "Invalid schema for function 'render': 'image' is a required property."),
 ], ids=["unrelated-400", "auth-401", "permission-403", "rate-429", "server-500",
-        "tool-name", "field-name", "echoed-data-url"])
+        "tool-name", "field-name", "echoed-data-url", "tool-schema-anthropic",
+        "tool-schema-openai"])
 def test_other_failures_are_not_image_rejections(error):
     assert _is_image_rejection(error) is False
 
@@ -423,6 +427,48 @@ def test_earlier_images_survive_a_non_input_error_that_mentions_vision(error):
     assert len(sent) == 2
     assert _has_image(agent.messages)
     assert not _note_texts(agent)
+
+
+_TOO_LARGE = lambda: _openai_error(  # noqa: E731
+    413, "request_too_large: the image in this request is too large to process.",
+    cls=openai.APIStatusError)
+
+
+@pytest.mark.parametrize("statuses", [
+    ("cancelled",),               # the host declined the overflow compaction
+    ("success", "skipped"),       # compacted, still too large, no smaller cut
+], ids=["overflow-compaction-cancelled", "minimal-history-no-cut"])
+def test_an_image_overflow_that_compaction_cannot_fix_removes_the_image(statuses):
+    """An error both tables match compacts first. When that cannot shrink
+    history, the image is what is left to remove, or every later turn fails."""
+    from agentao.context_manager import is_context_too_long_error
+
+    assert is_context_too_long_error(_TOO_LARGE()) and _is_image_rejection(_TOO_LARGE())
+    agent = _make_agent()
+    _sends(agent, _TOO_LARGE(), _TOO_LARGE())
+    queue = list(statuses)
+
+    def fake_run(request, *, system_prompt, messages_with_system=None, **_):
+        return SimpleNamespace(
+            outcome=SimpleNamespace(status=queue.pop(0), detail=None),
+            system_prompt=system_prompt,
+            messages_with_system=[{"role": "system", "content": system_prompt}] + agent.messages,
+        )
+    agent.compaction_coordinator.run = fake_run
+
+    out = agent.chat("what is this?", images=[{"data": _PNG_B64, "mimeType": "image/png"}])
+    assert "history was removed" in out
+    assert not _has_image(agent.messages)
+
+
+def test_an_echoed_data_url_is_cut_from_the_saved_error():
+    agent = _make_agent()
+    echo = _openai_error(400, "Invalid image: {'url': 'data:image/png;base64,"
+                              + "QUFB" * 50 + "'}")
+    _sends(agent, echo)
+    out = agent.chat("what is this?", images=[{"data": _PNG_B64, "mimeType": "image/png"}])
+    assert "data:image/png;base64,[…]" in out
+    assert "QUFB" not in json.dumps(agent.messages)
 
 
 def test_a_saved_session_does_not_bring_the_image_back(tmp_path):

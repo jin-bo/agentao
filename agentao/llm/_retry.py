@@ -277,6 +277,15 @@ def _is_image_unsupported(err_str: str) -> bool:
 #: unrelated 400: that names the request's payload, not a refusal of it.
 _IMAGE_WORD = re.compile(r"(?<![\w:-])images?(?![\w-])", re.IGNORECASE)
 
+#: Wording of a tool-definition error. A 400 about a tool whose schema has a
+#: parameter called ``image`` ("…input_schema.properties.image…", "'image' is
+#: a required property") says "image" as a word but is not about the user's
+#: picture. None of the 17 measured image rejections uses any of these words.
+_TOOL_SCHEMA_WORDS = re.compile(
+    r"input_schema|\btools?\b|\bfunction\b|\bproperties\b|\bparameters\b",
+    re.IGNORECASE,
+)
+
 #: Statuses a provider answers a bad *input* with. Never 401/403 (auth),
 #: 404 (model), 429 (rate) or 5xx: an image is not why those failed, and
 #: :func:`_is_image_rejection` must not rewrite history over them.
@@ -308,7 +317,8 @@ def _is_image_rejection(exc: BaseException) -> bool:
     """
     if not _is_input_rejection_status(exc):
         return False
-    return _IMAGE_WORD.search(str(exc)) is not None
+    text = str(exc)
+    return _IMAGE_WORD.search(text) is not None and not _TOOL_SCHEMA_WORDS.search(text)
 
 
 def _compute_backoff_delay(attempt: int, retry_after_header: Optional[str] = None) -> float:

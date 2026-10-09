@@ -27,6 +27,7 @@ history.
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -201,6 +202,14 @@ _IMAGE_REJECTED_GUIDANCE = (
     "(PNG, JPEG, GIF or WEBP), switch to a model that accepts it, or ask to "
     "continue from the text alone."
 )
+
+
+#: A base64 ``data:`` URL inside error text a provider echoed back.
+_DATA_URL_IN_TEXT = re.compile(r"data:([\w.+-]+/[\w.+-]+);base64,[A-Za-z0-9+/=]+")
+
+
+def _elide_data_url(match: "re.Match[str]") -> str:
+    return f"data:{match.group(1)};base64,[…]"
 
 
 def _image_part_count(message: Any) -> int:
@@ -1363,9 +1372,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             # say "vision … not supported" must not strip them.
             remove_older = _is_input_rejection_status(e)
             if (
-                self._history_has_images()
-                and _is_image_unsupported(str(e))
+                _is_image_unsupported(str(e))
                 and (image_fallback_text or remove_older)
+                and self._history_has_images()
             ):
                 agent.llm.logger.info(
                     "Model rejected image input; retrying with image references as text"
@@ -1430,13 +1439,11 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 # than quietly falling through to the next rung: the runaway
                 # the earlier design feared comes from a cancel that is
                 # ignored, not from one that is honoured and reported.
-                err_msg = f"[LLM API error: {e}]"
                 agent.llm.logger.warning(
                     "Compaction cancelled by the host on an API overflow; "
                     "returning the context-length error"
                 )
-                agent.messages.append({"role": "assistant", "content": err_msg})
-                return ChatLoopRunner._LlmOutcome(error_return=err_msg)
+                return self._llm_error_outcome(e, None)
             system_prompt = run.system_prompt
             messages_with_system = run.messages_with_system
             try:
@@ -1475,17 +1482,13 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                         # attempt on the request the provider just refused.
                         # Every non-success here means history did not shrink,
                         # so the provider's own error is the honest answer.
-                        err_msg = f"[LLM API error: {e2}]"
                         agent.llm.logger.warning(
                             "Minimal-history compaction did not shrink history "
                             f"({run.outcome.status}"
                             + (f": {run.outcome.detail}" if run.outcome.detail else "")
                             + "); returning the context-length error"
                         )
-                        agent.messages.append(
-                            {"role": "assistant", "content": err_msg}
-                        )
-                        return ChatLoopRunner._LlmOutcome(error_return=err_msg)
+                        return self._llm_error_outcome(e2, None)
                     messages_with_system = run.messages_with_system
                     try:
                         response = _send(messages_with_system)
@@ -1508,7 +1511,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
     # ------------------------------------------------------------------
 
     def _llm_error_outcome(
-        self, e: BaseException, log_prefix: str
+        self, e: BaseException, log_prefix: Optional[str]
     ) -> "ChatLoopRunner._LlmOutcome":
         """End the turn on a provider error — the one terminal error path.
 
@@ -1520,10 +1523,18 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         which image it refused, so all of them go, earlier turns' included;
         the turn then stops rather than retrying, since the user asked about
         an image the model can no longer see.
+
+        The overflow exits come here too: an error the overflow table also
+        matches compacts first, and only when that could not shrink history
+        is it treated as the image rejection it may be (a single image too
+        large for the request, say). ``log_prefix=None`` means the caller has
+        already logged. A ``data:`` URL the provider echoed back is cut from
+        the saved text, which otherwise kept the image's base64 in history.
         """
         agent = self._agent
-        err_msg = f"[LLM API error: {e}]"
-        agent.llm.logger.error(f"{log_prefix}: {e}")
+        err_msg = "[LLM API error: " + _DATA_URL_IN_TEXT.sub(_elide_data_url, str(e)) + "]"
+        if log_prefix is not None:
+            agent.llm.logger.error(f"{log_prefix}: {e}")
         if self._is_history_image_rejection(e):
             removed = self._remove_history_images("provider_rejected")
             agent.llm.logger.warning(
