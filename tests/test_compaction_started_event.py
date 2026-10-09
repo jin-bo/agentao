@@ -212,7 +212,22 @@ def test_a_failed_one_says_so_with_its_time(monkeypatch, printed):
     _send(cli, EventType.COMPACTION_STARTED, _AUTO)
     _send(cli, EventType.COMPACTION_SETTLED,
           {**_AUTO, "status": "failed", "detail": "summary_empty"})
-    assert printed == ["[warning]Compaction made no change (summary_empty) · 3s[/warning]"]
+    assert printed == [
+        "[warning]Compaction made no change — the summarization call returned nothing · 3s[/warning]"
+    ]
+
+
+@pytest.mark.parametrize("open_", [True, False, Mock()], ids=["open", "closed", "mock"])
+def test_a_failure_that_paused_compaction_says_so(monkeypatch, printed, open_):
+    """The third automatic failure pauses automatic compaction; only a real
+    ``True`` counts, since a duck-typed seam answers any attribute."""
+    cli = _cli()
+    cli.agent = SimpleNamespace(context_manager=SimpleNamespace(compaction_circuit_open=open_))
+    _clock(monkeypatch, 10.0, 13.0)
+    _send(cli, EventType.COMPACTION_STARTED, _AUTO)
+    _send(cli, EventType.COMPACTION_SETTLED,
+          {**_AUTO, "status": "failed", "detail": "summary_empty"})
+    assert any("Automatic compaction is paused" in line for line in printed) is (open_ is True)
 
 
 def test_manual_compact_keeps_its_own_spinner(printed):

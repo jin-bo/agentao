@@ -138,7 +138,7 @@ def on_compaction_settled(cli: AgentaoCLI, data: object) -> None:
     """Report how the compaction went and give the spinner back to the turn."""
     from time import monotonic
 
-    from .commands.compact import _fmt_elapsed
+    from .commands.compact import _FAILURE_HINTS, _fmt_elapsed
 
     pending = getattr(cli, "_compaction_pending", None)
     cli._compaction_pending = None
@@ -159,9 +159,21 @@ def on_compaction_settled(cli: AgentaoCLI, data: object) -> None:
         )
         console.print(f"[dim]Context compacted{counts} · {took}[/dim]")
     else:
+        # Same wording ``/compact`` uses: the raw detail is an internal code
+        # (``summary_empty``, ``host_summary_rejected:…+summary_empty``).
         detail = data.get("detail")
-        why = f" ({_display(str(detail))})" if detail else ""
+        hint = _FAILURE_HINTS.get(detail) if isinstance(detail, str) else None
+        why = f" — {hint}" if hint else (" (see agentao.log)" if detail else "")
         console.print(f"[warning]Compaction made no change{why} · {took}[/warning]")
+        # The third automatic failure pauses automatic compaction; without
+        # this line nothing tells the user. Checked as ``is True`` — a
+        # duck-typed seam answers any attribute.
+        cm = getattr(getattr(cli, "agent", None), "context_manager", None)
+        if getattr(cm, "compaction_circuit_open", None) is True:
+            console.print(
+                "[dim]Automatic compaction is paused after repeated failures "
+                "until a compaction succeeds (/compact) or /clear.[/dim]"
+            )
 
 
 def emit_event(cli: AgentaoCLI, event: AgentEvent) -> None:
