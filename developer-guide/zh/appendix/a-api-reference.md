@@ -126,6 +126,17 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 来源的图片退化为 `inline-image-N`。本节是该格式的规范出处——实现见
 `agentao/runtime/chat_loop/_runner.py::_render_image_reference_fallback`。
 
+自 0.5.12 起，这次重试也覆盖历史里之前轮次留下的图片（例如切换到纯文本模型之后）。
+每张都替换为 `[Image removed from the conversation history because the current model does not accept image input. It can no longer be viewed.]`；此前它们会被再次发送，这一轮也会再次失败。
+
+**服务商拒收的图片**（0.5.12+）。服务商因为某张图片拒绝请求时（状态码 400、413 或
+422、报错正文提到图片、且请求里带了图片），历史里所有图片部分都替换为
+`[Image removed from the conversation history after the model provider rejected it. It can no longer be viewed.]`。服务商不会指明拒收的是哪一张，所以之前轮次的图片也一并移除。每条消息
+保留其角色、文字和其他部分，说明文字里绝不包含图片数据。随后这一轮以
+`[LLM API error: …]` 提示结束，并附一句话请用户重新附图、换模型或根据文字继续。
+没有这一步，这张图片会随之后每次请求再次发送并以同样方式失败，恢复会话后也一样。
+两种改写都会发出 `IMAGES_REMOVED`（replay schema 1.4）。
+
 ### 属性
 
 | 属性 | 类型 | 说明 |

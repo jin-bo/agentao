@@ -232,6 +232,13 @@ def _print_turn(turn: dict, console_) -> None:
                 + (f" {markup_escape(str(p.get('detail'))[:80])}" if p.get("detail") else "")
                 + "[/dim]"
             )
+        elif kind == "images_removed":
+            p = e.get("payload") or {}
+            console_.print(
+                f"  [warning]images[/warning]  "
+                f"[dim]{p.get('images_removed')} removed "
+                f"({markup_escape(str(p.get('reason', '')))})[/dim]"
+            )
         elif kind == "session_summary_written":
             p = e.get("payload") or {}
             console_.print(

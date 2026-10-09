@@ -268,6 +268,33 @@ def _is_image_unsupported(err_str: str) -> bool:
     )
 
 
+#: Statuses a provider answers a bad *input* with. Never 401/403 (auth),
+#: 404 (model), 429 (rate) or 5xx: an image is not why those failed, and
+#: :func:`_is_image_rejection` must not rewrite history over them.
+IMAGE_REJECTION_STATUS_CODES = frozenset({400, 413, 422})
+
+
+def _is_image_rejection(exc: BaseException) -> bool:
+    """True when a provider refused a request because of an image in it.
+
+    A heuristic, measured against real rejections (#480): of 17 image
+    failures across Anthropic, OpenAI (both wires), Gemini and Qwen, all were
+    400s and every body mentions "image"; only OpenAI Chat Completions also
+    sends an image-specific ``code``, so the body is what carries the signal.
+    An unrelated 400 from the same probe (``max_tokens``) does not mention
+    one. The caller also requires the request to have carried an image.
+
+    The status is read off the SDK exception and type-checked: an object that
+    merely answers ``status_code`` (a ``MagicMock``) is not a 400.
+    """
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int) or isinstance(status, bool):
+        return False
+    if status not in IMAGE_REJECTION_STATUS_CODES:
+        return False
+    return "image" in str(exc).lower()
+
+
 def _compute_backoff_delay(attempt: int, retry_after_header: Optional[str] = None) -> float:
     """Compute the next sleep duration. Honors ``Retry-After`` when present."""
     parsed = _parse_retry_after(retry_after_header)

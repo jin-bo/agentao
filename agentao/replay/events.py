@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 
-SCHEMA_VERSION = "1.3"
+SCHEMA_VERSION = "1.4"
 
 
 class EventKind:
@@ -171,9 +171,18 @@ class EventKind:
 
     V1_3 = V1_2 | V1_3_NEW
 
+    # v1.4 event kinds — history rewrites a delta capture cannot show.
+    IMAGES_REMOVED = "images_removed"
+
+    V1_4_NEW = frozenset({
+        IMAGES_REMOVED,
+    })
+
+    V1_4 = V1_3 | V1_4_NEW
+
     # Back-compat alias. Existing callers that imported ``EventKind.ALL``
     # keep working; new code should pick the version-specific set.
-    ALL = V1_3
+    ALL = V1_4
 
 
 @dataclass

@@ -35,7 +35,7 @@ from xml.sax.saxutils import quoteattr
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...compaction.coordinator import CompactionRequest
 from ...context_manager import is_context_too_long_error
-from ...llm._retry import _is_image_unsupported
+from ...llm._retry import _is_image_rejection, _is_image_unsupported
 from ...transport import AgentEvent, EventType
 from ..sanitize import canonicalize_tool_arguments, sanitize_assistant_message
 from ..tool_planning import make_tool_result_message
@@ -173,6 +173,43 @@ LENGTH_TRUNCATED_TOOL_CALL_MESSAGE = (
     "truncated and untrustworthy. Nothing was run. Re-issue the tool call with "
     "complete arguments (and a shorter response if you were near the limit)."
 )
+
+
+#: The text that takes an image's place in history once it is removed (#480).
+#: Worded so the model does not treat it as an attachment it can still open,
+#: and true even when an earlier turn's model did see the image.
+_IMAGE_REMOVED_NOTES = {
+    "provider_rejected": (
+        "[Image removed from the conversation history after the model "
+        "provider rejected it. It can no longer be viewed.]"
+    ),
+    "model_unsupported": (
+        "[Image removed from the conversation history because the current "
+        "model does not accept image input. It can no longer be viewed.]"
+    ),
+}
+
+#: Appended to the turn's ``[LLM API error: …]`` when images were removed.
+#: The user's text stays in history, so it is not asked for again.
+_IMAGE_REJECTED_GUIDANCE = (
+    "\n\nImage content in this conversation's history was removed because "
+    "the model provider rejected it; your text was kept. Re-attach the image "
+    "(PNG, JPEG, GIF or WEBP), switch to a model that accepts it, or ask to "
+    "continue from the text alone."
+)
+
+
+def _image_part_count(message: Any) -> int:
+    """How many ``image_url`` parts a history message carries."""
+    if not isinstance(message, dict):
+        return 0
+    content = message.get("content")
+    if not isinstance(content, list):
+        return 0
+    return sum(
+        1 for part in content
+        if isinstance(part, dict) and part.get("type") == "image_url"
+    )
 
 
 class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
@@ -1316,14 +1353,20 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 system_prompt=system_prompt,
             )
         except Exception as e:
-            if image_fallback_text and _is_image_unsupported(str(e)):
+            if self._history_has_images() and _is_image_unsupported(str(e)):
                 agent.llm.logger.info(
                     "Model rejected image input; retrying with image references as text"
                 )
-                self._replace_image_message_for_fallback(
-                    image_fallback_text,
-                    image_fallback_index,
-                )
+                # This turn's images keep the documented ``<attachment/>``
+                # degradation; any image left in history (an earlier turn's,
+                # e.g. after a switch to a text-only model) is removed with a
+                # note, or the retry would carry it and fail the same way.
+                if image_fallback_text:
+                    self._replace_image_message_for_fallback(
+                        image_fallback_text,
+                        image_fallback_index,
+                    )
+                self._remove_history_images("model_unsupported")
                 messages_with_system = [
                     {"role": "system", "content": system_prompt}
                 ] + agent.messages
@@ -1336,11 +1379,8 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     )
                 except Exception as fallback_e:
                     e = fallback_e
-            if not is_context_too_long_error(e):
-                err_msg = f"[LLM API error: {e}]"
-                agent.llm.logger.error(f"LLM call failed: {e}")
-                agent.messages.append({"role": "assistant", "content": err_msg})
-                return ChatLoopRunner._LlmOutcome(error_return=err_msg)
+            if not self._is_overflow(e):
+                return self._llm_error_outcome(e, "LLM call failed")
             agent.llm.logger.warning(f"Context overflow from API, forcing compression: {e}")
             # The provider just told us its real window, if it named one.
             # This is the only place that information exists, and it is why
@@ -1389,7 +1429,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     system_prompt=system_prompt,
                 )
             except Exception as e2:
-                if is_context_too_long_error(e2):
+                if self._is_overflow(e2):
                     agent.llm.logger.warning(
                         "Context still too long after compression, keeping minimal history"
                     )
@@ -1437,19 +1477,97 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                             system_prompt=system_prompt,
                         )
                     except Exception as e3:
-                        err_msg = f"[LLM API error: {e3}]"
-                        agent.llm.logger.error(f"LLM call failed after compression: {e3}")
-                        agent.messages.append({"role": "assistant", "content": err_msg})
-                        return ChatLoopRunner._LlmOutcome(error_return=err_msg)
+                        return self._llm_error_outcome(
+                            e3, "LLM call failed after compression"
+                        )
                 else:
-                    err_msg = f"[LLM API error: {e2}]"
-                    agent.llm.logger.error(f"LLM call failed after compression: {e2}")
-                    agent.messages.append({"role": "assistant", "content": err_msg})
-                    return ChatLoopRunner._LlmOutcome(error_return=err_msg)
+                    return self._llm_error_outcome(
+                        e2, "LLM call failed after compression"
+                    )
 
     # ------------------------------------------------------------------
     # Image fallback helpers
     # ------------------------------------------------------------------
+
+    def _llm_error_outcome(
+        self, e: BaseException, log_prefix: str
+    ) -> "ChatLoopRunner._LlmOutcome":
+        """End the turn on a provider error — the one terminal error path.
+
+        When the provider refused the request because of an image
+        (:func:`_is_image_rejection`) and history still carries one, every
+        image is removed from history first (#480). Otherwise the image would
+        go out again with every later request and fail the same way, for the
+        rest of the session and after a resume. The provider does not say
+        which image it refused, so all of them go, earlier turns' included;
+        the turn then stops rather than retrying, since the user asked about
+        an image the model can no longer see.
+        """
+        agent = self._agent
+        err_msg = f"[LLM API error: {e}]"
+        agent.llm.logger.error(f"{log_prefix}: {e}")
+        if self._history_has_images() and _is_image_rejection(e):
+            removed = self._remove_history_images("provider_rejected")
+            agent.llm.logger.warning(
+                f"Provider rejected an image; removed {removed} image(s) "
+                "from conversation history"
+            )
+            err_msg += _IMAGE_REJECTED_GUIDANCE
+        agent.messages.append({"role": "assistant", "content": err_msg})
+        return ChatLoopRunner._LlmOutcome(error_return=err_msg)
+
+    def _is_overflow(self, e: BaseException) -> bool:
+        """``is_context_too_long_error``, minus image rejections.
+
+        DashScope (Qwen) answers both an overflow and a refused image with the
+        same generic code, ``InternalError.Algo.InvalidParameter``, which the
+        overflow table matches. Read as an overflow, a refused image ran a full
+        compaction and then the minimal-history rung (#480), and still failed.
+        """
+        if self._history_has_images() and _is_image_rejection(e):
+            return False
+        return is_context_too_long_error(e)
+
+    def _history_has_images(self) -> bool:
+        return any(
+            _image_part_count(m) for m in self._agent.messages
+        )
+
+    def _remove_history_images(self, reason: str) -> int:
+        """Replace every image part in history with a note; return how many.
+
+        Only the ``image_url`` parts change. Each message keeps its role, its
+        other keys, its text and any other content part, in order. The note
+        never repeats the data URL. The rewrite is announced as
+        ``IMAGES_REMOVED``: replay records only the messages a turn *adds*,
+        so an in-place rewrite of an earlier one is otherwise invisible to it.
+        """
+        agent = self._agent
+        note = _IMAGE_REMOVED_NOTES[reason]
+        removed = 0
+        indices: List[int] = []
+        for i, message in enumerate(agent.messages):
+            count = _image_part_count(message)
+            if not count:
+                continue
+            agent.messages[i] = {
+                **message,
+                "content": [
+                    {"type": "text", "text": note}
+                    if isinstance(part, dict) and part.get("type") == "image_url"
+                    else part
+                    for part in message["content"]
+                ],
+            }
+            removed += count
+            indices.append(i)
+        if removed:
+            agent.transport.emit(AgentEvent(EventType.IMAGES_REMOVED, {
+                "reason": reason,
+                "images_removed": removed,
+                "message_indices": indices,
+            }))
+        return removed
 
     def _render_image_reference_fallback(self, images: List[Dict[str, str]]) -> str:
         """Render images as ``<attachment uri=... mimetype=.../>`` tags.
