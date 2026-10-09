@@ -107,7 +107,12 @@ def test_every_measured_rejection_is_classified(name):
     _openai_error(403, "Image input is not enabled for this project.", cls=openai.PermissionDeniedError),
     _openai_error(429, "Rate limit reached for image requests."),
     _openai_error(500, "Internal error while processing image.", cls=openai.InternalServerError),
-], ids=["unrelated-400", "auth-401", "permission-403", "rate-429", "server-500"])
+    # An unrelated 400 that only echoes an identifier containing "image".
+    _openai_error(400, "Invalid schema for function 'mcp_figma_get_image': "
+                       "'required' is required to be supplied."),
+    _openai_error(400, "Invalid 'messages[1].content[0].image_url_detail': unknown parameter."),
+], ids=["unrelated-400", "auth-401", "permission-403", "rate-429", "server-500",
+        "tool-name", "field-name"])
 def test_other_failures_are_not_image_rejections(error):
     assert _is_image_rejection(error) is False
 
@@ -281,14 +286,19 @@ def test_switching_to_a_text_only_model_after_an_image_turn_recovers():
 
 def test_this_turns_image_keeps_the_documented_attachment_tag():
     """Developer guide A.1: the image-turn degradation is an ``<attachment/>``
-    tag. Unchanged — only images left over from earlier turns get the note."""
-    agent = _make_agent()
+    tag. Unchanged — only images left over from earlier turns get the note.
+    The rewrite is still announced: replay cannot see it otherwise."""
+    transport = _Recording()
+    agent = _make_agent(transport)
     unsupported = _openai_error(400, "This model does not support image input.")
     _sends(agent, unsupported, _ok())
     agent.chat("look", images=[{"data": _PNG_B64, "mimeType": "image/png", "_source": "shot.png"}])
     user = [m for m in agent.messages if m["role"] == "user"][-1]
     assert isinstance(user["content"], str)
     assert '<attachment uri="shot.png" mimetype="image/png"/>' in user["content"]
+    removed = [e.data for e in transport.events if e.type == EventType.IMAGES_REMOVED]
+    assert removed == [{"reason": "model_unsupported", "images_removed": 1,
+                        "message_indices": [agent.messages.index(user)]}]
 
 
 def test_a_rejection_on_the_retry_after_compaction_is_handled_too():
@@ -327,6 +337,31 @@ def test_a_qwen_image_rejection_is_not_treated_as_an_overflow(name):
     out = agent.chat("what is this?", images=[{"data": _PNG_B64, "mimeType": "image/png"}])
     assert len(sent) == 1
     assert "history was removed" in out
+    assert not _has_image(agent.messages)
+
+
+def test_removal_drops_the_stale_token_anchor():
+    """The last response's prompt_tokens still counts the removed images."""
+    agent = _make_agent()
+    _sends(agent, REJECTIONS["anthropic-not-an-image"]())
+    agent.context_manager.invalidate_token_anchor = Mock()
+    agent.chat("what is this?", images=[{"data": _PNG_B64, "mimeType": "image/png"}])
+    agent.context_manager.invalidate_token_anchor.assert_called_once_with()
+
+
+def test_a_transport_that_raises_does_not_replace_the_provider_error():
+    agent = _make_agent()
+    _sends(agent, REJECTIONS["anthropic-not-an-image"]())
+    real_emit = agent.transport.emit
+
+    def emit(event):
+        if event.type == EventType.IMAGES_REMOVED:
+            raise RuntimeError("host transport is broken")
+        return real_emit(event)
+    agent.transport.emit = emit
+
+    out = agent.chat("what is this?", images=[{"data": _PNG_B64, "mimeType": "image/png"}])
+    assert out.startswith("[LLM API error:") and "history was removed" in out
     assert not _has_image(agent.messages)
 
 

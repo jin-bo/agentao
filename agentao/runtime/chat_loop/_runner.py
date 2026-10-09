@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from xml.sax.saxutils import quoteattr
 
 from ...cancellation import AgentCancelledError, CancellationToken
@@ -1361,12 +1361,15 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 # degradation; any image left in history (an earlier turn's,
                 # e.g. after a switch to a text-only model) is removed with a
                 # note, or the retry would carry it and fail the same way.
-                if image_fallback_text:
+                degraded = (
                     self._replace_image_message_for_fallback(
                         image_fallback_text,
                         image_fallback_index,
                     )
-                self._remove_history_images("model_unsupported")
+                    if image_fallback_text
+                    else None
+                )
+                self._remove_history_images("model_unsupported", also=degraded)
                 messages_with_system = [
                     {"role": "system", "content": system_prompt}
                 ] + agent.messages
@@ -1506,7 +1509,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         agent = self._agent
         err_msg = f"[LLM API error: {e}]"
         agent.llm.logger.error(f"{log_prefix}: {e}")
-        if self._history_has_images() and _is_image_rejection(e):
+        if _is_image_rejection(e) and self._history_has_images():
             removed = self._remove_history_images("provider_rejected")
             agent.llm.logger.warning(
                 f"Provider rejected an image; removed {removed} image(s) "
@@ -1524,7 +1527,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         overflow table matches. Read as an overflow, a refused image ran a full
         compaction and then the minimal-history rung (#480), and still failed.
         """
-        if self._history_has_images() and _is_image_rejection(e):
+        if _is_image_rejection(e) and self._history_has_images():
             return False
         return is_context_too_long_error(e)
 
@@ -1533,7 +1536,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             _image_part_count(m) for m in self._agent.messages
         )
 
-    def _remove_history_images(self, reason: str) -> int:
+    def _remove_history_images(
+        self, reason: str, *, also: Optional[Tuple[int, int]] = None
+    ) -> int:
         """Replace every image part in history with a note; return how many.
 
         Only the ``image_url`` parts change. Each message keeps its role, its
@@ -1541,11 +1546,14 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         never repeats the data URL. The rewrite is announced as
         ``IMAGES_REMOVED``: replay records only the messages a turn *adds*,
         so an in-place rewrite of an earlier one is otherwise invisible to it.
+        ``also`` is ``(index, images)`` for a message the caller already
+        rewrote (the image turn's ``<attachment/>`` degradation), so the one
+        event covers that rewrite too.
         """
         agent = self._agent
         note = _IMAGE_REMOVED_NOTES[reason]
-        removed = 0
-        indices: List[int] = []
+        removed = also[1] if also else 0
+        indices: List[int] = [also[0]] if also else []
         for i, message in enumerate(agent.messages):
             count = _image_part_count(message)
             if not count:
@@ -1562,11 +1570,21 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             removed += count
             indices.append(i)
         if removed:
-            agent.transport.emit(AgentEvent(EventType.IMAGES_REMOVED, {
-                "reason": reason,
-                "images_removed": removed,
-                "message_indices": indices,
-            }))
+            # History was rewritten in place, so the Tier-1 anchor no longer
+            # describes the already-sent prefix (it still counts the images).
+            agent.context_manager.invalidate_token_anchor()
+            # Reached from an ``except`` handler: a host transport that
+            # raises here must not replace the provider error being handled.
+            try:
+                agent.transport.emit(AgentEvent(EventType.IMAGES_REMOVED, {
+                    "reason": reason,
+                    "images_removed": removed,
+                    "message_indices": indices,
+                }))
+            except Exception:
+                agent.llm.logger.warning(
+                    "IMAGES_REMOVED emit failed", exc_info=True
+                )
         return removed
 
     def _render_image_reference_fallback(self, images: List[Dict[str, str]]) -> str:
@@ -1597,35 +1615,33 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         self,
         fallback_text: str,
         preferred_index: Optional[int],
-    ) -> None:
+    ) -> Optional[Tuple[int, int]]:
+        """Rewrite the image turn's message; return ``(index, images)``."""
         agent = self._agent
         if (
             preferred_index is not None
             and 0 <= preferred_index < len(agent.messages)
             and self._message_has_image_content(agent.messages[preferred_index])
         ):
+            count = _image_part_count(agent.messages[preferred_index])
             agent.messages[preferred_index] = {
                 "role": "user",
                 "content": fallback_text,
             }
-            return
+            return preferred_index, count
 
         for i in range(len(agent.messages) - 1, -1, -1):
             if self._message_has_image_content(agent.messages[i]):
+                count = _image_part_count(agent.messages[i])
                 agent.messages[i] = {"role": "user", "content": fallback_text}
-                return
+                return i, count
+        return None
 
     @staticmethod
     def _message_has_image_content(message: Dict[str, Any]) -> bool:
         if message.get("role") != "user":
             return False
-        content = message.get("content")
-        if not isinstance(content, list):
-            return False
-        return any(
-            isinstance(part, dict) and part.get("type") == "image_url"
-            for part in content
-        )
+        return _image_part_count(message) > 0
 
     # ------------------------------------------------------------------
     # Skill / memory diff replay events

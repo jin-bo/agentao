@@ -229,7 +229,7 @@ def _summarize_replay_event(event: dict) -> str:
     if kind == "images_removed":
         indices = payload.get("message_indices") or []
         return (
-            f"[warning]{payload.get('images_removed')} image(s) removed "
+            f"[warning]{markup_escape(str(payload.get('images_removed')))} image(s) removed "
             f"({markup_escape(str(payload.get('reason', '?')))}) "
             f"from message(s) {markup_escape(str(indices)[:80])}[/warning]"
         )

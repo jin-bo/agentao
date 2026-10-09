@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import importlib
 import random
+import re
 import time
 from typing import Any, Optional, Tuple
 
@@ -268,6 +269,12 @@ def _is_image_unsupported(err_str: str) -> bool:
     )
 
 
+#: "image" / "images" as a word of its own. Not inside an identifier, so an
+#: unrelated 400 that echoes a tool named ``mcp_figma_get_image`` or a field
+#: ``image_url`` does not read as a refused image. Every one of the 17
+#: measured rejections says "image" as a standalone word.
+_IMAGE_WORD = re.compile(r"(?<![\w-])images?(?![\w-])", re.IGNORECASE)
+
 #: Statuses a provider answers a bad *input* with. Never 401/403 (auth),
 #: 404 (model), 429 (rate) or 5xx: an image is not why those failed, and
 #: :func:`_is_image_rejection` must not rewrite history over them.
@@ -292,7 +299,7 @@ def _is_image_rejection(exc: BaseException) -> bool:
         return False
     if status not in IMAGE_REJECTION_STATUS_CODES:
         return False
-    return "image" in str(exc).lower()
+    return _IMAGE_WORD.search(str(exc)) is not None
 
 
 def _compute_backoff_delay(attempt: int, retry_after_header: Optional[str] = None) -> float:

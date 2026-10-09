@@ -236,7 +236,7 @@ def _print_turn(turn: dict, console_) -> None:
             p = e.get("payload") or {}
             console_.print(
                 f"  [warning]images[/warning]  "
-                f"[dim]{p.get('images_removed')} removed "
+                f"[dim]{markup_escape(str(p.get('images_removed')))} removed "
                 f"({markup_escape(str(p.get('reason', '')))})[/dim]"
             )
         elif kind == "session_summary_written":
