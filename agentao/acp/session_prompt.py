@@ -37,8 +37,11 @@ ContentBlock support (v1):
   host path or secret — the runtime mirror of the schema's
   ``additionalProperties: false``. The untrusted
   payload is validated: ``mimeType`` must be ``image/*``, ``data`` must be
-  valid base64 within the per-image size cap, and a prompt may carry at
-  most ``_MAX_IMAGES_PER_PROMPT`` images — each violation is a ``-32602``.
+  valid base64 within the per-image size cap, its bytes must be PNG, JPEG,
+  GIF or WEBP, and a prompt may carry at most ``_MAX_IMAGES_PER_PROMPT``
+  images — each violation is a ``-32602``. The forwarded ``mimeType`` is
+  the one the bytes show, not the declared one (#477): a mislabelled image
+  left in history would be re-sent, and rejected, on every later turn.
 - Any other block type (``audio``, embedded ``resource``, unknown types)
   raises :class:`TypeError`, which the dispatcher maps to ``-32602``
   ``INVALID_PARAMS``. No silent degradation.
@@ -70,6 +73,8 @@ from .session_manager import SessionNotFoundError
 from agentao.media_limits import (
     MAX_IMAGE_BYTES as _MAX_IMAGE_BYTES,
     MAX_IMAGES_PER_TURN as _MAX_IMAGES_PER_PROMPT,
+    SUPPORTED_IMAGE_FORMATS,
+    sniff_image_mime,
 )
 
 # base64 expands ~4/3; cap the encoded length so we reject oversized payloads
@@ -190,6 +195,26 @@ def _parse_prompt(raw: Any) -> Tuple[str, List[Dict[str, str]]]:
                     f"session/prompt.prompt[{i}]: image exceeds the "
                     f"{_MAX_IMAGE_BYTES // (1024 * 1024)} MB limit"
                 )
+            # Trust the bytes, not the label. The image message enters history
+            # before the request is sent, and a provider error the runner does
+            # not recognise as "image unsupported" leaves it there — so a bad
+            # image would fail this turn and every later one in the session.
+            # A known format under a wrong label is relabelled (harmless to
+            # fix); content that is no supported format is refused here.
+            sniffed = sniff_image_mime(decoded)
+            if sniffed is None:
+                raise TypeError(
+                    f"session/prompt.prompt[{i}]: image data is not "
+                    f"{', '.join(SUPPORTED_IMAGE_FORMATS[:-1])} or "
+                    f"{SUPPORTED_IMAGE_FORMATS[-1]} (declared {mime_type!r})"
+                )
+            if sniffed != mime_type:
+                logger.warning(
+                    "session/prompt.prompt[%d]: image declared %.80r is %s; "
+                    "forwarding it as %s",
+                    i, mime_type, sniffed, sniffed,
+                )
+                mime_type = sniffed
             if len(images) >= _MAX_IMAGES_PER_PROMPT:
                 raise TypeError(
                     f"session/prompt.prompt: too many image blocks "
