@@ -534,6 +534,16 @@ The host-facing contract:
   nothing about an image before sending it, so validating the bytes in the
   host (as `/image` and ACP do via `agentao.media_limits.sniff_image_mime`)
   avoids the round trip.
+- **Image URLs a wire cannot send** (0.5.12+). An `image_url` part that a
+  host wrote into `agent.messages` (or a session file it edited) may carry
+  a URL the wire cannot express: on `anthropic-messages` anything but a
+  base64 `data:` URL or an `http(s)` URL, on `openai-responses` a missing
+  or empty URL. The request carries
+  `[Image omitted: its URL cannot be sent to the model, so it cannot be viewed.]`
+  in its place, and `agentao.log` gets a warning; `agent.messages` is left
+  as written. Before, the adapter raised before sending, on every later
+  turn. `chat(images=...)` always builds a `data:` URL, so it never meets
+  this.
 
 ---
 
