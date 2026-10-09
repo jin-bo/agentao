@@ -72,7 +72,23 @@ def live_llm_env(monkeypatch, _stub_llm_credentials):
     Request it only behind an opt-in gate (``AGENTAO_TEST_LIVE_LLM``,
     ``AGENTAO_TEST_LIVE_MODELS``). It runs after the scrub and the stubs, so the
     shell's values win where it has them and the stubs fill in the rest.
+
+    Fails, before any request, when the shell exports no key for the provider
+    it selects. Otherwise the stub key would go to the real endpoint and come
+    back as a bare 401. The usual cause is a key kept only in ``.env``, which
+    the suite never reads (``_no_dotenv_discovery``). A fail, not a skip: the
+    run asked for a live test.
     """
+    from agentao.embedding.factory import resolve_provider_name
+
+    provider = resolve_provider_name(_SHELL_LLM_ENV)
+    if not _SHELL_LLM_ENV.get(f"{provider}_API_KEY", "").strip():
+        pytest.fail(
+            f"live test opted in, but the shell exports no {provider}_API_KEY "
+            f"(LLM_PROVIDER={provider}). Export it in the shell: the suite does "
+            "not read .env.",
+            pytrace=False,
+        )
     for key, value in _SHELL_LLM_ENV.items():
         monkeypatch.setenv(key, value)
 
