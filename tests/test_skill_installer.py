@@ -378,6 +378,62 @@ class TestInstall:
             installer.install("owner/bad-pkg")
 
 
+class TestUnwritableRegistry:
+    """A registry save() would refuse stops install/update before any directory changes (#462)."""
+
+    def test_install_refuses_before_fetching(self, tmp_path):
+        from agentao.skills.installer import SkillInstallError
+
+        pkg = tmp_path / "source-pkg"
+        _create_valid_skill(pkg, "my-skill")
+        reg_path = tmp_path / "reg.json"
+        reg_path.write_text("[]", encoding="utf-8")
+        source = FakeSource(pkg)
+        source.fetch = lambda *a: pytest.fail("fetched despite an unwritable registry")
+        installer = SkillInstaller(SkillRegistry(reg_path), source, "project", tmp_path)
+
+        with pytest.raises(SkillInstallError, match="No skill was installed or changed"):
+            installer.install("owner/my-skill")
+        assert not (tmp_path / ".agentao" / "skills" / "my-skill").exists()
+        assert reg_path.read_text(encoding="utf-8") == "[]"
+
+    def test_update_refuses_before_checking(self, tmp_path):
+        from agentao.skills.installer import SkillInstallError
+
+        pkg = tmp_path / "source-pkg"
+        _create_valid_skill(pkg, "my-skill")
+        reg_path = tmp_path / "reg.json"
+        reg = SkillRegistry(reg_path)
+        source = FakeSource(pkg, has_update=True)
+        installer = SkillInstaller(reg, source, "project", tmp_path)
+        installer.install("owner/my-skill")
+
+        reg_path.write_text("NOT JSON", encoding="utf-8")
+        source.check_update = lambda *a: pytest.fail("checked despite an unwritable registry")
+        with pytest.raises(SkillInstallError, match="No skill was installed or changed"):
+            installer.update("my-skill")
+
+    def test_install_names_the_directory_when_save_fails_after_copy(self, tmp_path, monkeypatch):
+        from agentao.skills.installer import SkillInstallError
+        from agentao.skills.registry import SkillRegistryWriteError
+
+        pkg = tmp_path / "source-pkg"
+        _create_valid_skill(pkg, "my-skill")
+        reg = SkillRegistry(tmp_path / "reg.json")
+
+        def fail():
+            raise SkillRegistryWriteError("simulated")
+
+        monkeypatch.setattr(reg, "save", fail)
+        installer = SkillInstaller(reg, FakeSource(pkg), "project", tmp_path)
+        target = tmp_path / ".agentao" / "skills" / "my-skill"
+        with pytest.raises(SkillInstallError) as exc_info:
+            installer.install("owner/my-skill")
+        assert str(target) in str(exc_info.value)
+        assert "--force" in str(exc_info.value)
+        assert target.exists()
+
+
 # ------------------------------------------------------------------
 # Update flow
 # ------------------------------------------------------------------
