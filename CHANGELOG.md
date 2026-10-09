@@ -31,7 +31,14 @@ _Targeting 0.5.12. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A hook `timeout` outside the integer range no longer breaks hook loading.** `"timeout": 1e309` is valid JSON and loads as infinity, which `int()` refuses with `OverflowError`; both hook-file shapes (`agentao-v1` and `claude-code@profile-1`) caught only `ValueError` / `TypeError`, so the error escaped hook collection instead of becoming a plugin warning. It now takes the same path as any other invalid timeout: a warning, and the event's default timeout.
+
+- **Malformed persisted goal state falls back to an empty goal.** Non-object JSON, overflowing integer fields and non-finite elapsed time in `.agentao/goal.json` no longer crash loading or duration display.
+
+- **`/image` prints filenames literally.** Filenames use literal Rich text in staging, listing and error messages, so names containing brackets remain visible and cannot break an error message with an unmatched closing tag.
+
 - **Search results preserve Unicode line separators inside matched text.** The Git and ripgrep output formatter now splits on physical line endings, so U+0085, U+2028 and U+2029 do not create phantom matches or rewrite file content in the result.
+
 - **Replay inspection keeps valid records when a crash truncates a UTF-8 character.** Decode each JSONL record independently, so an incomplete or invalid UTF-8 record is skipped without losing earlier or later events in listings and readers.
 
 - **One unreadable replay file no longer stops replay listing, lookup or retention.** `list_replays`, `open_replay` (finding a session's latest instance) and retention sorted `.agentao/replays/*.jsonl` by `stat()` and raised on the first entry whose `stat()` failed — a dangling symlink, or a file another process pruned between listing the directory and reading its metadata. `/replay list` and `/replay prune` failed, and because `ReplayManager` swallows a pruning error at session start and end, automatic retention silently deleted nothing while such an entry was present, so the directory grew past `replay.max_instances`. Those entries are now skipped and the rest keep their oldest-first order; a skipped entry is neither counted nor deleted. (#459)

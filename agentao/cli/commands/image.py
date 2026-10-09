@@ -22,6 +22,8 @@ from __future__ import annotations
 import base64
 import mimetypes
 from pathlib import Path
+
+from rich.text import Text
 from typing import TYPE_CHECKING
 
 from ...media_limits import (
@@ -53,7 +55,10 @@ def _show_staged(cli: "AgentaoCLI") -> None:
         # data is base64; approximate the decoded payload size for display.
         approx = (len(img["data"]) * 3) // 4
         label = img.get("_label", "image")
-        console.print(f"  {i}. {label}  [dim]({img['mimeType']}, ~{_format_size(approx)})[/dim]")
+        console.print(Text.assemble(
+            f"  {i}. {label}  ",
+            (f"({img['mimeType']}, ~{_format_size(approx)})", "dim"),
+        ))
     console.print("[dim]They will be sent with your next message. /image clear to discard.[/dim]\n")
 
 
@@ -81,18 +86,18 @@ def handle_image_command(cli: "AgentaoCLI", args: str) -> None:
     path = Path(raw).expanduser()
 
     if not path.exists():
-        console.print(f"\n[error]No such file: {path}[/error]\n")
+        console.print(Text(f"\nNo such file: {path}\n", style="error"))
         return
     if not path.is_file():
-        console.print(f"\n[error]Not a file: {path}[/error]\n")
+        console.print(Text(f"\nNot a file: {path}\n", style="error"))
         return
 
     mime_type, _ = mimetypes.guess_type(str(path))
     if mime_type is None or not mime_type.startswith("image/"):
-        console.print(
-            f"\n[error]Not a recognized image file: {path}[/error] "
-            f"[dim](got {mime_type or 'unknown type'})[/dim]\n"
-        )
+        console.print(Text.assemble(
+            (f"\nNot a recognized image file: {path} ", "error"),
+            (f"(got {mime_type or 'unknown type'})\n", "dim"),
+        ))
         return
 
     if len(cli._staged_images) >= _MAX_STAGED_IMAGES:
@@ -108,11 +113,11 @@ def handle_image_command(cli: "AgentaoCLI", args: str) -> None:
     try:
         file_size = path.stat().st_size
     except OSError as exc:
-        console.print(f"\n[error]Could not stat {path}: {exc}[/error]\n")
+        console.print(Text(f"\nCould not stat {path}: {exc}\n", style="error"))
         return
 
     if file_size == 0:
-        console.print(f"\n[error]Image file is empty: {path}[/error]\n")
+        console.print(Text(f"\nImage file is empty: {path}\n", style="error"))
         return
 
     if file_size > _MAX_IMAGE_BYTES:
@@ -125,7 +130,7 @@ def handle_image_command(cli: "AgentaoCLI", args: str) -> None:
     try:
         raw_bytes = path.read_bytes()
     except OSError as exc:
-        console.print(f"\n[error]Could not read {path}: {exc}[/error]\n")
+        console.print(Text(f"\nCould not read {path}: {exc}\n", style="error"))
         return
 
     # Re-validate the bytes actually read — the stat() above is a separate
@@ -133,7 +138,7 @@ def handle_image_command(cli: "AgentaoCLI", args: str) -> None:
     # block) or grown past the cap between stat and read would otherwise slip
     # through. Trust the bytes in hand, not the earlier stat.
     if not raw_bytes:
-        console.print(f"\n[error]Image file is empty: {path}[/error]\n")
+        console.print(Text(f"\nImage file is empty: {path}\n", style="error"))
         return
     if len(raw_bytes) > _MAX_IMAGE_BYTES:
         console.print(
@@ -149,8 +154,8 @@ def handle_image_command(cli: "AgentaoCLI", args: str) -> None:
         "_label": path.name,
         "_source": str(path),
     })
-    console.print(
-        f"\n[green]✓ Staged image: {path.name}[/green] "
-        f"[dim]({mime_type}, {_format_size(len(raw_bytes))}) — "
-        f"{len(cli._staged_images)} total, sent with your next message.[/dim]\n"
-    )
+    console.print(Text.assemble(
+        (f"\n✓ Staged image: {path.name} ", "green"),
+        (f"({mime_type}, {_format_size(len(raw_bytes))}) — "
+         f"{len(cli._staged_images)} total, sent with your next message.\n", "dim"),
+    ))
