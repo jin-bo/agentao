@@ -82,8 +82,11 @@ The "circuit breaker" is a safety: if compaction itself fails (LLM timeout, pars
 
 ```text
 > /compact
-Compacted history: 54 → 19 messages, ~47,231 → ~12,880 tokens (6.4% of window).
+⠋ Compacting context (12s)
+Compacted history: 54 → 19 messages, ~47,231 → ~12,880 tokens (6.4% of window) · 14s.
 ```
+
+While it runs, a `Compacting context (12s)` spinner shows how long the summarization call has taken so far; the result line ends with the total time.
 
 What happens:
 

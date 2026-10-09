@@ -82,8 +82,11 @@ Context limit set to 500,000 tokens
 
 ```text
 > /compact
-Compacted history: 54 → 19 messages, ~47,231 → ~12,880 tokens (6.4% of window).
+⠋ Compacting context (12s)
+Compacted history: 54 → 19 messages, ~47,231 → ~12,880 tokens (6.4% of window) · 14s.
 ```
+
+执行期间会显示 `Compacting context (12s)` 转圈提示，实时显示摘要调用已用的时间；结果行末尾附上总耗时。
 
 发生了什么：
 
