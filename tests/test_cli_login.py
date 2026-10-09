@@ -98,7 +98,9 @@ def test_a_failed_save_is_non_zero_without_a_traceback(monkeypatch, config_path,
 
     assert login_mod.run_login(config_path) == login_mod.EXIT_FAILED
     out = capsys.readouterr()
-    assert "Permission denied" in out.out
+    # Rich wraps at the console width and the message carries tmp_path, so
+    # where the line breaks depends on the temp path's length (#471).
+    assert "Permission denied" in " ".join(out.out.split())
     assert "Traceback" not in out.out + out.err
     assert "sk-typed" not in out.out + out.err
 

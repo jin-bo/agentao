@@ -10,6 +10,22 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _no_dotenv_discovery(monkeypatch):
+    """Stop ``safe_load_dotenv()`` with no path from finding a ``.env`` (#471).
+
+    Without a path it calls ``find_dotenv(usecwd=True)``, which walks up from the
+    process cwd. From a checkout with no ``.env`` that walk ends at whatever sits
+    above it, a developer's ``~/.env`` included. The write goes straight to
+    ``os.environ``, outside ``monkeypatch``, so ``LLM_PROVIDER``, ``*_API_FORMAT``
+    and other providers' keys stayed for the rest of the session. That came in
+    through the factory and the CLI, not only through tests that load a ``.env``
+    on purpose. An explicit path still loads, so a test that writes its own
+    ``.env`` under ``tmp_path`` is unaffected.
+    """
+    monkeypatch.setattr("agentao._env.find_dotenv", lambda *args, **kwargs: "")
+
+
+@pytest.fixture(autouse=True)
 def _stub_llm_credentials(monkeypatch):
     """Set dummy LLM credentials for every test that doesn't supply its own.
 
