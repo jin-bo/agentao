@@ -30,7 +30,7 @@ before, which is how the dependency baseline drifted unnoticed since June.
 | `tests/cli/` | Slash-command and `agentao run` argument handling. |
 | `tests/support/` | Shared scaffolding — fake servers, agent doubles, param builders. See its own README. |
 | `tests/data/` | Static fixtures (e.g. `full_extras_baseline.txt` — the `[full]` closure as PEP 503 *names*; versions float by design and are not compared). |
-| `tests/conftest.py` | Two autouse credential fixtures plus `search_tool` / `capture_subprocess_run`. |
+| `tests/conftest.py` | Two autouse credential fixtures, plus opt-in `isolated_cwd` / `isolated_skill_dirs` (keep agentao's cwd writes and skill discovery under `tmp_path`) and `search_tool` / `capture_subprocess_run`. |
 
 ## Conventions
 
@@ -48,17 +48,29 @@ a live model gate themselves on an env var:
 
 | Gate | Used by | Unset means |
 |---|---|---|
-| `AGENTAO_TEST_LIVE_LLM` | `test_multi_turn.py` | the request is **always** sent; the gate only picks which assertions apply (live-success outside CI, `GITHUB_ACTIONS`) |
+| `AGENTAO_TEST_LIVE_LLM` | `test_multi_turn.py` | offline everywhere; `1` opts in |
 | `AGENTAO_TEST_LIVE_MODELS` | `test_model_command.py` | offline everywhere; `1` opts in |
 
-Make a new gate opt-in like `AGENTAO_TEST_LIVE_MODELS`. Guessing from the
-environment (CI or not, a key that looks fake or not) is what sent a dummy
-`sk-dummy` key to the real models endpoint (#463).
+Make a new gate opt-in like these two. Guessing from the environment (CI or
+not, a key that looks fake or not) is what sent a dummy `sk-dummy` key to the
+real models endpoint (#463), and a gate that picks assertions but not whether
+the request is sent is no gate: `test_multi_turn.py` used to reach the
+provider on every run and pass on the 401 (#468).
 
 Both are pinned to `0` in `.github/workflows/publish*.yml`. A new test that
-talks to a provider needs the same gate *and* an assertion that still holds on
-the offline path — see `test_multi_turn.py::test_multi_turn_tool_calls` for the
-degradation branch.
+talks to a provider needs the same gate, and the behaviour it checks needs an
+offline test too: script the provider with the wire fakes in `tests/support/`
+(`test_multi_turn.py` drives two tool rounds and a second turn through
+`openai_responses_wire.py`). A live test asserts success; it does not accept an
+API error as a pass.
+
+**Never call `load_dotenv()` in a test.** It writes into `os.environ` for the
+rest of the session, outside `monkeypatch`, and with no path it walks up from
+the test file to the first `.env` it finds — a developer's `~/.env` when the
+checkout has none. Keys conftest already set are left alone, so it does not
+even supply the test's credentials; it leaks the rest (`LLM_PROVIDER`,
+`OPENAI_API_FORMAT`, other providers' keys), and conftest's credential
+discovery in every later test then picks up that provider's real key (#468).
 
 **Write under `tmp_path`, never `Path.cwd()`.** A test rooted at the repo
 working directory mutates the developer's real `.agentao/` state (memory DB,
