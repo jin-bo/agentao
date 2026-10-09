@@ -22,14 +22,29 @@ from tests.support.openai_responses_wire import (
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 
+@pytest.fixture(autouse=True)
+def _skills_inside_tmp_path(tmp_path, monkeypatch):
+    """Keep skill discovery off the developer's home.
+
+    Both directories are module constants bound at import time, so a
+    redirected ``HOME`` does not move them: left alone, ``Agentao(...)`` scans
+    the real ``~/.agentao/skills`` and ``_bootstrap_bundled_skills`` copies this
+    repo's ``skills/`` into it (see ``test_skills_prompt._agent_with_a_skill``).
+    """
+    from agentao.skills import manager as skills_manager
+
+    monkeypatch.setattr(skills_manager, "_GLOBAL_SKILLS_DIR", tmp_path / "home" / "skills")
+    monkeypatch.setattr(skills_manager, "_BUNDLED_SKILLS_DIR", tmp_path / "no-bundled-skills")
+
+
 def _live_llm_opted_in() -> bool:
     return os.getenv("AGENTAO_TEST_LIVE_LLM", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _tool_call(call_id: str, name: str, arguments: dict) -> bytes:
+def _tool_call(call_id: str, name: str, arguments: dict, item_id: str) -> bytes:
     raw = json.dumps(arguments)
-    return stream_of(created(), function_call_events(0, call_id, name, raw),
-                     completed([function_call_item(call_id, name, raw)]))
+    return stream_of(created(), function_call_events(0, call_id, name, raw, item_id=item_id),
+                     completed([function_call_item(call_id, name, raw, item_id=item_id)]))
 
 
 def _answer(text: str) -> bytes:
@@ -51,8 +66,8 @@ def test_tool_results_carry_across_rounds_and_turns(tmp_path: Path):
                     api_format="openai-responses", working_directory=tmp_path)
     try:
         wire = attach(agent.llm, Wire(
-            _tool_call("call_ls", "list_directory", {"directory_path": "skills"}),
-            _tool_call("call_read", "read_file", {"file_path": "skills/demo/SKILL.md"}),
+            _tool_call("call_ls", "list_directory", {"directory_path": "skills"}, "fc_ls"),
+            _tool_call("call_read", "read_file", {"file_path": "skills/demo/SKILL.md"}, "fc_read"),
             _answer("demo is a skill"),
             _answer("still demo"),
         ))
