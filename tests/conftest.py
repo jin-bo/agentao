@@ -79,14 +79,18 @@ def live_llm_env(monkeypatch, _stub_llm_credentials):
     the suite never reads (``_no_dotenv_discovery``). A fail, not a skip: the
     run asked for a live test.
     """
-    from agentao.embedding.factory import resolve_provider_name
+    from agentao.embedding.factory import discover_llm_kwargs, resolve_provider_name
 
-    provider = resolve_provider_name(_SHELL_LLM_ENV)
-    if not _SHELL_LLM_ENV.get(f"{provider}_API_KEY", "").strip():
+    if not str(discover_llm_kwargs(_SHELL_LLM_ENV).get("api_key", "")).strip():
+        provider = resolve_provider_name(_SHELL_LLM_ENV)
+        selected = (
+            f"LLM_PROVIDER={_SHELL_LLM_ENV['LLM_PROVIDER']!r}"
+            if "LLM_PROVIDER" in _SHELL_LLM_ENV
+            else "LLM_PROVIDER unset, default OPENAI"
+        )
         pytest.fail(
             f"live test opted in, but the shell exports no {provider}_API_KEY "
-            f"(LLM_PROVIDER={provider}). Export it in the shell: the suite does "
-            "not read .env.",
+            f"({selected}). Export it in the shell: the suite does not read .env.",
             pytrace=False,
         )
     for key, value in _SHELL_LLM_ENV.items():
