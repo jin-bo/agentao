@@ -302,6 +302,11 @@ def _is_input_rejection_status(exc: BaseException) -> bool:
     )
 
 
+def _is_tool_schema_error(text: str) -> bool:
+    """True when error text reads as a tool-definition error, not an image one."""
+    return _TOOL_SCHEMA_WORDS.search(text) is not None
+
+
 def _is_image_rejection(exc: BaseException) -> bool:
     """True when a provider refused a request because of an image in it.
 
@@ -318,7 +323,7 @@ def _is_image_rejection(exc: BaseException) -> bool:
     if not _is_input_rejection_status(exc):
         return False
     text = str(exc)
-    return _IMAGE_WORD.search(text) is not None and not _TOOL_SCHEMA_WORDS.search(text)
+    return _IMAGE_WORD.search(text) is not None and not _is_tool_schema_error(text)
 
 
 def _compute_backoff_delay(attempt: int, retry_after_header: Optional[str] = None) -> float:

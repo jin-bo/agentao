@@ -40,6 +40,7 @@ from ...llm._retry import (
     _is_image_rejection,
     _is_image_unsupported,
     _is_input_rejection_status,
+    _is_tool_schema_error,
 )
 from ...transport import AgentEvent, EventType
 from ..sanitize import canonicalize_tool_arguments, sanitize_assistant_message
@@ -204,8 +205,12 @@ _IMAGE_REJECTED_GUIDANCE = (
 )
 
 
-#: A base64 ``data:`` URL inside error text a provider echoed back.
-_DATA_URL_IN_TEXT = re.compile(r"data:([\w.+-]+/[\w.+-]+);base64,[A-Za-z0-9+/=]+")
+#: A base64 ``data:`` URL inside error text a provider echoed back. The
+#: payload may be URL-safe (``-``/``_``) or JSON-escaped (``\/``); a base64 run
+#: ends at a quote, space or brace, so the text after it is kept.
+_DATA_URL_IN_TEXT = re.compile(
+    r"data:([\w.+-]+\\*/[\w.+-]+);base64,(?:[A-Za-z0-9+/=_-]|\\+/)+"
+)
 
 
 def _elide_data_url(match: "re.Match[str]") -> str:
@@ -1369,15 +1374,19 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             # The image turn's own degradation keeps its old trigger (the
             # message alone). Removing *earlier* turns' images is permanent,
             # so it also needs a 400/413/422: a 429 or 5xx that happens to
-            # say "vision … not supported" must not strip them.
-            remove_older = _is_input_rejection_status(e)
+            # say "vision … not supported" must not strip them. Nor may a
+            # tool-schema 400 that names an ``images`` parameter: the same
+            # guard ``_is_image_rejection`` applies on the terminal path.
+            remove_older = (
+                _is_input_rejection_status(e) and not _is_tool_schema_error(str(e))
+            )
             if (
                 _is_image_unsupported(str(e))
                 and (image_fallback_text or remove_older)
                 and self._history_has_images()
             ):
                 agent.llm.logger.info(
-                    "Model rejected image input; retrying with image references as text"
+                    "Model rejected image input; retrying without image content"
                 )
                 # This turn's images keep the documented ``<attachment/>``
                 # degradation; any image left in history (an earlier turn's,
@@ -1532,9 +1541,10 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         the saved text, which otherwise kept the image's base64 in history.
         """
         agent = self._agent
-        err_msg = "[LLM API error: " + _DATA_URL_IN_TEXT.sub(_elide_data_url, str(e)) + "]"
+        err_text = _DATA_URL_IN_TEXT.sub(_elide_data_url, str(e))
+        err_msg = "[LLM API error: " + err_text + "]"
         if log_prefix is not None:
-            agent.llm.logger.error(f"{log_prefix}: {e}")
+            agent.llm.logger.error(f"{log_prefix}: {err_text}")
         if self._is_history_image_rejection(e):
             removed = self._remove_history_images("provider_rejected")
             agent.llm.logger.warning(

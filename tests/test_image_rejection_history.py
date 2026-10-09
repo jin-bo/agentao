@@ -291,6 +291,24 @@ def test_switching_to_a_text_only_model_after_an_image_turn_recovers():
     assert reasons == ["model_unsupported"]
 
 
+def test_a_tool_schema_400_that_says_images_unsupported_leaves_earlier_images():
+    """The retry path's scan applies the same tool-schema guard as the
+    terminal path: a 400 about a tool parameter named ``images`` is not the
+    model refusing the user's picture."""
+    agent = _make_agent()
+    schema_400 = _openai_error(
+        400, "Invalid schema for function 'gallery': tools[0].function.parameters."
+        "properties.images: array type unsupported")
+    sent = _sends(agent, _ok(), schema_400)
+    agent.chat("look", images=[{"data": _PNG_B64, "mimeType": "image/png"}])
+
+    out = agent.chat("hello")
+    assert out.startswith("[LLM API error:")
+    assert len(sent) == 2
+    assert _has_image(agent.messages)
+    assert not _note_texts(agent)
+
+
 def test_this_turns_image_keeps_the_documented_attachment_tag():
     """Developer guide A.1: the image-turn degradation is an ``<attachment/>``
     tag. Unchanged — only images left over from earlier turns get the note.
@@ -469,6 +487,18 @@ def test_an_echoed_data_url_is_cut_from_the_saved_error():
     out = agent.chat("what is this?", images=[{"data": _PNG_B64, "mimeType": "image/png"}])
     assert "data:image/png;base64,[…]" in out
     assert "QUFB" not in json.dumps(agent.messages)
+
+
+@pytest.mark.parametrize("payload", [
+    "QUFB\\/QUFB-QUFB_QUFB" * 20,   # JSON-escaped slash, URL-safe alphabet
+], ids=["escaped-and-url-safe"])
+def test_an_escaped_echoed_data_url_is_cut_whole(payload):
+    agent = _make_agent()
+    _sends(agent, _openai_error(400, 'Invalid image: {"url": "data:image\\/png;base64,'
+                                     + payload + '"} end'))
+    out = agent.chat("what is this?", images=[{"data": _PNG_B64, "mimeType": "image/png"}])
+    assert "QUFB" not in json.dumps(agent.messages)
+    assert '"} end' in out
 
 
 def test_a_saved_session_does_not_bring_the_image_back(tmp_path):
