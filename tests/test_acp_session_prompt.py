@@ -331,11 +331,14 @@ def test_image_block_missing_mimetype_rejected(initialized_server):
     ("path", "/tmp/secret"),
     ("apiKey", "sk-leak"),
     ("baseUrl", "https://evil.example"),
-    ("_meta", {"x": 1}),
+    # The Python field name of the schema's ``_meta`` alias: the runtime
+    # mirrors the schema's alias-only rule.
+    ("meta", {"x": 1}),
 ])
 def test_image_block_rejects_extra_fields(initialized_server, extra_field, value):
-    """The image wire carries only {data, mimeType}. The raw-dict parser must
-    reject ANY other key (host-path/secret vectors), not just 'uri' — mirroring
+    """An image block forwards only {data, mimeType}. Beyond those and the
+    ignored ACP ``annotations`` / ``_meta`` (#479), the raw-dict parser must
+    reject every key (host-path/secret vectors), not just 'uri' — mirroring
     the schema's additionalProperties:false, which the parser does not invoke."""
     with pytest.raises(TypeError, match="unexpected field"):
         acp_session_prompt.handle_session_prompt(
@@ -417,6 +420,59 @@ def test_too_many_image_blocks_rejected(initialized_server):
             initialized_server,
             {"sessionId": "sess_x", "prompt": blocks},
         )
+
+
+@pytest.mark.parametrize("extra", [
+    {"annotations": {"audience": ["user"], "priority": 0.5}},
+    {"_meta": {"traceparent": "00-80e1afed08e019fc1110464cfa66635c-7a085853722dc6d2-01"}},
+    {"annotations": {"audience": ["user"]}, "_meta": {"x": 1}},
+    # The runtime does not validate these fields; only the schema does.
+    {"annotations": "not-an-object", "_meta": ["not", "an", "object"]},
+], ids=["annotations", "meta", "both", "malformed"])
+def test_image_block_accepts_and_drops_annotations_and_meta(session_with_agent, extra):
+    """#479: ACP-defined ``annotations`` / ``_meta`` on an image block are
+    accepted, as on text blocks, and never forwarded to the agent."""
+    server, session_id, fake = session_with_agent
+    result = acp_session_prompt.handle_session_prompt(
+        server,
+        {
+            "sessionId": session_id,
+            "prompt": [{"type": "image", "data": _PNG_B64, "mimeType": "image/png", **extra}],
+        },
+    )
+    assert result["stopReason"] == "end_turn"
+    assert fake.received_images[0] == [{"data": _PNG_B64, "mimeType": "image/png"}]
+
+
+def test_image_block_with_meta_still_gets_content_checks(session_with_agent):
+    """Accepting ``_meta`` must not skip the byte check that runs after it."""
+    server, session_id, fake = session_with_agent
+    with pytest.raises(TypeError, match="image data is not"):
+        acp_session_prompt.handle_session_prompt(
+            server,
+            {
+                "sessionId": session_id,
+                "prompt": [{
+                    "type": "image", "data": base64.b64encode(b"ABC").decode(),
+                    "mimeType": "image/png", "_meta": {"x": 1},
+                }],
+            },
+        )
+    assert fake.chat_calls == []
+
+
+def test_prompt_level_meta_and_text_annotations_are_ignored(session_with_agent):
+    server, session_id, fake = session_with_agent
+    acp_session_prompt.handle_session_prompt(
+        server,
+        {
+            "sessionId": session_id,
+            "_meta": {"traceparent": "00-80e1afed08e019fc1110464cfa66635c-7a085853722dc6d2-01"},
+            "prompt": [{"type": "text", "text": "hi", "annotations": {"audience": ["user"]}, "_meta": {"x": 1}}],
+        },
+    )
+    assert fake.chat_calls[0][0] == "hi"
+    assert fake.received_images[0] is None
 
 
 @pytest.mark.parametrize("declared", ["image/png", "image/jpg", "image/JPEG"])

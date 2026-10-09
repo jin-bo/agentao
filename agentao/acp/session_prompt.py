@@ -31,11 +31,12 @@ ContentBlock support (v1):
 - ``{"type": "image", "data": "<base64>", "mimeType": "..."}``
   → collected as an image attachment and forwarded to
   ``agent.chat(images=[...])``, which surfaces it as an OpenAI
-  ``image_url`` part. Inline ``data``/``mimeType`` is required and is the
-  *only* shape accepted: any other key (``uri``, ``path``, ``apiKey``,
-  ``_meta``, …) is rejected (``-32602``), so the wire can never carry a
-  host path or secret — the runtime mirror of the schema's
-  ``additionalProperties: false``. The untrusted
+  ``image_url`` part. Inline ``data``/``mimeType`` is required. The
+  spec's ``annotations`` and ``_meta`` are accepted and ignored (#479); any
+  other key (``uri``, ``path``, ``apiKey``, …) is rejected (``-32602``) —
+  the runtime mirror of the schema's ``additionalProperties: false``. The
+  handler never reads anything but ``data``/``mimeType``, so refusing
+  ``uri`` keeps the existing contract rather than guarding a read. The untrusted
   payload is validated: ``mimeType`` must be ``image/*``, ``data`` must be
   valid base64 within the per-image size cap, its bytes must be PNG, JPEG,
   GIF or WEBP, and a prompt may carry at most ``_MAX_IMAGES_PER_PROMPT``
@@ -65,11 +66,12 @@ from .protocol import (
 from .server import JsonRpcHandlerError
 from .session_manager import SessionNotFoundError
 
-# Bounds on untrusted inline image input from the ACP wire. The wire carries
-# only ``{data, mimeType}`` content — never a path or secret — so these guard
-# against a malformed or oversized payload reaching the LLM client as an
-# opaque API error instead of a clean ``-32602`` ``INVALID_PARAMS``. The byte
-# cap and count are shared with the CLI /image command via media_limits.
+# Bounds on untrusted inline image input from the ACP wire. Only an image
+# block's ``{data, mimeType}`` is forwarded — never a path or secret — so
+# these guard against a malformed or oversized payload reaching the LLM
+# client as an opaque API error instead of a clean ``-32602``
+# ``INVALID_PARAMS``. The byte cap and count are shared with the CLI /image
+# command via media_limits.
 from agentao.media_limits import (
     MAX_IMAGE_BYTES as _MAX_IMAGE_BYTES,
     MAX_IMAGES_PER_TURN as _MAX_IMAGES_PER_PROMPT,
@@ -81,11 +83,12 @@ from agentao.media_limits import (
 # *before* decoding them (a decode-to-check would itself be the DoS).
 _MAX_IMAGE_B64_LEN = ((_MAX_IMAGE_BYTES + 2) // 3) * 4
 
-# The only keys an inline image block may carry. Anything else (``uri``,
-# ``path``, ``apiKey``, ``baseUrl``, ``_meta``, …) is rejected so the wire can
-# never smuggle a host path or secret — the runtime mirror of the schema's
-# ``additionalProperties: false``.
-_IMAGE_BLOCK_KEYS = frozenset({"type", "data", "mimeType"})
+# The keys an inline image block may carry. ``annotations`` and ``_meta`` are
+# ACP-defined and ignored: neither reaches the model or any configuration
+# (#479). Anything else — the spec's by-reference ``uri``, or an invented
+# ``path`` / ``apiKey`` / ``baseUrl`` — is rejected, the runtime mirror of the
+# schema's ``additionalProperties: false``.
+_IMAGE_BLOCK_KEYS = frozenset({"type", "data", "mimeType", "annotations", "_meta"})
 
 if TYPE_CHECKING:
     from .server import AcpServer
@@ -151,18 +154,17 @@ def _parse_prompt(raw: Any) -> Tuple[str, List[Dict[str, str]]]:
                 )
             rendered.append(f"[Resource: {label}]({uri})")
         elif btype == "image":
-            # The image wire carries only inline content — {type, data,
-            # mimeType}. Reject ANY other key at runtime (by-reference
-            # ``uri``, ``path``, ``apiKey``, ``baseUrl``, ``_meta``, …),
-            # mirroring the schema's extra="forbid"/additionalProperties:
-            # false; the hand-rolled raw-dict parser would otherwise
-            # silently forward a host path or secret instead of rejecting it.
+            # The image wire carries inline content only. Reject any key
+            # outside _IMAGE_BLOCK_KEYS (by-reference ``uri``, ``path``,
+            # ``apiKey``, …), mirroring the schema's extra="forbid". Only
+            # ``data`` and ``mimeType`` are read below; ``annotations`` and
+            # ``_meta`` are accepted and never forwarded.
             extra_keys = set(block) - _IMAGE_BLOCK_KEYS
             if extra_keys:
                 raise TypeError(
                     f"session/prompt.prompt[{i}]: image block has unexpected "
                     f"field(s) {sorted(extra_keys)}; send inline "
-                    f"'data'/'mimeType' only"
+                    f"'data'/'mimeType' (optionally 'annotations'/'_meta')"
                 )
             data = block.get("data")
             mime_type = block.get("mimeType")
