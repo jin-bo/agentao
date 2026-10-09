@@ -52,6 +52,10 @@ class EventType(str, Enum):
     PERMISSION_MODE_CHANGED = "permission_mode_changed"
     READONLY_MODE_CHANGED   = "readonly_mode_changed"
     PLUGIN_HOOK_FIRED       = "plugin_hook_fired"
+    # Image parts were replaced with a note in history — after a provider
+    # refused an image, or a model refused image input (#480). An in-place
+    # rewrite: without this event a replay would never show it.
+    IMAGES_REMOVED          = "images_removed"
 
 
 @dataclass

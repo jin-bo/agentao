@@ -770,7 +770,7 @@ of this writing:
 | LLM call | `LLM_CALL_STARTED`, `LLM_CALL_COMPLETED`, `LLM_CALL_DELTA`, `LLM_CALL_IO`, `LLM_TEXT`, `THINKING` |
 | Sub-agent (raw) | `AGENT_START`, `AGENT_END` |
 | Interaction | `TOOL_CONFIRMATION`, `ASK_USER_REQUESTED`, `ASK_USER_ANSWERED` |
-| History | `BACKGROUND_NOTIFICATION_INJECTED`, `CONTEXT_COMPRESSED`, `COMPACTION_SETTLED`, `SESSION_SUMMARY_WRITTEN` |
+| History | `BACKGROUND_NOTIFICATION_INJECTED`, `CONTEXT_COMPRESSED`, `COMPACTION_SETTLED`, `SESSION_SUMMARY_WRITTEN`, `IMAGES_REMOVED` |
 | Memory | `MEMORY_WRITE`, `MEMORY_DELETE`, `MEMORY_CLEARED` |
 | Runtime state | `SKILL_ACTIVATED`, `SKILL_DEACTIVATED`, `MODEL_CHANGED`, `PERMISSION_MODE_CHANGED`, `READONLY_MODE_CHANGED`, `PLUGIN_HOOK_FIRED` |
 | Errors | `ERROR` |
@@ -794,6 +794,14 @@ measure `[system prompt] + messages`; `COMPACTION_SETTLED`'s
 alone. Do not wire one into the other. Both are `null` on the two
 API-overflow rungs and on microcompaction, because filling them in would
 mean full-history estimates on the paths where they are most expensive.
+
+**`IMAGES_REMOVED`** (`reason`, `images_removed`, `message_indices`) says
+image parts in history were replaced with a text note: a provider refused
+an image (`provider_rejected`; every image goes, since the provider does
+not say which one, and the turn ends with an error), or the model refused
+image input (`model_unsupported`; the turn retries without them). It is
+the only record of that rewrite: `LLM_CALL_DELTA` carries only the
+messages a turn adds.
 
 Every `AgentEvent` carries a `schema_version: int` field; bumps are
 the *only* signal that a payload's shape changed. It is a **single

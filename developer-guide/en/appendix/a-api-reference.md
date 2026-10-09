@@ -129,6 +129,22 @@ CLI `/image` command); wire images that carry no source degrade to
 implementation in
 `agentao/runtime/chat_loop/_runner.py::_render_image_reference_fallback`.
 
+Since 0.5.12, when the error is a 400, 413 or 422, the retry also covers images
+left in history from earlier turns (for example after switching to a text-only
+model). Each one is replaced with
+`[Image removed from the conversation history because the current model does not accept image input. It can no longer be viewed.]`; before, they were sent again and the turn failed again.
+
+**Provider-rejected images** (0.5.12+). When the provider refuses a request
+because of an image (a 400, 413 or 422 whose body mentions an image, on a
+request that carried one), every image part in history is replaced with
+`[Image removed from the conversation history after the model provider rejected it. It can no longer be viewed.]`. The provider does not say which image it refused, so earlier
+turns' images go too. Each message keeps its role, text and other parts, and
+the note never contains the image data. The turn then ends with the
+`[LLM API error: …]` notice plus a line asking to re-attach the image, switch
+model or continue from the text. Without this, the image went out again with
+every later request and failed the same way, also after a resume. Both
+rewrites emit `IMAGES_REMOVED` (replay schema 1.4).
+
 ### Attributes
 
 | Attribute | Type | Notes |
