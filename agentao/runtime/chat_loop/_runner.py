@@ -1538,10 +1538,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         shrink, or a retry that still overflows. Such a message may say
         "including 3 images" without refusing any of them, and a declined
         overflow returns the provider's context-length error with history
-        untouched. ``log_prefix=None``
-        means the caller has already logged. A ``data:`` URL the provider
-        echoed back is cut from the saved text, which otherwise kept the
-        image's base64 in history.
+        untouched. ``log_prefix=None`` means the caller has already logged.
+        A ``data:`` URL the provider echoed back is cut from the saved text,
+        which otherwise kept the image's base64 in history.
         """
         agent = self._agent
         err_text = _DATA_URL_IN_TEXT.sub(_elide_data_url, str(e))
