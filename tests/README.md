@@ -30,7 +30,7 @@ before, which is how the dependency baseline drifted unnoticed since June.
 | `tests/cli/` | Slash-command and `agentao run` argument handling. |
 | `tests/support/` | Shared scaffolding — fake servers, agent doubles, param builders. See its own README. |
 | `tests/data/` | Static fixtures (e.g. `full_extras_baseline.txt` — the `[full]` closure as PEP 503 *names*; versions float by design and are not compared). |
-| `tests/conftest.py` | Two autouse credential fixtures, plus opt-in `isolated_cwd` / `isolated_skill_dirs` (keep agentao's cwd writes and skill discovery under `tmp_path`) and `search_tool` / `capture_subprocess_run`. |
+| `tests/conftest.py` | Two autouse credential fixtures and an autouse `.env`-discovery guard, plus opt-in `isolated_cwd` / `isolated_skill_dirs` (keep agentao's cwd writes and skill discovery under `tmp_path`) and `search_tool` / `capture_subprocess_run`. |
 
 ## Conventions
 
@@ -71,6 +71,13 @@ checkout has none. Keys conftest already set are left alone, so it does not
 even supply the test's credentials; it leaks the rest (`LLM_PROVIDER`,
 `OPENAI_API_FORMAT`, other providers' keys), and conftest's credential
 discovery in every later test then picks up that provider's real key (#468).
+
+agentao's own `safe_load_dotenv()` does the same walk when it gets no path
+(from the process cwd, in `build_from_environment`, the CLI and `agentao
+doctor`), so a test that builds through the real factory loaded `~/.env` too.
+`conftest.py::_no_dotenv_discovery` makes that walk find nothing for every test
+(#471). An explicit path still loads: a test that needs a `.env` writes one
+under `tmp_path` and passes it.
 
 **Write under `tmp_path`, never `Path.cwd()`.** A test rooted at the repo
 working directory mutates the developer's real `.agentao/` state (memory DB,
