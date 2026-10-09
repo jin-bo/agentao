@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from .cancellation import CancellationToken
 from .compaction.types import (
@@ -1502,6 +1502,7 @@ class ContextManager:
         reason: str,
         decide=None,
         cancellation_token: Optional[CancellationToken] = None,
+        on_summarize: Optional[Callable[[], None]] = None,
     ) -> CompactionOutcome:
         """prepare -> decide -> summarize -> commit, and the failure counter.
 
@@ -1538,6 +1539,12 @@ class ContextManager:
         summary, which counts as a summarizer failure — three cancelled turns
         would have paused automatic compaction. Manual ``/compact`` runs
         outside a turn and passes none.
+
+        ``on_summarize`` is called just before the built-in summarizer, the
+        slow step, and only then: not when prepare rejects, the host cancels
+        or the host's own summary is taken. Every outcome after that point
+        settles, so a caller announcing a start there always sees an end
+        (#491). A plain callable, so this class still holds no coordinator.
         """
         trigger = "auto" if is_auto else "manual"
         kind = "full"
@@ -1652,6 +1659,8 @@ class ContextManager:
         if summary is None:
             if cancellation_token is not None:
                 cancellation_token.check()
+            if on_summarize is not None:
+                on_summarize()
             summary = self._summarize_formatted(
                 prep.summary_input, cancellation_token=cancellation_token,
             )

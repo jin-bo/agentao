@@ -633,7 +633,7 @@ for ev in events:
 | LLM 调用 | `LLM_CALL_STARTED`、`LLM_CALL_COMPLETED`、`LLM_CALL_DELTA`、`LLM_CALL_IO`、`LLM_TEXT`、`THINKING` |
 | 子 Agent（原始） | `AGENT_START`、`AGENT_END` |
 | 交互 | `TOOL_CONFIRMATION`、`ASK_USER_REQUESTED`、`ASK_USER_ANSWERED` |
-| 历史 | `BACKGROUND_NOTIFICATION_INJECTED`、`CONTEXT_COMPRESSED`、`COMPACTION_SETTLED`、`SESSION_SUMMARY_WRITTEN`、`IMAGES_REMOVED` |
+| 历史 | `BACKGROUND_NOTIFICATION_INJECTED`、`COMPACTION_STARTED`、`CONTEXT_COMPRESSED`、`COMPACTION_SETTLED`、`SESSION_SUMMARY_WRITTEN`、`IMAGES_REMOVED` |
 | Memory | `MEMORY_WRITE`、`MEMORY_DELETE`、`MEMORY_CLEARED` |
 | Runtime 状态 | `SKILL_ACTIVATED`、`SKILL_DEACTIVATED`、`MODEL_CHANGED`、`PERMISSION_MODE_CHANGED`、`READONLY_MODE_CHANGED`、`PLUGIN_HOOK_FIRED` |
 | 错误 | `ERROR` |
@@ -652,6 +652,14 @@ for ev in events:
 `pre_tokens_history` / `post_tokens_history` 只量消息列表本身。**不要把它们
 接到一起。** 在 API 溢出的两级和微压缩上两者都是 `null` —— 在那些路径上补齐
 它们意味着在最贵的时候做全量历史估算。
+
+**`COMPACTION_STARTED`**（`trigger`、`kind`、`reason`；0.5.12+）在 `full` 压缩调用
+摘要器（最慢的一步）之前发出，让 UI 能显示“正在压缩”而不是“正在思考”。只在这时
+发出：微压缩和 `minimal_history` 不发（不调用模型），尝试在摘要之前被跳过、否决
+或拒绝时不发，`compaction_controller` 自己提供摘要时也不发。每个开始之后都会有
+同一次尝试的 `COMPACTION_SETTLED`（`success` 或 `failed`），除非这一轮在此期间
+被取消——所以恢复 UI 不要依赖等到结束事件。它只是实时信号，不记入 replay；耗时
+由 `COMPACTION_SETTLED.duration_ms` 给出。
 
 **`IMAGES_REMOVED`**（`reason`、`images_removed`、`message_indices`）表示历史里的
 图片部分被替换成了一段说明文字：服务商拒收了某张图片（`provider_rejected`；服务商

@@ -41,6 +41,12 @@ class EventType(str, Enum):
     # policy, vetoed, or failed — and its two token fields are named apart
     # because they exclude the system prompt where the older pair includes it.
     COMPACTION_SETTLED = "compaction_settled"
+    # A full compaction is about to call the summarizer — the slow part, up
+    # to a minute. Live only, for a UI to say "compacting" rather than
+    # "thinking" (#491); never recorded to replay, since COMPACTION_SETTLED
+    # already carries the duration. Every start is followed by a
+    # COMPACTION_SETTLED for the same attempt, unless the turn is cancelled.
+    COMPACTION_STARTED = "compaction_started"
     SESSION_SUMMARY_WRITTEN = "session_summary_written"
     # Step 6 — runtime state changes
     SKILL_ACTIVATED         = "skill_activated"
