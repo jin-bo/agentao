@@ -137,6 +137,13 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 没有这一步，这张图片会随之后每次请求再次发送并以同样方式失败，恢复会话后也一样。
 两种改写都会发出 `IMAGES_REMOVED`（replay schema 1.4）。
 
+**线路无法发送的图片 URL**（0.5.12+）。宿主写入的 `image_url` 部分，如果其 URL
+是当前线路无法表达的（`anthropic-messages` 上除 base64 `data:` URL 和 `http(s)` URL
+以外的任何形式；`openai-responses` 上缺失或为空的 URL），发出的请求里会以
+`[Image omitted: its URL cannot be sent to the model, so it cannot be viewed.]`
+代替，并在 `agentao.log` 里记一条警告。历史保持原样。此前适配器会在发送前抛错，
+这一轮和之后每一轮都如此。`chat(images=...)` 总是生成 `data:` URL，不会遇到这种情况。
+
 ### 属性
 
 | 属性 | 类型 | 说明 |

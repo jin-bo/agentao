@@ -566,3 +566,32 @@ def test_a_real_anthropic_client_rejection_clears_history():
     second = json.dumps(wire.requests[1])
     assert '"type": "image"' not in second
     assert "[Image removed from the conversation history after" in second
+
+
+def test_an_image_url_the_wire_cannot_send_does_not_stick_the_session():
+    """#485: a history image whose URL the anthropic-messages wire cannot
+    express (here a host-written ``file:`` URL) used to raise before any
+    request, on every turn. It now goes out as a note, and history keeps
+    what the host wrote."""
+    from agentao import Agentao
+    from agentao.llm._image_parts import UNSENDABLE_IMAGE_NOTE
+    from agentao.llm.client import LLMClient
+
+    llm = LLMClient(api_key="test-key", base_url="https://api.example.test", model="claude-test",
+                    api_format="anthropic-messages", max_tokens=1024,
+                    logger=logging.getLogger("test.anthropic"))
+    wire = attach(llm, Wire(
+        stream_of(message_start(), text_block(0, "first"), message_end()),
+        stream_of(message_start(), text_block(0, "second"), message_end()),
+    ))
+    agent = Agentao(working_directory=Path.cwd(), logger=Mock(), llm_client=llm)
+    host_part = {"type": "image_url", "image_url": {"url": "file:///tmp/cat.png"}}
+    agent.messages.append({"role": "user", "content": [{"type": "text", "text": "cat"}, host_part]})
+    agent.messages.append({"role": "assistant", "content": "noted"})
+
+    assert agent.chat("what was it?") == "first"
+    assert agent.chat("and now?") == "second"
+    assert len(wire.requests) == 2
+    for request in wire.requests:
+        assert UNSENDABLE_IMAGE_NOTE in json.dumps(request)
+    assert host_part in agent.messages[0]["content"]
