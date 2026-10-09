@@ -136,7 +136,8 @@ model). Each one is replaced with
 
 **Provider-rejected images** (0.5.12+). When the provider refuses a request
 because of an image (a 400, 413 or 422 whose body mentions an image, on a
-request that carried one), every image part in history is replaced with
+request that carried one, and not only in a run of words echoed from the
+conversation's user or tool text, a whole line of it or at least five words), every image part in history is replaced with
 `[Image removed from the conversation history after the model provider rejected it. It can no longer be viewed.]`. The provider does not say which image it refused, so earlier
 turns' images go too. Each message keeps its role, text and other parts, and
 the note never contains the image data. The turn then ends with the

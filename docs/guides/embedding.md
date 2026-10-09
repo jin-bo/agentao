@@ -525,7 +525,10 @@ The host-facing contract:
   request because of an image (a 400, 413 or 422 whose body mentions an
   image, on a request that carried one), **every** image part in
   `agent.messages` is replaced with a text note, earlier turns' included,
-  since the provider does not say which one it refused. Each message keeps
+  since the provider does not say which one it refused. A body whose every
+  "image" sits in a run of words echoed from the conversation's user or tool text,
+  a whole line of it or at least five words (a gateway echoing "please
+  describe this image" back in an unrelated 400), does not count. Each message keeps
   its role, text and other parts. The turn ends with the `[LLM API error: …]`
   notice plus guidance to re-attach, switch model or continue from text.
   Without this the image was re-sent, and refused, on every later turn.

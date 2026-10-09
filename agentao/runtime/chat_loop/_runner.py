@@ -230,6 +230,29 @@ def _image_part_count(message: Any) -> int:
     )
 
 
+def _sent_texts(messages: Any) -> List[str]:
+    """The ``user`` and ``tool`` text in history, for the echo check.
+
+    Not ``assistant``: the turn-ending ``[LLM API error: …]`` replies quote
+    earlier rejections word for word, so counting them would read the next
+    real rejection with the same wording as an echo (#486).
+    """
+    texts: List[str] = []
+    for message in messages if isinstance(messages, list) else []:
+        if not isinstance(message, dict) or message.get("role") not in ("user", "tool"):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            texts.append(content)
+        elif isinstance(content, list):
+            texts.extend(
+                part["text"] for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+                and isinstance(part.get("text"), str)
+            )
+    return texts
+
+
 class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
     """Run one ``chat()`` turn for an :class:`agentao.agent.Agentao`."""
 
@@ -1558,8 +1581,14 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         return ChatLoopRunner._LlmOutcome(error_return=err_msg)
 
     def _is_history_image_rejection(self, e: BaseException) -> bool:
-        """A provider refused an image, and history still carries one."""
-        return _is_image_rejection(e) and self._history_has_images()
+        """A provider refused an image, and history still carries one.
+
+        An error that only echoes the conversation's own words back ("…
+        describe this image") is not a refusal (#486).
+        """
+        return self._history_has_images() and _is_image_rejection(
+            e, _sent_texts(self._agent.messages),
+        )
 
     def _history_has_images(self) -> bool:
         return any(

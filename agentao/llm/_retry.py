@@ -26,7 +26,7 @@ import importlib
 import random
 import re
 import time
-from typing import Any, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
 
 # OpenAI SDK's built-in retry is disabled (max_retries=0) so this layer owns
@@ -307,7 +307,80 @@ def _is_tool_schema_error(text: str) -> bool:
     return _TOOL_SCHEMA_WORDS.search(text) is not None
 
 
-def _is_image_rejection(exc: BaseException) -> bool:
+#: One word of text, for the echo check: letters and digits, so an
+#: ``_IMAGE_WORD`` match is always exactly one of these.
+_ECHO_TOKEN = re.compile(r"[^\W_]+")
+
+#: The fewest words an echo run may have. A run that also covers a whole
+#: line of the sent text may be this short ("describe this image"); otherwise it must
+#: reach :data:`_ECHO_LONG_RUN`. A three-word overlap alone is not an echo:
+#: a user asking "why did it say could not process image?" carries every
+#: word of Anthropic's own refusal, and reading the next real refusal as an
+#: echo of it would leave the image in history for good.
+_ECHO_MIN_RUN = 3
+_ECHO_LONG_RUN = 5
+
+
+def _tokens(text: str) -> list:
+    return [m.group().lower() for m in _ECHO_TOKEN.finditer(text)]
+
+
+def _echo_run(error: list, index: int, sent: list) -> bool:
+    """True when a run of ``error`` words around ``index`` is an echo of ``sent``.
+
+    The run is the longest stretch of words, through ``error[index]``, that
+    ``sent`` carries in the same order. It counts when it is at least
+    :data:`_ECHO_MIN_RUN` words and either covers all of ``sent`` (one line of
+    a sent text, so a prepended ``<system-reminder>`` line does not lengthen
+    it) or reaches :data:`_ECHO_LONG_RUN`.
+    """
+    for j, word in enumerate(sent):
+        if word != error[index]:
+            continue
+        left = 0
+        while (index - left - 1 >= 0 and j - left - 1 >= 0
+               and error[index - left - 1] == sent[j - left - 1]):
+            left += 1
+        right = 0
+        while (index + right + 1 < len(error) and j + right + 1 < len(sent)
+               and error[index + right + 1] == sent[j + right + 1]):
+            right += 1
+        run = left + right + 1
+        if run >= _ECHO_MIN_RUN and (run == len(sent) or run >= _ECHO_LONG_RUN):
+            return True
+    return False
+
+
+def _echoes_sent_text(text: str, sent_texts: Iterable[str]) -> bool:
+    """True when every "image" in ``text`` sits in words the request sent.
+
+    A gateway or validating proxy may echo part of the request in an
+    unrelated 400, the user's own words included ("…{content: 'please
+    describe this image'}", #486). Such an "image" is explained when the run
+    of words around it is an echo of a text the request carried
+    (:func:`_echo_run`). One unexplained "image" (the provider's own "could
+    not process image") keeps the error an image rejection.
+    """
+    sent = [
+        _tokens(line)
+        for t in sent_texts if isinstance(t, str)
+        for line in t.splitlines()
+    ]
+    sent = [s for s in sent if s]
+    if not sent:
+        return False
+    starts = {m.start(): i for i, m in enumerate(_ECHO_TOKEN.finditer(text))}
+    error = _tokens(text)
+    for match in _IMAGE_WORD.finditer(text):
+        index = starts.get(match.start())
+        if index is None:  # not on a word boundary: nothing explains it
+            return False
+        if not any(_echo_run(error, index, s) for s in sent):
+            return False
+    return True
+
+
+def _is_image_rejection(exc: BaseException, sent_texts: Iterable[str] = ()) -> bool:
     """True when a provider refused a request because of an image in it.
 
     A heuristic, measured against real rejections (#480): of 17 image
@@ -319,11 +392,18 @@ def _is_image_rejection(exc: BaseException) -> bool:
 
     The status is read off the SDK exception and type-checked: an object that
     merely answers ``status_code`` (a ``MagicMock``) is not a 400.
+
+    ``sent_texts`` is the text the request carried. An error whose every
+    "image" is an echo of it is not a rejection (:func:`_echoes_sent_text`).
     """
     if not _is_input_rejection_status(exc):
         return False
     text = str(exc)
-    return _IMAGE_WORD.search(text) is not None and not _is_tool_schema_error(text)
+    return (
+        _IMAGE_WORD.search(text) is not None
+        and not _is_tool_schema_error(text)
+        and not _echoes_sent_text(text, sent_texts)
+    )
 
 
 def _compute_backoff_delay(attempt: int, retry_after_header: Optional[str] = None) -> float:

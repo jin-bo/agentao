@@ -130,7 +130,7 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 每张都替换为 `[Image removed from the conversation history because the current model does not accept image input. It can no longer be viewed.]`；此前它们会被再次发送，这一轮也会再次失败。
 
 **服务商拒收的图片**（0.5.12+）。服务商因为某张图片拒绝请求时（状态码 400、413 或
-422、报错正文提到图片、且请求里带了图片），历史里所有图片部分都替换为
+422、报错正文提到图片、且请求里带了图片；若正文里每个“image”都只出现在回显对话里用户或工具原文的一串词里（整行原文或至少五个词），则不算），历史里所有图片部分都替换为
 `[Image removed from the conversation history after the model provider rejected it. It can no longer be viewed.]`。服务商不会指明拒收的是哪一张，所以之前轮次的图片也一并移除。每条消息
 保留其角色、文字和其他部分，说明文字里绝不包含图片数据。随后这一轮以
 `[LLM API error: …]` 提示结束，并附一句话请用户重新附图、换模型或根据文字继续。
