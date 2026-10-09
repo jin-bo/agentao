@@ -1415,7 +1415,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     )
                 except Exception as fallback_e:
                     e = fallback_e
-            if not self._is_overflow(e):
+            if not is_context_too_long_error(e):
                 return self._llm_error_outcome(e, "LLM call failed")
             agent.llm.logger.warning(f"Context overflow from API, forcing compression: {e}")
             # The provider just told us its real window, if it named one.
@@ -1463,7 +1463,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     system_prompt=system_prompt,
                 )
             except Exception as e2:
-                if self._is_overflow(e2):
+                if is_context_too_long_error(e2):
                     agent.llm.logger.warning(
                         "Context still too long after compression, keeping minimal history"
                     )
@@ -1538,8 +1538,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         shrink, or a retry that still overflows. Such a message may say
         "including 3 images" without refusing any of them, and a declined
         overflow returns the provider's context-length error with history
-        untouched. Only DashScope's generic code is not taken as an overflow
-        for an image rejection (:meth:`_is_overflow`). ``log_prefix=None``
+        untouched. ``log_prefix=None``
         means the caller has already logged. A ``data:`` URL the provider
         echoed back is cut from the saved text, which otherwise kept the
         image's base64 in history.
@@ -1549,7 +1548,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         err_msg = "[LLM API error: " + err_text + "]"
         if log_prefix is not None:
             agent.llm.logger.error(f"{log_prefix}: {err_text}")
-        if self._is_history_image_rejection(e) and not self._is_overflow(e):
+        if self._is_history_image_rejection(e) and not is_context_too_long_error(e):
             removed = self._remove_history_images("provider_rejected")
             agent.llm.logger.warning(
                 f"Provider rejected an image; removed {removed} image(s) "
@@ -1558,21 +1557,6 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             err_msg += _IMAGE_REJECTED_GUIDANCE
         agent.messages.append({"role": "assistant", "content": err_msg})
         return ChatLoopRunner._LlmOutcome(error_return=err_msg)
-
-    def _is_overflow(self, e: BaseException) -> bool:
-        """``is_context_too_long_error``, minus DashScope's refused images.
-
-        DashScope (Qwen) answers both an overflow and a refused image with the
-        same generic code, ``InternalError.Algo.InvalidParameter``, which the
-        overflow table matches. Read as an overflow, a refused image ran a full
-        compaction and then the minimal-history rung (#480), and still failed.
-        So for an image rejection the generic code alone does not count — but
-        a real overflow phrase still wins: an overflow message that happens to
-        mention images must compact, not lose them.
-        """
-        if self._is_history_image_rejection(e):
-            return is_context_too_long_error(e, generic_codes=False)
-        return is_context_too_long_error(e)
 
     def _is_history_image_rejection(self, e: BaseException) -> bool:
         """A provider refused an image, and history still carries one."""

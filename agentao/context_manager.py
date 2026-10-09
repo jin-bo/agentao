@@ -2444,19 +2444,11 @@ _OVERFLOW_PATTERNS = [
         r"too many tokens",  # generic fallback (guarded below)
         r"token limit exceeded",  # generic fallback
         r"tokens > ",  # Anthropic-style "X tokens > Y maximum"
-        r"range of input length",  # Alibaba/DashScope-style
-    )
-]
-
-# Error *codes* the overflow table accepts though they are not specific to an
-# overflow. DashScope (Qwen) sends ``InternalError.Algo.InvalidParameter`` for a
-# real overflow ("Range of input length should be …", also matched above) and
-# for a refused image alike (measured 2026-10-09, #480), so a caller that knows
-# an image was refused asks ``generic_codes=False``.
-_GENERIC_OVERFLOW_CODE_PATTERNS = [
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"internalerror\.algo\.invalidparameter",  # Alibaba/DashScope overflow code
+        # Alibaba/DashScope: "Range of input length should be [1, N]". Not the
+        # error code that precedes it, ``InternalError.Algo.InvalidParameter``:
+        # DashScope sends that for every invalid parameter (a bad temperature,
+        # max_tokens or image alike; measured 2026-10-09, #484).
+        r"range of input length",
     )
 ]
 
@@ -2563,20 +2555,14 @@ def parse_observed_context_limit(exc: Exception) -> Optional[tuple]:
     return value, provenance
 
 
-def is_context_too_long_error(exc: Exception, *, generic_codes: bool = True) -> bool:
+def is_context_too_long_error(exc: Exception) -> bool:
     """Return True if the exception is a 'prompt too long' / context overflow API error.
 
     Two-tier match: a negative guard (rate-limit / throttling / 429 / 503) is
     checked first so a fallback overflow phrase can't misclassify a transient
     error as overflow and trigger a destructive history compaction.
-
-    ``generic_codes=False`` drops the matches that rest on a provider's
-    generic error code alone (:data:`_GENERIC_OVERFLOW_CODE_PATTERNS`), for a
-    caller that already knows the error has another cause.
     """
     msg = str(exc)
     if any(pat.search(msg) for pat in _NON_OVERFLOW_PATTERNS):
         return False
-    if any(pat.search(msg) for pat in _OVERFLOW_PATTERNS):
-        return True
-    return generic_codes and any(pat.search(msg) for pat in _GENERIC_OVERFLOW_CODE_PATTERNS)
+    return any(pat.search(msg) for pat in _OVERFLOW_PATTERNS)
