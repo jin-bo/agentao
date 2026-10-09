@@ -331,10 +331,14 @@ def test_image_block_missing_mimetype_rejected(initialized_server):
     ("path", "/tmp/secret"),
     ("apiKey", "sk-leak"),
     ("baseUrl", "https://evil.example"),
+    # The Python field name of the schema's ``_meta`` alias: the runtime
+    # mirrors the schema's alias-only rule.
+    ("meta", {"x": 1}),
 ])
 def test_image_block_rejects_extra_fields(initialized_server, extra_field, value):
-    """The image wire carries only {data, mimeType}. The raw-dict parser must
-    reject ANY other key (host-path/secret vectors), not just 'uri' — mirroring
+    """An image block forwards only {data, mimeType}. Beyond those and the
+    ignored ACP ``annotations`` / ``_meta`` (#479), the raw-dict parser must
+    reject every key (host-path/secret vectors), not just 'uri' — mirroring
     the schema's additionalProperties:false, which the parser does not invoke."""
     with pytest.raises(TypeError, match="unexpected field"):
         acp_session_prompt.handle_session_prompt(

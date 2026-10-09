@@ -66,11 +66,12 @@ from .protocol import (
 from .server import JsonRpcHandlerError
 from .session_manager import SessionNotFoundError
 
-# Bounds on untrusted inline image input from the ACP wire. The wire carries
-# only ``{data, mimeType}`` content — never a path or secret — so these guard
-# against a malformed or oversized payload reaching the LLM client as an
-# opaque API error instead of a clean ``-32602`` ``INVALID_PARAMS``. The byte
-# cap and count are shared with the CLI /image command via media_limits.
+# Bounds on untrusted inline image input from the ACP wire. Only an image
+# block's ``{data, mimeType}`` is forwarded — never a path or secret — so
+# these guard against a malformed or oversized payload reaching the LLM
+# client as an opaque API error instead of a clean ``-32602``
+# ``INVALID_PARAMS``. The byte cap and count are shared with the CLI /image
+# command via media_limits.
 from agentao.media_limits import (
     MAX_IMAGE_BYTES as _MAX_IMAGE_BYTES,
     MAX_IMAGES_PER_TURN as _MAX_IMAGES_PER_PROMPT,
