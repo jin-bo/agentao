@@ -81,7 +81,7 @@ def test_tool_results_carry_across_rounds_and_turns(tmp_path: Path):
 
 
 @pytest.mark.skipif(not _live_llm_opted_in(), reason="live LLM test; set AGENTAO_TEST_LIVE_LLM=1")
-def test_multi_turn_tool_calls_live(tmp_path: Path):
+def test_multi_turn_tool_calls_live(tmp_path: Path, live_llm_env):
     """The model drives real tool calls against the configured provider."""
     _demo_skill(tmp_path)
 

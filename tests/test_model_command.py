@@ -31,7 +31,9 @@ def _build_agent() -> Agentao:
     return Agentao(working_directory=Path.cwd())
 
 
-def test_model_switching_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_model_switching_flow(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
+    if _use_live_models():
+        request.getfixturevalue("live_llm_env")
     agent = _build_agent()
     expected_models = ["claude-sonnet-4-5", "gpt-3.5-turbo", "gpt-4"]
 
