@@ -50,6 +50,8 @@ test sees, whatever the developer exported. Before, `LLM_PROVIDER` in the shell 
 key, and a malformed `LLM_TEMPERATURE` failed them on that machine only. A test
 that needs one of these sets it with `monkeypatch`. The one way back to the
 shell's values is the `live_llm_env` fixture, for a test behind a live gate.
+It fails, before any request, when the shell exports no `{PROVIDER}_API_KEY`
+for the provider it selects: a key kept only in `.env` is never read.
 
 **Do not reach the network by default.** The two tests that legitimately call
 a live model gate themselves on an env var:
