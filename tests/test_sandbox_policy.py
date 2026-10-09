@@ -934,6 +934,13 @@ def dir_outside_profile_writes():
     import shutil
     import tempfile
 
+    home = Path.home().resolve()
+    for allowed in ("/private/tmp", "/private/var/tmp", "/private/var/folders"):
+        if home.is_relative_to(allowed):
+            # A HOME redirected under a temp root (an isolated test run) is
+            # writable by the profile, so there is no outside to probe (#463).
+            pytest.skip(f"HOME ({home}) is under {allowed}, which the profile lets writes reach")
+
     d = Path(tempfile.mkdtemp(prefix=".agentao-sandbox-probe-", dir=Path.home()))
     try:
         yield d

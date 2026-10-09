@@ -44,12 +44,16 @@ value* (`os.environ.get(key, default)`); a test that reaches the network will
 use a developer's real key.
 
 **Do not reach the network by default.** The two tests that legitimately call
-a live model gate themselves on an env var and default to offline in CI:
+a live model gate themselves on an env var:
 
-| Gate | Used by |
-|---|---|
-| `AGENTAO_TEST_LIVE_LLM` | `test_multi_turn.py` |
-| `AGENTAO_TEST_LIVE_MODELS` | `test_model_command.py` |
+| Gate | Used by | Unset means |
+|---|---|---|
+| `AGENTAO_TEST_LIVE_LLM` | `test_multi_turn.py` | live outside CI (`GITHUB_ACTIONS`) |
+| `AGENTAO_TEST_LIVE_MODELS` | `test_model_command.py` | offline everywhere; `1` opts in |
+
+Make a new gate opt-in like `AGENTAO_TEST_LIVE_MODELS`. Guessing from the
+environment (CI or not, a key that looks fake or not) is what sent a dummy
+`sk-dummy` key to the real models endpoint (#463).
 
 Both are pinned to `0` in `.github/workflows/publish*.yml`. A new test that
 talks to a provider needs the same gate *and* an assertion that still holds on

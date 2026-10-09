@@ -1,8 +1,7 @@
 """Tests for model switching functionality.
 
-This test runs offline in CI and can use the live provider locally.
-Set ``AGENTAO_TEST_LIVE_MODELS=0`` to force offline mode locally.
-Set ``AGENTAO_TEST_LIVE_MODELS=1`` to force live mode explicitly.
+This test runs offline by default: the model list is stubbed. Set
+``AGENTAO_TEST_LIVE_MODELS=1`` to fetch it from the configured provider instead.
 """
 
 from __future__ import annotations
@@ -21,44 +20,32 @@ pytestmark = pytest.mark.usefixtures("isolated_cwd")
 _FAKE_KEY = "test-key"
 
 
-def _has_fake_openai_key() -> bool:
-    """True if OPENAI_API_KEY is an obvious placeholder (e.g. set by another test).
+@pytest.fixture(autouse=True)
+def _default_provider_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the default provider a key without clobbering real local credentials.
 
-    Matches the whole ``test-`` family rather than one literal: the suite injects
-    at least two spellings (``test-key`` here, ``test-dummy-key`` from
-    ``conftest.py`` and several ACP/MCP tests), and enumerating them drifts —
-    ``test-dummy-key`` used to slip through, so this test would take the *live*
-    branch and fire a real request that 401s. No real provider key starts with
-    ``test-``, so the prefix is the safe generalisation; a developer's genuine
-    key still selects live mode.
+    LLMClient reads credentials for whatever provider LLM_PROVIDER points at
+    (default: OPENAI), so the client constructor must find a key there even
+    when the shell has credentials only for a different provider. Set through
+    ``monkeypatch`` so neither default outlives the test.
     """
-    key = os.getenv("OPENAI_API_KEY", "").strip().lower()
-    return key.startswith("test-") or key in {"", "dummy", "fake"}
+    if "LLM_PROVIDER" not in os.environ:
+        monkeypatch.setenv("LLM_PROVIDER", "OPENAI")
+    if "OPENAI_API_KEY" not in os.environ:
+        monkeypatch.setenv("OPENAI_API_KEY", _FAKE_KEY)
 
 
 def _use_live_models() -> bool:
-    """Return whether the test should call the configured model API."""
-    env = os.getenv("AGENTAO_TEST_LIVE_MODELS")
-    if env is not None:
-        return env.strip().lower() in {"1", "true", "yes", "on"}
-    # If the default provider only has a placeholder key (often injected by
-    # other tests like test_logging.py), we can't hit the live API — fall back
-    # to offline mode regardless of CI status.
-    if os.getenv("LLM_PROVIDER", "OPENAI").strip().upper() == "OPENAI" and _has_fake_openai_key():
-        return False
-    return os.getenv("GITHUB_ACTIONS") != "true"
+    """Return whether the test should call the configured model API.
+
+    Opt-in only. Guessing from the key (a placeholder skips, anything else goes
+    live) sent a real request whenever a dummy key did not look like one, such
+    as ``sk-dummy``, and failed with HTTP 401, or offline with no network (#463).
+    """
+    return os.getenv("AGENTAO_TEST_LIVE_MODELS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _build_agent() -> Agentao:
-    """Create an agent without clobbering any real local credentials.
-
-    LLMClient reads credentials for whatever provider LLM_PROVIDER points at
-    (default: OPENAI). Ensure the default provider has a key so the client
-    constructor never fails, even when the shell has credentials for a
-    different provider (e.g. GEMINI_API_KEY only).
-    """
-    os.environ.setdefault("LLM_PROVIDER", "OPENAI")
-    os.environ.setdefault("OPENAI_API_KEY", _FAKE_KEY)
     return Agentao(working_directory=Path.cwd())
 
 
