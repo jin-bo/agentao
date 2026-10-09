@@ -35,7 +35,11 @@ from xml.sax.saxutils import quoteattr
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...compaction.coordinator import CompactionRequest
 from ...context_manager import is_context_too_long_error
-from ...llm._retry import _is_image_rejection, _is_image_unsupported
+from ...llm._retry import (
+    _is_image_rejection,
+    _is_image_unsupported,
+    _is_input_rejection_status,
+)
 from ...transport import AgentEvent, EventType
 from ..sanitize import canonicalize_tool_arguments, sanitize_assistant_message
 from ..tool_planning import make_tool_result_message
@@ -1353,7 +1357,16 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 system_prompt=system_prompt,
             )
         except Exception as e:
-            if self._history_has_images() and _is_image_unsupported(str(e)):
+            # The image turn's own degradation keeps its old trigger (the
+            # message alone). Removing *earlier* turns' images is permanent,
+            # so it also needs a 400/413/422: a 429 or 5xx that happens to
+            # say "vision … not supported" must not strip them.
+            remove_older = _is_input_rejection_status(e)
+            if (
+                self._history_has_images()
+                and _is_image_unsupported(str(e))
+                and (image_fallback_text or remove_older)
+            ):
                 agent.llm.logger.info(
                     "Model rejected image input; retrying with image references as text"
                 )
@@ -1369,7 +1382,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     if image_fallback_text
                     else None
                 )
-                self._remove_history_images("model_unsupported", also=degraded)
+                self._remove_history_images(
+                    "model_unsupported", also=degraded, scan=remove_older,
+                )
                 messages_with_system = [
                     {"role": "system", "content": system_prompt}
                 ] + agent.messages
@@ -1509,7 +1524,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         agent = self._agent
         err_msg = f"[LLM API error: {e}]"
         agent.llm.logger.error(f"{log_prefix}: {e}")
-        if _is_image_rejection(e) and self._history_has_images():
+        if self._is_history_image_rejection(e):
             removed = self._remove_history_images("provider_rejected")
             agent.llm.logger.warning(
                 f"Provider rejected an image; removed {removed} image(s) "
@@ -1520,16 +1535,23 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         return ChatLoopRunner._LlmOutcome(error_return=err_msg)
 
     def _is_overflow(self, e: BaseException) -> bool:
-        """``is_context_too_long_error``, minus image rejections.
+        """``is_context_too_long_error``, minus DashScope's refused images.
 
         DashScope (Qwen) answers both an overflow and a refused image with the
         same generic code, ``InternalError.Algo.InvalidParameter``, which the
         overflow table matches. Read as an overflow, a refused image ran a full
         compaction and then the minimal-history rung (#480), and still failed.
+        So for an image rejection the generic code alone does not count — but
+        a real overflow phrase still wins: an overflow message that happens to
+        mention images must compact, not lose them.
         """
-        if _is_image_rejection(e) and self._history_has_images():
-            return False
+        if self._is_history_image_rejection(e):
+            return is_context_too_long_error(e, generic_codes=False)
         return is_context_too_long_error(e)
+
+    def _is_history_image_rejection(self, e: BaseException) -> bool:
+        """A provider refused an image, and history still carries one."""
+        return _is_image_rejection(e) and self._history_has_images()
 
     def _history_has_images(self) -> bool:
         return any(
@@ -1537,7 +1559,11 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         )
 
     def _remove_history_images(
-        self, reason: str, *, also: Optional[Tuple[int, int]] = None
+        self,
+        reason: str,
+        *,
+        also: Optional[Tuple[int, int]] = None,
+        scan: bool = True,
     ) -> int:
         """Replace every image part in history with a note; return how many.
 
@@ -1548,13 +1574,13 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         so an in-place rewrite of an earlier one is otherwise invisible to it.
         ``also`` is ``(index, images)`` for a message the caller already
         rewrote (the image turn's ``<attachment/>`` degradation), so the one
-        event covers that rewrite too.
+        event covers that rewrite too; ``scan=False`` reports only that one.
         """
         agent = self._agent
         note = _IMAGE_REMOVED_NOTES[reason]
         removed = also[1] if also else 0
         indices: List[int] = [also[0]] if also else []
-        for i, message in enumerate(agent.messages):
+        for i, message in enumerate(agent.messages if scan else ()):
             count = _image_part_count(message)
             if not count:
                 continue
@@ -1579,7 +1605,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 agent.transport.emit(AgentEvent(EventType.IMAGES_REMOVED, {
                     "reason": reason,
                     "images_removed": removed,
-                    "message_indices": indices,
+                    "message_indices": sorted(indices),
                 }))
             except Exception:
                 agent.llm.logger.warning(

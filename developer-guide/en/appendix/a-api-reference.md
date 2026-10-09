@@ -129,8 +129,9 @@ CLI `/image` command); wire images that carry no source degrade to
 implementation in
 `agentao/runtime/chat_loop/_runner.py::_render_image_reference_fallback`.
 
-Since 0.5.12 the retry also covers images left in history from earlier turns
-(for example after switching to a text-only model). Each one is replaced with
+Since 0.5.12, when the error is a 400, 413 or 422, the retry also covers images
+left in history from earlier turns (for example after switching to a text-only
+model). Each one is replaced with
 `[Image removed from the conversation history because the current model does not accept image input. It can no longer be viewed.]`; before, they were sent again and the turn failed again.
 
 **Provider-rejected images** (0.5.12+). When the provider refuses a request

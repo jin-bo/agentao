@@ -272,13 +272,25 @@ def _is_image_unsupported(err_str: str) -> bool:
 #: "image" / "images" as a word of its own. Not inside an identifier, so an
 #: unrelated 400 that echoes a tool named ``mcp_figma_get_image`` or a field
 #: ``image_url`` does not read as a refused image. Every one of the 17
-#: measured rejections says "image" as a standalone word.
-_IMAGE_WORD = re.compile(r"(?<![\w-])images?(?![\w-])", re.IGNORECASE)
+#: measured rejections says "image" as a standalone word. Nor the ``image``
+#: of a ``data:image/...`` URL a validating proxy echoes back in an
+#: unrelated 400: that names the request's payload, not a refusal of it.
+_IMAGE_WORD = re.compile(r"(?<![\w:-])images?(?![\w-])", re.IGNORECASE)
 
 #: Statuses a provider answers a bad *input* with. Never 401/403 (auth),
 #: 404 (model), 429 (rate) or 5xx: an image is not why those failed, and
 #: :func:`_is_image_rejection` must not rewrite history over them.
 IMAGE_REJECTION_STATUS_CODES = frozenset({400, 413, 422})
+
+
+def _is_input_rejection_status(exc: BaseException) -> bool:
+    """True when ``exc`` carries a 400/413/422 status, as a real ``int``."""
+    status = getattr(exc, "status_code", None)
+    return (
+        isinstance(status, int)
+        and not isinstance(status, bool)
+        and status in IMAGE_REJECTION_STATUS_CODES
+    )
 
 
 def _is_image_rejection(exc: BaseException) -> bool:
@@ -294,10 +306,7 @@ def _is_image_rejection(exc: BaseException) -> bool:
     The status is read off the SDK exception and type-checked: an object that
     merely answers ``status_code`` (a ``MagicMock``) is not a 400.
     """
-    status = getattr(exc, "status_code", None)
-    if not isinstance(status, int) or isinstance(status, bool):
-        return False
-    if status not in IMAGE_REJECTION_STATUS_CODES:
+    if not _is_input_rejection_status(exc):
         return False
     return _IMAGE_WORD.search(str(exc)) is not None
 

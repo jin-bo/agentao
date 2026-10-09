@@ -516,8 +516,8 @@ The host-facing contract:
   `uri` is the item's `_source` when present, else `inline-image-N`
   (1-based). Hosts that inspect or persist `agent.messages` should expect
   a multimodal user turn to have been rewritten into this plain-text form
-  after a degraded turn. Since 0.5.12 the retry also replaces images left in
-  history from earlier turns with `[Image removed from the conversation history because the current model does not accept image input. It can no longer be viewed.]`.
+  after a degraded turn. Since 0.5.12, on a 400, 413 or 422, the retry also
+  replaces images left in history from earlier turns with `[Image removed from the conversation history because the current model does not accept image input. It can no longer be viewed.]`.
   Implementation:
   `agentao/runtime/chat_loop/_runner.py::_render_image_reference_fallback`;
   canonical format description: developer guide appendix A.1.

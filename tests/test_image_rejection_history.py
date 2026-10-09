@@ -111,8 +111,11 @@ def test_every_measured_rejection_is_classified(name):
     _openai_error(400, "Invalid schema for function 'mcp_figma_get_image': "
                        "'required' is required to be supplied."),
     _openai_error(400, "Invalid 'messages[1].content[0].image_url_detail': unknown parameter."),
+    # A validating proxy echoing the request's data URL in an unrelated 400.
+    _openai_error(400, "1 validation error: temperature must be <= 2 "
+                       "(input: {'url': 'data:image/png;base64,iVBORw0K'})"),
 ], ids=["unrelated-400", "auth-401", "permission-403", "rate-429", "server-500",
-        "tool-name", "field-name"])
+        "tool-name", "field-name", "echoed-data-url"])
 def test_other_failures_are_not_image_rejections(error):
     assert _is_image_rejection(error) is False
 
@@ -363,6 +366,63 @@ def test_a_transport_that_raises_does_not_replace_the_provider_error():
     out = agent.chat("what is this?", images=[{"data": _PNG_B64, "mimeType": "image/png"}])
     assert out.startswith("[LLM API error:") and "history was removed" in out
     assert not _has_image(agent.messages)
+
+
+def test_a_real_overflow_that_mentions_images_still_compacts():
+    """An overflow phrase wins over the image heuristic: the images must not be
+    removed for an error that is really about size."""
+    agent = _make_agent()
+    overflow = _openai_error(
+        400, "This model's maximum context length is 128000 tokens. However, your "
+        "messages resulted in 130000 tokens, including 3 images.",
+        code="context_length_exceeded")
+    assert _is_image_rejection(overflow)  # the overlap this test is about
+    sent = _sends(agent, overflow, _ok())
+    runs = []
+
+    def fake_run(request, *, system_prompt, messages_with_system=None, **_):
+        runs.append(request)
+        return SimpleNamespace(
+            outcome=SimpleNamespace(status="success", detail=None),
+            system_prompt=system_prompt,
+            messages_with_system=[{"role": "system", "content": system_prompt}] + agent.messages,
+        )
+    agent.compaction_coordinator.run = fake_run
+
+    assert agent.chat("what is this?", images=[{"data": _PNG_B64, "mimeType": "image/png"}]) == "ok"
+    assert len(runs) == 1 and len(sent) == 2
+    assert _has_image(agent.messages)
+
+
+def test_dashscope_generic_code_counts_as_overflow_only_by_default():
+    from agentao.context_manager import is_context_too_long_error
+
+    refused = REJECTIONS["qwen-format"]()
+    assert is_context_too_long_error(refused)
+    assert not is_context_too_long_error(refused, generic_codes=False)
+    real_overflow = _openai_error(
+        400, "<400> InternalError.Algo.InvalidParameter: Range of input length should "
+        "be [1, 30720]", code="invalid_parameter_error")
+    assert is_context_too_long_error(real_overflow, generic_codes=False)
+
+
+@pytest.mark.parametrize("error", [
+    _openai_error(500, "vision is not supported on this deployment right now.",
+                  cls=openai.InternalServerError),
+    _openai_error(429, "Requests with images are not supported at this rate tier."),
+], ids=["server-500", "rate-429"])
+def test_earlier_images_survive_a_non_input_error_that_mentions_vision(error):
+    """Removing an earlier turn's image is permanent, so it needs a
+    400/413/422; a transient error that says "not supported" leaves it."""
+    agent = _make_agent()
+    sent = _sends(agent, _ok(), error)
+    agent.chat("look", images=[{"data": _PNG_B64, "mimeType": "image/png"}])
+
+    out = agent.chat("hello")
+    assert out.startswith("[LLM API error:")
+    assert len(sent) == 2
+    assert _has_image(agent.messages)
+    assert not _note_texts(agent)
 
 
 def test_a_saved_session_does_not_bring_the_image_back(tmp_path):
