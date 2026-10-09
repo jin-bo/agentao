@@ -395,7 +395,7 @@ class TestResolveDefaultScope:
         home = registry_mod.user_home().resolve()
         for parent in tmp_path.resolve().parents:
             for marker in registry_mod._PROJECT_MARKERS:
-                if parent == home and marker in (".agentao", ".git"):
+                if parent == home and marker in registry_mod._HOME_SKIP:
                     continue
                 if (parent / marker).exists():
                     pytest.skip(f"an ancestor of tmp_path is a project root: {parent / marker}")

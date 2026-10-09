@@ -48,7 +48,7 @@ a live model gate themselves on an env var:
 
 | Gate | Used by | Unset means |
 |---|---|---|
-| `AGENTAO_TEST_LIVE_LLM` | `test_multi_turn.py` | live outside CI (`GITHUB_ACTIONS`) |
+| `AGENTAO_TEST_LIVE_LLM` | `test_multi_turn.py` | the request is **always** sent; the gate only picks which assertions apply (live-success outside CI, `GITHUB_ACTIONS`) |
 | `AGENTAO_TEST_LIVE_MODELS` | `test_model_command.py` | offline everywhere; `1` opts in |
 
 Make a new gate opt-in like `AGENTAO_TEST_LIVE_MODELS`. Guessing from the

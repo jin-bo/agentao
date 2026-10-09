@@ -17,24 +17,6 @@ from agentao.agent import Agentao
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 
-_FAKE_KEY = "test-key"
-
-
-@pytest.fixture(autouse=True)
-def _default_provider_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Give the default provider a key without clobbering real local credentials.
-
-    LLMClient reads credentials for whatever provider LLM_PROVIDER points at
-    (default: OPENAI), so the client constructor must find a key there even
-    when the shell has credentials only for a different provider. Set through
-    ``monkeypatch`` so neither default outlives the test.
-    """
-    if "LLM_PROVIDER" not in os.environ:
-        monkeypatch.setenv("LLM_PROVIDER", "OPENAI")
-    if "OPENAI_API_KEY" not in os.environ:
-        monkeypatch.setenv("OPENAI_API_KEY", _FAKE_KEY)
-
-
 def _use_live_models() -> bool:
     """Return whether the test should call the configured model API.
 
