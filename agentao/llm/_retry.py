@@ -311,23 +311,44 @@ def _is_tool_schema_error(text: str) -> bool:
 #: ``_IMAGE_WORD`` match is always exactly one of these.
 _ECHO_TOKEN = re.compile(r"[^\W_]+")
 
-#: Words in an echo window: the "image" and its neighbours. Three is enough
-#: to tell "describe this image" from "could not process image", and short
-#: enough that a gateway's escaping or truncation of the echo rarely
-#: splits one.
-_ECHO_WINDOW = 3
+#: The fewest words an echo run may have. A run that also covers a whole
+#: line of the sent text may be this short ("describe this image"); otherwise it must
+#: reach :data:`_ECHO_LONG_RUN`. A three-word overlap alone is not an echo:
+#: a user asking "why did it say could not process image?" carries every
+#: word of Anthropic's own refusal, and reading the next real refusal as an
+#: echo of it would leave the image in history for good.
+_ECHO_MIN_RUN = 3
+_ECHO_LONG_RUN = 5
 
 
-def _echo_windows(text: str, start: int) -> list:
-    """The word windows around the ``_IMAGE_WORD`` match starting at ``start``."""
-    tokens = [(m.start(), m.group().lower()) for m in _ECHO_TOKEN.finditer(text)]
-    index = next((i for i, (pos, _) in enumerate(tokens) if pos == start), None)
-    if index is None:  # not on a word boundary: nothing explains it
-        return []
-    words = [word for _, word in tokens]
-    lo = max(0, index - _ECHO_WINDOW + 1)
-    hi = min(index, len(words) - _ECHO_WINDOW)
-    return [" ".join(words[i:i + _ECHO_WINDOW]) for i in range(lo, hi + 1)]
+def _tokens(text: str) -> list:
+    return [m.group().lower() for m in _ECHO_TOKEN.finditer(text)]
+
+
+def _echo_run(error: list, index: int, sent: list) -> bool:
+    """True when a run of ``error`` words around ``index`` is an echo of ``sent``.
+
+    The run is the longest stretch of words, through ``error[index]``, that
+    ``sent`` carries in the same order. It counts when it is at least
+    :data:`_ECHO_MIN_RUN` words and either covers all of ``sent`` (one line of
+    a sent text, so a prepended ``<system-reminder>`` line does not lengthen
+    it) or reaches :data:`_ECHO_LONG_RUN`.
+    """
+    for j, word in enumerate(sent):
+        if word != error[index]:
+            continue
+        left = 0
+        while (index - left - 1 >= 0 and j - left - 1 >= 0
+               and error[index - left - 1] == sent[j - left - 1]):
+            left += 1
+        right = 0
+        while (index + right + 1 < len(error) and j + right + 1 < len(sent)
+               and error[index + right + 1] == sent[j + right + 1]):
+            right += 1
+        run = left + right + 1
+        if run >= _ECHO_MIN_RUN and (run == len(sent) or run >= _ECHO_LONG_RUN):
+            return True
+    return False
 
 
 def _echoes_sent_text(text: str, sent_texts: Iterable[str]) -> bool:
@@ -335,20 +356,26 @@ def _echoes_sent_text(text: str, sent_texts: Iterable[str]) -> bool:
 
     A gateway or validating proxy may echo part of the request in an
     unrelated 400, the user's own words included ("…{content: 'please
-    describe this image'}", #486). Such an "image" is explained when some
-    window of words around it appears, in order, in a text the request
-    carried. One unexplained "image" (the provider's own "could not process
-    image") keeps the error an image rejection.
+    describe this image'}", #486). Such an "image" is explained when the run
+    of words around it is an echo of a text the request carried
+    (:func:`_echo_run`). One unexplained "image" (the provider's own "could
+    not process image") keeps the error an image rejection.
     """
-    normalised = [
-        " " + " ".join(m.group().lower() for m in _ECHO_TOKEN.finditer(t)) + " "
+    sent = [
+        _tokens(line)
         for t in sent_texts if isinstance(t, str)
+        for line in t.splitlines()
     ]
-    if not normalised:
+    sent = [s for s in sent if s]
+    if not sent:
         return False
+    starts = {m.start(): i for i, m in enumerate(_ECHO_TOKEN.finditer(text))}
+    error = _tokens(text)
     for match in _IMAGE_WORD.finditer(text):
-        windows = _echo_windows(text, match.start())
-        if not any(f" {w} " in sent for w in windows for sent in normalised):
+        index = starts.get(match.start())
+        if index is None:  # not on a word boundary: nothing explains it
+            return False
+        if not any(_echo_run(error, index, s) for s in sent):
             return False
     return True
 

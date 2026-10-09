@@ -652,3 +652,27 @@ def test_a_repeated_rejection_is_not_explained_by_the_earlier_error_reply():
 
     assert "history was removed" in agent.chat("try this one", images=image)
     assert not _has_image(agent.messages)
+
+
+@pytest.mark.parametrize("name, said", [
+    ("anthropic-not-an-image", "why did it say could not process image earlier?"),
+    ("qwen-format", "convert the image format to png please"),
+    ("gemini-compat", "write code to process input image files"),
+])
+def test_a_few_shared_words_are_not_an_echo(name, said):
+    """Asking about a refusal carries its words; the next refusal is still one."""
+    assert _is_image_rejection(REJECTIONS[name](), [said]) is True
+
+
+def test_the_model_restating_a_refusal_does_not_hide_the_next_one():
+    """Assistant text is left out of the echo check: the model restates the
+    error it saw, often in full, and that would read the next identical
+    refusal as an echo. A wrongly removed image can be re-attached; a missed
+    refusal sticks the session."""
+    agent = _make_agent()
+    agent.messages.append({"role": "assistant", "content":
+                           "The provider said: The image format is illegal and cannot be opened."})
+    _sends(agent, REJECTIONS["qwen-format"]())
+    out = agent.chat("try again", images=[{"data": _PNG_B64, "mimeType": "image/png"}])
+    assert "history was removed" in out
+    assert not _has_image(agent.messages)
