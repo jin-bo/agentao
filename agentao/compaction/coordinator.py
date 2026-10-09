@@ -380,6 +380,7 @@ class CompactionCoordinator:
                 reason=request.reason,
                 decide=decide,
                 cancellation_token=cancellation_token,
+                on_summarize=lambda: self._emit_started(request),
             )
 
         # The other two kinds call no summarizer, write no SQLite and never
@@ -687,6 +688,24 @@ class CompactionCoordinator:
     # ------------------------------------------------------------------
     # Observability
     # ------------------------------------------------------------------
+
+    def _emit_started(self, request: CompactionRequest) -> None:
+        """``COMPACTION_STARTED``, just before the summarizer call (#491).
+
+        Only ``full`` calls a model, so only ``full`` announces a start; the
+        other two kinds finish in milliseconds, where a status change would
+        only flicker. A transport that raises does not stop the compaction.
+        """
+        from ..transport import AgentEvent, EventType
+
+        try:
+            self._agent.transport.emit(AgentEvent(EventType.COMPACTION_STARTED, {
+                "trigger": request.trigger,
+                "kind": request.kind,
+                "reason": request.reason,
+            }))
+        except Exception:
+            pass
 
     def _emit(
         self,

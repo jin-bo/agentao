@@ -74,6 +74,8 @@ When `/context` usage approaches the configured limit, the context manager:
 
 The summary lives both in the live message history (so the next turn sees it) and in the DB (so future sessions can reference it via memory).
 
+While step 2 runs (it can take a minute), the turn's `Thinking…` spinner reads `Compacting context (12s)`; when it finishes you see `Context compacted · 54 → 19 messages · 14s` (or `Compaction made no change (…) · 14s`) and the spinner goes back to `Thinking…`.
+
 The "circuit breaker" is a safety: if compaction itself fails (LLM timeout, parse error) more than `CIRCUIT_BREAKER_LIMIT` times in a row, auto-compaction disables for the rest of the session — better to refuse a turn than spiral.
 
 ## `/compact` — compact on demand

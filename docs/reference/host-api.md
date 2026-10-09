@@ -770,7 +770,7 @@ of this writing:
 | LLM call | `LLM_CALL_STARTED`, `LLM_CALL_COMPLETED`, `LLM_CALL_DELTA`, `LLM_CALL_IO`, `LLM_TEXT`, `THINKING` |
 | Sub-agent (raw) | `AGENT_START`, `AGENT_END` |
 | Interaction | `TOOL_CONFIRMATION`, `ASK_USER_REQUESTED`, `ASK_USER_ANSWERED` |
-| History | `BACKGROUND_NOTIFICATION_INJECTED`, `CONTEXT_COMPRESSED`, `COMPACTION_SETTLED`, `SESSION_SUMMARY_WRITTEN`, `IMAGES_REMOVED` |
+| History | `BACKGROUND_NOTIFICATION_INJECTED`, `COMPACTION_STARTED`, `CONTEXT_COMPRESSED`, `COMPACTION_SETTLED`, `SESSION_SUMMARY_WRITTEN`, `IMAGES_REMOVED` |
 | Memory | `MEMORY_WRITE`, `MEMORY_DELETE`, `MEMORY_CLEARED` |
 | Runtime state | `SKILL_ACTIVATED`, `SKILL_DEACTIVATED`, `MODEL_CHANGED`, `PERMISSION_MODE_CHANGED`, `READONLY_MODE_CHANGED`, `PLUGIN_HOOK_FIRED` |
 | Errors | `ERROR` |
@@ -794,6 +794,17 @@ measure `[system prompt] + messages`; `COMPACTION_SETTLED`'s
 alone. Do not wire one into the other. Both are `null` on the two
 API-overflow rungs and on microcompaction, because filling them in would
 mean full-history estimates on the paths where they are most expensive.
+
+**`COMPACTION_STARTED`** (`trigger`, `kind`, `reason`; 0.5.12+) fires just
+before a `full` compaction calls the summarizer, the slow step, so a UI can
+show "compacting" instead of "thinking". It fires only then: not for
+microcompaction or `minimal_history` (no model call), not when the attempt
+is skipped, vetoed or rejected before summarizing, and not when a
+`compaction_controller` supplies the summary. Every start is followed by
+a `COMPACTION_SETTLED` (`success` or `failed`) for the same attempt, unless
+the turn is cancelled meanwhile, so do not wait for a settle to restore
+your UI. It is a live signal only and is not recorded to replay;
+`COMPACTION_SETTLED.duration_ms` carries the timing.
 
 **`IMAGES_REMOVED`** (`reason`, `images_removed`, `message_indices`) says
 image parts in history were replaced with a text note: a provider refused
