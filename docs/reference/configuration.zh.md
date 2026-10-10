@@ -108,7 +108,7 @@
   - `embedding/factory.py::_load_settings` — 读取 `agents.enable_builtin` / `enable_builtin_agents` 用作构造器的 `enable_builtin_agents` 默认值。
   - `plan/controller.py::_load_settings` — 在 plan-mode 会话结束后**恢复**权限模式时读取 `mode`。
   - `cli/app.py::_read_auto_wake` — 交互式 CLI 启动时读取一次 `background_agents.auto_wake`。
-- **失败行为。** 文件缺失 → 静默当作 `{}`。文件不可读、不是合法 UTF-8、或 JSON 损坏 → **打一条带路径的 warning**，再当作 `{}`（仍不会启动报错）。按 `utf-8-sig` 读取，因此带 BOM 的文件能正常加载，而不是被整份丢弃。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
+- **失败行为。** 文件缺失 → 静默当作 `{}`。文件不可读、不是合法 UTF-8、或 JSON 损坏 → **打一条带路径的 warning**，再当作 `{}`（仍不会启动报错）。超过 Python 转换上限（默认 4300 位）的整数字面量算作 JSON 损坏，agentao 读取的其他 JSON 文件也一样。按 `utf-8-sig` 读取，因此带 BOM 的文件能正常加载，而不是被整份丢弃。`/replay on` / `/replay off` 会回写这份文件，因此改为拒绝：文件无法读成 JSON object，或在 `replay.max_instances` 之外含有 JSON 无法表示的数时，打印错误并保持文件不变，因为覆盖写入会丢掉其他所有键。`/mode` 也会写这份文件，文件无法读成 JSON object 时同样拒绝写入，该模式仍在本次会话中生效。非有限的 `replay.max_instances`（`1e309` 读出来是无穷大）回写为实际生效的数量 20。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
 - **重要。** factory 启动时**不会**把 `mode` 应用到引擎；`PermissionEngine` 始终以 `workspace-write` 初始化。`mode` 字段是"上次持久化的模式"，用于恢复路径与 CLI 展示——运行期模式切换走 CLI 命令或 `PermissionEngine.set_mode()`。
 
 ### Schema

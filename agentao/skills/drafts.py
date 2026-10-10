@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .. import json_parse
+
 _DRAFT_DIR = Path(".agentao") / "crystallize"
 _DEFAULT_DRAFT_FILENAME = "skill_draft.json"
 _SAFE_SESSION_ID_RE = re.compile(r"[^A-Za-z0-9._-]")
@@ -138,7 +140,7 @@ def load_skill_draft(
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json_parse.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(data, dict):

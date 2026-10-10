@@ -50,6 +50,7 @@ from ._profile import (
 from ._profile_payload import to_profile_payload
 from ._matchers import _claude_matcher_match, _glob_match, _regex_match_full
 from ._output_parsing import _cap, _OutputParsingMixin
+from ... import json_parse
 
 logger = logging.getLogger(__name__)
 
@@ -324,7 +325,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
         if not stdout:
             return
         try:
-            data = json.loads(stdout)
+            data = json_parse.loads(stdout)
         except json.JSONDecodeError:
             return
         if not isinstance(data, dict):
@@ -744,7 +745,7 @@ class PluginHookDispatcher(_OutputParsingMixin):
             return
 
         try:
-            data = json.loads(stdout)
+            data = json_parse.loads(stdout)
         except json.JSONDecodeError:
             result.additional_contexts.append(stdout)
             return

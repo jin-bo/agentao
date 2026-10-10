@@ -69,6 +69,7 @@ from .protocol import (
     PARSE_ERROR,
 )
 from .session_manager import AcpSessionManager
+from .. import json_parse
 
 logger = logging.getLogger(__name__)
 
@@ -411,7 +412,7 @@ class AcpServer:
     def _handle_line(self, line: str) -> None:
         # 1) Parse JSON
         try:
-            raw = json.loads(line)
+            raw = json_parse.loads(line)
         except json.JSONDecodeError as e:
             # Per JSON-RPC 2.0, parse errors use id=null.
             self._write_error(None, PARSE_ERROR, f"Parse error: {e.msg}")

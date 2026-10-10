@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .models import AcpClientConfig, AcpConfigError, AcpServerConfig
+from .. import json_parse
 
 
 def load_acp_client_config(
@@ -54,7 +55,7 @@ def load_acp_client_config(
         raise AcpConfigError(f"cannot read {config_path}: {exc}") from exc
 
     try:
-        parsed = json.loads(text)
+        parsed = json_parse.loads(text)
     except json.JSONDecodeError as exc:
         raise AcpConfigError(f"invalid JSON in {config_path}: {exc}") from exc
 

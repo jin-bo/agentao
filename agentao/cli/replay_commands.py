@@ -198,13 +198,16 @@ def _handle_list(cli: AgentaoCLI) -> None:
 
 
 def _handle_toggle(cli: AgentaoCLI, arg: str) -> None:
-    from ..replay import save_replay_enabled
+    from ..replay import ReplaySettingsError, save_replay_enabled
 
     enabled = (arg == "on")
     try:
         cfg = save_replay_enabled(enabled, cli.agent.working_directory)
-    except OSError as exc:
-        console.print(f"\n[error]Could not persist replay setting: {exc}[/error]\n")
+    except (OSError, ReplaySettingsError) as exc:
+        console.print(
+            f"\n[error]Could not persist replay setting: "
+            f"{markup_escape(str(exc))}[/error]\n"
+        )
         return
     cli.agent.reload_replay_config()
     if enabled:

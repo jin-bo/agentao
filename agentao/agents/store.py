@@ -11,6 +11,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
+from .. import json_parse
+
 _STORE_VERSION = 1
 
 
@@ -23,7 +25,7 @@ def load_bg_task_store(path: Path) -> Dict[str, Dict[str, Any]]:
     if not path.is_file():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json_parse.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict) or data.get("version") != _STORE_VERSION:
             return {}
         tasks = data.get("tasks", {})
