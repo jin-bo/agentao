@@ -47,6 +47,12 @@ class MemoryStore(Protocol):
 
     Lifecycle: :class:`MemoryManager` does not call ``close``; the
     factory or embedded host owns the store's lifetime.
+
+    Optional, outside this Protocol: ``change_version() -> int``, a
+    counter that advances on every memory write by *any* writer of the
+    store. ``MemoryManager.store_change_version`` probes it so the recall
+    index sees writes from other managers and processes. Without it,
+    recall sees only writes made through its own manager.
     """
 
     # --- Memory CRUD -----------------------------------------------------

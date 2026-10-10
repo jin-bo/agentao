@@ -620,3 +620,130 @@ def test_inverted_index_rebuilds_after_delete(tmp_path):
     mgr.delete_by_title("temp_note")
     hits2 = ret.recall_candidates("kubernetes")
     assert all(h.title != "temp_note" for h in hits2)
+
+
+# ---------------------------------------------------------------------------
+# Writes by another manager / process on the same store
+# ---------------------------------------------------------------------------
+
+def _two_managers_on_one_file(tmp_path):
+    from agentao.memory.storage import SQLiteMemoryStore
+    db = tmp_path / ".agentao" / "memory.db"
+    a = MemoryManager(project_store=SQLiteMemoryStore.open(db))
+    b = MemoryManager(project_store=SQLiteMemoryStore.open(db))
+    return a, b, db
+
+
+def test_recall_sees_a_write_by_another_manager_on_the_same_file(tmp_path):
+    """Two ACP sessions (or two terminals on the user store) share one file."""
+    a, b, _ = _two_managers_on_one_file(tmp_path)
+    ret = MemoryRetriever(a)
+    a.save_from_tool("seed_note", "an unrelated seed note", ["misc"])
+    assert ret.recall_candidates("postgres database") == []
+
+    b.save_from_tool("db_choice", "we use the postgres database in production", ["db"])
+    assert [h.title for h in ret.recall_candidates("postgres database")] == ["db_choice"]
+
+    b.delete_by_title("db_choice")
+    assert ret.recall_candidates("postgres database") == []
+
+
+def test_a_foreign_write_does_not_move_write_version(tmp_path):
+    """``write_version`` gates the ``<memory-stable>`` system prompt rebuild.
+
+    A write by another manager must not move it, or the cached prompt prefix
+    would change under this session on every foreign save.
+    """
+    a, b, _ = _two_managers_on_one_file(tmp_path)
+    before = a.write_version
+    b.save_from_tool("db_choice", "we use postgres", ["db"])
+    assert a.write_version == before
+    assert a.store_change_version() == b.store_change_version()
+
+
+def test_a_raw_sql_write_advances_the_change_version(tmp_path):
+    """The counter lives in triggers, so a writer that knows nothing of it
+    (an older agentao, a sqlite3 shell) still advances it."""
+    import sqlite3
+    a, _, db = _two_managers_on_one_file(tmp_path)
+    a.save_from_tool("note", "content", [])
+    before = a.store_change_version()
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute("UPDATE memories SET content = 'edited'")
+    conn.close()
+    assert a.store_change_version() != before
+
+
+def test_an_existing_file_without_the_counter_gets_it_on_open(tmp_path):
+    import sqlite3
+    from agentao.memory.storage import SQLiteMemoryStore
+    a, _, db = _two_managers_on_one_file(tmp_path)
+    conn = sqlite3.connect(db)
+    with conn:
+        for suffix in ("ins", "upd", "del"):
+            conn.execute(f"DROP TRIGGER trg_memories_change_{suffix}")
+        conn.execute("DELETE FROM schema_meta WHERE key = 'memories_change'")
+    conn.close()
+
+    store = SQLiteMemoryStore.open(db)
+    before = store.change_version()
+    MemoryManager(project_store=store).save_from_tool("note", "content", [])
+    assert store.change_version() > before
+
+
+def test_an_empty_store_is_read_once_until_it_changes(tmp_path):
+    ret, mgr = _make_retriever(tmp_path)
+    real = mgr.get_all_entries
+    calls = []
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    mgr.get_all_entries = counting
+    for _ in range(3):
+        assert ret.recall_candidates("python") == []
+    assert len(calls) == 1
+
+    mgr.save_from_tool("python_pref", "Python is the preferred language", ["python"])
+    assert ret.recall_candidates("python")
+    assert len(calls) == 2
+
+
+class _HostStore:
+    """A host ``MemoryStore`` that delegates to SQLite, with a chosen
+    ``change_version`` (or none)."""
+
+    def __init__(self, inner, change_version=None):
+        self._inner = inner
+        if change_version is not None:
+            self.change_version = change_version
+
+    def __getattr__(self, name):
+        if name == "change_version":
+            raise AttributeError(name)
+        return getattr(self._inner, name)
+
+
+def _raise():
+    raise RuntimeError("store down")
+
+
+def test_store_change_version_fails_closed_to_none(tmp_path):
+    """A missing, non-int, bool or raising answer is ``None``, never trusted."""
+    from agentao.memory.storage import SQLiteMemoryStore
+    inner = SQLiteMemoryStore.open(tmp_path / "memory.db")
+    for change_version in (None, lambda: "7", lambda: True, _raise):
+        mgr = MemoryManager(project_store=_HostStore(inner, change_version))
+        assert mgr.store_change_version() == (None, None)
+
+
+def test_recall_still_works_on_a_host_store_without_change_version(tmp_path):
+    from agentao.memory.storage import SQLiteMemoryStore
+    inner = SQLiteMemoryStore.open(tmp_path / "memory.db")
+    mgr = MemoryManager(project_store=_HostStore(inner))
+    ret = MemoryRetriever(mgr)
+    assert ret.recall_candidates("python") == []
+    mgr.save_from_tool("python_pref", "Python is the preferred language", ["python"])
+    assert [h.title for h in ret.recall_candidates("python")] == ["python_pref"]

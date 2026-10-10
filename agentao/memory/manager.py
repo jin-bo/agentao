@@ -88,6 +88,34 @@ class MemoryManager:
         with self._write_version_lock:
             self._write_version += 1
 
+    def store_change_version(self) -> tuple:
+        """Each store's ``change_version()``, or ``None`` where it has none.
+
+        Unlike :attr:`write_version`, this also moves on writes made by another
+        manager or process on the same store. Use it for caches of store
+        contents (the recall index). Do **not** use it for the system-prompt
+        dirty flag: the ``<memory-stable>`` prefix must stay byte-identical
+        until this session writes, or the prompt cache breaks every turn.
+
+        ``change_version`` is optional on :class:`MemoryStore`. A store without
+        it, or one whose answer is not an ``int``, or one that raises, gives
+        ``None`` — the cache then falls back to :attr:`write_version` alone.
+        """
+        versions = []
+        for store in (self.project_store, self.user_store):
+            version = None
+            probe = getattr(store, "change_version", None) if store is not None else None
+            if callable(probe):
+                try:
+                    answer = probe()
+                except Exception:
+                    logger.debug("memory store change_version failed", exc_info=True)
+                else:
+                    if isinstance(answer, int) and not isinstance(answer, bool):
+                        version = answer
+            versions.append(version)
+        return tuple(versions)
+
     def close(self) -> None:
         """Release both stores' resources. Safe to call more than once.
 

@@ -405,6 +405,8 @@ class MemoryStore(Protocol):
 
 15 methods, schema-less. Implement the Protocol to back memory with Redis / Postgres / in-process dict / remote API. Default `SQLiteMemoryStore` is byte-equivalent to the pre-Protocol implementation.
 
+Optional, outside the Protocol: `change_version() -> int`, a counter that advances on every write to the store's memories by **any** writer (another manager, another process). `MemoryRetriever` uses it to refresh its recall index after such writes. A store without it (or whose answer is not an `int`) still works; recall then sees only writes made through its own `MemoryManager`. `SQLiteMemoryStore` implements it with triggers in the database file.
+
 ### `SQLiteMemoryStore`
 
 ```python
