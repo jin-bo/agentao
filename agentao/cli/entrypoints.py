@@ -202,6 +202,13 @@ def entrypoint():
         )
         sys.exit(2)
 
+    if extras and args.subcommand not in ("run", "doctor", "mcp", "config"):
+        # The interactive session, ``-p``, ``init``, ``plugin`` and ``skill``
+        # would otherwise start with the leftover ignored: a typo
+        # (``-p hi --jsno``) ran the turn anyway. The four automation
+        # subcommands below keep their own, prefixed refusal.
+        parser.error("unrecognized arguments: " + " ".join(extras))
+
     if args.subcommand == "init":
         _cli.run_init_wizard()
     elif args.subcommand == "run":

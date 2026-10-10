@@ -28,6 +28,8 @@ def _build_parser():
     """Build the top-level argument parser with subcommands."""
     import argparse
 
+    from agentao import __version__
+
     parser = argparse.ArgumentParser(prog="agentao", add_help=False)
     parser.add_argument(
         "-h", "--help",
@@ -35,6 +37,12 @@ def _build_parser():
         action="store_true",
         default=False,
         help="Show this help message and exit.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"agentao {__version__}",
+        help="Show the version and exit.",
     )
     parser.add_argument("-p", "--print", dest="prompt", nargs="?", const="", default=None)
     parser.add_argument(
@@ -206,7 +214,7 @@ def dispatch_acp_or_login(parser: Any, args: Any, extras: List[str]) -> bool:
 
 
 def run_light(argv: List[str]) -> bool:
-    """Handle *argv* if it asks for ``--acp`` / ``--login`` / ``mcp``; else ``False``.
+    """Handle *argv* if it asks for ``--acp`` / ``--login`` / ``mcp`` / ``--version``; else ``False``.
 
     Only consulted when one of those tokens is present, so every other
     command still meets the extras check first. A command line that does not

@@ -93,12 +93,12 @@ def entrypoint() -> None:
     """
     import importlib.util
 
-    # ``--acp``, ``--login`` and ``mcp login|logout`` need none of the [cli]
+    # ``--acp``, ``--login``, ``mcp login|logout`` and ``--version`` need none of the [cli]
     # extras, and an ACP Registry client runs them from a bare
     # ``uvx agentao@<version>`` (an ACP user logs in to an MCP server from a
     # shell, docs/design/mcp-oauth.md §8.3).
     argv = sys.argv[1:]
-    if "--acp" in argv or "--login" in argv or "mcp" in argv:
+    if "--acp" in argv or "--login" in argv or "mcp" in argv or "--version" in argv:
         from ._light import run_light
 
         if run_light(argv):

@@ -120,6 +120,60 @@ class TestEntrypointArgparse:
         assert exc.value.code == 0
         assert "usage: agentao" in capsys.readouterr().out
 
+    def test_version_flag_prints_version_without_the_cli_extras(
+        self, monkeypatch, capsys,
+    ):
+        """``agentao --version`` used to start an interactive session (the
+        leftover was ignored). It prints the version and exits 0, and needs
+        none of the [cli] extras, like ``--acp``."""
+        from agentao import __version__, cli
+
+        monkeypatch.setattr(cli, "_CLI_EXTRA_PACKAGES", ("agentao_no_such_pkg",))
+        monkeypatch.setattr(
+            cli, "main", lambda **kw: pytest.fail("interactive main called"),
+        )
+        monkeypatch.setattr(sys, "argv", ["agentao", "--version"])
+
+        with pytest.raises(SystemExit) as exc:
+            cli.entrypoint()
+        assert exc.value.code == 0
+        assert capsys.readouterr().out == f"agentao {__version__}\n"
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--bogus"], ["-p", "hi", "--jsno"], ["--resume", "abc", "--bogus"],
+            ["init", "--bogus"], ["plugin", "list", "--bogus"],
+            ["skill", "list", "--bogus"],
+        ],
+    )
+    def test_unknown_flag_exits_2_instead_of_starting(
+        self, argv, monkeypatch, capsys,
+    ):
+        """The interactive and ``-p`` paths refuse a leftover the way
+        ``run`` / ``doctor`` / ``config`` already did, rather than starting
+        a session or a turn with it ignored."""
+        from agentao import cli
+
+        monkeypatch.setattr(
+            cli, "main", lambda **kw: pytest.fail("interactive main called"),
+        )
+        monkeypatch.setattr(
+            cli, "run_print_mode", lambda *a, **kw: pytest.fail("print mode called"),
+        )
+        for name in (
+            "run_init_wizard", "handle_plugin_subcommand", "handle_skill_subcommand",
+        ):
+            monkeypatch.setattr(
+                cli, name, lambda *a, _n=name, **kw: pytest.fail(f"{_n} called"),
+            )
+        monkeypatch.setattr(sys, "argv", ["agentao", *argv])
+
+        with pytest.raises(SystemExit) as exc:
+            cli.entrypoint()
+        assert exc.value.code == 2
+        assert f"unrecognized arguments: {argv[-1]}" in capsys.readouterr().err
+
     def test_stdio_without_acp_exits_with_error(self, monkeypatch, capsys):
         """``--stdio`` alone is a typo guard — fail fast on stderr."""
         from agentao import cli
