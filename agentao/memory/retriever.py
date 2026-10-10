@@ -270,8 +270,11 @@ class MemoryRetriever:
         self._error_count: int = 0    # total recall errors this session
         self._last_error: str = ""    # one-line summary of the most recent error
 
-        # Inverted-index state — invalidated when manager.write_version advances.
-        self._index_version: int = -1
+        # Inverted-index state — invalidated when manager.write_version or a
+        # store's change counter advances. ``_index_built`` is separate from
+        # the records so an empty store is cached too.
+        self._index_version: object = None
+        self._index_built: bool = False
         self._inverted: Dict[str, Set[str]] = {}              # token -> set of record IDs
         self._bundles_by_id: Dict[str, _RecordTokenBundle] = {}
         self._records_by_id: Dict[str, MemoryRecord] = {}
@@ -298,14 +301,26 @@ class MemoryRetriever:
         )
 
     def _rebuild_index_if_stale(self) -> None:
-        """Rebuild inverted index whenever ``manager.write_version`` advances.
+        """Rebuild the inverted index whenever the memories may have changed.
 
-        Cheap O(1) version check on hot path; full rebuild only when memories
-        have been added/updated/deleted since the last build.
+        The key pairs ``manager.write_version`` (this manager's writes) with
+        ``manager.store_change_version()`` (writes by any manager or process on
+        the same store). The key is read *before* the records, so a write that
+        lands in between leaves a stale key and the next call rebuilds again.
+
+        An empty index is cached only when every store reports its version. A
+        store that cannot (``None``) keeps the older behaviour of re-reading
+        while the index is empty, which is how it ever sees another writer.
         """
-        current = self._manager.write_version
-        if current == self._index_version and self._records_by_id:
+        store_versions = self._manager.store_change_version()
+        current = (self._manager.write_version, store_versions)
+        if (
+            self._index_built
+            and current == self._index_version
+            and (self._records_by_id or None not in store_versions)
+        ):
             return
+        self._index_built = False
         records = self._manager.get_all_entries()
         self._inverted.clear()
         self._bundles_by_id.clear()
@@ -317,6 +332,7 @@ class MemoryRetriever:
             for tok in bundle.all_tokens:
                 self._inverted.setdefault(tok, set()).add(r.id)
         self._index_version = current
+        self._index_built = True
 
     def tokenize(self, text: str) -> set:
         """Tokenize *text* with jieba CJK segmentation and light normalization.

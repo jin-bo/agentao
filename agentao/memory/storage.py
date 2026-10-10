@@ -43,6 +43,27 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE UNIQUE INDEX IF NOT EXISTS uix_memories_scope_key
     ON memories(scope, key_normalized) WHERE deleted_at IS NULL;
 
+-- Change counter for the ``memories`` table, bumped by triggers so that every
+-- writer of this file advances it: another ``MemoryManager`` in this process,
+-- another process, an older agentao that knows nothing of the counter.
+-- ``MemoryRetriever`` keys its index on it (``change_version``).
+INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('memories_change', '0');
+
+CREATE TRIGGER IF NOT EXISTS trg_memories_change_ins AFTER INSERT ON memories
+BEGIN
+    UPDATE schema_meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'memories_change';
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_memories_change_upd AFTER UPDATE ON memories
+BEGIN
+    UPDATE schema_meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'memories_change';
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_memories_change_del AFTER DELETE ON memories
+BEGIN
+    UPDATE schema_meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'memories_change';
+END;
+
 CREATE TABLE IF NOT EXISTS session_summaries (
     id                   TEXT PRIMARY KEY,
     session_id           TEXT NOT NULL,
@@ -254,6 +275,21 @@ class SQLiteMemoryStore:
                 except Exception:
                     pass
             conn.commit()
+
+    def change_version(self) -> int:
+        """Counter that advances on every write to ``memories``, by any writer.
+
+        ``MemoryManager.write_version`` only counts writes made through that
+        manager. Two managers on one file — two ACP sessions, two terminals
+        sharing the user store — each see the other's rows in a query but not
+        in a cached recall index. The triggers in ``_INIT_SQL`` live in the
+        database file, so this counter sees all of them.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'memories_change'",
+            ).fetchone()
+        return int(row[0]) if row else 0
 
     # ------------------------------------------------------------------
     # Memory CRUD

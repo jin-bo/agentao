@@ -393,6 +393,8 @@ class MemoryStore(Protocol):
 
 15 个方法，schema-less。实现这套 Protocol 即可把记忆后端换成 Redis / Postgres / 进程内 dict / 远端 API。默认 `SQLiteMemoryStore` 与 #16 之前的实现字节级一致。
 
+可选、不在 Protocol 内：`change_version() -> int`，store 中的记忆被**任何**写入方（另一个 manager、另一个进程）写入时都会递增的计数器。`MemoryRetriever` 用它在这类写入后刷新召回索引。没有这个方法（或返回值不是 `int`）的 store 照常可用，只是召回只能看到经自己的 `MemoryManager` 写入的内容。`SQLiteMemoryStore` 用数据库文件里的触发器实现它。
+
 ### `SQLiteMemoryStore`
 
 ```python
