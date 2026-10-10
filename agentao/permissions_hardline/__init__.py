@@ -31,7 +31,7 @@ Public API:
 
 Layout (each row only depends on rows above):
     _decode      ← _decode_ansi_c
-    _patterns    ← regex constants + REASON_HARDLINE + compiled table
+    _patterns    ← regex constants + REASON_HARDLINE + compiled table (on first use)
     _contexts    ← _position_contexts / _shell_word_normalize / etc.
     _heredoc     ← here-doc masking
     _windows     ← the Windows dangerous table + PowerShell alias resolution

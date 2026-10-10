@@ -32,7 +32,7 @@ than the original audit got right, which is the point of running one.
 | 4 | 4× ruff F821 | **Shipped, value corrected** — static hygiene only |
 | 5 | June Tier 3 (`_execute_one`, overflow recovery, `get_conversation_summary`) | **Declined** — no churn evidence |
 | 6 | mypy per-package ratchet | **Declined** — 27/89 are mixin false positives |
-| 7 | Lazy-compile hardline regexes | **Declined** — 17ms of a 130ms start |
+| 7 | Lazy-compile hardline regexes | **Declined** — 17ms of a 130ms start; **reversed 2026-10-10** at 77ms, see §8 |
 
 ---
 
@@ -169,6 +169,15 @@ at `--select F` and expect ~88 findings of pure cleanup value.
 most expensive module in the import graph, which is what made it look like a
 finding. It is still 17ms, one-time, and for an embedded host it is paid once at
 module import. Demand-gated.
+
+**Reversed 2026-10-10.** The premise was the 17ms. The wrapper-grammar work in
+#169 put a ~4 KB command-position prefix at the head of every pattern, and the
+table's 23 regexes now take ~77ms to compile, ~94ms for the module, about half
+of a ~190ms `import agentao.agent`. The table is now compiled on first use
+(`_patterns.py::_hardline_patterns_compiled`), and only a shell decision reads
+it, so a process that runs no shell command never pays it; one that does pays
+it once, on its first command. `import agentao.agent` measured ~111ms after.
+The eight smaller module-level regexes (~17ms together) stay eager.
 
 ### 9 — Renderers for the 5 remaining unrendered `EventKind`s
 

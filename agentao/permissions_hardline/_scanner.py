@@ -32,10 +32,10 @@ from ._patterns import (
     _CMDSUB_ECHO_AS_BODY,
     _CMDSUB_ECHO_AT_CMDPOS,
     _ECHO_PIPE_TO_SHELL,
-    _HARDLINE_PATTERNS_COMPILED,
     _HERESTRING_TO_SHELL,
     _PROCSUBST_TO_SHELL,
     _SHELL_SCRIPT_WRAPPER,
+    _hardline_patterns_compiled,
 )
 
 
@@ -78,7 +78,7 @@ def _hardline_match(
         contexts, escaped = _position_contexts(cmd)
     norm, idx_map = _shell_word_normalize(cmd)
     norm_n = len(norm)
-    for compiled, desc in _HARDLINE_PATTERNS_COMPILED:
+    for compiled, desc in _hardline_patterns_compiled():
         for m in compiled.finditer(norm):
             start = m.start()
             if start >= norm_n:
