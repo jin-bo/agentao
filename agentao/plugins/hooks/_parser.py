@@ -38,6 +38,7 @@ from ..models import (
     PluginWarning,
 )
 from ._profile import LEGACY_CONTRACT_ID, PROFILE_ID
+from ... import json_parse
 
 #: ``claude-code`` is an alias for the newest profile agentao ships. It is
 #: convenient and it **drifts by design**; a plugin that needs stability pins the
@@ -137,7 +138,7 @@ class ClaudeHooksParser:
     ) -> tuple[list[ParsedHookRule], list[PluginWarning]]:
         """Parse a hooks JSON file and return ``(rules, warnings)``."""
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw = json_parse.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
             return [], [
                 PluginWarning(

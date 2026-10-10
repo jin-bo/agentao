@@ -36,6 +36,7 @@ from ..embedding.factory import resolve_provider_name
 from ..transport import AgentEvent
 from ._globals import console
 from ._utils import _SlashCompleter
+from .. import json_parse
 
 
 AgentFactory = Callable[..., Agentao]
@@ -433,7 +434,7 @@ class AgentaoCLI:
             from rich.markup import escape as _esc
 
             try:
-                data = json.loads(path.read_text(encoding="utf-8-sig"))
+                data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
             except UnicodeDecodeError as exc:
                 # Runs from AgentaoCLI.__init__, before the factory, so an
                 # uncaught decode error here killed interactive startup

@@ -17,6 +17,7 @@ from .registry import (
     install_dir_for_scope,
 )
 from .sources import SkillSource
+from .. import json_parse
 
 
 # ------------------------------------------------------------------
@@ -335,7 +336,7 @@ class SkillInstaller:
         manifest_version = ""
         if skill_json_path.exists():
             try:
-                manifest = json.loads(
+                manifest = json_parse.loads(
                     skill_json_path.read_text(encoding="utf-8")
                 )
             except (json.JSONDecodeError, OSError) as exc:

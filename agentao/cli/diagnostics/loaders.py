@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from .models import FileStatus, Finding
+from ... import json_parse
 
 
 def _load_dotenv(wd: Path) -> None:
@@ -74,7 +75,7 @@ def _load_json_object(
             source=str(path),
         )
     try:
-        data = json.loads(text)
+        data = json_parse.loads(text)
     except json.JSONDecodeError as exc:
         return None, "malformed", Finding(
             level="error",

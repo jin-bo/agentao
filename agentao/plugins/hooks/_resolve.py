@@ -52,6 +52,7 @@ from ._profile import (
 )
 
 from ._profile import PROFILE_ID as PROFILE_ID_NAME
+from ... import json_parse
 
 StdoutState = str  # "empty" | "plain" | "parse_error" | "schema_invalid" | "valid"
 
@@ -77,7 +78,7 @@ def parse_stdout(stdout: str, event: str) -> tuple[dict[str, Any] | None, Stdout
         # implies an array is parsed.
         return None, "plain", None
     try:
-        data = json.loads(text)
+        data = json_parse.loads(text)
     except json.JSONDecodeError as exc:
         return None, "parse_error", str(exc)
     if not isinstance(data, dict):

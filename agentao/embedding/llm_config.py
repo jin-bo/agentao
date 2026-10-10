@@ -59,6 +59,7 @@ from dotenv import dotenv_values
 from dotenv.variables import parse_variables
 
 from .factory import discover_llm_kwargs
+from .. import json_parse
 
 USER_LLM_CONFIG_FILENAME = "llm.json"
 
@@ -123,7 +124,7 @@ def load_user_llm_config(path: Path) -> Optional[Dict[str, str]]:
     except (OSError, UnicodeDecodeError) as exc:
         raise LLMConfigError(f"cannot read {path} ({type(exc).__name__})") from None
     try:
-        data = json.loads(raw)
+        data = json_parse.loads(raw)
     except json.JSONDecodeError as exc:
         raise LLMConfigError(
             f"{path} is not valid JSON (line {exc.lineno}, column {exc.colno})"

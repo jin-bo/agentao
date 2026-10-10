@@ -21,6 +21,8 @@ import json
 import re
 from typing import Any, List, Tuple
 
+from .. import json_parse
+
 
 TAG_EMPTY = "empty"
 TAG_FENCE = "fence"
@@ -104,7 +106,7 @@ def _balance_brackets(text: str) -> str:
 
     for _ in range(_BRACKET_FIXUP_MAX_ITERS):
         try:
-            json.loads(fixed)
+            json_parse.loads(fixed)
             return fixed
         except json.JSONDecodeError:
             if fixed.endswith("}") and fixed.count("}") > fixed.count("{"):
@@ -159,20 +161,20 @@ def parse_tool_arguments(
             return {}, tags
 
     try:
-        parsed = json.loads(stripped)
+        parsed = json_parse.loads(stripped)
     except json.JSONDecodeError:
         parsed = _SENTINEL
     else:
         if isinstance(parsed, str):
             try:
-                parsed = json.loads(parsed)
+                parsed = json_parse.loads(parsed)
                 tags.append(TAG_DOUBLE_ENCODED)
             except json.JSONDecodeError:
                 pass
 
     if parsed is _SENTINEL:
         try:
-            parsed = json.loads(stripped, strict=False)
+            parsed = json_parse.loads(stripped, strict=False)
             tags.append(TAG_LENIENT_JSON)
         except json.JSONDecodeError:
             parsed = _SENTINEL
@@ -181,7 +183,7 @@ def parse_tool_arguments(
         de_comma = _TRAILING_COMMA_RE.sub(r"\1", stripped)
         if de_comma != stripped:
             try:
-                parsed = json.loads(de_comma, strict=False)
+                parsed = json_parse.loads(de_comma, strict=False)
                 tags.append(TAG_TRAILING_COMMA)
             except json.JSONDecodeError:
                 parsed = _SENTINEL
@@ -201,7 +203,7 @@ def parse_tool_arguments(
         balanced = _balance_brackets(stripped)
         if balanced != stripped:
             try:
-                parsed = json.loads(balanced, strict=False)
+                parsed = json_parse.loads(balanced, strict=False)
                 tags.append(TAG_BRACKET_BALANCE)
             except json.JSONDecodeError:
                 parsed = _SENTINEL

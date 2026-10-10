@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
+from .. import json_parse
+
 
 #: Keys whose values are redacted before logging ``extra_body``. ``extra_body``
 #: can nest provider credentials (some gateways accept an API key in the body,
@@ -184,7 +186,7 @@ class _LoggingMixin:
                     func_name = tc.get('function', {}).get('name', 'unknown')
                     func_args = tc.get('function', {}).get('arguments', '{}')
                     try:
-                        args_dict = json.loads(func_args)
+                        args_dict = json_parse.loads(func_args)
                         args_str = json.dumps(args_dict, indent=10, ensure_ascii=False)
                     except json.JSONDecodeError:
                         args_str = func_args
@@ -284,7 +286,7 @@ class _LoggingMixin:
 
                 # Pretty print arguments
                 try:
-                    args_dict = json.loads(func_args)
+                    args_dict = json_parse.loads(func_args)
                     args_str = json.dumps(args_dict, indent=4, ensure_ascii=False)
                 except json.JSONDecodeError:
                     args_str = func_args

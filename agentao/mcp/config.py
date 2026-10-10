@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .. import json_parse
+
 _logger = logging.getLogger(__name__)
 
 
@@ -422,7 +424,7 @@ def _load_json_file(path: Path) -> Dict[str, Any]:
     if not path.is_file():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
     except UnicodeDecodeError as exc:
         _logger.warning(
             "Ignoring %s: not valid UTF-8 (%s at byte %d). Re-save it as "
