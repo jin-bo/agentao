@@ -384,6 +384,16 @@ class TestCollectReplay:
         err = next(f for f in report.findings if "max_instances" in f.message)
         assert ">= 1" in err.message
 
+    @pytest.mark.parametrize("value", [float("inf"), float("-inf")])
+    def test_nonfinite_max_instances_is_error(self, isolated_wd, value):
+        report = DiagnosticReport()
+        _collect_replay(
+            isolated_wd, report,
+            settings_data={"replay": {"max_instances": value}},
+        )
+        assert report.ok is False
+        assert any("must be an integer" in f.message for f in report.findings)
+
     def test_non_bool_capture_flag_is_error(self, isolated_wd):
         report = DiagnosticReport()
         _collect_replay(

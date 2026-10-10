@@ -427,7 +427,7 @@ def _collect_replay(
         if "max_instances" in raw:
             try:
                 parsed = int(raw["max_instances"])
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 report.add(Finding(
                     level="error",
                     area="replay",

@@ -15,6 +15,8 @@ _Targeting 0.5.13. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **An overflowing `replay.max_instances` no longer crashes startup or `agentao doctor`.** A JSON number such as `1e309` now falls back to the default count of 20 while preserving the other replay settings, and the diagnostic command reports the invalid count as an error.
+
 ---
 
 ## [0.5.12] — 2026-10-09
