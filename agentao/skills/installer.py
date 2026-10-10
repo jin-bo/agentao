@@ -146,7 +146,7 @@ class SkillInstaller:
                 # Absolute: the registry skips a relative install_dir on load,
                 # and a relative ``cwd`` with no project marker yields one.
                 install_dir=str(target_dir.absolute()),
-                version=result.version,
+                version=self._package_version(package_root) or result.version,
                 revision=result.revision,
                 etag=result.etag,
             )
@@ -215,7 +215,11 @@ class SkillInstaller:
             # Update record
             record.revision = result.revision
             record.etag = result.etag or info.latest_etag
-            record.version = result.version or record.version
+            record.version = (
+                self._package_version(package_root)
+                or result.version
+                or record.version
+            )
             record.installed_at = datetime.now(timezone.utc).isoformat()
             self._registry.add(record)
             try:
@@ -279,6 +283,25 @@ class SkillInstaller:
     # ------------------------------------------------------------------
     # Validation
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _package_version(package_dir: Path) -> str:
+        """The ``version`` in *package_dir*'s own ``skill.json``, else ``""``.
+
+        Read after ``_find_package_root``, so a package under a subdirectory,
+        named or auto-discovered, reports its own version rather than the
+        repository root's. Call after ``_validate_package``, which has already
+        refused a malformed manifest.
+        """
+        try:
+            manifest = json_parse.loads(
+                (package_dir / "skill.json").read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            return ""
+        if not isinstance(manifest, dict):
+            return ""
+        return str(manifest.get("version", ""))
 
     def _validate_package(self, package_dir: Path) -> tuple:
         """Validate a skill package. Returns (skill_name, warnings_list)."""
