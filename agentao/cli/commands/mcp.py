@@ -116,11 +116,11 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
             servers = read_mcp_servers_for_update(project_dir)
             servers[name] = server_cfg
             saved_path = save_mcp_config(servers, config_dir=project_dir)
-        except McpConfigWriteError as exc:
+        except (McpConfigWriteError, OSError) as exc:
             console.print(f"\n[error]MCP server '{escape(name)}' not added: {escape(str(exc))}[/error]\n")
             return
 
-        console.print(f"\n[success]Added MCP server '{name}' to {saved_path}[/success]")
+        console.print(f"\n[success]Added MCP server '{escape(name)}' to {escape(str(saved_path))}[/success]")
         console.print("[info]Restart agentao to connect to the new server.[/info]\n")
 
     elif sub == "remove":
@@ -133,15 +133,15 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
         try:
             servers = read_mcp_servers_for_update(project_dir)
             if name not in servers:
-                console.print(f"\n[warning]Server '{name}' not found in config.[/warning]\n")
+                console.print(f"\n[warning]Server '{escape(name)}' not found in config.[/warning]\n")
                 return
             del servers[name]
             save_mcp_config(servers, config_dir=project_dir)
-        except McpConfigWriteError as exc:
+        except (McpConfigWriteError, OSError) as exc:
             console.print(f"\n[error]MCP server '{escape(name)}' not removed: {escape(str(exc))}[/error]\n")
             return
         _forget_mcp_skill_approvals(cli, name)
-        console.print(f"\n[success]Removed MCP server '{name}'.[/success]")
+        console.print(f"\n[success]Removed MCP server '{escape(name)}'.[/success]")
         console.print("[info]Restart agentao to apply changes.[/info]\n")
 
     elif sub in ("login", "logout"):

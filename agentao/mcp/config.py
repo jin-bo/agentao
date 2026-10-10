@@ -483,7 +483,10 @@ def read_mcp_servers_for_update(config_dir: Path) -> Dict[str, Any]:
     in it (#497).
     """
     config_path = config_dir / "mcp.json"
-    servers = _read_for_update(config_path).get("mcpServers", {})
+    servers = _read_for_update(config_path).get("mcpServers")
+    if servers is None:
+        # Absent or ``null``: nothing in it to lose.
+        return {}
     if not isinstance(servers, dict):
         raise McpConfigWriteError(
             f"{config_path} was not changed: 'mcpServers' must be a JSON "
@@ -575,8 +578,8 @@ def save_mcp_config(
 
     Raises:
         McpConfigWriteError: the existing file cannot be read as a JSON
-            object, or holds a number JSON cannot represent. The file is
-            left unchanged.
+            object, or holds a number JSON cannot represent or text UTF-8
+            cannot encode. The file is left unchanged.
     """
     if config_dir is None:
         raise TypeError(
@@ -601,7 +604,17 @@ def save_mcp_config(
             f"{config_path} was not changed: it holds a number JSON cannot "
             f"represent ({exc}). Replace it with a finite value."
         ) from exc
+    try:
+        # Encode before opening: ``write_text`` truncates the file first, so a
+        # lone surrogate (``"\ud800"`` is valid JSON) failing to encode
+        # mid-write would leave it empty.
+        payload = (text + "\n").encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise McpConfigWriteError(
+            f"{config_path} was not changed: it holds text UTF-8 cannot "
+            f"encode ({exc.reason}). Fix the file, then try again."
+        ) from exc
 
     config_dir.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(text + "\n", encoding="utf-8")
+    config_path.write_bytes(payload)
     return config_path

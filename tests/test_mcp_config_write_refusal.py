@@ -106,3 +106,26 @@ def test_startup_still_ignores_an_unreadable_file(tmp_path, caplog):
     with caplog.at_level("WARNING", logger="agentao.mcp.config"):
         assert load_mcp_config(project_root=tmp_path) == {}
     assert "Ignoring" in caplog.text and "JSONDecodeError" in caplog.text
+
+
+def test_save_refuses_a_lone_surrogate_instead_of_truncating_the_file(tmp_path):
+    text = '{"mcpServers": {"gh": ' + _GH + '}, "note": "\\ud800"}'
+    path = _write(tmp_path, text)
+    with pytest.raises(McpConfigWriteError, match="UTF-8 cannot"):
+        save_mcp_config({"new": {"command": "x"}}, config_dir=path.parent)
+    assert path.read_text(encoding="utf-8") == text
+
+
+def test_mcp_add_reports_a_write_error_instead_of_raising(tmp_path, monkeypatch):
+    (tmp_path / ".agentao" / "mcp.json").mkdir(parents=True)
+    out = _run(tmp_path, "add new new-mcp", monkeypatch)
+    assert "not added" in out
+
+
+def test_mcp_add_accepts_null_servers(tmp_path, monkeypatch):
+    path = _write(tmp_path, '{"mcpServers": null, "keepMe": 1}')
+    _run(tmp_path, "add new new-mcp", monkeypatch)
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "mcpServers": {"new": {"command": "new-mcp"}},
+        "keepMe": 1,
+    }
