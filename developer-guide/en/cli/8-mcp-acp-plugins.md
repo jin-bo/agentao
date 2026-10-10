@@ -82,7 +82,7 @@ MCP Servers (3):
 
 For a server with `"skills": true`, `/mcp list` adds a line under it: the number of skills it serves, or why its skills are unavailable.
 
-`/mcp add` writes to the **project** config (`.agentao/mcp.json`) — it never touches the user-global one.
+`/mcp add` writes to the **project** config (`.agentao/mcp.json`) — it never touches the user-global one. If that file exists but cannot be read as a JSON object, `/mcp add` and `/mcp remove` print an error and leave it unchanged rather than replace it and lose the servers in it. Fix the file, or move it aside, and run the command again.
 
 `/mcp remove` deletes the entry from the project config but **the change requires restart** (the message tells you so). The current session keeps the running connection.
 

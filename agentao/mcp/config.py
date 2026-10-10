@@ -412,40 +412,88 @@ def check_credential_vars(config: McpServerConfig) -> None:
         )
 
 
-def _load_json_file(path: Path) -> Dict[str, Any]:
-    """Load a JSON file, returning empty dict if missing or unusable.
+class McpConfigWriteError(ValueError):
+    """``mcp.json`` was left unchanged because writing it would lose data.
 
-    Missing is silent; every other failure warns with the path. Reads
-    ``utf-8-sig`` so a BOM'd file loads, and catches
-    ``UnicodeDecodeError`` explicitly — it subclasses ``ValueError``, so
-    the original ``(json.JSONDecodeError, OSError)`` pair let a UTF-16
-    file raise straight out of config loading.
+    Raised by :func:`save_mcp_config` and :func:`read_mcp_servers_for_update`
+    when the existing file cannot be read as a JSON object (rewriting it from
+    scratch would delete every server and key in it), when its ``mcpServers``
+    is not an object, or when its contents hold a number JSON cannot represent.
+    """
+
+
+def _read_json_object(path: Path) -> "tuple[Dict[str, Any], Optional[str]]":
+    """``(data, problem)``: the parsed object, or ``({}, why it is unusable)``.
+
+    Missing is not a problem. Reads ``utf-8-sig`` so a BOM'd file loads, and
+    catches ``UnicodeDecodeError`` explicitly — it subclasses ``ValueError``,
+    so the original ``(json.JSONDecodeError, OSError)`` pair let a UTF-16 file
+    raise straight out of config loading.
     """
     if not path.is_file():
-        return {}
+        return {}, None
     try:
         data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
     except UnicodeDecodeError as exc:
-        _logger.warning(
-            "Ignoring %s: not valid UTF-8 (%s at byte %d). Re-save it as "
-            "UTF-8 — PowerShell 5.1 writes UTF-16LE from `>` and `Out-File`.",
-            path, exc.reason, exc.start,
+        return {}, (
+            f"not valid UTF-8 ({exc.reason} at byte {exc.start}). Re-save it as "
+            "UTF-8 — PowerShell 5.1 writes UTF-16LE from `>` and `Out-File`."
         )
-        return {}
     except (json.JSONDecodeError, OSError) as exc:
-        _logger.warning("Ignoring %s: %s: %s", path, type(exc).__name__, exc)
-        return {}
+        return {}, f"{type(exc).__name__}: {exc}"
     # The return type is the contract every caller relies on: ``load_mcp_config``
     # does ``.get("mcpServers")`` and ``save_mcp_config`` does ``existing[...] =``,
     # so a top-level list or string would be an AttributeError / TypeError out
     # of config loading rather than the documented "warn and use the default".
     if not isinstance(data, dict):
-        _logger.warning(
-            "Ignoring %s: top-level value must be a JSON object, got %s.",
-            path, type(data).__name__,
+        return {}, (
+            f"top-level value must be a JSON object, got {type(data).__name__}."
         )
-        return {}
+    return data, None
+
+
+def _load_json_file(path: Path) -> Dict[str, Any]:
+    """Load a JSON file, returning empty dict if missing or unusable.
+
+    Missing is silent; every other failure warns with the path.
+    """
+    data, problem = _read_json_object(path)
+    if problem is not None:
+        _logger.warning("Ignoring %s: %s", path, problem)
     return data
+
+
+def _read_for_update(config_path: Path) -> Dict[str, Any]:
+    data, problem = _read_json_object(config_path)
+    if problem is not None:
+        raise McpConfigWriteError(
+            f"{config_path} was not changed because it could not be read: "
+            f"{problem.rstrip('.')}. Fix the file or move it aside, then try again."
+        )
+    return data
+
+
+def read_mcp_servers_for_update(config_dir: Path) -> Dict[str, Any]:
+    """The ``mcpServers`` object of ``<config_dir>/mcp.json``, for editing.
+
+    ``{}`` when the file or the key is absent. Raises
+    :class:`McpConfigWriteError` when the file exists but cannot be read as
+    a JSON object, or ``mcpServers`` is not an object: startup ignores such a
+    file with a warning, and an edit saved over it would delete every server
+    in it (#497).
+    """
+    config_path = config_dir / "mcp.json"
+    servers = _read_for_update(config_path).get("mcpServers")
+    if servers is None:
+        # Absent or ``null``: nothing in it to lose.
+        return {}
+    if not isinstance(servers, dict):
+        raise McpConfigWriteError(
+            f"{config_path} was not changed: 'mcpServers' must be a JSON "
+            f"object, got {type(servers).__name__}. Fix the file or move it "
+            "aside, then try again."
+        )
+    return servers
 
 
 def load_mcp_config(
@@ -527,18 +575,46 @@ def save_mcp_config(
 
     Returns:
         Path to the saved config file.
+
+    Raises:
+        McpConfigWriteError: the existing file cannot be read as a JSON
+            object, or holds a number JSON cannot represent or text UTF-8
+            cannot encode. The file is left unchanged.
     """
     if config_dir is None:
         raise TypeError(
             "save_mcp_config requires a config_dir keyword argument."
         )
 
-    config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "mcp.json"
 
-    # Load existing to preserve other keys
-    existing = _load_json_file(config_path)
+    # Load existing to preserve other keys. A file that exists but cannot be
+    # read is refused rather than replaced (#497): startup ignored it with a
+    # warning, so writing ``{"mcpServers": ...}`` over it would delete every
+    # server and key in it.
+    existing = _read_for_update(config_path)
     existing["mcpServers"] = servers
+    try:
+        # ``allow_nan=False``: ``1e309`` elsewhere in the file reads as
+        # infinity, and the default would write it back as ``Infinity``,
+        # which is not JSON.
+        text = json.dumps(existing, indent=2, ensure_ascii=False, allow_nan=False)
+    except ValueError as exc:
+        raise McpConfigWriteError(
+            f"{config_path} was not changed: it holds a number JSON cannot "
+            f"represent ({exc}). Replace it with a finite value."
+        ) from exc
+    try:
+        # Encode before opening: ``write_text`` truncates the file first, so a
+        # lone surrogate (``"\ud800"`` is valid JSON) failing to encode
+        # mid-write would leave it empty.
+        payload = (text + "\n").encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise McpConfigWriteError(
+            f"{config_path} was not changed: it holds text UTF-8 cannot "
+            f"encode ({exc.reason}). Fix the file, then try again."
+        ) from exc
 
-    config_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path.write_bytes(payload)
     return config_path
