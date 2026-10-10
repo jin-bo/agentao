@@ -10,6 +10,7 @@ Public-via-package:
 
 from __future__ import annotations
 
+import functools
 import re
 from typing import List, Sequence, Tuple
 
@@ -641,9 +642,15 @@ _HARDLINE_PATTERNS: List[Tuple[str, str]] = [
     ),
 ]
 
-_HARDLINE_PATTERNS_COMPILED: List[Tuple["re.Pattern[str]", str]] = [
-    (re.compile(src, re.IGNORECASE), desc) for src, desc in _HARDLINE_PATTERNS
-]
+# Compiled on first use, not at import: every pattern above opens with the
+# ~4 KB ``_CMDPOS`` prefix, so the table costs ~75 ms to compile — most of
+# ``import agentao.agent`` — and only a shell command ever reads it.
+@functools.cache
+def _hardline_patterns_compiled() -> List[Tuple["re.Pattern[str]", str]]:
+    return [
+        (re.compile(src, re.IGNORECASE), desc)
+        for src, desc in _HARDLINE_PATTERNS
+    ]
 
 # First-char set for the ``_CMDPOS_HEAD`` separator alternation
 # ``(?:^|[;&|`\n\r({!]|\$\(|\b(?:then|do|else|elif)\b)``. When a hardline

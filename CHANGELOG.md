@@ -13,6 +13,8 @@ _Targeting 0.5.13. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **`import agentao.agent` is about 80 ms faster.** The shell hardline floor's 23 regexes, each opening with a ~4 KB command-position prefix, were compiled at import, about half of the import's ~190 ms. They are now compiled on the first shell-command decision, so a process that runs no shell command never compiles them; one that does pays the cost once, on its first command. Which commands the floor denies is unchanged.
+
 ### Fixed
 
 - **A skill installed from a repository subdirectory records its own version.** `agentao skill install owner/repo:skills/pdf`, and `owner/repo` when the installer picks the single subdirectory holding `SKILL.md`, recorded the version in the repository root's `skill.json` instead of the package's. The installer now reads the version from the selected package after locating it, on install and on update; a package with no `skill.json` records no version rather than the root's. A version already recorded wrongly is corrected by the next update that brings a package `skill.json`. `GitHubSkillSource.fetch()` no longer reads a version (`FetchResult.version` is `""`).

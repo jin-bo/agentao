@@ -1882,3 +1882,34 @@ def test_hardline_indirect_shell_no_false_positive(tmp_path):
     ]:
         d = e.decide("run_shell_command", {"command": cmd})
         assert d == PermissionDecision.ALLOW, f"{cmd!r} should NOT hit hardline"
+
+
+def test_hardline_table_is_compiled_on_first_shell_decision_not_at_import(tmp_path):
+    """Compiling the table costs most of ``import agentao.agent``, and only a
+    shell command reads it, so importing (or constructing) must not compile it.
+    A subprocess, because this process has compiled it long since.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "from agentao.agent import Agentao\n"
+        "from agentao.permissions import PermissionEngine, PermissionMode\n"
+        "from agentao.permissions_hardline._patterns import "
+        "_hardline_patterns_compiled as table\n"
+        "print(table.cache_info().currsize)\n"
+        "from pathlib import Path\n"
+        f"root = Path({str(tmp_path)!r})\n"
+        "e = PermissionEngine(project_root=root, user_root=root / 'home')\n"
+        "e.set_mode(PermissionMode.FULL_ACCESS)\n"
+        "print(e.decide('run_shell_command', {'command': 'rm -rf /'}).value)\n"
+        "print(table.cache_info().currsize)\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    assert proc.stdout.split() == ["0", "deny", "1"]
