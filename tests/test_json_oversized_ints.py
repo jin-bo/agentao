@@ -61,6 +61,32 @@ def test_an_oversized_integer_is_a_decode_error_at_the_literal():
     assert f"longer than {sys.get_int_max_str_digits()} digits" in err.msg
 
 
+def test_the_position_skips_digits_inside_strings_and_fractions():
+    doc = '{"s": "' + _big() + '", "f": 1.' + _big() + ', "n": -' + _big() + "}"
+    with pytest.raises(json.JSONDecodeError) as info:
+        json_parse.loads(doc)
+    assert info.value.pos == doc.index("-1")
+
+
+def test_utf16_bytes_report_a_position_in_the_decoded_text():
+    with pytest.raises(json.JSONDecodeError) as info:
+        json_parse.loads(("[" + _big() + "]").encode("utf-16"))
+    assert info.value.pos == 1
+
+
+def test_locating_the_literal_is_linear_in_the_document():
+    """A ``\\d{N,}`` search restarts inside every shorter run: seconds here."""
+    import time
+
+    limit = sys.get_int_max_str_digits()
+    doc = "[" + ",".join(["1" * limit] * 300) + "," + _big() + "]"
+    start = time.monotonic()
+    with pytest.raises(json.JSONDecodeError) as info:
+        json_parse.loads(doc)
+    assert time.monotonic() - start < 1.0
+    assert info.value.pos == doc.index(_big())
+
+
 def test_load_reads_a_file_object():
     with pytest.raises(json.JSONDecodeError):
         json_parse.load(io.StringIO("[" + _big() + "]"))
@@ -157,6 +183,46 @@ def test_replay_toggle_command_reports_the_refusal(tmp_path, monkeypatch):
     replay_commands._handle_toggle(cli, "on")
     assert reloaded == []
     assert "Could not persist replay setting" in str(printed[0][0])
+
+
+@pytest.mark.parametrize(
+    "text",
+    ['{"other": ' + "1" * 5000 + "}", '{"other": [1,}', "[1]"],
+    ids=["oversized-int", "invalid-json", "not-an-object"],
+)
+def test_mode_save_never_overwrites_a_file_it_could_not_read(tmp_path, monkeypatch, text):
+    """``/mode`` writes the same file as ``/replay on|off`` and must refuse alike."""
+    from types import SimpleNamespace
+
+    from agentao.cli import app as cli_app
+    from agentao.permissions import PermissionMode
+
+    path = _settings(tmp_path, text)
+    printed = []
+    monkeypatch.setattr(cli_app.console, "print", lambda *a, **k: printed.append(a))
+    cli = SimpleNamespace(
+        _project_root=tmp_path, current_mode=PermissionMode.FULL_ACCESS,
+    )
+    cli_app.AgentaoCLI._save_settings(cli)
+    assert path.read_text(encoding="utf-8") == text
+    assert "Mode not saved" in str(printed[0][0])
+
+
+def test_session_save_skips_a_neighbour_that_is_not_an_object(tmp_path):
+    from agentao.embedding.sessions import _find_created_at
+
+    (tmp_path / "a.json").write_text("[1]", encoding="utf-8")
+    (tmp_path / "b.json").write_bytes(b"\xff\xfe{")
+    assert _find_created_at(tmp_path, "sid") is None
+
+
+def test_session_scans_skip_a_neighbour_that_is_not_utf8(tmp_path):
+    from agentao.embedding.sessions import _session_dir, delete_session
+
+    session_dir = _session_dir(tmp_path)
+    session_dir.mkdir(parents=True)
+    (session_dir / "a.json").write_bytes(b"\xff\xfe{")
+    assert delete_session("nope", project_root=tmp_path) is False
 
 
 def test_doctor_reports_invalid_json_instead_of_crashing(tmp_path):

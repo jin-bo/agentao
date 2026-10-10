@@ -31,13 +31,30 @@ import sys
 from typing import IO, Any, Union
 
 
+#: One JSON string (skipped whole, so digits inside it are never reported) or
+#: one number, split into integer part, fraction and exponent. Each match
+#: consumes its whole token, so the scan is linear in the document: a
+#: ``\d{N,}`` search restarts at every digit of every shorter run and is
+#: quadratic, which on a megabyte of 4300-digit literals took seconds.
+_TOKEN_RE = re.compile(r'"(?:[^"\\]|\\.)*"|(-?\d+)(\.\d+)?([eE][-+]?\d+)?')
+
+
 def _too_long_error(doc: str, exc: ValueError) -> json.JSONDecodeError:
     limit = getattr(sys, "get_int_max_str_digits", lambda: 0)()
     pos = 0
     if limit:
-        match = re.search(r"\d{%d,}" % (limit + 1), doc)
-        if match is not None:
-            pos = match.start()
+        # Everything before the offending literal decoded, so its strings are
+        # terminated; the first integer-only token over the limit is the one.
+        for match in _TOKEN_RE.finditer(doc):
+            digits = match.group(1)
+            if (
+                digits is not None
+                and match.group(2) is None
+                and match.group(3) is None
+                and len(digits.lstrip("-")) > limit
+            ):
+                pos = match.start(1)
+                break
     msg = (
         f"Integer literal longer than {limit} digits"
         if limit
@@ -53,7 +70,12 @@ def loads(s: Union[str, bytes, bytearray], **kwargs: Any) -> Any:
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise
     except ValueError as exc:
-        doc = s if isinstance(s, str) else bytes(s).decode("utf-8", "replace")
+        if isinstance(s, str):
+            doc = s
+        else:
+            # ``json.loads`` detects UTF-16/32 from the leading bytes; decode
+            # the same way so the reported position indexes the same text.
+            doc = bytes(s).decode(json.detect_encoding(s), "replace")
         raise _too_long_error(doc, exc) from exc
 
 

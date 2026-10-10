@@ -88,10 +88,12 @@ def _find_created_at(session_dir: Path, session_id: str) -> Optional[str]:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json_parse.load(f)
-            if data.get("session_id") == session_id:
-                return data.get("created_at")
-        except (IOError, json.JSONDecodeError):
+        except (OSError, ValueError):
+            # ``ValueError`` covers ``JSONDecodeError`` and a file that is not
+            # UTF-8; either way it is a neighbour, and must not fail the save.
             continue
+        if isinstance(data, dict) and data.get("session_id") == session_id:
+            return data.get("created_at")
     return None
 
 
@@ -649,7 +651,7 @@ def _resolve_session_file(
                 persisted = data.get("session_id") or ""
                 if isinstance(persisted, str) and persisted.startswith(session_id):
                     uuid_matches.append(path)
-            except (IOError, json.JSONDecodeError):
+            except (OSError, ValueError):
                 # One unreadable neighbour must never stop the scan — it is
                 # not the file being asked for. ``isinstance`` above covers
                 # the shapes that parse and then fail on ``.get`` /
@@ -861,7 +863,7 @@ def delete_session(session_id: str, project_root: Path) -> bool:
             if isinstance(persisted, str) and persisted.startswith(session_id):
                 path.unlink()
                 uuid_deleted += 1
-        except (IOError, json.JSONDecodeError):
+        except (OSError, ValueError):
             continue
     if uuid_deleted:
         return True
