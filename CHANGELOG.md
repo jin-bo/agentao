@@ -15,6 +15,7 @@ _Targeting 0.5.13. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **`glob` and the Python fallback of `search_file_content` preserve recursive directory prefixes.** `src/**/test.py` searches within `src` without including unrelated `other/src` paths. Common leading `**/` patterns and literal prefixes retain the existing host `FileSystem.glob(..., recursive=True)` call shape.
 - **Regex searches in git repositories use Perl/Python-style syntax.** `git grep -P` handles `\d`, `\w`, `\s`, `\b`, inline flags, alternation, grouping, `+` and `?` consistently with the other backends. A git build without PCRE support uses the existing ripgrep/Python fallback. Literal searches retain fixed-string mode.
 - **Editing a file with a long name no longer fails with `ENAMETOOLONG`.** Atomic writes use a fixed short temporary prefix in the target's directory, so a valid target name near the filesystem limit does not overflow the temporary name.
 - **An overflowing `replay.max_instances` no longer crashes startup or `agentao doctor`.** A JSON number such as `1e309` now falls back to the default count of 20 while preserving the other replay settings, and the diagnostic command reports the invalid count as an error.
