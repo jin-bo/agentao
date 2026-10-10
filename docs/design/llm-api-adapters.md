@@ -609,8 +609,9 @@ same duck-type**.
 
 The history shape is the opposite: it is load-bearing everywhere, it is persisted
 to session files and replay files, it crosses the ACP boundary, and
-`docs/reference/host-api.md:202` tells hosts to read `agent.messages` directly.
-It is a contract, not an implementation detail.
+`docs/reference/host-api.md` ("Vetoing or replacing a compaction") tells hosts
+to read `agent.messages` directly. It is a contract, not an implementation
+detail.
 
 ## 2. Is this worth doing? — three honest sub-questions
 
