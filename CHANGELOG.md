@@ -11,12 +11,15 @@ _Targeting 0.5.13. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`agentao --version`** prints `agentao <version>` and exits 0. It needs none of the `[cli]` extras, so it works on a library-only install.
+
 ### Changed
 
 - **`import agentao.agent` is about 80 ms faster.** The shell hardline floor's 23 regexes, each opening with a ~4 KB command-position prefix, were compiled at import, about half of the import's ~190 ms. They are now compiled on the first shell-command decision, so a process that runs no shell command never compiles them; one that does pays the cost once, on its first command. Which commands the floor denies is unchanged.
 
 ### Fixed
 
+- **An unknown top-level flag is refused instead of ignored.** `agentao --bogus` started an interactive session and `agentao -p "…" --jsno` ran the turn, both with the flag silently dropped (the old `agentao --version` was one of these), and so did `init`, `plugin` and `skill`. All of them now print `unrecognized arguments: …` and exit 2, as `agentao run`, `doctor`, `mcp` and `config` already did.
 - **A skill installed from a repository subdirectory records its own version.** `agentao skill install owner/repo:skills/pdf`, and `owner/repo` when the installer picks the single subdirectory holding `SKILL.md`, recorded the version in the repository root's `skill.json` instead of the package's. The installer now reads the version from the selected package after locating it, on install and on update; a package with no `skill.json` records no version rather than the root's. A version already recorded wrongly is corrected by the next update that brings a package `skill.json`. `GitHubSkillSource.fetch()` no longer reads a version (`FetchResult.version` is `""`).
 - **`glob` and the Python fallback of `search_file_content` preserve recursive directory prefixes.** `src/**/test.py` searches within `src` without including unrelated `other/src` paths. Common leading `**/` patterns and literal prefixes retain the existing host `FileSystem.glob(..., recursive=True)` call shape.
 - **Regex searches in git repositories use Perl/Python-style syntax.** `git grep -P` handles `\d`, `\w`, `\s`, `\b`, inline flags, alternation, grouping, `+` and `?` consistently with the other backends. A git build without PCRE support uses the existing ripgrep/Python fallback. Literal searches retain fixed-string mode.
