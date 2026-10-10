@@ -82,7 +82,7 @@ MCP Servers (3):
 
 对开启了 `"skills": true` 的 server，`/mcp list` 会在它下面多显示一行：它提供的 skill 数量，或者 skills 不可用的原因。
 
-`/mcp add` 写到**项目**配置（`.agentao/mcp.json`）— 不动用户全局那一份。
+`/mcp add` 写到**项目**配置（`.agentao/mcp.json`）— 不动用户全局那一份。如果该文件存在但无法读成 JSON object，`/mcp add` 和 `/mcp remove` 会打印错误并保持文件不变，而不是覆盖它、丢掉其中的 server。修好文件或把它移开后再运行一次。
 
 `/mcp remove` 从项目配置里删条目，但**改动需要重启**才生效（CLI 会提示）。当前会话保留运行中的连接。
 
