@@ -11,8 +11,6 @@ from typing import Optional
 
 import httpx
 
-from .. import json_parse
-
 
 @dataclasses.dataclass
 class SourceSpec:
@@ -33,7 +31,9 @@ class FetchResult:
     extracted_dir: Path    # temp dir with extracted content
     revision: str          # content hash or commit sha
     etag: str              # HTTP ETag header
-    version: str           # from skill.json if present, else ""
+    # Version the source itself reports, else "". The installer prefers the
+    # selected package's own skill.json, which only it can locate.
+    version: str
 
 
 @dataclasses.dataclass
@@ -158,22 +158,13 @@ class GitHubSkillSource(SkillSource):
         else:
             extracted = dest_dir
 
-        # Read version from skill.json if present
-        version = ""
-        skill_json = extracted / "skill.json"
-        if skill_json.exists():
-            import json
-            try:
-                data = json_parse.loads(skill_json.read_text(encoding="utf-8"))
-                version = str(data.get("version", ""))
-            except (json.JSONDecodeError, OSError):
-                pass
-
+        # No version here: the archive root's skill.json belongs to the
+        # repository, not necessarily to the package the installer selects.
         return FetchResult(
             extracted_dir=extracted,
             revision=revision,
             etag=etag,
-            version=version,
+            version="",
         )
 
     def check_update(self, source_ref: str, current_etag: str) -> UpdateInfo:
