@@ -16,6 +16,7 @@ from agentao.plugins.models import (
 )
 
 from .manifest import PluginManifestParser
+from ... import json_parse
 
 logger = logging.getLogger(__name__)
 
@@ -429,7 +430,7 @@ class PluginManager:
             # subclasses ``ValueError``, so neither name in the original pair
             # caught it and a UTF-16LE ``plugins_config.json`` (PowerShell
             # 5.1's ``>`` default) escaped straight out of plugin discovery.
-            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
             return data if isinstance(data, dict) else {}
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             return {}
@@ -505,7 +506,7 @@ def _resolve_mcp_servers(
                 ))
             return {}
         try:
-            data = json.loads(mcp_path.read_text(encoding="utf-8-sig"))
+            data = json_parse.loads(mcp_path.read_text(encoding="utf-8-sig"))
             servers = data.get("mcpServers", data)
             if not isinstance(servers, dict):
                 if warnings is not None:

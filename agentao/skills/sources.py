@@ -11,6 +11,8 @@ from typing import Optional
 
 import httpx
 
+from .. import json_parse
+
 
 @dataclasses.dataclass
 class SourceSpec:
@@ -162,7 +164,7 @@ class GitHubSkillSource(SkillSource):
         if skill_json.exists():
             import json
             try:
-                data = json.loads(skill_json.read_text(encoding="utf-8"))
+                data = json_parse.loads(skill_json.read_text(encoding="utf-8"))
                 version = str(data.get("version", ""))
             except (json.JSONDecodeError, OSError):
                 pass

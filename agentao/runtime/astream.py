@@ -50,6 +50,7 @@ from ..host.events import DEFAULT_SUBSCRIBER_QUEUE_SIZE
 from ..host.stream import TextDelta
 from ..outcome import TurnOutcome
 from ..transport.events import AgentEvent, EventType
+from .tool_executor import ASYNC_CANCEL_REASON
 
 if TYPE_CHECKING:
     from ..agent import Agentao
@@ -256,6 +257,15 @@ async def stream_turn(
             )
         yield outcomes[-1]
     finally:
+        if task is not None and not task.done():
+            # Cancel the turn before releasing its writes. ``_close`` frees a
+            # producer parked on a full queue, and ``task.cancel()`` reaches
+            # the token only once ``arun`` handles it on this loop: released
+            # first, the producer ran on with an uncancelled token and could
+            # finish the turn as "ok" (#473). The token's callbacks release a
+            # blocked write themselves, so this keeps the close fast. Same
+            # reason as ``arun``'s own cancel, which this one pre-empts.
+            token.cancel(ASYNC_CANCEL_REASON)
         _close()
         try:
             if task is not None and not task.done():

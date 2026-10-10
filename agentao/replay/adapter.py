@@ -465,6 +465,15 @@ class ReplayAdapter:
             )
             return
 
+        if kind == EventType.IMAGES_REMOVED:
+            self._recorder.record(
+                EventKind.IMAGES_REMOVED,
+                turn_id=self._current_turn_id(),
+                parent_turn_id=self._current_parent_turn(),
+                payload=dict(data),
+            )
+            return
+
         if kind == EventType.MODEL_CHANGED:
             self._recorder.record(
                 EventKind.MODEL_CHANGED,

@@ -16,6 +16,7 @@ from agentao.plugins.models import (
     PluginWarning,
     PluginWarningSeverity,
 )
+from ... import json_parse
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ class PluginManifestParser:
             )
 
         try:
-            raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+            raw = json_parse.loads(manifest_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
             return (
                 PluginManifest(name=plugin_name),

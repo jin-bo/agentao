@@ -15,6 +15,8 @@ Replay recording ON. (max_instances=20)
 
 Persists to `.agentao/settings.json` so the next session starts with the same setting. Off by default — turn it on when you want a paper trail.
 
+If `settings.json` exists but cannot be read as a JSON object, the command prints `Could not persist replay setting: …` and leaves the file unchanged, because rewriting it would drop your other settings. Fix the file, or move it aside, and run the command again.
+
 ### `/replay` and `/replay list` — list recordings
 
 ```text

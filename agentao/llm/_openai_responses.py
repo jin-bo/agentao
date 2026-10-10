@@ -37,6 +37,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
+from ._api_format import OPENAI_RESPONSES
+from ._image_parts import unsendable_image_note
 from ._retry import (
     QUOTA_EXHAUSTED_CODES,
     StreamEndedEarlyError,
@@ -150,7 +152,12 @@ def _input_parts(content: Any) -> List[Dict[str, Any]]:
         elif kind == "image_url":
             url = (part.get("image_url") or {}).get("url")
             if not isinstance(url, str) or not url:
-                raise ValueError("openai-responses: an image part needs a URL")
+                # Not raised: the part is in history, so a raise here would
+                # fail every later request too (#485).
+                parts.append({"type": "input_text", "text": unsendable_image_note(
+                    OPENAI_RESPONSES, "an image part needs a URL",
+                )})
+                continue
             parts.append({"type": "input_image", "image_url": url})
         else:
             raise ValueError(

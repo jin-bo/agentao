@@ -151,7 +151,10 @@ def _resolve_targets(path: Path, node: ast.stmt) -> List[str]:
                 base = base[: len(base) - climb] or ["agentao"]
             root = ".".join(base)
             head = f"{root}.{node.module}" if node.module else root
-            targets.append(head)
+            # ``from .. import x`` imports ``x``; the bare package it names
+            # is only the container, so it is not a target of its own.
+            if node.module:
+                targets.append(head)
             targets += [f"{head}.{a.name}" for a in node.names]
     return targets
 
@@ -320,6 +323,7 @@ LEAF_MODULES: Set[str] = {
     "_env",
     "cancellation",
     "frontmatter",
+    "json_parse",
     "logging_utils",
     "media_limits",
     "outcome",

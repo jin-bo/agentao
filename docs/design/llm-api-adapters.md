@@ -1037,6 +1037,9 @@ are corroboration that the rule is real, not a spec citation.
    supported. v1 handling data URLs only is therefore a stated **scope** limit,
    not a property of the protocol: fail loudly on anything else rather than
    dropping it silently.
+   *As implemented:* an `http(s)` URL passes through, and since #485 any other
+   image goes out as a text note saying it was omitted, with a warning in
+   `agentao.log`. Raising was permanent, because the part stays in history.
 
 7. **Thinking blocks.** Anthropic returns `thinking` and `redacted_thinking`
    blocks with a signature that must be returned verbatim on the next request.

@@ -108,7 +108,7 @@
   - `embedding/factory.py::_load_settings` — 读取 `agents.enable_builtin` / `enable_builtin_agents` 用作构造器的 `enable_builtin_agents` 默认值。
   - `plan/controller.py::_load_settings` — 在 plan-mode 会话结束后**恢复**权限模式时读取 `mode`。
   - `cli/app.py::_read_auto_wake` — 交互式 CLI 启动时读取一次 `background_agents.auto_wake`。
-- **失败行为。** 文件缺失 → 静默当作 `{}`。文件不可读、不是合法 UTF-8、或 JSON 损坏 → **打一条带路径的 warning**，再当作 `{}`（仍不会启动报错）。按 `utf-8-sig` 读取，因此带 BOM 的文件能正常加载，而不是被整份丢弃。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
+- **失败行为。** 文件缺失 → 静默当作 `{}`。文件不可读、不是合法 UTF-8、或 JSON 损坏 → **打一条带路径的 warning**，再当作 `{}`（仍不会启动报错）。超过 Python 转换上限（默认 4300 位）的整数字面量算作 JSON 损坏，agentao 读取的其他 JSON 文件也一样。按 `utf-8-sig` 读取，因此带 BOM 的文件能正常加载，而不是被整份丢弃。`/replay on` / `/replay off` 会回写这份文件，因此改为拒绝：文件无法读成 JSON object，或在 `replay.max_instances` 之外含有 JSON 无法表示的数时，打印错误并保持文件不变，因为覆盖写入会丢掉其他所有键。`/mode` 也会写这份文件，文件无法读成 JSON object 时同样拒绝写入，该模式仍在本次会话中生效。非有限的 `replay.max_instances`（`1e309` 读出来是无穷大）回写为实际生效的数量 20。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
 - **重要。** factory 启动时**不会**把 `mode` 应用到引擎；`PermissionEngine` 始终以 `workspace-write` 初始化。`mode` 字段是"上次持久化的模式"，用于恢复路径与 CLI 展示——运行期模式切换走 CLI 命令或 `PermissionEngine.set_mode()`。
 
 ### Schema
@@ -272,7 +272,7 @@ PowerShell 上会在它之上再叠一张 Windows 专属的不可恢复类别表
   2. `<cwd>/.agentao/mcp.json`（项目级）—— **仅可新增**：可以声明*新*的 server name，但不能覆盖用户级同名条目。冲突时打 warning + 跳过项目项。
 - **Loader。** `mcp/config.py`。`env`、`headers`、`args` 和 `oauth.client_secret` 里的环境变量会被展开（`$VAR` 和 `${VAR}` 形式）。`headers` 或 `oauth.client_secret` 引用了未设置或为空的变量时，该服务器不会连接，报错写明变量名：否则 `"Authorization": "Bearer ${TOKEN}"` 在 `TOKEN` 未设置时会发出 `Bearer `，而 `Authorization` 头会关闭 OAuth。`env` 或 `args` 里未设置的变量展开为空字符串，并记一条写明变量名的警告。
 - **工具名。** 每个工具注册为 `mcp_<server>_<tool>`，`[A-Za-z0-9_]` 以外的字符替换为 `_`。超过 64 个字符（Chat Completions 的上限）的名字，以及由含非 ASCII 字符的服务器名或工具名生成的名字，会被截断并加上一个由原始服务器名和工具名算出的 8 位哈希，每次连接都相同。仍然映射到同一名字的两个工具（`my-srv` 与 `my_srv`）不会都注册：先列出的保留这个名字，另一个不注册，并在 `agentao.log` 记一条错误。
-- **失败行为。** 文件缺失 → 静默。文件不可读、不是合法 UTF-8、或 JSON 损坏 → 打一条带路径的 warning，然后退回默认值（该文件不贡献任何 server）。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
+- **失败行为。** 文件缺失 → 静默。文件不可读、不是合法 UTF-8、或 JSON 损坏 → 打一条带路径的 warning，然后退回默认值（该文件不贡献任何 server）。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。`/mcp add` 和 `/mcp remove` 会回写项目文件，因此改为拒绝：文件无法读成 JSON object、其 `mcpServers` 不是 object、或含有 JSON 无法表示的数、或 UTF-8 无法编码的文本（如孤立代理项 `"\ud800"`）时，打印错误并保持文件不变，因为覆盖写入会删掉其中所有 server。`save_mcp_config` 在同样情况下抛出 `McpConfigWriteError`。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
 
 ### Schema
 

@@ -232,7 +232,7 @@ Replay 键：
 | 键 | 类型 | 默认 | 说明 |
 |----|------|------|------|
 | `replay.enabled` | bool | `false` | 为后续 session 开启记录。`/replay on` 和 `/replay off` 会写这个值。 |
-| `replay.max_instances` | int | `20` | `.agentao/replays/` 下的保留上限；不影响 `.agentao/sessions/`。 |
+| `replay.max_instances` | int | `20` | `.agentao/replays/` 下的保留上限；不影响 `.agentao/sessions/`。`true` / `false`、非数字或小于 1 的值会被忽略（改用 20，`agentao doctor` 报错）；数字字符串或带小数的值会被转换，`agentao doctor` 给出警告。 |
 | `replay.capture_flags.capture_llm_delta` | bool | `true` | 记录每次 LLM 调用新增的 messages。 |
 | `replay.capture_flags.capture_full_llm_io` | bool | `false` | deep capture 完整 LLM 输入/输出；按敏感内容处理。 |
 | `replay.capture_flags.capture_tool_result_full` | bool | `false` | 在普通 replay 截断策略之外，deep capture 完整工具结果。 |

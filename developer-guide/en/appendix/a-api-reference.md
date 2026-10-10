@@ -129,6 +129,32 @@ CLI `/image` command); wire images that carry no source degrade to
 implementation in
 `agentao/runtime/chat_loop/_runner.py::_render_image_reference_fallback`.
 
+Since 0.5.12, when the error is a 400, 413 or 422, the retry also covers images
+left in history from earlier turns (for example after switching to a text-only
+model). Each one is replaced with
+`[Image removed from the conversation history because the current model does not accept image input. It can no longer be viewed.]`; before, they were sent again and the turn failed again.
+
+**Provider-rejected images** (0.5.12+). When the provider refuses a request
+because of an image (a 400, 413 or 422 whose body mentions an image, on a
+request that carried one, and not only in a run of words echoed from the
+conversation's user or tool text, a whole line of it or at least five words), every image part in history is replaced with
+`[Image removed from the conversation history after the model provider rejected it. It can no longer be viewed.]`. The provider does not say which image it refused, so earlier
+turns' images go too. Each message keeps its role, text and other parts, and
+the note never contains the image data. The turn then ends with the
+`[LLM API error: …]` notice plus a line asking to re-attach the image, switch
+model or continue from the text. Without this, the image went out again with
+every later request and failed the same way, also after a resume. Both
+rewrites emit `IMAGES_REMOVED` (replay schema 1.4).
+
+**Image URLs a wire cannot send** (0.5.12+). A host-written `image_url` part
+whose URL the wire cannot express (on `anthropic-messages`, anything but a
+base64 `data:` URL or an `http(s)` URL; on `openai-responses`, a missing or
+empty URL) goes out as
+`[Image omitted: its URL cannot be sent to the model, so it cannot be viewed.]`,
+with a warning in `agentao.log`. History is left as written. Before, the
+adapter raised before sending, on that turn and every later one.
+`chat(images=...)` always builds a `data:` URL, so it never meets this.
+
 ### Attributes
 
 | Attribute | Type | Notes |

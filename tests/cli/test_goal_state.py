@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from agentao.cli.goal_state import (
     GoalState,
     GoalStatus,
@@ -199,3 +201,20 @@ def test_budget_summary():
     s = budget_summary(g)
     assert "3/25 turns" in s
     assert "10m/2h" in s
+
+
+@pytest.mark.parametrize("data", [None, [], "goal", 42, True])
+def test_load_non_object_returns_none(tmp_path, data):
+    path = goal_path(tmp_path)
+    path.parent.mkdir()
+    path.write_text(json.dumps(data))
+    assert load_goal(tmp_path) is None
+
+
+@pytest.mark.parametrize("field", ["max_turns", "time_budget_seconds", "turns_used", "time_used_seconds"])
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_load_nonfinite_numeric_state_returns_none(tmp_path, field, value):
+    path = goal_path(tmp_path)
+    path.parent.mkdir()
+    path.write_text(json.dumps({"objective": "work", field: value}))
+    assert load_goal(tmp_path) is None

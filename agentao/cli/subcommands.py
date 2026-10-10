@@ -103,7 +103,11 @@ def _skill_remove(args, scope: str) -> None:
     """Remove a managed skill installation."""
     import shutil
 
-    from ..skills.registry import SkillRegistry, registry_path_for_scope
+    from ..skills.registry import (
+        SkillRegistry,
+        SkillRegistryWriteError,
+        registry_path_for_scope,
+    )
 
     reg_path = registry_path_for_scope(scope)
     registry = SkillRegistry(reg_path)
@@ -124,12 +128,42 @@ def _skill_remove(args, scope: str) -> None:
         console.print(f"[red]Skill '{args.name}' not found in any registry.[/red]")
         sys.exit(1)
 
-    install_dir = Path(record.install_dir)
-    if install_dir.exists():
-        shutil.rmtree(install_dir)
-
+    # Registry first: if the save is refused nothing has changed, while a
+    # directory deleted ahead of a failed save would leave a record
+    # pointing at nothing.
     registry.remove(args.name)
-    registry.save()
+    try:
+        registry.save()
+    except SkillRegistryWriteError as exc:
+        console.print(f"[red]Error: {exc}. Nothing was removed.[/red]")
+        sys.exit(1)
+
+    install_dir = Path(record.install_dir)
+    # Only delete inside this scope's skills directory: the project
+    # registry can arrive with a cloned repository, and any absolute
+    # install_dir in it would otherwise be handed to rmtree.
+    skills_root = reg_path.parent / "skills"
+    try:
+        inside = install_dir.resolve().is_relative_to(skills_root.resolve()) and (
+            install_dir.resolve() != skills_root.resolve()
+        )
+    except OSError:
+        inside = False
+    if install_dir.exists() and not inside:
+        console.print(
+            f"[yellow]Removed '{args.name}' from the {scope} registry, but did "
+            f"not delete {install_dir}: it is outside {skills_root}.[/yellow]"
+        )
+        return
+    if install_dir.exists():
+        try:
+            shutil.rmtree(install_dir)
+        except OSError as exc:
+            console.print(
+                f"[red]Removed '{args.name}' from the {scope} registry, but "
+                f"could not delete {install_dir}: {exc}. Delete it by hand.[/red]"
+            )
+            sys.exit(1)
     console.print(f"[green]Removed skill '{args.name}' from {scope} scope.[/green]")
 
 

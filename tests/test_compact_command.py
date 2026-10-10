@@ -153,10 +153,104 @@ def test_a_failed_probe_says_the_breaker_is_still_open(monkeypatch):
     # Patched through monkeypatch, not by assignment: ``console`` is a shared
     # module-level singleton, so an unrestored stub here silently rewrites
     # every other test's console for the rest of the session.
-    monkeypatch.setattr(
-        mod, "console", SimpleNamespace(print=lambda text="", **kw: printed.append(str(text))),
-    )
+    monkeypatch.setattr(mod, "console", _FakeConsole(printed))
 
     handle_compact_command(cli, "")
 
     assert any("circuit breaker is still open" in line for line in printed), printed
+
+
+class _FakeStatus:
+    def __init__(self, renderable):
+        self.renderable = renderable
+        self.running = False
+        self.starts = self.stops = 0
+
+    def start(self):
+        self.running, self.starts = True, self.starts + 1
+
+    def stop(self):
+        self.running, self.stops = False, self.stops + 1
+
+
+class _FakeConsole:
+    """Stands in for the shared ``console``; patch it with ``monkeypatch``."""
+
+    def __init__(self, printed):
+        self.printed = printed
+        self.statuses = []
+
+    def print(self, text="", **kw):
+        self.printed.append(str(text))
+
+    def status(self, renderable, **kw):
+        self.statuses.append(_FakeStatus(renderable))
+        return self.statuses[-1]
+
+
+def _clock(monkeypatch, *readings):
+    import agentao.cli.commands.compact as mod
+    ticks = iter(readings)
+    monkeypatch.setattr(mod, "monotonic", lambda: next(ticks))
+
+
+def test_a_spinner_with_a_running_clock_shows_while_it_compacts(monkeypatch):
+    """The summarization call can take a minute; with nothing on screen the
+    CLI looked hung (codex shows "Compacting context (12s)" the same way)."""
+    import agentao.cli.commands.compact as mod
+    messages = [{"role": "user", "content": f"m{i}"} for i in range(10)]
+    compacted = [{"role": "system", "content": "[Compact Boundary]"}] + messages[-2:]
+    cli, agent, cm = _cli_with_messages(
+        messages, _outcome("success", compacted, pre_tokens=900, post_tokens=100),
+    )
+    printed: list[str] = []
+    fake = _FakeConsole(printed)
+    monkeypatch.setattr(mod, "console", fake)
+    seen = {}
+
+    def run(*args, **kwargs):
+        status = cli.current_status
+        seen["running"] = status.running
+        seen["text"] = str(status.renderable.__rich__())
+        return _outcome("success", compacted, pre_tokens=900, post_tokens=100)
+    cm._run_compaction.side_effect = run
+    _clock(monkeypatch, 100.0, 107.0, 165.4)
+
+    handle_compact_command(cli, "")
+
+    assert seen == {"running": True, "text": "Compacting context (7s)"}
+    (status,) = fake.statuses
+    assert (status.starts, status.stops, status.running) == (1, 1, False)
+    assert cli.current_status is None
+    assert any("Compacted history" in line and "· 1m 05s." in line for line in printed), printed
+
+
+def test_the_spinner_stops_when_compaction_raises(monkeypatch):
+    import pytest
+    import agentao.cli.commands.compact as mod
+    messages = [{"role": "user", "content": f"m{i}"} for i in range(10)]
+    cli, agent, cm = _cli_with_messages(messages)
+    fake = _FakeConsole([])
+    monkeypatch.setattr(mod, "console", fake)
+    cm._run_compaction.side_effect = KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        handle_compact_command(cli, "")
+
+    (status,) = fake.statuses
+    assert status.running is False
+    assert cli.current_status is None
+
+
+def test_no_change_and_cancel_also_say_how_long_it_took(monkeypatch):
+    import agentao.cli.commands.compact as mod
+    for status, phrase in (("failed", "made no change"), ("cancelled", "cancelled by the host")):
+        messages = [{"role": "user", "content": f"m{i}"} for i in range(10)]
+        cli, agent, cm = _cli_with_messages(messages, _outcome(status, messages))
+        printed: list[str] = []
+        monkeypatch.setattr(mod, "console", _FakeConsole(printed))
+        _clock(monkeypatch, 10.0, 13.0)
+
+        handle_compact_command(cli, "")
+
+        assert any(phrase in line and "· 3s." in line for line in printed), (status, printed)
