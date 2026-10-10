@@ -450,7 +450,7 @@ max_tokens|max_completion_tokens?, extra_body?}`。
 可以复用整个 runtime。
 
 历史形状则相反：它到处都是承重的，会被持久化进 session 文件和 replay 文件，会穿过
-ACP 边界，而且 `docs/reference/host-api.md:202` 明确告诉宿主直接读 `agent.messages`。
+ACP 边界，而且 `docs/reference/host-api.md`（"Vetoing or replacing a compaction" 一节）明确告诉宿主直接读 `agent.messages`。
 它是契约，不是实现细节。
 
 ## 2. 这事值不值得做 —— 三个诚实的子问题
