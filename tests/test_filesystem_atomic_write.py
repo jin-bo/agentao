@@ -14,6 +14,7 @@ and that no temp debris is left behind.
 from __future__ import annotations
 
 import os
+import errno
 
 import pytest
 
@@ -39,6 +40,20 @@ def existing(tmp_path):
 
 def _temp_debris(directory):
     return [f for f in os.listdir(directory) if f.endswith(".tmp")]
+
+
+@pytest.mark.parametrize("filename", ["x" * 250, "文" * 84])
+def test_atomic_write_accepts_long_valid_filenames(fs, tmp_path, filename):
+    target = tmp_path / filename
+    try:
+        target.write_text("old", encoding="utf-8")
+    except OSError as exc:
+        if exc.errno == errno.ENAMETOOLONG:
+            pytest.skip("filesystem does not support this valid filename length")
+        raise
+    fs.write_text(target, "new")
+    assert target.read_text(encoding="utf-8") == "new"
+    assert _temp_debris(tmp_path) == []
 
 
 class TestInterruptedOverwrite:
