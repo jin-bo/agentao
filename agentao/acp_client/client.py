@@ -32,6 +32,7 @@ from .errors import (
 )
 from .models import ServerState
 from .process import ACPProcessHandle
+from .. import json_parse
 
 logger = logging.getLogger("agentao.acp_client")
 
@@ -244,7 +245,7 @@ class ACPClient:
                 if not line:
                     continue
                 try:
-                    msg = json.loads(line)
+                    msg = json_parse.loads(line)
                 except json.JSONDecodeError:
                     logger.warning(
                         "acp[%s]: non-JSON line on stdout: %s",

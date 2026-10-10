@@ -931,10 +931,28 @@ def dir_outside_profile_writes():
     those rules. (The old target, /private/etc, is not writable by the
     test user at all, so EPERM there proved nothing about the sandbox.)
     """
+    import os
+    import pwd
     import shutil
     import tempfile
 
-    d = Path(tempfile.mkdtemp(prefix=".agentao-sandbox-probe-", dir=Path.home()))
+    # A HOME redirected under a temp root (an isolated test run) is writable by
+    # the profile, so it is no outside to probe (#463). The account's own home
+    # directory from the password database still is, so fall back to it.
+    allowed = ("/private/tmp", "/private/var/tmp", "/private/var/folders")
+    candidates = (Path.home().resolve(), Path(pwd.getpwuid(os.getuid()).pw_dir).resolve())
+    target = next(
+        (c for c in candidates if not any(c.is_relative_to(a) for a in allowed)), None,
+    )
+    if target is None:
+        pytest.skip(f"every home candidate {candidates} is under a root the profile lets writes reach")
+
+    try:
+        d = Path(tempfile.mkdtemp(prefix=".agentao-sandbox-probe-", dir=target))
+    except OSError as exc:
+        # The password-database home can be absent or read-only (a service
+        # account's /var/empty); that is a missing target, not a failure.
+        pytest.skip(f"cannot create a probe directory under {target}: {exc}")
     try:
         yield d
     finally:

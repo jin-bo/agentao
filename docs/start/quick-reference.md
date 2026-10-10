@@ -20,11 +20,13 @@
 ## 🧪 测试
 
 ```bash
-# 测试多轮工具调用
-uv run python test_multi_turn.py
+# 测试多轮工具调用（离线，脚本化的模型响应）
+uv run python -m pytest tests/test_multi_turn.py
+# 同时跑真实模型那一项（使用 shell 里的服务商环境变量）
+AGENTAO_TEST_LIVE_LLM=1 uv run python -m pytest tests/test_multi_turn.py
 
 # 测试 skills 系统提示词
-uv run python test_skills_prompt.py
+uv run python -m pytest tests/test_skills_prompt.py
 
 # 运行主程序
 ./run.sh

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 from agentao.frontmatter import parse_frontmatter
 
 from ..paths import user_root
+from .. import json_parse
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +273,7 @@ class SkillManager:
         if self._config_file.exists():
             try:
                 with open(self._config_file, "r", encoding="utf-8-sig") as f:
-                    config = json.load(f)
+                    config = json_parse.load(f)
                 if not isinstance(config, dict):
                     # ``config.get`` below is an AttributeError on a top-level
                     # list — the same uncaught-shape crash the decode branch
@@ -371,7 +372,7 @@ class SkillManager:
             ) from exc
 
         try:
-            data = json.loads(raw)
+            data = json_parse.loads(raw)
         except json.JSONDecodeError as exc:
             raise _SkillConfigWriteError(
                 f"Error: not updating {self._config_file}: it is not valid "

@@ -15,6 +15,8 @@ Replay recording ON. (max_instances=20)
 
 持久化到 `.agentao/settings.json`，下次启动也是这个状态。默认关 — 想要审计轨迹时再开。
 
+如果 `settings.json` 存在但无法读成 JSON object，命令会打印 `Could not persist replay setting: …` 并保持文件不变，因为重写它会丢掉你的其他设置。修好文件或把它移开后再运行一次。
+
 ### `/replay` 和 `/replay list` — 列出录制
 
 ```text

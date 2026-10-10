@@ -22,6 +22,7 @@ from ..models import ParsedHookRule, StopHookResult, UserPromptSubmitResult
 from ._attachments import _make_attachment
 from ._budget import cap_channel
 from ._profile import LEGACY_CONTRACT_ID
+from ... import json_parse
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ class _OutputParsingMixin:
             return
 
         try:
-            data = json.loads(stdout)
+            data = json_parse.loads(stdout)
         except json.JSONDecodeError:
             # Non-JSON output treated as additional context. The attachment
             # carries the *capped* text too: ``_attachment_to_message`` renders
@@ -234,7 +235,7 @@ class _OutputParsingMixin:
             return
 
         try:
-            data = json.loads(stdout)
+            data = json_parse.loads(stdout)
         except json.JSONDecodeError:
             # Non-JSON output is treated as additional context.
             result.additional_contexts.append(_cap(stdout, rule))

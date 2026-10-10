@@ -126,6 +126,24 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 来源的图片退化为 `inline-image-N`。本节是该格式的规范出处——实现见
 `agentao/runtime/chat_loop/_runner.py::_render_image_reference_fallback`。
 
+自 0.5.12 起，当报错状态码为 400、413 或 422 时，这次重试也覆盖历史里之前轮次留下的图片（例如切换到纯文本模型之后）。
+每张都替换为 `[Image removed from the conversation history because the current model does not accept image input. It can no longer be viewed.]`；此前它们会被再次发送，这一轮也会再次失败。
+
+**服务商拒收的图片**（0.5.12+）。服务商因为某张图片拒绝请求时（状态码 400、413 或
+422、报错正文提到图片、且请求里带了图片；若正文里每个“image”都只出现在回显对话里用户或工具原文的一串词里（整行原文或至少五个词），则不算），历史里所有图片部分都替换为
+`[Image removed from the conversation history after the model provider rejected it. It can no longer be viewed.]`。服务商不会指明拒收的是哪一张，所以之前轮次的图片也一并移除。每条消息
+保留其角色、文字和其他部分，说明文字里绝不包含图片数据。随后这一轮以
+`[LLM API error: …]` 提示结束，并附一句话请用户重新附图、换模型或根据文字继续。
+没有这一步，这张图片会随之后每次请求再次发送并以同样方式失败，恢复会话后也一样。
+两种改写都会发出 `IMAGES_REMOVED`（replay schema 1.4）。
+
+**线路无法发送的图片 URL**（0.5.12+）。宿主写入的 `image_url` 部分，如果其 URL
+是当前线路无法表达的（`anthropic-messages` 上除 base64 `data:` URL 和 `http(s)` URL
+以外的任何形式；`openai-responses` 上缺失或为空的 URL），发出的请求里会以
+`[Image omitted: its URL cannot be sent to the model, so it cannot be viewed.]`
+代替，并在 `agentao.log` 里记一条警告。历史保持原样。此前适配器会在发送前抛错，
+这一轮和之后每一轮都如此。`chat(images=...)` 总是生成 `data:` URL，不会遇到这种情况。
+
 ### 属性
 
 | 属性 | 类型 | 说明 |

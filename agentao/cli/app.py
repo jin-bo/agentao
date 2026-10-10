@@ -36,6 +36,7 @@ from ..embedding.factory import resolve_provider_name
 from ..transport import AgentEvent
 from ._globals import console
 from ._utils import _SlashCompleter
+from .. import json_parse
 
 
 AgentFactory = Callable[..., Agentao]
@@ -282,6 +283,9 @@ class AgentaoCLI:
 
         self.current_session_id: Optional[str] = str(_uuid_mod.uuid4())
         self.current_status = None
+        # (spinner, started) while an automatic compaction is running; see
+        # ``transport.on_compaction_started``.
+        self._compaction_pending = None
         self._streaming_output = False
         self.markdown_mode = True
         self.last_response: str | None = None
@@ -430,7 +434,7 @@ class AgentaoCLI:
             from rich.markup import escape as _esc
 
             try:
-                data = json.loads(path.read_text(encoding="utf-8-sig"))
+                data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
             except UnicodeDecodeError as exc:
                 # Runs from AgentaoCLI.__init__, before the factory, so an
                 # uncaught decode error here killed interactive startup
@@ -460,12 +464,24 @@ class AgentaoCLI:
         return {}
 
     def _save_settings(self) -> None:
-        from ..replay.config import settings_path
+        from ..replay.config import _read_settings, settings_path
         path = settings_path(self._project_root)
-        path.parent.mkdir(exist_ok=True)
-        data = self._load_settings()
+        # Same refusal as ``/replay on|off`` (#495): a file that exists but
+        # cannot be read as a JSON object (startup already warned about it)
+        # is left alone, since writing ``{"mode": ...}`` over it would delete
+        # every other setting. The mode still applies for this session.
+        data, problem = _read_settings(path)
+        if problem is not None:
+            from rich.markup import escape as _esc
+
+            console.print(
+                f"[warning]Mode not saved: {_esc(str(path))} could not be "
+                f"read ({_esc(problem)}), so it was left unchanged.[/warning]"
+            )
+            return
         data["mode"] = self.current_mode.value
         try:
+            path.parent.mkdir(exist_ok=True)
             path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except OSError:
             pass

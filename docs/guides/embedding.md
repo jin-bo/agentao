@@ -516,9 +516,37 @@ The host-facing contract:
   `uri` is the item's `_source` when present, else `inline-image-N`
   (1-based). Hosts that inspect or persist `agent.messages` should expect
   a multimodal user turn to have been rewritten into this plain-text form
-  after a degraded turn. Implementation:
+  after a degraded turn. Since 0.5.12, on a 400, 413 or 422, the retry also
+  replaces images left in history from earlier turns with `[Image removed from the conversation history because the current model does not accept image input. It can no longer be viewed.]`.
+  Implementation:
   `agentao/runtime/chat_loop/_runner.py::_render_image_reference_fallback`;
   canonical format description: developer guide appendix A.1.
+- **Provider-rejected images** (0.5.12+). When the provider refuses a
+  request because of an image (a 400, 413 or 422 whose body mentions an
+  image, on a request that carried one), **every** image part in
+  `agent.messages` is replaced with a text note, earlier turns' included,
+  since the provider does not say which one it refused. A body whose every
+  "image" sits in a run of words echoed from the conversation's user or tool text,
+  a whole line of it or at least five words (a gateway echoing "please
+  describe this image" back in an unrelated 400), does not count. Each message keeps
+  its role, text and other parts. The turn ends with the `[LLM API error: …]`
+  notice plus guidance to re-attach, switch model or continue from text.
+  Without this the image was re-sent, and refused, on every later turn.
+  Both this and the degradation above emit `IMAGES_REMOVED`. A host that
+  persists `agent.messages` should expect the rewrite. The engine checks
+  nothing about an image before sending it, so validating the bytes in the
+  host (as `/image` and ACP do via `agentao.media_limits.sniff_image_mime`)
+  avoids the round trip.
+- **Image URLs a wire cannot send** (0.5.12+). An `image_url` part that a
+  host wrote into `agent.messages` (or a session file it edited) may carry
+  a URL the wire cannot express: on `anthropic-messages` anything but a
+  base64 `data:` URL or an `http(s)` URL, on `openai-responses` a missing
+  or empty URL. The request carries
+  `[Image omitted: its URL cannot be sent to the model, so it cannot be viewed.]`
+  in its place, and `agentao.log` gets a warning; `agent.messages` is left
+  as written. Before, the adapter raised before sending, on every later
+  turn. `chat(images=...)` always builds a `data:` URL, so it never meets
+  this.
 
 ---
 

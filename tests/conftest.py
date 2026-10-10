@@ -10,19 +10,108 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _stub_llm_credentials(monkeypatch):
-    """Set dummy LLM credentials for every test that doesn't supply its own.
+def _no_dotenv_discovery(monkeypatch):
+    """Stop ``safe_load_dotenv()`` with no path from finding a ``.env`` (#471).
+
+    Without a path it calls ``find_dotenv(usecwd=True)``, which walks up from the
+    process cwd. From a checkout with no ``.env`` that walk ends at whatever sits
+    above it, a developer's ``~/.env`` included. The write goes straight to
+    ``os.environ``, outside ``monkeypatch``, so ``LLM_PROVIDER``, ``*_API_FORMAT``
+    and other providers' keys stayed for the rest of the session. That came in
+    through the factory and the CLI, not only through tests that load a ``.env``
+    on purpose. An explicit path still loads, so a test that writes its own
+    ``.env`` under ``tmp_path`` is unaffected.
+    """
+    monkeypatch.setattr("agentao._env.find_dotenv", lambda *args, **kwargs: "")
+
+
+def _is_llm_env_key(key: str) -> bool:
+    """A variable that picks or configures an LLM provider.
+
+    ``discover_llm_kwargs()`` reads ``LLM_*`` and ``{PROVIDER}_API_KEY`` /
+    ``_BASE_URL`` / ``_MODEL`` / ``_API_FORMAT`` for whatever ``LLM_PROVIDER``
+    names, so the provider-prefixed keys are matched by suffix. The ``openai``
+    and ``anthropic`` SDKs read their own ``OPENAI_*`` / ``ANTHROPIC_*``
+    (``OPENAI_ORG_ID``, ``ANTHROPIC_AUTH_TOKEN``) when a client gets ``None``.
+    ``AGENTAO_CONTEXT_TOKENS`` sizes the CLI's context window and goes through
+    ``int()`` there. The ``_API_KEY`` suffix also takes the web tools' keys
+    (``JINA_API_KEY``, ``BOCHA_API_KEY``), which no test should read from the
+    shell either.
+    """
+    return (
+        key.startswith(("LLM_", "OPENAI_", "ANTHROPIC_"))
+        or key.endswith(("_API_KEY", "_BASE_URL", "_MODEL", "_API_FORMAT"))
+        or key == "AGENTAO_CONTEXT_TOKENS"
+    )
+
+
+#: The shell's LLM settings, read once at collection, before any test ran.
+#: Only ``live_llm_env`` puts them back, for a test that opted in to a provider.
+_SHELL_LLM_ENV = {k: v for k, v in os.environ.items() if _is_llm_env_key(k)}
+
+
+@pytest.fixture(autouse=True)
+def _scrub_llm_env(monkeypatch):
+    """Start every test with no LLM settings from the shell (#470).
+
+    ``_agentao_env_default_credentials`` fills ``Agentao(...)`` in from the
+    process environment. Left as the shell had it, ``LLM_PROVIDER=ANTHROPIC``
+    gave tests that provider's real key and endpoint, ``OPENAI_API_FORMAT``
+    switched their wire, and a malformed ``LLM_TEMPERATURE`` or an unknown
+    ``LLM_PROMPT_CACHE`` failed construction on that machine only. A test
+    that needs one of these sets it with ``monkeypatch``.
+    """
+    for key in [k for k in os.environ if _is_llm_env_key(k)]:
+        monkeypatch.delenv(key)
+
+
+@pytest.fixture
+def live_llm_env(monkeypatch, _stub_llm_credentials):
+    """Put the shell's LLM settings back, for a test that calls a real provider.
+
+    Request it only behind an opt-in gate (``AGENTAO_TEST_LIVE_LLM``,
+    ``AGENTAO_TEST_LIVE_MODELS``). It runs after the scrub and the stubs, so the
+    shell's values win where it has them and the stubs fill in the rest.
+
+    Fails, before any request, when the shell exports no key for the provider
+    it selects. Otherwise the stub key would go to the real endpoint and come
+    back as a bare 401. The usual cause is a key kept only in ``.env``, which
+    the suite never reads (``_no_dotenv_discovery``). A fail, not a skip: the
+    run asked for a live test.
+    """
+    from agentao.embedding.factory import discover_llm_kwargs, resolve_provider_name
+
+    if not str(discover_llm_kwargs(_SHELL_LLM_ENV).get("api_key", "")).strip():
+        provider = resolve_provider_name(_SHELL_LLM_ENV)
+        selected = (
+            f"LLM_PROVIDER={_SHELL_LLM_ENV['LLM_PROVIDER']!r}"
+            if "LLM_PROVIDER" in _SHELL_LLM_ENV
+            else "LLM_PROVIDER unset, default OPENAI"
+        )
+        pytest.fail(
+            f"live test opted in, but the shell exports no {provider}_API_KEY "
+            f"({selected}). Export it in the shell: the suite does not read .env.",
+            pytrace=False,
+        )
+    for key, value in _SHELL_LLM_ENV.items():
+        monkeypatch.setenv(key, value)
+
+
+@pytest.fixture(autouse=True)
+def _stub_llm_credentials(monkeypatch, _scrub_llm_env):
+    """Set dummy LLM credentials for every test.
 
     Production code resolves provider env vars only inside
     ``agentao.embedding.build_from_environment``. Tests that
     instantiate ``Agentao(working_directory=...)`` directly used to
     rely on those env reads, so we stub them here and have
     ``_agentao_env_default_credentials`` mirror the factory's
-    discovery contract through ``discover_llm_kwargs()``.
+    discovery contract through ``discover_llm_kwargs()``. The shell's own
+    values are scrubbed first and never used, outside ``live_llm_env``.
     """
-    monkeypatch.setenv("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", "test-dummy-key"))
-    monkeypatch.setenv("OPENAI_BASE_URL", os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"))
-    monkeypatch.setenv("OPENAI_MODEL", os.environ.get("OPENAI_MODEL", "gpt-5.4"))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-dummy-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4")
 
 
 @pytest.fixture(autouse=True)
@@ -115,6 +204,22 @@ def isolated_cwd(tmp_path, monkeypatch):
     fails the run when a test writes there anyway.
     """
     monkeypatch.chdir(tmp_path)
+
+
+@pytest.fixture
+def isolated_skill_dirs(tmp_path, monkeypatch):
+    """Keep skill discovery off the developer's home.
+
+    ``_GLOBAL_SKILLS_DIR`` and ``_BUNDLED_SKILLS_DIR`` are module constants bound at
+    import time, so a redirected ``HOME`` does not move them: left alone, ``Agentao(...)``
+    scans the real ``~/.agentao/skills`` and ``_bootstrap_bundled_skills`` copies this
+    repo's ``skills/`` into it, which also makes any catalogue assertion depend on
+    whatever that machine happens to hold.
+    """
+    from agentao.skills import manager as skills_manager
+
+    monkeypatch.setattr(skills_manager, "_GLOBAL_SKILLS_DIR", tmp_path / "home" / "skills")
+    monkeypatch.setattr(skills_manager, "_BUNDLED_SKILLS_DIR", tmp_path / "no-bundled-skills")
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent

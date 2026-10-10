@@ -209,7 +209,10 @@ Degradation convention: if the model rejects image input, the turn retries
 once with the user message rewritten to plain text, each image becoming a
 tag appended at the end — `<attachment uri="..." mimetype="..."/>` (`uri` =
 `_source`, else `inline-image-N`). Expect this rewrite if you inspect or
-persist `agent.messages`. Full contract: `docs/guides/embedding.md` §4.
+persist `agent.messages`. Since 0.5.12, an image the *provider* refuses
+(400/413/422 mentioning an image) gets every image part in history replaced
+with a text note and ends the turn with an error; both rewrites emit
+`IMAGES_REMOVED`. Full contract: `docs/guides/embedding.md` §4.
 
 ---
 

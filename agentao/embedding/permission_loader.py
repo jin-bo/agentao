@@ -47,6 +47,7 @@ from ..permissions import (
     format_permission_rule_errors,
     validate_permission_rules,
 )
+from .. import json_parse
 
 _logger = logging.getLogger(__name__)
 
@@ -316,7 +317,7 @@ def _read_rule_file(path: Path) -> Tuple[List[Dict[str, Any]], bool, Optional[Di
         ) from exc
 
     try:
-        data = json.loads(text)
+        data = json_parse.loads(text)
     except json.JSONDecodeError as exc:
         raise PermissionConfigError(
             path,

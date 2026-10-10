@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..paths import user_root
+from .. import json_parse
 
 
 _BUILTIN_PROFILES_DIR = Path(__file__).parent / "profiles"
@@ -103,7 +104,7 @@ def _load_json(path: Path) -> Tuple[Dict[str, Any], Optional[str]]:
     except OSError as e:
         return {}, f"{path}: unreadable ({e})"
     try:
-        data = json.loads(raw)
+        data = json_parse.loads(raw)
     except json.JSONDecodeError as e:
         return {}, f"{path}: invalid JSON (line {e.lineno}, col {e.colno}: {e.msg})"
     if not isinstance(data, dict):

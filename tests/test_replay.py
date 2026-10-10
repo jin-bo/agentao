@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 
 from agentao.replay import (
     REPLAY_DEFAULTS,
@@ -57,6 +58,25 @@ from agentao.transport import AgentEvent, EventType, NullTransport
 # ---------------------------------------------------------------------------
 # Config + settings.json persistence
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_nonfinite_retention_count_does_not_block_settings_load(tmp_path, value):
+    settings = tmp_path / ".agentao" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps({"replay": {"enabled": True, "max_instances": value}}))
+    config = load_replay_config(tmp_path)
+    assert config.enabled is True
+    assert config.max_instances == 20
+
+
+def test_retention_count_from_overflowing_json_number(tmp_path):
+    settings = tmp_path / ".agentao" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text('{"replay": {"enabled": true, "max_instances": 1e309}}')
+    config = load_replay_config(tmp_path)
+    assert config.enabled is True
+    assert config.max_instances == 20
 
 
 def test_config_defaults_when_file_missing(tmp_path):

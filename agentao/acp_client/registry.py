@@ -30,6 +30,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
+from .. import json_parse
+
 #: The official stable index.
 REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"
 
@@ -171,7 +173,7 @@ def fetch_registry(
         if owned:
             http.close()
     try:
-        data = json.loads(b"".join(chunks).decode("utf-8"))
+        data = json_parse.loads(b"".join(chunks).decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RegistryError(f"the ACP Registry index is not valid JSON: {exc}") from exc
     return parse_registry(data)

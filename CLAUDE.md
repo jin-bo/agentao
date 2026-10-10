@@ -262,7 +262,7 @@ Design: `docs/design/compaction-orchestration-plan.md`.
 
 ### Skills
 
-Auto-discovered from `skills/`. Each subdir has `SKILL.md` (YAML frontmatter `name:` / `description:`) and optional `references/*.md`, which are **not** inlined — activation *enumerates* them by absolute path and tells the model to `read_file` what it needs (`skills/manager.py::activate_skill`). That is the whole point: the always-resident cost stays at name + description. The skill manager (`agentao/skills/`) maintains `available_skills` (all) and `active_skills` (this session). Cross-process locking via `filelock` — installs and updates are safe across concurrent CLI processes.
+Auto-discovered from `skills/`. Each subdir has `SKILL.md` (YAML frontmatter `name:` / `description:`) and optional `references/*.md`, which are **not** inlined — activation *enumerates* them by absolute path and tells the model to `read_file` what it needs (`skills/manager.py::activate_skill`). That is the whole point: the always-resident cost stays at name + description. The skill manager (`agentao/skills/`) maintains `available_skills` (all) and `active_skills` (this session). `skills_registry.json` (`skills/registry.py`) loads leniently and saves strictly: `save()` re-reads under a `filelock`, merges only this instance's adds/removes, swaps the file in with `os.replace`, and refuses to overwrite a file it cannot read — so concurrent installs keep each other's records (same name: last save wins). The lock covers the registry file only; two processes replacing the *same* skill directory are not serialized.
 
 Activate via the `activate_skill` tool or `/skills activate <name>`.
 

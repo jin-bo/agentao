@@ -20,6 +20,7 @@ import agentao.llm.client as client_mod
 from agentao import Agentao
 from agentao.cancellation import CancellationToken
 from agentao.llm._api_format import API_FORMATS, resolve_api_format
+from agentao.llm._image_parts import UNSENDABLE_IMAGE_NOTE
 from agentao.llm._openai_responses import (
     ResponsesProtocolError, ResponsesStreamError, compose_tool_id, split_tool_id,
     translate_messages,
@@ -145,6 +146,21 @@ def test_history_becomes_items_rebuilt_key_by_key():
         {"type": "function_call_output", "call_id": "call_1", "output": "hello"},
         {"role": "system", "content": "[Conversation Summary] earlier"},
     ]
+
+
+@pytest.mark.parametrize("image_url", [{"url": ""}, {"url": None}, {}, None],
+                         ids=["empty", "none", "no-url", "no-image_url"])
+def test_an_image_part_with_no_url_goes_out_as_a_note(image_url):
+    """#485: raising was permanent — the part is in history, so every later
+    request raised too."""
+    items = translate_messages([{"role": "user", "content": [
+        {"type": "text", "text": "look"},
+        {"type": "image_url", "image_url": image_url},
+    ]}])
+    assert items == [{"role": "user", "content": [
+        {"type": "input_text", "text": "look"},
+        {"type": "input_text", "text": UNSENDABLE_IMAGE_NOTE},
+    ]}]
 
 
 def test_translation_does_not_touch_history():

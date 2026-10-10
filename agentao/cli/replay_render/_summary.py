@@ -226,6 +226,13 @@ def _summarize_replay_event(event: dict) -> str:
             line += f" {markup_escape(str(detail)[:80])}"
         colour = "dim" if status == "success" else "warning"
         return f"[{colour}]{line}[/{colour}]"
+    if kind == "images_removed":
+        indices = payload.get("message_indices") or []
+        return (
+            f"[warning]{markup_escape(str(payload.get('images_removed')))} image(s) removed "
+            f"({markup_escape(str(payload.get('reason', '?')))}) "
+            f"from message(s) {markup_escape(str(indices)[:80])}[/warning]"
+        )
     if kind == "session_summary_written":
         return (
             f"[dim]id={markup_escape(str(payload.get('summary_id', ''))[:8])} "

@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from .. import json_parse
+
 logger = logging.getLogger(__name__)
 
 _SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
@@ -85,11 +87,13 @@ def _find_created_at(session_dir: Path, session_id: str) -> Optional[str]:
     for path in session_dir.glob("*.json"):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if data.get("session_id") == session_id:
-                return data.get("created_at")
-        except (IOError, json.JSONDecodeError):
+                data = json_parse.load(f)
+        except (OSError, ValueError):
+            # ``ValueError`` covers ``JSONDecodeError`` and a file that is not
+            # UTF-8; either way it is a neighbour, and must not fail the save.
             continue
+        if isinstance(data, dict) and data.get("session_id") == session_id:
+            return data.get("created_at")
     return None
 
 
@@ -235,7 +239,7 @@ def _earlier_save(session_dir: Path, path: Path, sid: str) -> Optional[dict]:
         if path.resolve().parent != session_dir.resolve():
             return None
         with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            data = json_parse.load(f)
     except (OSError, ValueError):
         return None
     if isinstance(data, dict) and data.get("session_id") == sid:
@@ -641,13 +645,13 @@ def _resolve_session_file(
         for path in sessions:
             try:
                 with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+                    data = json_parse.load(f)
                 if not isinstance(data, dict):
                     continue
                 persisted = data.get("session_id") or ""
                 if isinstance(persisted, str) and persisted.startswith(session_id):
                     uuid_matches.append(path)
-            except (IOError, json.JSONDecodeError):
+            except (OSError, ValueError):
                 # One unreadable neighbour must never stop the scan — it is
                 # not the file being asked for. ``isinstance`` above covers
                 # the shapes that parse and then fail on ``.get`` /
@@ -701,7 +705,7 @@ def load_session_record(
     session_file = _resolve_session_file(session_id, project_root=project_root)
 
     with open(session_file, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        data = json_parse.load(f)
 
     if not isinstance(data, dict):
         raise ValueError(
@@ -791,7 +795,7 @@ def list_sessions(project_root: Path) -> List[Dict[str, Any]]:
     for path in sorted(session_dir.glob("*.json"), reverse=True):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+                data = json_parse.load(f)
             # A file that parses but is not an object (``[]``, ``null``, a bare
             # string) is corrupt in the only sense this loop cares about, and
             # ``data.get`` would raise ``AttributeError`` — which the skip below
@@ -852,14 +856,14 @@ def delete_session(session_id: str, project_root: Path) -> bool:
     for path in list(session_dir.glob("*.json")):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+                data = json_parse.load(f)
             if not isinstance(data, dict):
                 continue
             persisted = data.get("session_id") or ""
             if isinstance(persisted, str) and persisted.startswith(session_id):
                 path.unlink()
                 uuid_deleted += 1
-        except (IOError, json.JSONDecodeError):
+        except (OSError, ValueError):
             continue
     if uuid_deleted:
         return True
