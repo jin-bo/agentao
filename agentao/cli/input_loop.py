@@ -349,6 +349,12 @@ def _build_command_table() -> Dict[str, "CommandHandler"]:
 _EXIT_COMMANDS = frozenset({"exit", "quit"})
 
 
+def _end_session(cli: "AgentaoCLI") -> None:
+    """End the session the way ``/exit`` does: save it and say goodbye."""
+    cli._save_session_on_exit()
+    console.print("\n[success]Goodbye![/success]\n")
+
+
 def run_loop(cli: "AgentaoCLI") -> None:
     """Main input loop — slash-command dispatch + agent turn handling."""
     commands = _build_command_table()
@@ -363,7 +369,23 @@ def run_loop(cli: "AgentaoCLI") -> None:
     while True:
         try:
             cli._flush_acp_inbox()
-            user_input = cli._get_user_input()
+            # Handled here, not by the loop's ``except Exception``: that
+            # handler goes back to reading input, and a read that cannot
+            # succeed fails again at once, thousands of times a second.
+            try:
+                user_input = cli._get_user_input()
+            except EOFError:
+                # Ctrl-D on an empty line, or the end of piped input.
+                _end_session(cli)
+                break
+            except OSError as e:
+                # stdin cannot be read at all, e.g. ``agentao </dev/null`` on
+                # macOS, where kqueue refuses /dev/null (EINVAL). The session
+                # still ends the way ``/exit`` ends it — SessionEnd hooks run
+                # and the history is saved — before the non-zero exit.
+                console.print(f"\n[error]Cannot read input: {markup_escape(str(e))}[/error]\n")
+                cli._save_session_on_exit()
+                raise SystemExit(1)
 
             # Before the blank-input skip: the wake carries no text of its own.
             if user_input is _BG_WAKE:
@@ -394,8 +416,7 @@ def run_loop(cli: "AgentaoCLI") -> None:
                 args = parts[1] if len(parts) > 1 else ""
 
                 if command in _EXIT_COMMANDS:
-                    cli._save_session_on_exit()
-                    console.print("\n[success]Goodbye![/success]\n")
+                    _end_session(cli)
                     break
 
                 handler = commands.get(command)
