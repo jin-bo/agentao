@@ -398,7 +398,12 @@ def _collect_replay(
     for an explicit validation command, so we walk the raw block first and
     surface findings for shapes that ``from_mapping`` would silently swallow.
     """
-    from ...replay.config import CAPTURE_FLAG_DEFAULTS, ReplayConfig, settings_path
+    from ...replay.config import (
+        CAPTURE_FLAG_DEFAULTS,
+        ReplayConfig,
+        check_max_instances,
+        settings_path,
+    )
 
     raw = settings_data.get("replay") if settings_data else None
     source = str(settings_path(wd))
@@ -425,33 +430,15 @@ def _collect_replay(
                 source=source,
             ))
         if "max_instances" in raw:
-            try:
-                parsed = int(raw["max_instances"])
-            except (TypeError, ValueError, OverflowError):
+            # The same reading runtime uses, so the verdict cannot drift.
+            check = check_max_instances(raw["max_instances"])
+            if check.level is not None:
                 report.add(Finding(
-                    level="error",
+                    level=check.level,
                     area="replay",
-                    message=(
-                        f"replay.max_instances must be an integer, got "
-                        f"{raw['max_instances']!r}"
-                    ),
+                    message=check.message,
                     source=source,
                 ))
-            else:
-                # ``from_mapping`` silently replaces any value < 1 with the
-                # default — that means ``max_instances: 0`` parses but is
-                # ignored at runtime. Surface it as a validation error so
-                # the user does not assume their (no-op) value applied.
-                if parsed < 1:
-                    report.add(Finding(
-                        level="error",
-                        area="replay",
-                        message=(
-                            f"replay.max_instances must be >= 1, got "
-                            f"{parsed} (ignored at runtime)"
-                        ),
-                        source=source,
-                    ))
         raw_flags = raw.get("capture_flags")
         if raw_flags is not None and not isinstance(raw_flags, dict):
             report.add(Finding(

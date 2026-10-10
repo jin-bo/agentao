@@ -16,7 +16,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, NamedTuple, Optional, Tuple
 
 from .. import json_parse
 
@@ -53,6 +53,62 @@ def _coerce_bool(value: Any, fallback: bool) -> bool:
     return bool(value)
 
 
+class MaxInstancesCheck(NamedTuple):
+    """How a ``replay.max_instances`` value is read: the count used, and a
+    finding about it, if any. ``level`` is ``"error"`` when the value is
+    ignored (the default is used) and ``"warning"`` when it was converted."""
+
+    value: int
+    level: Optional[str]
+    message: Optional[str]
+
+
+def check_max_instances(raw: Any) -> MaxInstancesCheck:
+    """Read ``replay.max_instances`` the one way runtime and doctor share.
+
+    ``int()`` is lenient, and that stays, with one exception: a JSON
+    ``true`` / ``false`` is not a count. ``int(True)`` is 1, so ``true``
+    kept only the newest replay and pruning deleted the rest, while doctor
+    reported nothing. A bool now falls back to the default, which never
+    keeps fewer replays than before. Every other accepted value keeps its
+    count, because the fallback runs the other way for them: rejecting a
+    ``"100"`` that works today would prune down to 20. Doctor flags the
+    conversions instead (a fraction cut off, a number given as a string).
+    """
+    default = REPLAY_DEFAULTS["max_instances"]
+    if isinstance(raw, bool):
+        return MaxInstancesCheck(
+            default, "error",
+            f"replay.max_instances must be an integer, got {json.dumps(raw)} "
+            f"(ignored at runtime; the default {default} is used)",
+        )
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError, OverflowError):
+        return MaxInstancesCheck(
+            default, "error",
+            f"replay.max_instances must be an integer, got {raw!r}",
+        )
+    if parsed < 1:
+        return MaxInstancesCheck(
+            default, "error",
+            f"replay.max_instances must be >= 1, got {parsed} (ignored at runtime)",
+        )
+    if isinstance(raw, str):
+        return MaxInstancesCheck(
+            parsed, "warning",
+            f"replay.max_instances is a string, {raw!r}; {parsed} is used. "
+            "Write it as a number.",
+        )
+    if isinstance(raw, float) and raw != parsed:
+        return MaxInstancesCheck(
+            parsed, "warning",
+            f"replay.max_instances is not a whole number, {raw!r}; "
+            f"{parsed} is used.",
+        )
+    return MaxInstancesCheck(parsed, None, None)
+
+
 @dataclass
 class ReplayConfig:
     """Effective replay configuration for a project.
@@ -75,17 +131,13 @@ class ReplayConfig:
         flags: Dict[str, bool] = dict(CAPTURE_FLAG_DEFAULTS)
         if isinstance(raw, dict):
             enabled = _coerce_bool(raw.get("enabled", enabled), enabled)
-            try:
-                max_instances = int(raw.get("max_instances", max_instances))
-            except (TypeError, ValueError, OverflowError):
-                max_instances = REPLAY_DEFAULTS["max_instances"]
+            if "max_instances" in raw:
+                max_instances = check_max_instances(raw["max_instances"]).value
             raw_flags = raw.get("capture_flags")
             if isinstance(raw_flags, dict):
                 for key, default_value in CAPTURE_FLAG_DEFAULTS.items():
                     if key in raw_flags:
                         flags[key] = _coerce_bool(raw_flags[key], default_value)
-        if max_instances < 1:
-            max_instances = REPLAY_DEFAULTS["max_instances"]
         return cls(enabled=enabled, max_instances=max_instances, capture_flags=flags)
 
     def deep_capture_enabled(self) -> bool:
