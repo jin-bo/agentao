@@ -78,6 +78,8 @@ class MemoryManager:
         # ``MemoryRetriever`` recalling a stale index, so the bump takes a lock.
         self._write_version: int = 0
         self._write_version_lock = threading.Lock()
+        # Stores whose ``change_version()`` failure has been warned about once.
+        self._change_version_warned: set = set()
 
     @property
     def write_version(self) -> int:
@@ -89,7 +91,7 @@ class MemoryManager:
             self._write_version += 1
 
     def store_change_version(self) -> tuple:
-        """Each store's ``change_version()``, or ``None`` where it has none.
+        """Each present store's ``change_version()``, or ``None`` where it has none.
 
         Unlike :attr:`write_version`, this also moves on writes made by another
         manager or process on the same store. Use it for caches of store
@@ -100,16 +102,33 @@ class MemoryManager:
         ``change_version`` is optional on :class:`MemoryStore`. A store without
         it, or one whose answer is not an ``int``, or one that raises, gives
         ``None`` — the cache then falls back to :attr:`write_version` alone.
+        An absent user store contributes no entry, so ``None`` always means
+        "this store cannot report its changes".
+
+        A probe that raises logs one warning per store, then debug lines: a
+        store that keeps failing has silently lost cross-writer recall.
         """
         versions = []
-        for store in (self.project_store, self.user_store):
+        for label, store in (("project", self.project_store), ("user", self.user_store)):
+            if store is None:
+                continue
             version = None
-            probe = getattr(store, "change_version", None) if store is not None else None
+            probe = getattr(store, "change_version", None)
             if callable(probe):
                 try:
                     answer = probe()
                 except Exception:
-                    logger.debug("memory store change_version failed", exc_info=True)
+                    if label in self._change_version_warned:
+                        logger.debug("memory store change_version failed", exc_info=True)
+                    else:
+                        self._change_version_warned.add(label)
+                        logger.warning(
+                            "%s memory store change_version() failed; recall will "
+                            "not see memories written by other sessions until this "
+                            "session writes one",
+                            label,
+                            exc_info=True,
+                        )
                 else:
                     if isinstance(answer, int) and not isinstance(answer, bool):
                         version = answer

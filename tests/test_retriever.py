@@ -656,9 +656,10 @@ def test_a_foreign_write_does_not_move_write_version(tmp_path):
     """
     a, b, _ = _two_managers_on_one_file(tmp_path)
     before = a.write_version
+    store_before = a.store_change_version()
     b.save_from_tool("db_choice", "we use postgres", ["db"])
     assert a.write_version == before
-    assert a.store_change_version() == b.store_change_version()
+    assert a.store_change_version() != store_before
 
 
 def test_a_raw_sql_write_advances_the_change_version(tmp_path):
@@ -736,7 +737,32 @@ def test_store_change_version_fails_closed_to_none(tmp_path):
     inner = SQLiteMemoryStore.open(tmp_path / "memory.db")
     for change_version in (None, lambda: "7", lambda: True, _raise):
         mgr = MemoryManager(project_store=_HostStore(inner, change_version))
-        assert mgr.store_change_version() == (None, None)
+        assert mgr.store_change_version() == (None,)
+
+
+def test_a_failing_change_version_warns_once_per_store(tmp_path, caplog):
+    from agentao.memory.storage import SQLiteMemoryStore
+    inner = SQLiteMemoryStore.open(tmp_path / "memory.db")
+    mgr = MemoryManager(project_store=_HostStore(inner, _raise))
+    with caplog.at_level(logging.DEBUG, logger="agentao.memory.manager"):
+        for _ in range(3):
+            mgr.store_change_version()
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "project memory store change_version() failed" in warnings[0].getMessage()
+
+
+def test_an_empty_index_on_a_store_without_change_version_sees_another_writer(tmp_path):
+    """Such a store cannot report foreign writes, so an empty index is not
+    cached for it: it re-reads, as it did before the change counter."""
+    from agentao.memory.storage import SQLiteMemoryStore
+    db = tmp_path / "memory.db"
+    a = MemoryManager(project_store=_HostStore(SQLiteMemoryStore.open(db)))
+    b = MemoryManager(project_store=SQLiteMemoryStore.open(db))
+    ret = MemoryRetriever(a)
+    assert ret.recall_candidates("postgres database") == []
+    b.save_from_tool("db_choice", "we use the postgres database in production", ["db"])
+    assert [h.title for h in ret.recall_candidates("postgres database")] == ["db_choice"]
 
 
 def test_recall_still_works_on_a_host_store_without_change_version(tmp_path):

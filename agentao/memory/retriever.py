@@ -307,9 +307,18 @@ class MemoryRetriever:
         ``manager.store_change_version()`` (writes by any manager or process on
         the same store). The key is read *before* the records, so a write that
         lands in between leaves a stale key and the next call rebuilds again.
+
+        An empty index is cached only when every store reports its version. A
+        store that cannot (``None``) keeps the older behaviour of re-reading
+        while the index is empty, which is how it ever sees another writer.
         """
-        current = (self._manager.write_version, self._manager.store_change_version())
-        if self._index_built and current == self._index_version:
+        store_versions = self._manager.store_change_version()
+        current = (self._manager.write_version, store_versions)
+        if (
+            self._index_built
+            and current == self._index_version
+            and (self._records_by_id or None not in store_versions)
+        ):
             return
         self._index_built = False
         records = self._manager.get_all_entries()

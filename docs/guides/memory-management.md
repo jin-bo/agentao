@@ -38,8 +38,10 @@ Agentao 使用 SQLite 作为唯一的持久化后端，管理三类不同性质�
 memories           — 持久记忆（软删除）
 session_summaries  — 会话压缩摘要
 memory_events      — 写操作审计日志（内部使用）
-schema_meta        — 版本元数据
+schema_meta        — 版本元数据；另有 memories_change 计数器
 ```
+
+`memories` 表上有三个触发器（`trg_memories_change_ins` / `_upd` / `_del`），每次插入、更新、删除都把 `memories_change` 加一。触发器存在数据库文件里，所以任何写入方（另一个会话、另一个进程、旧版 agentao）都会推进它。召回索引以它为键：其他会话写入的记忆，下一次召回就能看到。`<memory-stable>` 系统提示块不看这个计数器，只在本会话自己写入时更新，保证提示缓存前缀稳定。
 
 ---
 
