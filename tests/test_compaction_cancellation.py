@@ -200,7 +200,7 @@ def _bare(tmp_path, monkeypatch):
     monkeypatch.setattr(agent, "_build_volatile_tail", lambda: "")
     seen: List[Any] = []
 
-    def capture(msgs, *, is_auto=True, reason="", decide=None, cancellation_token=None):
+    def capture(msgs, *, is_auto=True, reason="", decide=None, cancellation_token=None, on_summarize=None):
         seen.append((reason, cancellation_token))
         raise AgentCancelledError("stop here")
 

@@ -15,7 +15,10 @@ coordinator returns a ``CompactionOutcome`` with a ``status``.
 
 from __future__ import annotations
 
+from time import monotonic
 from typing import TYPE_CHECKING
+
+from rich.text import Text
 
 from ...compaction.coordinator import CompactionRequest
 from ...context_manager import ContextManager
@@ -52,6 +55,30 @@ _FAILURE_HINTS = {
 }
 
 
+def _fmt_elapsed(seconds: float) -> str:
+    """``0s``, ``59s``, ``1m 05s``, ``1h 02m 03s`` — codex's status-line form."""
+    secs = int(seconds)
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m {secs % 60:02d}s"
+    return f"{secs // 3600}h {secs % 3600 // 60:02d}m {secs % 60:02d}s"
+
+
+class _CompactingStatus:
+    """The spinner's text, re-rendered on every refresh so the clock runs
+    without a timer thread of its own."""
+
+    def __init__(self, started: float) -> None:
+        self._started = started
+
+    def __rich__(self) -> Text:
+        elapsed = _fmt_elapsed(monotonic() - self._started)
+        return Text.assemble(
+            ("Compacting context", "bold yellow"), (f" ({elapsed})", "dim"),
+        )
+
+
 def handle_compact_command(cli: AgentaoCLI, args: str) -> None:
     """Handle ``/compact`` — summarize old history into a compact block."""
     agent = cli.agent
@@ -66,17 +93,30 @@ def handle_compact_command(cli: AgentaoCLI, args: str) -> None:
     system_prompt = agent._build_system_prompt()
     pre_msgs = len(agent.messages)
 
-    run = agent.compaction_coordinator.run(
-        CompactionRequest("manual", "full", "manual_cli"),
-        system_prompt=system_prompt,
-        measure_system_tokens=True,
-    )
+    # The summarization call can take a minute; without a spinner the
+    # prompt sits there looking hung. Published as ``current_status`` like a
+    # turn's spinner, so a retry notice or a PreCompact hook's output prints
+    # above it instead of tearing it.
+    started = monotonic()
+    cli.current_status = console.status(_CompactingStatus(started), spinner="dots")
+    cli.current_status.start()
+    try:
+        run = agent.compaction_coordinator.run(
+            CompactionRequest("manual", "full", "manual_cli"),
+            system_prompt=system_prompt,
+            measure_system_tokens=True,
+        )
+    finally:
+        if cli.current_status:
+            cli.current_status.stop()
+        cli.current_status = None
+    took = _fmt_elapsed(monotonic() - started)
     outcome = run.outcome
 
     if outcome.status == "cancelled":
         why = f" — {outcome.detail}" if outcome.detail else ""
         console.print(
-            f"\n[warning]Compaction cancelled by the host{why}.[/warning]\n"
+            f"\n[warning]Compaction cancelled by the host{why} · {took}.[/warning]\n"
             "[dim]History is unchanged. A PreCompact hook or the configured "
             "compaction controller vetoed it.[/dim]\n"
         )
@@ -96,7 +136,7 @@ def handle_compact_command(cli: AgentaoCLI, args: str) -> None:
                 "succeeds (or /clear).[/dim]"
             )
         console.print(
-            f"\n[warning]Compaction made no change{detail}.[/warning]{note}\n"
+            f"\n[warning]Compaction made no change{detail} · {took}.[/warning]{note}\n"
         )
         return
 
@@ -114,5 +154,5 @@ def handle_compact_command(cli: AgentaoCLI, args: str) -> None:
     console.print(
         f"\n[success]Compacted history: {pre_msgs} → {post_msgs} messages, "
         f"~{pre_tokens:,} → ~{post_tokens:,} tokens "
-        f"({pct:.1f}% of window).[/success]\n"
+        f"({pct:.1f}% of window) · {took}.[/success]\n"
     )

@@ -94,6 +94,70 @@
       "title": "AcpAgentaoSetModelResponse",
       "type": "object"
     },
+    "AcpAnnotations": {
+      "additionalProperties": false,
+      "description": "ACP ``Annotations`` on a content block (display / routing hints).\n\nAccepted on every prompt block and ignored: nothing here reaches the\nmodel. The runtime does not validate it, so a malformed value is not\nrefused; this model describes what a valid one looks like (#479).",
+      "properties": {
+        "_meta": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Meta"
+        },
+        "audience": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "assistant",
+                  "user"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Audience"
+        },
+        "lastModified": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastmodified"
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Priority"
+        }
+      },
+      "title": "AcpAnnotations",
+      "type": "object"
+    },
     "AcpAskUserAnswered": {
       "additionalProperties": false,
       "description": "``ask_user`` reply when the user typed an answer.",
@@ -418,8 +482,32 @@
     },
     "AcpImageContentBlock": {
       "additionalProperties": false,
-      "description": "An ACP image content block (inline base64).\n\nThe agent surfaces ``data``/``mimeType`` to the LLM as an OpenAI\n``image_url`` data-URL part. The image wire deliberately carries only\ninline content \u2014 ``{data, mimeType}`` \u2014 and never a by-reference\n``uri``: with ``extra=\"forbid\"`` an image block that includes ``uri``\n(e.g. ``file:///etc/passwd``) is rejected outright, so the handler can\nnever be coaxed into dereferencing a host path or secret. The spec's\noptional by-reference field is intentionally unsupported in v1.",
+      "description": "An ACP image content block (inline base64).\n\nThe agent surfaces ``data``/``mimeType`` to the LLM as an OpenAI\n``image_url`` data-URL part; ``annotations`` and ``_meta`` are accepted\nand ignored (#479), and reach neither the model nor any configuration.\nThe spec's optional ``uri`` stays unsupported in v1: with\n``extra=\"forbid\"`` an image block that includes ``uri`` (e.g.\n``file:///etc/passwd``) is rejected outright. The handler would not\ndereference it either way; the refusal keeps the existing contract.",
       "properties": {
+        "_meta": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Meta"
+        },
+        "annotations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AcpAnnotations"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "data": {
           "title": "Data",
           "type": "string"
@@ -857,7 +945,56 @@
     },
     "AcpResourceLinkBlock": {
       "additionalProperties": false,
+      "description": "An ACP resource link, rendered as ``[Resource: label](uri)``.\n\nOnly ``uri`` and the ``title`` / ``name`` label are read; the other\nspec-defined fields are accepted and ignored.",
       "properties": {
+        "_meta": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Meta"
+        },
+        "annotations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AcpAnnotations"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "mimeType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mimetype"
+        },
         "name": {
           "anyOf": [
             {
@@ -869,6 +1006,18 @@
           ],
           "default": null,
           "title": "Name"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
         },
         "title": {
           "anyOf": [
@@ -1145,7 +1294,21 @@
     },
     "AcpSessionPromptRequest": {
       "additionalProperties": false,
+      "description": "``session/prompt`` params. ``_meta`` (e.g. a W3C ``traceparent``) is ignored.",
       "properties": {
+        "_meta": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Meta"
+        },
         "prompt": {
           "items": {
             "discriminator": {
@@ -1718,7 +1881,32 @@
     },
     "AcpTextContentBlock": {
       "additionalProperties": false,
+      "description": "An ACP text content block. ``annotations`` / ``_meta`` are ignored.",
       "properties": {
+        "_meta": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Meta"
+        },
+        "annotations": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AcpAnnotations"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "text": {
           "title": "Text",
           "type": "string"

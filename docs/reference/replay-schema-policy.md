@@ -1,7 +1,7 @@
 # Replay schema versioning policy
 
 This document defines how the JSON Schema files under `schemas/` evolve.
-It exists so that "what does `SCHEMA_VERSION = "1.3"` mean?" has a
+It exists so that "what does `SCHEMA_VERSION = "1.4"` mean?" has a
 machine-checkable answer instead of living in a dataclass docstring.
 
 ## Source of truth
@@ -56,8 +56,8 @@ Required when:
   would fail validation.
 
 Major bumps freeze the previous schema file. `schemas/replay-event-1.0.json`,
-`schemas/replay-event-1.1.json`, `schemas/replay-event-1.2.json`, and
-`schemas/replay-event-1.3.json` each
+`schemas/replay-event-1.1.json`, `schemas/replay-event-1.2.json`,
+`schemas/replay-event-1.3.json`, and `schemas/replay-event-1.4.json` each
 keep validating every replay file written under their respective minor,
 indefinitely.
 
@@ -163,3 +163,13 @@ belongs in `agentao/replay/schema.py` so it is unit-testable.
   `pre_tokens_history` / `post_tokens_history` are named apart precisely
   because they exclude the system prompt. Backward-compatible with 1.2 —
   every 1.2 kind survives, and older readers skip the new one.
+- **1.4** — adds one kind, `images_removed`: image parts in history were
+  replaced with a text note, because a provider refused an image
+  (`reason: provider_rejected`) or the model refused image input
+  (`reason: model_unsupported`). Payload: `reason`, `images_removed`
+  (a count) and `message_indices` (history positions rewritten); never
+  the image data. It exists because `llm_call_delta` records only the
+  messages a turn *adds*, so an in-place rewrite of an earlier message is
+  otherwise absent from the replay: the file would keep showing an image
+  that was no longer being sent. Backward-compatible with 1.3 — older
+  readers skip the new kind.

@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ._api_format import ANTHROPIC_MESSAGES
 from ._cache_control import apply_cache_control
+from ._image_parts import unsendable_image_note
 from ._retry import (
     RETRYABLE_STATUS_CODES,
     StreamEndedEarlyError,
@@ -197,10 +198,10 @@ def _content_blocks(content: Any) -> List[Dict[str, Any]]:
 
     Empty and whitespace-only text is dropped — the API rejects an empty text
     block. An image is a base64 data URL (all agentao's own ``chat(images=...)``
-    produces) or an ``http(s)`` URL, which the API fetches itself. Anything
-    else raises: it can only come from a host writing history directly, and
-    dropping it silently would send the model a different conversation than the
-    host recorded.
+    produces) or an ``http(s)`` URL, which the API fetches itself. Any other
+    image is sent as a text note saying it was omitted, never dropped silently
+    and never raised: the part is in history, so a raise would fail every later
+    request (#485). Any other part type still raises.
     """
     if content is None:
         return []
@@ -235,10 +236,13 @@ def _content_blocks(content: Any) -> List[Dict[str, Any]]:
                 # would raise too, with nothing short of ``/clear`` to recover.
                 source = {"type": "url", "url": url}
             else:
-                raise ValueError(
-                    "anthropic-messages: an image must be a base64 data URL "
-                    "or an http(s) URL"
-                )
+                # Not raised: the part is in history, so a raise here would
+                # fail every later request too (#485).
+                blocks.append(_text_block(unsendable_image_note(
+                    ANTHROPIC_MESSAGES,
+                    "an image must be a base64 data URL or an http(s) URL",
+                ), marker))
+                continue
             block: Dict[str, Any] = {"type": "image", "source": source}
             if marker is not None:
                 block["cache_control"] = marker

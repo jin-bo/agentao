@@ -49,6 +49,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from ..security.unicode_tags import strip_unicode_tags
 from .arg_repair import parse_tool_arguments
 from .tool_planning import make_tool_result_message
+from .. import json_parse
 
 
 SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
@@ -97,7 +98,7 @@ def canonicalize_tool_arguments(
     # path so the same ``"{}"`` fallback applies.
     if isinstance(raw, str) and SURROGATE_RE.search(raw) is None:
         try:
-            if isinstance(json.loads(raw), dict):
+            if isinstance(json_parse.loads(raw), dict):
                 return raw
         except json.JSONDecodeError:
             pass

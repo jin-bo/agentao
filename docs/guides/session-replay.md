@@ -29,7 +29,10 @@ or by editing `.agentao/settings.json` directly:
 
 - `replay.enabled` — boolean master switch.
 - `replay.max_instances` — retention cap under `.agentao/replays/`. Defaults
-  to 20. Does not affect `.agentao/sessions/`.
+  to 20. Does not affect `.agentao/sessions/`. A value that is not a count
+  (`true`, `"abc"`, `0`) is ignored and 20 is used; `agentao doctor` reports
+  it as an error. A number written as a string (`"50"`) or with a fraction
+  (`2.9` → 2) still applies, with a doctor warning.
 
 Toggling recording takes effect on the **next** session; the currently
 running instance is not touched. Use `/replay off` to stop recording

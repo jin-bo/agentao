@@ -239,18 +239,51 @@ class AcpSessionNewResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class AcpAnnotations(BaseModel):
+    """ACP ``Annotations`` on a content block (display / routing hints).
+
+    Accepted on every prompt block and ignored: nothing here reaches the
+    model. The runtime does not validate it, so a malformed value is not
+    refused; this model describes what a valid one looks like (#479).
+    """
+
+    audience: Optional[List[Literal["assistant", "user"]]] = None
+    lastModified: Optional[str] = None
+    priority: Optional[float] = None
+    meta: Optional[Dict[str, Any]] = Field(default=None, alias="_meta")
+
+    # Alias-only, as on ``AcpInitializeResponse``: ``meta`` is never an
+    # accepted input key, only the wire key ``_meta``.
+    model_config = ConfigDict(extra="forbid")
+
+
 class AcpTextContentBlock(BaseModel):
+    """An ACP text content block. ``annotations`` / ``_meta`` are ignored."""
+
     type: Literal["text"] = "text"
     text: str
+    annotations: Optional[AcpAnnotations] = None
+    meta: Optional[Dict[str, Any]] = Field(default=None, alias="_meta")
 
     model_config = ConfigDict(extra="forbid")
 
 
 class AcpResourceLinkBlock(BaseModel):
+    """An ACP resource link, rendered as ``[Resource: label](uri)``.
+
+    Only ``uri`` and the ``title`` / ``name`` label are read; the other
+    spec-defined fields are accepted and ignored.
+    """
+
     type: Literal["resource_link"] = "resource_link"
     uri: str
     name: Optional[str] = None
     title: Optional[str] = None
+    description: Optional[str] = None
+    mimeType: Optional[str] = None
+    size: Optional[int] = None
+    annotations: Optional[AcpAnnotations] = None
+    meta: Optional[Dict[str, Any]] = Field(default=None, alias="_meta")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -259,17 +292,19 @@ class AcpImageContentBlock(BaseModel):
     """An ACP image content block (inline base64).
 
     The agent surfaces ``data``/``mimeType`` to the LLM as an OpenAI
-    ``image_url`` data-URL part. The image wire deliberately carries only
-    inline content — ``{data, mimeType}`` — and never a by-reference
-    ``uri``: with ``extra="forbid"`` an image block that includes ``uri``
-    (e.g. ``file:///etc/passwd``) is rejected outright, so the handler can
-    never be coaxed into dereferencing a host path or secret. The spec's
-    optional by-reference field is intentionally unsupported in v1.
+    ``image_url`` data-URL part; ``annotations`` and ``_meta`` are accepted
+    and ignored (#479), and reach neither the model nor any configuration.
+    The spec's optional ``uri`` stays unsupported in v1: with
+    ``extra="forbid"`` an image block that includes ``uri`` (e.g.
+    ``file:///etc/passwd``) is rejected outright. The handler would not
+    dereference it either way; the refusal keeps the existing contract.
     """
 
     type: Literal["image"] = "image"
     data: str
     mimeType: str
+    annotations: Optional[AcpAnnotations] = None
+    meta: Optional[Dict[str, Any]] = Field(default=None, alias="_meta")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -281,8 +316,11 @@ AcpPromptContentBlock = Annotated[
 
 
 class AcpSessionPromptRequest(BaseModel):
+    """``session/prompt`` params. ``_meta`` (e.g. a W3C ``traceparent``) is ignored."""
+
     sessionId: str
     prompt: List[AcpPromptContentBlock]
+    meta: Optional[Dict[str, Any]] = Field(default=None, alias="_meta")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -901,6 +939,7 @@ __all__ = [
     "AcpAgentInfo",
     "AcpAgentaoSetModelRequest",
     "AcpAgentaoSetModelResponse",
+    "AcpAnnotations",
     "AcpAskUserAnswered",
     "AcpAskUserCancelled",
     "AcpAskUserParams",

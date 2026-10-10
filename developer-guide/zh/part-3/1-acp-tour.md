@@ -174,7 +174,7 @@ sequenceDiagram
 
 v1 协议的**明确限制**（Agentao 能力字段如实反映）：
 
-- `promptCapabilities.image = true`（0.4.8+，仅接受内联 `{data, mimeType}` 块）、`audio = false`、`embeddedContext = false`
+- `promptCapabilities.image = true`（0.4.8+，接受内联 `{data, mimeType}` 块，不接受按引用的 `uri`；可选的 `annotations` / `_meta` 会被忽略）、`audio = false`、`embeddedContext = false`
 - `mcpCapabilities.http = true`、`sse = true`——MCP 支持 stdio、Streamable HTTP 与 SSE
 - `authMethods`——client 声明支持 Terminal Auth（`clientCapabilities.auth.terminal`，或旧式 `_meta["terminal-auth"]`）时，含一个 `terminal` 登录方法（`--login`），否则为 `[]`。凭据不经过协议：来自启动环境、项目 `.env`，或 `agentao --login` 写入的 `~/.agentao/llm.json`；都没有时，`session/new` / `session/load` 返回 `auth_required`（`-32000`）（0.5.8+）
 

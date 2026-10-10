@@ -12,7 +12,13 @@ protocol replay features.
 """
 
 from .adapter import ReplayAdapter
-from .config import REPLAY_DEFAULTS, ReplayConfig, load_replay_config, save_replay_enabled
+from .config import (
+    REPLAY_DEFAULTS,
+    ReplayConfig,
+    ReplaySettingsError,
+    load_replay_config,
+    save_replay_enabled,
+)
 from .events import (
     SCHEMA_VERSION,
     EventKind,
@@ -44,6 +50,7 @@ __all__ = [
     "REPLAY_DEFAULTS",
     "load_replay_config",
     "save_replay_enabled",
+    "ReplaySettingsError",
     "list_replays",
     "open_replay",
     "resolve_replay_id",

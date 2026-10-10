@@ -74,6 +74,8 @@ Context limit set to 500,000 tokens
 
 摘要既存在于活的消息历史里（下一轮看得见），又存在 DB 里（未来会话能通过记忆引用）。
 
+第 2 步执行期间（可能要一分钟），这一轮的 `Thinking…` 转圈会变成 `Compacting context (12s)`；完成后会显示 `Context compacted · 54 → 19 messages · 14s`（或 `Compaction made no change — <reason> · 14s`），转圈再变回 `Thinking…`。如果连续失败已让自动压缩暂停，会另有一行说明。
+
 "熔断器"是兜底：如果压缩本身失败（LLM 超时、解析错）连续超过 `CIRCUIT_BREAKER_LIMIT` 次，本会话剩余时间自动压缩关闭 — 拒绝一轮总比螺旋崩溃好。
 
 ## `/compact` — 手动立即压缩
@@ -82,8 +84,11 @@ Context limit set to 500,000 tokens
 
 ```text
 > /compact
-Compacted history: 54 → 19 messages, ~47,231 → ~12,880 tokens (6.4% of window).
+⠋ Compacting context (12s)
+Compacted history: 54 → 19 messages, ~47,231 → ~12,880 tokens (6.4% of window) · 14s.
 ```
+
+执行期间会显示 `Compacting context (12s)` 转圈提示，实时显示摘要调用已用的时间；结果行末尾附上总耗时。
 
 发生了什么：
 

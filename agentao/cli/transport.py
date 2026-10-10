@@ -112,6 +112,70 @@ def on_llm_retry(data: object) -> None:
     console.print(f"[yellow]\u27f3 Reconnecting… {retry}/{max_retries}[/yellow]{suffix}")
 
 
+def on_compaction_started(cli: AgentaoCLI, data: object) -> None:
+    """Turn the turn's ``Thinking…`` into ``Compacting context (Ns)`` (#491).
+
+    Only an automatic compaction: manual ``/compact`` runs outside a turn and
+    shows its own spinner. The start is remembered with the spinner it
+    changed, so a settle can only answer the start of its own turn — a turn
+    cancelled mid-compaction sends no settle, and the next turn has a new
+    spinner.
+    """
+    from time import monotonic
+
+    from .commands.compact import _CompactingStatus
+
+    status = cli.current_status
+    if not isinstance(data, dict) or data.get("trigger") != "auto" or status is None:
+        return
+    started = monotonic()
+    cli._compaction_pending = (status, started)
+    status.update(_CompactingStatus(started))
+    status.start()
+
+
+def on_compaction_settled(cli: AgentaoCLI, data: object) -> None:
+    """Report how the compaction went and give the spinner back to the turn."""
+    from time import monotonic
+
+    from .commands.compact import _FAILURE_HINTS, _fmt_elapsed
+
+    pending = getattr(cli, "_compaction_pending", None)
+    cli._compaction_pending = None
+    if pending is None or not isinstance(data, dict):
+        return
+    status, started = pending
+    if status is not cli.current_status:
+        return
+    took = _fmt_elapsed(monotonic() - started)
+    # Spinner first: printing first lets the live display redraw the old
+    # "Compacting" text once more under the result line.
+    status.update("[bold yellow]Thinking…[/bold yellow]")
+    if data.get("status") == "success":
+        pre, post = data.get("pre_msgs"), data.get("post_msgs")
+        counts = (
+            f" · {pre} → {post} messages"
+            if isinstance(pre, int) and isinstance(post, int) else ""
+        )
+        console.print(f"[dim]Context compacted{counts} · {took}[/dim]")
+    else:
+        # Same wording ``/compact`` uses: the raw detail is an internal code
+        # (``summary_empty``, ``host_summary_rejected:…+summary_empty``).
+        detail = data.get("detail")
+        hint = _FAILURE_HINTS.get(detail) if isinstance(detail, str) else None
+        why = f" — {hint}" if hint else (" (see agentao.log)" if detail else "")
+        console.print(f"[warning]Compaction made no change{why} · {took}[/warning]")
+        # The third automatic failure pauses automatic compaction; without
+        # this line nothing tells the user. Checked as ``is True`` — a
+        # duck-typed seam answers any attribute.
+        cm = getattr(getattr(cli, "agent", None), "context_manager", None)
+        if getattr(cm, "compaction_circuit_open", None) is True:
+            console.print(
+                "[dim]Automatic compaction is paused after repeated failures "
+                "until a compaction succeeds (/compact) or /clear.[/dim]"
+            )
+
+
 def emit_event(cli: AgentaoCLI, event: AgentEvent) -> None:
     """Dispatch a runtime event to the appropriate handler."""
     try:
@@ -134,6 +198,10 @@ def emit_event(cli: AgentaoCLI, event: AgentEvent) -> None:
             on_hook_notices(event.data.get("user_notices"))
         elif t == EventType.LLM_RETRY:
             on_llm_retry(event.data)
+        elif t == EventType.COMPACTION_STARTED:
+            on_compaction_started(cli, event.data)
+        elif t == EventType.COMPACTION_SETTLED:
+            on_compaction_settled(cli, event.data)
         else:
             cli.display.on_event(event)
     except Exception:

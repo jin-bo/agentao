@@ -212,6 +212,23 @@ def test_profile_timeout_defaults_follow_the_reference():
     assert explicit[0].timeout == 5
 
 
+@pytest.mark.parametrize("value", [float("inf"), float("-inf")])
+def test_a_timeout_outside_the_int_range_falls_back_to_the_default(value):
+    """`1e309` is valid JSON and loads as infinity; `int()` raises
+    OverflowError on it, which must take the same warn-and-default path as
+    any other invalid timeout rather than escaping hook collection."""
+    flat, flat_warnings = parse({"hooks": {"PreToolUse": [
+        {"type": "command", "command": "x", "timeout": value}]}})
+    assert flat[0].contract == LEGACY_CONTRACT_ID
+    assert flat[0].timeout == 60
+    assert any("Invalid timeout value" in w.message for w in flat_warnings)
+
+    profile, profile_warnings = parse(official(timeout=value))
+    assert profile[0].contract == PROFILE_ID
+    assert profile[0].timeout == 600
+    assert any("Invalid timeout value" in w.message for w in profile_warnings)
+
+
 def test_args_is_accepted_and_type_checked():
     rules, _ = parse(official(args=["--flag", "${CLAUDE_PLUGIN_ROOT}/x"]))
     assert rules[0].args == ["--flag", "${CLAUDE_PLUGIN_ROOT}/x"]

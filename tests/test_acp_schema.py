@@ -268,6 +268,52 @@ def test_image_block_rejects_uri_field():
         })
 
 
+_ANNOTATIONS = {"audience": ["user"], "priority": 0.5, "lastModified": "2026-10-09T00:00:00Z"}
+_META = {"traceparent": "00-80e1afed08e019fc1110464cfa66635c-7a085853722dc6d2-01"}
+
+
+def test_session_prompt_accepts_spec_optional_fields():
+    """#479: the spec-defined optional fields validate on every prompt block
+    and on the request — the published schema used to forbid all of them."""
+    req = AcpSessionPromptRequest.model_validate({
+        "sessionId": "s-1",
+        "_meta": _META,
+        "prompt": [
+            {"type": "text", "text": "hi", "annotations": _ANNOTATIONS, "_meta": _META},
+            {
+                "type": "resource_link", "uri": "file:///x", "name": "x",
+                "title": "X", "description": "d", "mimeType": "text/plain",
+                "size": 3, "annotations": _ANNOTATIONS, "_meta": _META,
+            },
+            {
+                "type": "image", "data": "QUJD", "mimeType": "image/png",
+                "annotations": _ANNOTATIONS, "_meta": {**_META, "_agentao.cn/x": 1},
+            },
+        ],
+    })
+    assert req.meta == _META
+    assert req.prompt[2].annotations.audience == ["user"]
+
+
+@pytest.mark.parametrize("block", [
+    {"type": "text", "text": "hi", "meta": {}},
+    {"type": "image", "data": "QUJD", "mimeType": "image/png", "meta": {}},
+    {"type": "image", "data": "QUJD", "mimeType": "image/png", "annotations": {"meta": {}}},
+], ids=["text", "image", "annotations"])
+def test_meta_is_alias_only(block):
+    """Only the wire key ``_meta`` is accepted; the Python field name is not."""
+    with pytest.raises(ValidationError):
+        AcpSessionPromptRequest.model_validate({"sessionId": "s-1", "prompt": [block]})
+
+
+def test_annotations_audience_is_a_role():
+    with pytest.raises(ValidationError):
+        AcpSessionPromptRequest.model_validate({
+            "sessionId": "s-1",
+            "prompt": [{"type": "text", "text": "hi", "annotations": {"audience": ["robot"]}}],
+        })
+
+
 def test_session_prompt_response_rejects_unknown_stop_reason():
     with pytest.raises(ValidationError):
         AcpSessionPromptResponse.model_validate({"stopReason": "stopped"})

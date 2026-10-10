@@ -787,6 +787,8 @@ parts；同一持久化和清洗契约适用，原生载荷须区分线路，不
    带进来。Anthropic 本身接受远程图像（`source: {type: "url", url: ...}`，见 Anthropic
    vision 文档的 *URL-based image example*），需要支持这种情况时直接透传即可。v1 只处理
    data URL 因此是一条明确的**范围**限制，而非协议属性：对其它形态显式报错，不要静默丢弃。
+   *实际实现：* `http(s)` URL 直接透传；自 #485 起，其它形态的图片以一段说明已省略的
+   文字发出，并在 `agentao.log` 记警告。抛错会永久卡住会话，因为这部分一直留在历史里。
 
 7. **Thinking 块。** Anthropic 返回带签名的 `thinking` 与 `redacted_thinking` 块，
    下次请求必须原样送回。agentao 为历史把 `reasoning_content` 截到 500 字符

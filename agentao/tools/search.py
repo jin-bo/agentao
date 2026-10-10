@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, List, Optional
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional
 import fnmatch
 import re
 
@@ -20,6 +20,14 @@ from ..capabilities.process import run_captured as _run_capture
 def _find_executable(name: str) -> Optional[str]:
     """Locate an external binary on PATH (absolute path) or return None."""
     return shutil.which(name)
+
+
+def _glob_files(fs: FileSystem, path: Path, pattern: str) -> Iterable[Path]:
+    """Preserve recursive segments while retaining common host call shapes."""
+    head, sep, rest = pattern.partition("**/")
+    if sep and not any(ch in head for ch in "*?["):
+        return fs.glob(path / head if head else path, rest, recursive=True)
+    return fs.glob(path, pattern, recursive=False)
 
 
 # Files modified within this window are sorted by recency
@@ -110,7 +118,9 @@ def _format_grep_output(stdout: str, pattern: str, skip: FrozenSet[str]) -> str:
     Both engines emit ``path:lineno:content`` lines, so skip-list filtering
     and the 100-match truncation are identical.
     """
-    lines = stdout.strip().splitlines()
+    # grep records are delimited by LF (or CRLF). Unicode separators in
+    # matched file content are ordinary characters, not additional matches.
+    lines = [line.removesuffix("\r") for line in stdout.rstrip("\n").split("\n")] if stdout else []
     if skip:
         lines = [ln for ln in lines if not _any_part_in_skip(ln.split(":", 1)[0], skip)]
     return _format_match_lines(lines, pattern)
@@ -176,9 +186,7 @@ class FindFilesTool(Tool):
                 return f"Error: Directory {directory} does not exist"
 
             matches = []
-            # The pattern already locates each recursive segment. Adding an
-            # implicit leading ** or stripping inner ** changes its meaning.
-            for item in fs.glob(path, pattern, recursive=False):
+            for item in _glob_files(fs, path, pattern):
                 if fs.is_file(item):
                     matches.append(str(item.relative_to(path)))
 
@@ -407,9 +415,7 @@ class SearchTextTool(Tool):
                 if not case_sensitive:
                     pattern = pattern.lower()
 
-            recursive = "**" in file_pattern
-            search_pattern = file_pattern.replace("**/", "") if recursive else file_pattern
-            files_to_search = fs.glob(path, search_pattern, recursive=recursive)
+            files_to_search = _glob_files(fs, path, file_pattern)
 
             results = []
             for file_path in files_to_search:

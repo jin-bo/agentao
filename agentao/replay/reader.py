@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterator, List, Optional, Set
 from .events import EventKind
 from ._files import replay_files_oldest_first
 from .meta import ReplayMeta
+from .. import json_parse
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +163,7 @@ class ReplayReader:
             if not line.strip():
                 continue
             try:
-                event = json.loads(line.decode("utf-8"))
+                event = json_parse.loads(line.decode("utf-8"))
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 # Tolerate ONE malformed tail line (crash-during-write).
                 # Any malformed line in the middle is still skipped but
@@ -239,7 +240,7 @@ def _summarize(path: Path) -> Optional[ReplayMeta]:
         if not line.strip():
             continue
         try:
-            event = json.loads(line.decode("utf-8"))
+            event = json_parse.loads(line.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
             # Trailing partial line is normal after a crash; only count
             # middle-of-file malformation as "real" corruption.

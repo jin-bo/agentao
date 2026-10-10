@@ -32,8 +32,8 @@ OVERFLOW_CASES = [
     ("ollama", "prompt too long; exceeded max context length by 1200 tokens"),
     ("zai_glm", "tokens in request more than max tokens allowed"),
     ("configured_context_size", "Prompt has 5,958,968 tokens, but the configured context size is 256,000 tokens"),
-    ("dashscope_range", "Range of input length should be ..."),
-    ("dashscope_code", "InternalError.Algo.InvalidParameter: ..."),
+    # Measured on dashscope.aliyuncs.com, qwen3.8-flash, 2026-10-09 (#484).
+    ("dashscope_range", "<400> InternalError.Algo.InvalidParameter: Range of input length should be [1, 983616]"),
     # Broad forms the old substring matcher caught — must not regress to stricter regex.
     ("reduce_length_prompt", "Please reduce the length of the prompt and try again"),
     ("maxlen_no_digits", "Your request exceeds the maximum context length for this model"),
@@ -57,6 +57,14 @@ NON_OVERFLOW_CASES = [
     # Strands' negative cases: "model maximum" without "exceed" is not an overflow.
     ("max_output_positive", "model maximum output tokens must be a positive integer"),
     ("model_unavailable", "requested model openai.gpt-5.6-terra is not available in this region"),
+    # DashScope's error code covers every invalid parameter, so it is not an
+    # overflow on its own. Measured on dashscope.aliyuncs.com, qwen3.8-flash,
+    # 2026-10-09 (#484); the last two are refused images (#480).
+    ("dashscope_temperature", "<400> InternalError.Algo.InvalidParameter: Temperature should be in [0.0, 2.0)"),
+    ("dashscope_max_tokens", "<400> InternalError.Algo.InvalidParameter: Range of max_tokens should be [1, 131072]"),
+    ("dashscope_roles", '<400> InternalError.Algo.InvalidParameter: Role must be in ["user", "assistant", "system", "function", "plugin", "tool"] and the role in last message must be in ["user", "function", "tool"]'),
+    ("dashscope_image_format", "<400> InternalError.Algo.InvalidParameter: The image format is illegal and cannot be opened"),
+    ("dashscope_image_size", "<400> InternalError.Algo.InvalidParameter: The image length and width do not meet the model restrictions. [height:8 or width:8 must be larger than 10]"),
     # An output-limit setting, which compaction cannot fix.
     ("max_tokens_over_model_max", "max_tokens (100000) exceeds model maximum (64000)"),
     ("bedrock_max_tokens_after_input", "Malformed input request: max_tokens (200000) exceeds model maximum (64000)"),

@@ -234,7 +234,7 @@ Replay keys:
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
 | `replay.enabled` | bool | `false` | Enables recording for future sessions. `/replay on` and `/replay off` write this value. |
-| `replay.max_instances` | int | `20` | Retention cap under `.agentao/replays/`; does not affect `.agentao/sessions/`. |
+| `replay.max_instances` | int | `20` | Retention cap under `.agentao/replays/`; does not affect `.agentao/sessions/`. `true` / `false`, a non-number or a value below 1 is ignored (20 is used, and `agentao doctor` reports an error); a numeric string or a fraction is converted, with a doctor warning. |
 | `replay.capture_flags.capture_llm_delta` | bool | `true` | Records messages newly added by each LLM call. |
 | `replay.capture_flags.capture_full_llm_io` | bool | `false` | Deep capture of full LLM inputs/outputs; treat as sensitive. |
 | `replay.capture_flags.capture_tool_result_full` | bool | `false` | Deep capture of full tool results beyond the normal replay truncation policy. |

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional
 
 from .._env import safe_load_dotenv
+from .. import json_parse
 
 if TYPE_CHECKING:
     from ..agent import Agentao
@@ -39,7 +40,7 @@ def _load_settings(wd: Path) -> Dict[str, Any]:
     if not path.is_file():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
     except UnicodeDecodeError as exc:
         logger.warning(
             "Ignoring %s: not valid UTF-8 (%s at byte %d). Re-save it as "
