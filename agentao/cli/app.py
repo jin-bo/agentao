@@ -282,6 +282,9 @@ class AgentaoCLI:
 
         self.current_session_id: Optional[str] = str(_uuid_mod.uuid4())
         self.current_status = None
+        # (spinner, started) while an automatic compaction is running; see
+        # ``transport.on_compaction_started``.
+        self._compaction_pending = None
         self._streaming_output = False
         self.markdown_mode = True
         self.last_response: str | None = None

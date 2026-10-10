@@ -329,6 +329,68 @@ def test_closing_early_cancels_the_turn_and_unsubscribes() -> None:
     assert not agent._turn_lock.locked()
 
 
+def test_closing_early_cancels_the_turn_before_releasing_its_writes(monkeypatch) -> None:
+    """The order the test above depends on, recorded rather than timed (#473).
+
+    Released first, a producer parked on a full queue ran on with an
+    uncancelled token and could finish the turn as "ok". That took a loaded
+    runner to show (9 in 2000 runs), so this records the two steps in the
+    order they happen: the token's cancel, and a parked write's release.
+    """
+    order: List[str] = []
+    lock = threading.Lock()
+
+    class RecordingToken(CancellationToken):
+        def cancel(self, reason: str = "user-cancel") -> None:
+            with lock:
+                if not self.is_cancelled:
+                    order.append("cancel")
+            super().cancel(reason)
+
+    real_submit = asyncio.run_coroutine_threadsafe
+
+    def submit(coro: Any, loop: asyncio.AbstractEventLoop) -> Any:
+        fut = real_submit(coro, loop)
+        real_cancel = fut.cancel
+
+        def cancel() -> bool:
+            with lock:
+                order.append("release")
+            return real_cancel()
+
+        fut.cancel = cancel  # type: ignore[method-assign]
+        return fut
+
+    monkeypatch.setattr("agentao.runtime.astream.CancellationToken", RecordingToken)
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", submit)
+
+    agent = _make_agent()
+    many = [f"c{i} " for i in range(500)]
+
+    def flood(emit: Callable[[str], None], token: Optional[CancellationToken]) -> Any:
+        for c in many:
+            if token is not None and token.is_cancelled:
+                break
+            emit(c)
+        return _response("".join(many))
+
+    _script(agent, flood)
+
+    async def main() -> None:
+        async with contextlib.aclosing(agent.astream("hi")) as s:
+            async for _item in s:
+                await asyncio.sleep(0.2)  # the producer parks on the full queue
+                break
+
+    asyncio.run(asyncio.wait_for(main(), timeout=10))
+
+    assert "release" in order
+    assert order[0] == "cancel", order
+    assert agent.last_turn is not None and agent.last_turn.status == "cancelled"
+    # The reason ``arun``'s own cancel gives, which this one now pre-empts.
+    assert agent.last_turn.error == "async-cancel"
+
+
 def test_cancelling_the_consumer_task_cancels_the_turn() -> None:
     agent = _make_agent()
     started = threading.Event()

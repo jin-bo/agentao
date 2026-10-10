@@ -213,6 +213,13 @@ agentao skill update pdf
 agentao skill update --all
 ```
 
+Managed installs are recorded in `skills_registry.json` (`.agentao/` for the
+project scope, `~/.agentao/` for global). If that file is damaged, skill
+commands warn and treat it as empty, but install, update and remove refuse to
+overwrite it, so the records in it are never lost by accident. Fix the file or
+move it aside to continue. A single unusable entry is skipped with a warning
+and kept as is.
+
 ## Using Skills in Agentao
 
 ### List Available Skills

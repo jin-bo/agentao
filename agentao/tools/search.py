@@ -110,7 +110,9 @@ def _format_grep_output(stdout: str, pattern: str, skip: FrozenSet[str]) -> str:
     Both engines emit ``path:lineno:content`` lines, so skip-list filtering
     and the 100-match truncation are identical.
     """
-    lines = stdout.strip().splitlines()
+    # grep records are delimited by LF (or CRLF). Unicode separators in
+    # matched file content are ordinary characters, not additional matches.
+    lines = [line.removesuffix("\r") for line in stdout.rstrip("\n").split("\n")] if stdout else []
     if skip:
         lines = [ln for ln in lines if not _any_part_in_skip(ln.split(":", 1)[0], skip)]
     return _format_match_lines(lines, pattern)

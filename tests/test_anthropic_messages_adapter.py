@@ -29,6 +29,7 @@ from agentao.llm._anthropic_messages import (
     translate_tools,
 )
 from agentao.llm._api_format import resolve_api_format
+from agentao.llm._image_parts import UNSENDABLE_IMAGE_NOTE
 from agentao.llm.client import LLMClient
 from tests.support.anthropic_wire import (
     ChunkedBody,
@@ -279,13 +280,37 @@ def test_a_remote_image_url_is_passed_through_for_the_provider_to_fetch():
     ]
 
 
-@pytest.mark.parametrize("part", [
-    {"type": "image_url", "image_url": {"url": "file:///etc/passwd"}},
-    {"type": "input_audio", "input_audio": {"data": "x", "format": "wav"}},
-])
-def test_a_part_this_wire_cannot_express_fails_loudly_rather_than_vanishing(part):
+def test_a_part_this_wire_cannot_express_fails_loudly_rather_than_vanishing():
+    part = {"type": "input_audio", "input_audio": {"data": "x", "format": "wav"}}
     with pytest.raises(ValueError, match="anthropic-messages"):
         translate_messages([{"role": "user", "content": [part]}])
+
+
+@pytest.mark.parametrize("image_url", [
+    {"url": "file:///etc/passwd"},
+    {"url": ""},
+    {"url": None},
+    {},
+    None,
+], ids=["file-url", "empty", "none", "no-url", "no-image_url"])
+def test_an_image_this_wire_cannot_send_goes_out_as_a_note(image_url, caplog):
+    """#485: raising was permanent — the part is in history, so every later
+    request raised too. The note goes in the outbound copy only."""
+    history = [{"role": "user", "content": [
+        {"type": "text", "text": "look"},
+        {"type": "image_url", "image_url": image_url,
+         "cache_control": {"type": "ephemeral"}},
+    ]}]
+    before = json.dumps(history)
+    with caplog.at_level(logging.WARNING, logger="agentao.llm._image_parts"):
+        _, turns = translate_messages(history)
+    assert turns[0]["content"] == [
+        {"type": "text", "text": "look"},
+        {"type": "text", "text": UNSENDABLE_IMAGE_NOTE, "cache_control": {"type": "ephemeral"}},
+    ]
+    assert json.dumps(history) == before
+    assert "anthropic-messages: an image part was sent as a text note" in caplog.text
+    assert "/etc/passwd" not in caplog.text
 
 
 def test_ids_that_would_collide_after_the_rewrite_stay_distinct_and_paired():

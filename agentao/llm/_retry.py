@@ -24,8 +24,9 @@ from __future__ import annotations
 
 import importlib
 import random
+import re
 import time
-from typing import Any, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple
 
 
 # OpenAI SDK's built-in retry is disabled (max_retries=0) so this layer owns
@@ -265,6 +266,143 @@ def _is_image_unsupported(err_str: str) -> bool:
         or "unsupported" in s
         or "only supported" in s
         or "invalid content type" in s
+    )
+
+
+#: "image" / "images" as a word of its own. Not inside an identifier, so an
+#: unrelated 400 that echoes a tool named ``mcp_figma_get_image`` or a field
+#: ``image_url`` does not read as a refused image. Every one of the 17
+#: measured rejections says "image" as a standalone word. Nor the ``image``
+#: of a ``data:image/...`` URL a validating proxy echoes back in an
+#: unrelated 400: that names the request's payload, not a refusal of it.
+_IMAGE_WORD = re.compile(r"(?<![\w:-])images?(?![\w-])", re.IGNORECASE)
+
+#: Wording of a tool-definition error. A 400 about a tool whose schema has a
+#: parameter called ``image`` ("…input_schema.properties.image…", "'image' is
+#: a required property") says "image" as a word but is not about the user's
+#: picture. None of the 17 measured image rejections uses any of these words.
+_TOOL_SCHEMA_WORDS = re.compile(
+    r"input_schema|\btools?\b|\bfunction\b|\bproperties\b|\bparameters\b",
+    re.IGNORECASE,
+)
+
+#: Statuses a provider answers a bad *input* with. Never 401/403 (auth),
+#: 404 (model), 429 (rate) or 5xx: an image is not why those failed, and
+#: :func:`_is_image_rejection` must not rewrite history over them.
+IMAGE_REJECTION_STATUS_CODES = frozenset({400, 413, 422})
+
+
+def _is_input_rejection_status(exc: BaseException) -> bool:
+    """True when ``exc`` carries a 400/413/422 status, as a real ``int``."""
+    status = getattr(exc, "status_code", None)
+    return (
+        isinstance(status, int)
+        and not isinstance(status, bool)
+        and status in IMAGE_REJECTION_STATUS_CODES
+    )
+
+
+def _is_tool_schema_error(text: str) -> bool:
+    """True when error text reads as a tool-definition error, not an image one."""
+    return _TOOL_SCHEMA_WORDS.search(text) is not None
+
+
+#: One word of text, for the echo check: letters and digits, so an
+#: ``_IMAGE_WORD`` match is always exactly one of these.
+_ECHO_TOKEN = re.compile(r"[^\W_]+")
+
+#: The fewest words an echo run may have. A run that also covers a whole
+#: line of the sent text may be this short ("describe this image"); otherwise it must
+#: reach :data:`_ECHO_LONG_RUN`. A three-word overlap alone is not an echo:
+#: a user asking "why did it say could not process image?" carries every
+#: word of Anthropic's own refusal, and reading the next real refusal as an
+#: echo of it would leave the image in history for good.
+_ECHO_MIN_RUN = 3
+_ECHO_LONG_RUN = 5
+
+
+def _tokens(text: str) -> list:
+    return [m.group().lower() for m in _ECHO_TOKEN.finditer(text)]
+
+
+def _echo_run(error: list, index: int, sent: list) -> bool:
+    """True when a run of ``error`` words around ``index`` is an echo of ``sent``.
+
+    The run is the longest stretch of words, through ``error[index]``, that
+    ``sent`` carries in the same order. It counts when it is at least
+    :data:`_ECHO_MIN_RUN` words and either covers all of ``sent`` (one line of
+    a sent text, so a prepended ``<system-reminder>`` line does not lengthen
+    it) or reaches :data:`_ECHO_LONG_RUN`.
+    """
+    for j, word in enumerate(sent):
+        if word != error[index]:
+            continue
+        left = 0
+        while (index - left - 1 >= 0 and j - left - 1 >= 0
+               and error[index - left - 1] == sent[j - left - 1]):
+            left += 1
+        right = 0
+        while (index + right + 1 < len(error) and j + right + 1 < len(sent)
+               and error[index + right + 1] == sent[j + right + 1]):
+            right += 1
+        run = left + right + 1
+        if run >= _ECHO_MIN_RUN and (run == len(sent) or run >= _ECHO_LONG_RUN):
+            return True
+    return False
+
+
+def _echoes_sent_text(text: str, sent_texts: Iterable[str]) -> bool:
+    """True when every "image" in ``text`` sits in words the request sent.
+
+    A gateway or validating proxy may echo part of the request in an
+    unrelated 400, the user's own words included ("…{content: 'please
+    describe this image'}", #486). Such an "image" is explained when the run
+    of words around it is an echo of a text the request carried
+    (:func:`_echo_run`). One unexplained "image" (the provider's own "could
+    not process image") keeps the error an image rejection.
+    """
+    sent = [
+        _tokens(line)
+        for t in sent_texts if isinstance(t, str)
+        for line in t.splitlines()
+    ]
+    sent = [s for s in sent if s]
+    if not sent:
+        return False
+    starts = {m.start(): i for i, m in enumerate(_ECHO_TOKEN.finditer(text))}
+    error = _tokens(text)
+    for match in _IMAGE_WORD.finditer(text):
+        index = starts.get(match.start())
+        if index is None:  # not on a word boundary: nothing explains it
+            return False
+        if not any(_echo_run(error, index, s) for s in sent):
+            return False
+    return True
+
+
+def _is_image_rejection(exc: BaseException, sent_texts: Iterable[str] = ()) -> bool:
+    """True when a provider refused a request because of an image in it.
+
+    A heuristic, measured against real rejections (#480): of 17 image
+    failures across Anthropic, OpenAI (both wires), Gemini and Qwen, all were
+    400s and every body mentions "image"; only OpenAI Chat Completions also
+    sends an image-specific ``code``, so the body is what carries the signal.
+    An unrelated 400 from the same probe (``max_tokens``) does not mention
+    one. The caller also requires the request to have carried an image.
+
+    The status is read off the SDK exception and type-checked: an object that
+    merely answers ``status_code`` (a ``MagicMock``) is not a 400.
+
+    ``sent_texts`` is the text the request carried. An error whose every
+    "image" is an echo of it is not a rejection (:func:`_echoes_sent_text`).
+    """
+    if not _is_input_rejection_status(exc):
+        return False
+    text = str(exc)
+    return (
+        _IMAGE_WORD.search(text) is not None
+        and not _is_tool_schema_error(text)
+        and not _echoes_sent_text(text, sent_texts)
     )
 
 

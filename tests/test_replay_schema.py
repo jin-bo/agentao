@@ -63,6 +63,7 @@ _VERSION_KINDS = {
     "1.1": EventKind.V1_1,
     "1.2": EventKind.V1_2,
     "1.3": EventKind.V1_3,
+    "1.4": EventKind.V1_4,
 }
 
 

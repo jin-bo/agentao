@@ -126,6 +126,34 @@ class TestSkillRemove:
         reg2 = SkillRegistry(reg_path)
         assert reg2.get("test-skill") is None
 
+    def test_remove_does_not_delete_outside_the_skills_dir(self, tmp_path):
+        """A registry naming a directory outside <registry dir>/skills
+        loses the record, but the directory is not deleted."""
+        reg_path = tmp_path / "reg" / "skills_registry.json"
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        (victim / "keep.txt").write_text("x", encoding="utf-8")
+        reg = SkillRegistry(reg_path)
+        reg.add(InstalledSkillRecord(
+            name="test-skill", source_type="github", source_ref="owner/repo",
+            installed_at="", install_scope="project",
+            install_dir=str(victim), version="", revision="", etag="",
+        ))
+        reg.save()
+
+        from agentao.cli import _skill_remove
+
+        class FakeArgs:
+            name = "test-skill"
+
+        with mock.patch(
+            "agentao.skills.registry.registry_path_for_scope", return_value=reg_path
+        ):
+            _skill_remove(FakeArgs(), "project")
+
+        assert (victim / "keep.txt").exists()
+        assert SkillRegistry(reg_path).get("test-skill") is None
+
     def test_remove_not_found_exits(self, tmp_path):
         """Remove non-existent skill exits with error."""
         reg_path = tmp_path / "skills_registry.json"
@@ -140,6 +168,36 @@ class TestSkillRemove:
             "agentao.skills.registry.registry_path_for_scope", return_value=reg_path
         ), pytest.raises(SystemExit):
             _skill_remove(FakeArgs(), "project")
+
+
+    def test_refused_save_removes_nothing(self, tmp_path):
+        """The registry is saved before the directory goes, so a refusal changes nothing (#462)."""
+        from agentao.cli import _skill_remove
+        from agentao.skills.registry import SkillRegistryWriteError
+
+        reg_path = tmp_path / "skills_registry.json"
+        skill_dir = tmp_path / "skills" / "test-skill"
+        skill_dir.mkdir(parents=True)
+        reg = SkillRegistry(reg_path)
+        reg.add(InstalledSkillRecord(
+            name="test-skill", source_type="github", source_ref="owner/repo",
+            installed_at="", install_scope="project", install_dir=str(skill_dir),
+            version="", revision="", etag="",
+        ))
+        reg.save()
+
+        class FakeArgs:
+            name = "test-skill"
+
+        with mock.patch(
+            "agentao.skills.registry.registry_path_for_scope", return_value=reg_path
+        ), mock.patch.object(
+            SkillRegistry, "save", side_effect=SkillRegistryWriteError("simulated")
+        ), pytest.raises(SystemExit):
+            _skill_remove(FakeArgs(), "project")
+
+        assert skill_dir.exists()
+        assert SkillRegistry(reg_path).get("test-skill") is not None
 
 
 # ------------------------------------------------------------------

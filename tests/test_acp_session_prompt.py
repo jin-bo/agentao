@@ -11,6 +11,8 @@ and :mod:`tests.support.acp_server`.
 
 from __future__ import annotations
 
+import base64
+import gzip
 import io
 import json
 import threading
@@ -36,6 +38,11 @@ from agentao.transport.events import AgentEvent, EventType
 
 from .support.acp_agents import FakeAgent, make_factory
 from .support.acp_server import make_initialized_server, make_server
+
+# Leading bytes of a PNG and a JPEG, base64-encoded. Image blocks are checked
+# by content (#477), so a forwarded block needs real image bytes.
+_PNG_B64 = "iVBORw0KGgoAAAAA"
+_JPEG_B64 = "/9j/4AAAAAAAAAAA"
 
 
 # ---------------------------------------------------------------------------
@@ -278,14 +285,14 @@ def test_image_block_forwarded_to_agent(session_with_agent):
             "sessionId": session_id,
             "prompt": [
                 {"type": "text", "text": "what is this?"},
-                {"type": "image", "data": "QUJD", "mimeType": "image/png"},
+                {"type": "image", "data": _PNG_B64, "mimeType": "image/png"},
             ],
         },
     )
     assert result["stopReason"] == "end_turn"
     # Text is forwarded as the user message; the image rides on images=.
     assert fake.chat_calls[0][0] == "what is this?"
-    assert fake.received_images[0] == [{"data": "QUJD", "mimeType": "image/png"}]
+    assert fake.received_images[0] == [{"data": _PNG_B64, "mimeType": "image/png"}]
 
 
 def test_text_only_prompt_passes_no_images(session_with_agent):
@@ -324,11 +331,14 @@ def test_image_block_missing_mimetype_rejected(initialized_server):
     ("path", "/tmp/secret"),
     ("apiKey", "sk-leak"),
     ("baseUrl", "https://evil.example"),
-    ("_meta", {"x": 1}),
+    # The Python field name of the schema's ``_meta`` alias: the runtime
+    # mirrors the schema's alias-only rule.
+    ("meta", {"x": 1}),
 ])
 def test_image_block_rejects_extra_fields(initialized_server, extra_field, value):
-    """The image wire carries only {data, mimeType}. The raw-dict parser must
-    reject ANY other key (host-path/secret vectors), not just 'uri' — mirroring
+    """An image block forwards only {data, mimeType}. Beyond those and the
+    ignored ACP ``annotations`` / ``_meta`` (#479), the raw-dict parser must
+    reject every key (host-path/secret vectors), not just 'uri' — mirroring
     the schema's additionalProperties:false, which the parser does not invoke."""
     with pytest.raises(TypeError, match="unexpected field"):
         acp_session_prompt.handle_session_prompt(
@@ -402,7 +412,7 @@ def test_image_decoded_size_cap_is_exact(initialized_server, monkeypatch):
 
 def test_too_many_image_blocks_rejected(initialized_server):
     blocks = [
-        {"type": "image", "data": "QUJD", "mimeType": "image/png"}
+        {"type": "image", "data": _PNG_B64, "mimeType": "image/png"}
         for _ in range(acp_session_prompt._MAX_IMAGES_PER_PROMPT + 1)
     ]
     with pytest.raises(TypeError, match="too many image blocks"):
@@ -410,6 +420,114 @@ def test_too_many_image_blocks_rejected(initialized_server):
             initialized_server,
             {"sessionId": "sess_x", "prompt": blocks},
         )
+
+
+@pytest.mark.parametrize("extra", [
+    {"annotations": {"audience": ["user"], "priority": 0.5}},
+    {"_meta": {"traceparent": "00-80e1afed08e019fc1110464cfa66635c-7a085853722dc6d2-01"}},
+    {"annotations": {"audience": ["user"]}, "_meta": {"x": 1}},
+    # The runtime does not validate these fields; only the schema does.
+    {"annotations": "not-an-object", "_meta": ["not", "an", "object"]},
+], ids=["annotations", "meta", "both", "malformed"])
+def test_image_block_accepts_and_drops_annotations_and_meta(session_with_agent, extra):
+    """#479: ACP-defined ``annotations`` / ``_meta`` on an image block are
+    accepted, as on text blocks, and never forwarded to the agent."""
+    server, session_id, fake = session_with_agent
+    result = acp_session_prompt.handle_session_prompt(
+        server,
+        {
+            "sessionId": session_id,
+            "prompt": [{"type": "image", "data": _PNG_B64, "mimeType": "image/png", **extra}],
+        },
+    )
+    assert result["stopReason"] == "end_turn"
+    assert fake.received_images[0] == [{"data": _PNG_B64, "mimeType": "image/png"}]
+
+
+def test_image_block_with_meta_still_gets_content_checks(session_with_agent):
+    """Accepting ``_meta`` must not skip the byte check that runs after it."""
+    server, session_id, fake = session_with_agent
+    with pytest.raises(TypeError, match="image data is not"):
+        acp_session_prompt.handle_session_prompt(
+            server,
+            {
+                "sessionId": session_id,
+                "prompt": [{
+                    "type": "image", "data": base64.b64encode(b"ABC").decode(),
+                    "mimeType": "image/png", "_meta": {"x": 1},
+                }],
+            },
+        )
+    assert fake.chat_calls == []
+
+
+def test_prompt_level_meta_and_text_annotations_are_ignored(session_with_agent):
+    server, session_id, fake = session_with_agent
+    acp_session_prompt.handle_session_prompt(
+        server,
+        {
+            "sessionId": session_id,
+            "_meta": {"traceparent": "00-80e1afed08e019fc1110464cfa66635c-7a085853722dc6d2-01"},
+            "prompt": [{"type": "text", "text": "hi", "annotations": {"audience": ["user"]}, "_meta": {"x": 1}}],
+        },
+    )
+    assert fake.chat_calls[0][0] == "hi"
+    assert fake.received_images[0] is None
+
+
+@pytest.mark.parametrize("declared", ["image/png", "image/jpg", "image/JPEG"])
+def test_image_block_is_forwarded_under_the_type_its_bytes_show(
+    session_with_agent, declared, caplog,
+):
+    """#477: a known format under a wrong label is relabelled, not refused —
+    and not forwarded as declared, which the provider would reject on this
+    turn and, from history, on every later one."""
+    server, session_id, fake = session_with_agent
+    with caplog.at_level("WARNING", logger="agentao.acp.session_prompt"):
+        acp_session_prompt.handle_session_prompt(
+            server,
+            {
+                "sessionId": session_id,
+                "prompt": [{"type": "image", "data": _JPEG_B64, "mimeType": declared}],
+            },
+        )
+    assert fake.received_images[0] == [{"data": _JPEG_B64, "mimeType": "image/jpeg"}]
+    assert f"image declared {declared!r} is image/jpeg" in caplog.text
+
+
+def test_image_block_with_matching_label_logs_nothing(session_with_agent, caplog):
+    server, session_id, fake = session_with_agent
+    with caplog.at_level("WARNING", logger="agentao.acp.session_prompt"):
+        acp_session_prompt.handle_session_prompt(
+            server,
+            {
+                "sessionId": session_id,
+                "prompt": [{"type": "image", "data": _JPEG_B64, "mimeType": "image/jpeg"}],
+            },
+        )
+    assert fake.received_images[0] == [{"data": _JPEG_B64, "mimeType": "image/jpeg"}]
+    assert "image declared" not in caplog.text
+
+
+@pytest.mark.parametrize("data, declared", [
+    (base64.b64encode(b"ABC").decode(), "image/png"),
+    (base64.b64encode(b"<svg xmlns='http://www.w3.org/2000/svg'/>").decode(), "image/svg+xml"),
+    (base64.b64encode(b"BM" + b"\x00" * 30).decode(), "image/bmp"),
+    (base64.b64encode(gzip.compress(b"\x89PNG\r\n\x1a\n", mtime=0)).decode(), "image/png"),
+], ids=["text", "svg", "bmp", "gzipped-png"])
+def test_image_block_with_unsupported_content_rejected(session_with_agent, data, declared):
+    """#477: content that is no supported format is refused at the boundary,
+    before it can enter history, whatever the label says."""
+    server, session_id, fake = session_with_agent
+    with pytest.raises(TypeError, match="image data is not PNG, JPEG, GIF or WEBP"):
+        acp_session_prompt.handle_session_prompt(
+            server,
+            {
+                "sessionId": session_id,
+                "prompt": [{"type": "image", "data": data, "mimeType": declared}],
+            },
+        )
+    assert fake.chat_calls == []
 
 
 def test_audio_block_rejected_explicitly(initialized_server):
