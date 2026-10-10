@@ -239,7 +239,7 @@ class LocalFileSystem:
 
         try:
             fd, tmp_name = tempfile.mkstemp(
-                dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
+                dir=str(target.parent), prefix=".agentao-write-", suffix=".tmp"
             )
         except OSError as exc:
             # ONLY the "cannot create files in this directory" family falls
