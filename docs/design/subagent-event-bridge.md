@@ -1,9 +1,9 @@
 # Sub-agent event bridge: callbacks out, events back in
 
-**Status:** proposal, **not authorized**. Decision (rev 2, 2026-10-11): implement both options in two steps — A first, then B. Neither is implemented yet.
+**Status:** proposal, **not authorized**. Decision (rev 2, 2026-10-11): implement both options in two steps — A first, then B. Neither is implemented yet. rev 3 (2026-10-11) closes the review of rev 2; the design is complete.
 **Anchors:** agentao `main@60fcca9` (2026-10-11). Line numbers below are at that commit.
 **Related:** `0-5-0-removal-checklist.md` §C (why the sub-agent factory uses `build_compat_transport` today); `host-tool-injection.md`; `embedded-host-contract.md` (the public `SubagentLifecycleEvent`, which this doc does not change).
-**Revision history:** rev 1 (`af7b014`) deferred B and proposed namespacing child ids. rev 2 adopts A and B in sequence, drops the id namespacing, keeps every line of the public `build_compat_transport` (rev 1 wrongly counted parts of it as removable), and pins the field defaults, the exception scope and the event order.
+**Revision history:** rev 1 (`af7b014`) deferred B and proposed namespacing child ids. rev 2 adopts A and B in sequence, drops the id namespacing, keeps every line of the public `build_compat_transport` (rev 1 wrongly counted parts of it as removable), and pins the field defaults, the exception scope and the event order. rev 3 makes the parent entry points read `agent.transport` on every call (rev 2 passed bound methods, which replay's transport swap would bypass) and adds `tests/test_subagent_cancelled_terminal_state.py` to the test migration.
 
 ## 1. Summary
 
@@ -104,10 +104,20 @@ Put the send in the existing `except` branches, or a small local helper they cal
 The internal factory (`AgentManager.create_agent_tools`, `AgentToolWrapper.__init__`) takes three entry points instead of the progress callback group (`step_callback`, `output_callback`, `tool_complete_callback`, `confirmation_event_callback`, `confirmation_callback`, `ask_user_callback`):
 
 ```python
-event_sink: Callable[[AgentEvent], None]        # agent.transport.emit
-confirm_tool: Callable[[str, str, dict], bool]  # agent.transport.confirm_tool
-ask_user: Callable[..., str]                    # transport_ask_user(agent), unchanged
+event_sink: Callable[[AgentEvent], None]
+confirm_tool: Callable[[str, str, dict], bool]
+ask_user: Callable[..., str]
 ```
+
+The parent passes functions that read `agent.transport` **on every call**, exactly as `tooling/agent_tools.py` does today:
+
+```python
+event_sink=lambda event: agent.transport.emit(event),
+confirm_tool=lambda *a, **kw: agent.transport.confirm_tool(*a, **kw),
+ask_user=transport_ask_user(agent),
+```
+
+Never pass the bound methods `agent.transport.emit` / `agent.transport.confirm_tool`. Starting replay replaces `agent.transport` with a `ReplayAdapter` (`replay/manager.py:106-108`), and ending it puts the inner transport back (`replay/manager.py:168-171`), both after the agent tools are registered. A bound method would stay tied to the transport present at registration, so later sub-agent events would skip a replay started afterwards, or keep reaching an adapter that was removed. `transport_ask_user` already reads the transport per call for the same reason. No getter interface or proxy class is needed.
 
 These are still callbacks. `event_sink` receives whole events, and `confirm_tool` / `ask_user` return the user's answer. "Remove the callback bridge" means removing the conversion of events into the legacy callback shapes and back, not removing every callback.
 
@@ -152,13 +162,13 @@ None of these fallbacks fires on the real path. `normalize_tool_call_id` (`runti
 ### 6.4 What B changes, and what stays
 
 Removed from the **internal** path:
-- `tooling/agent_tools.py:59-112`: the three parent callbacks that rebuild events, replaced by passing `agent.transport.emit`.
+- `tooling/agent_tools.py:59-112`: the three parent callbacks that rebuild events, replaced by the per-call `event_sink` lambda in §6.1.
 - The sentinel constants and calls in `_wrapper.py` (`261-262`, `300-304`, `347-365`).
 - The sub-agent's dependence on `build_compat_transport`, the `__call_id__` key and `_accepted_meta_keywords`.
 
 **Unchanged:** all of `build_compat_transport` in `sdk.py`, including the `__call_id__` injection, the signature check, the `AGENT_START` / `AGENT_END` mapping and the `SubagentProgress` it builds. External callers depend on that code, so none of it counts as removed by B.
 
-Tests: `tests/test_subagent_tool_call_id.py` builds its fixtures from `build_compat_transport` and `_make_prefixed_step_callback`, and fakes `create_agent_tools` by keyword name. Its fixtures move to the real production forwarder (§8). Three other tests construct `AgentToolWrapper` without callbacks, and `tests/test_async_tool.py` reads the `create_agent_tools` type hints.
+Tests: `tests/test_subagent_tool_call_id.py` builds its fixtures from `build_compat_transport` and `_make_prefixed_step_callback`, and fakes `create_agent_tools` by keyword name. Its fixtures move to the real production forwarder (§8). `tests/test_subagent_cancelled_terminal_state.py` also depends on the old entry point: its `_watch()` sets `wrapper._step_callback` directly and `_agent_end()` reads ends by the `__agent_end__` sentinel. Its fixture moves to capturing `AgentEvent`s, with the same cancel-state and end-count assertions. Three other tests construct `AgentToolWrapper` without callbacks, and `tests/test_async_tool.py` reads the `create_agent_tools` type hints.
 
 ## 7. Invariants
 
@@ -174,6 +184,7 @@ Tests: `tests/test_subagent_tool_call_id.py` builds its fixtures from `build_com
 | 8 | Exactly one `AGENT_END` follows every `AGENT_START` for a normal return, an `Exception` and `AgentCancelledError`; it comes before the public terminal event; a failing send masks nothing. | added by A |
 | 9 | A sub-agent that runs out of turns stops. | not pinned today; added by B |
 | 10 | The public `build_compat_transport` keeps its contract for external callers. | `tests/test_transport.py` |
+| 11 | A parent transport replaced after the agent tools are registered (replay starting or ending) receives the sub-agent's events and confirmations. | not pinned today; added by B |
 
 ## 8. Acceptance and tests
 
@@ -192,7 +203,9 @@ Tests: `tests/test_subagent_tool_call_id.py` builds its fixtures from `build_com
   - an event outside the whitelist does not reach the parent transport;
   - a background child always refuses confirmation, and its child transport sends nothing to the parent;
   - a sub-agent that runs out of turns stops;
-  - the public `build_compat_transport` keeps its old contract.
+  - the public `build_compat_transport` keeps its old contract;
+  - after the parent's `agent.transport` is replaced post-registration, sub-agent events and confirmations reach the new transport.
+- Move the `_watch()` fixture in `tests/test_subagent_cancelled_terminal_state.py` to capture `AgentEvent`s; keep its cancel-state and exactly-one-end assertions.
 - Keep the existing ACP output assertions and the real-`ToolRunner` rejected-confirmation test. Do not replace them with tests that only inspect the forwarder.
 - No CHANGELOG entry is needed for B (no behaviour change).
 

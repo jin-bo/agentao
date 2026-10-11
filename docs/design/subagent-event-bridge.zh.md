@@ -1,9 +1,9 @@
 # 子 Agent 事件桥：回调出去，事件回来
 
-**状态：** 提案，**未授权**。决策（rev 2，2026-10-11）：两个方案都实施，分两步走——先 A，后 B。目前都还没有实施。
+**状态：** 提案，**未授权**。决策（rev 2，2026-10-11）：两个方案都实施，分两步走——先 A，后 B。目前都还没有实施。rev 3（2026-10-11）完成对 rev 2 的复审，设计到此齐备。
 **锚点：** agentao `main@60fcca9`（2026-10-11）。下文行号均以该提交为准。
 **相关：** `0-5-0-removal-checklist.zh.md` §C（子 Agent 工厂今天为什么用 `build_compat_transport`）；`host-tool-injection.zh.md`；`embedded-host-contract.md`（公共事件 `SubagentLifecycleEvent`，本文不改它）。
-**修订记录：** rev 1（`af7b014`）把 B 暂缓，并提出给子 Agent 的 id 加命名空间。rev 2 采纳先 A 后 B，删掉 id 命名空间，公开的 `build_compat_transport` 一行不删（rev 1 错把其中一部分算作可删），并把字段默认值、异常范围和事件顺序写死。
+**修订记录：** rev 1（`af7b014`）把 B 暂缓，并提出给子 Agent 的 id 加命名空间。rev 2 采纳先 A 后 B，删掉 id 命名空间，公开的 `build_compat_transport` 一行不删（rev 1 错把其中一部分算作可删），并把字段默认值、异常范围和事件顺序写死。rev 3 要求父侧入口在每次调用时读取 `agent.transport`（rev 2 传的是绑定方法，会绕过回放对 transport 的替换），并把 `tests/test_subagent_cancelled_terminal_state.py` 加入测试迁移范围。
 
 ## 1. 概要
 
@@ -104,10 +104,20 @@ A 落地并验证之后再开始 B，这样出了回归能定位到是哪一步�
 内部工厂（`AgentManager.create_agent_tools`、`AgentToolWrapper.__init__`）用三个入口替代现有的进度回调组（`step_callback`、`output_callback`、`tool_complete_callback`、`confirmation_event_callback`、`confirmation_callback`、`ask_user_callback`）：
 
 ```python
-event_sink: Callable[[AgentEvent], None]        # agent.transport.emit
-confirm_tool: Callable[[str, str, dict], bool]  # agent.transport.confirm_tool
-ask_user: Callable[..., str]                    # transport_ask_user(agent)，不变
+event_sink: Callable[[AgentEvent], None]
+confirm_tool: Callable[[str, str, dict], bool]
+ask_user: Callable[..., str]
 ```
+
+父 Agent 传入的函数要在**每次调用时**读取 `agent.transport`，与今天 `tooling/agent_tools.py` 的做法完全相同：
+
+```python
+event_sink=lambda event: agent.transport.emit(event),
+confirm_tool=lambda *a, **kw: agent.transport.confirm_tool(*a, **kw),
+ask_user=transport_ask_user(agent),
+```
+
+不要传绑定方法 `agent.transport.emit` / `agent.transport.confirm_tool`。启动回放会把 `agent.transport` 换成 `ReplayAdapter`（`replay/manager.py:106-108`），结束回放又把内层 transport 换回来（`replay/manager.py:168-171`），两者都发生在 agent 工具注册之后。绑定方法会固定在注册时的那个 transport 上，于是之后的子 Agent 事件会绕过后来启动的回放，或继续发往已被移除的适配器。`transport_ask_user` 出于同样的原因，已经是每次调用时读取 transport。不需要新增 getter 接口或代理类。
 
 这些仍然是回调：`event_sink` 接收完整事件，`confirm_tool` / `ask_user` 返回用户的回答。"去掉回调桥"指的是去掉"事件转成旧式回调再转回事件"这层转换，不是去掉所有回调。
 
@@ -152,13 +162,13 @@ ask_user: Callable[..., str]                    # transport_ask_user(agent)，�
 ### 6.4 B 改什么、保留什么
 
 从**内部**路径上去掉：
-- `tooling/agent_tools.py:59-112`：重建事件的三个父侧回调，改为直接传 `agent.transport.emit`。
+- `tooling/agent_tools.py:59-112`：重建事件的三个父侧回调，改为 §6.1 里每次调用时读取 transport 的 `event_sink` lambda。
 - `_wrapper.py` 里的哨兵常量与调用（`261-262`、`300-304`、`347-365`）。
 - 子 Agent 对 `build_compat_transport`、`__call_id__` 键和 `_accepted_meta_keywords` 的依赖。
 
 **不变：** `sdk.py` 里的整个 `build_compat_transport`，包括 `__call_id__` 注入、签名检查、`AGENT_START` / `AGENT_END` 映射，以及它构造的 `SubagentProgress`。外部调用者依赖这些代码，所以都不算 B 的删除收益。
 
-测试：`tests/test_subagent_tool_call_id.py` 用 `build_compat_transport` 和 `_make_prefixed_step_callback` 搭夹具，并按关键字名伪造 `create_agent_tools`。它的夹具改为经过实际的生产转发函数（§8）。另外三个测试构造 `AgentToolWrapper` 时不传回调，`tests/test_async_tool.py` 读取 `create_agent_tools` 的类型注解。
+测试：`tests/test_subagent_tool_call_id.py` 用 `build_compat_transport` 和 `_make_prefixed_step_callback` 搭夹具，并按关键字名伪造 `create_agent_tools`。它的夹具改为经过实际的生产转发函数（§8）。`tests/test_subagent_cancelled_terminal_state.py` 也依赖旧入口：它的 `_watch()` 直接设置 `wrapper._step_callback`，`_agent_end()` 按哨兵 `__agent_end__` 读取结束事件。它的夹具改为捕获 `AgentEvent`，保留原有的取消状态和结束次数断言。另外三个测试构造 `AgentToolWrapper` 时不传回调，`tests/test_async_tool.py` 读取 `create_agent_tools` 的类型注解。
 
 ## 7. 不变量
 
@@ -174,6 +184,7 @@ ask_user: Callable[..., str]                    # transport_ask_user(agent)，�
 | 8 | 正常返回、`Exception` 和 `AgentCancelledError` 时，每个 `AGENT_START` 之后恰好跟一个 `AGENT_END`；它在公共终态事件之前；发送失败不掩盖任何东西。 | 由 A 补上 |
 | 9 | 子 Agent 跑满迭代上限后停止。 | 目前未钉住；随 B 补上 |
 | 10 | 公开的 `build_compat_transport` 对外部调用者保持原有契约。 | `tests/test_transport.py` |
+| 11 | 在 agent 工具注册之后替换父 transport（启动或结束回放），子 Agent 的事件和确认仍到达新的 transport。 | 目前未钉住；随 B 补上 |
 
 ## 8. 验收与测试
 
@@ -192,7 +203,9 @@ ask_user: Callable[..., str]                    # transport_ask_user(agent)，�
   - 白名单以外的事件不进入父 transport；
   - 后台子 Agent 始终拒绝确认，其子 transport 不向父 Agent 发任何东西；
   - 子 Agent 跑满迭代上限后停止；
-  - 公开的 `build_compat_transport` 保持旧契约。
+  - 公开的 `build_compat_transport` 保持旧契约；
+  - 注册之后替换父 Agent 的 `agent.transport`，子 Agent 的事件和确认到达新的 transport。
+- 把 `tests/test_subagent_cancelled_terminal_state.py` 的 `_watch()` 夹具改为捕获 `AgentEvent`；保留取消状态和恰好一次结束的断言。
 - 保留现有的 ACP 输出断言和真实 `ToolRunner` 的拒绝确认测试，不要换成只检查转发函数内部的测试。
 - B 不需要 CHANGELOG 条目（没有行为变化）。
 
