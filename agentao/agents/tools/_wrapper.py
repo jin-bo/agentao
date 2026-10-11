@@ -9,8 +9,8 @@ spawns a fresh :class:`Agentao` for the sub-task, and emits public
 ``SubagentLifecycleEvent`` pairs so hosts can observe lineage.
 
 The class stays in one file because its sub-helpers (parent-context
-builder, sync runner, background launcher, prefixed step callback) all read
-the same constructor-captured callbacks. The free functions that read none
+builder, sync runner, background launcher, child-event forwarder) all read
+the same constructor-captured entry points. The free functions that read none
 of that state live beside it: what a sub-agent inherits in ``_inherit``,
 how its run is classified in ``_outcome``.
 """
@@ -23,7 +23,7 @@ import time
 import uuid
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...llm._usage import positive_int
@@ -44,6 +44,9 @@ from ._outcome import (
     _is_harness_notice,
     _terminal_state,
 )
+
+if TYPE_CHECKING:
+    from ...transport import SdkTransport
 
 logger = logging.getLogger(__name__)
 
@@ -555,9 +558,9 @@ class AgentToolWrapper(Tool):
         in a different order — see ``_launch_background``.
 
         Args:
-            suppress_output: When True, all live display callbacks are
-                suppressed so a background thread does not interleave output
-                with the foreground session.
+            suppress_output: When True, the child's events are not
+                forwarded to the parent, so a background thread does not
+                interleave output with the foreground session.
         """
         sub_agent, setup = self._build_sub_agent(suppress_output, skill_manager)
         # Everything after construction runs under ``finally``: the sub-agent
@@ -1275,8 +1278,9 @@ class AgentToolWrapper(Tool):
                     _settle()
                     self._close_sub_agent(sub_agent)
 
-        # Background agents run silently: suppress_output=True ensures no callbacks
-        # fire on the background thread, preventing interleaving with foreground output.
+        # Background agents run silently: suppress_output=True ensures no events
+        # reach the parent from the background thread, preventing interleaving
+        # with foreground output.
         t = threading.Thread(target=_run, daemon=True, name=f"bg-agent-{agent_id}")
         t.start()
 
@@ -1290,7 +1294,7 @@ class AgentToolWrapper(Tool):
             f"check_background_agent(agent_id='{agent_id}', wait_seconds=N) once."
         )
 
-    def _child_transport(self, suppress_output: bool, max_turns: int) -> Any:
+    def _child_transport(self, suppress_output: bool, max_turns: int) -> "SdkTransport":
         """The transport a sub-agent is built with.
 
         A foreground sub-agent reports to the parent through
