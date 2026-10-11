@@ -322,6 +322,7 @@ def test_acp_stays_behind_its_boundary() -> None:
 LEAF_MODULES: Set[str] = {
     "_env",
     "cancellation",
+    "config_file",
     "frontmatter",
     "json_parse",
     "logging_utils",

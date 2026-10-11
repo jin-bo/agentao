@@ -153,7 +153,7 @@
   1. `~/.agentao/permissions.json`（用户级）—— 唯一基于文件的规则来源。
   2. `<cwd>/.agentao/permissions.json`（项目级）—— **被忽略**并打 warning。原因见下方"为何不再支持项目级？"。
 - **Loader。** `embedding/permission_loader.py::load_permission_rules`。引擎在传入 `rules=` 时不做任何文件 I/O（`Agentao(permission_mode=)` 就是这样）；以 `rules=None` 构造时，它会调用这个加载器。
-- **失败行为 —— 这份文件 fail closed**（0.4.20 变更；此前是降级为空规则列表、不报错）。文件缺失 → 静默返回空规则列表。其余任何情况 —— 不可读、不是合法 UTF-8、JSON 损坏、顶层不是 object、出现未知的顶层键（`rules` 是唯一合法键，因此 `{"rule": [...]}` 会被拒绝，而不是静默加载出零条规则）、或某条规则校验不通过 —— 都会抛出带路径的 `PermissionConfigError`，并中止会话构造。与其他配置文件的这种不对称是刻意的：丢掉一条 shell/web 工具的 `deny` 会降级成 *ask*，而丢掉一条 `mcp_*` 工具的 `deny` 会降级成**什么都不剩**（引擎返回无决策，runtime 落到工具自身的 `requires_confirmation`，于是 `trust: true` server 的工具直接无提示执行）。`agentao doctor` 会报告同样的失败但不会中止。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。
+- **失败行为 —— 这份文件 fail closed**（0.4.20 变更；此前是降级为空规则列表、不报错）。文件缺失 → 静默返回空规则列表。其余任何情况 —— 不可读、不是普通文件（目录或命名管道）、不是合法 UTF-8、JSON 损坏、顶层不是 object、出现未知的顶层键（`rules` 是唯一合法键，因此 `{"rule": [...]}` 会被拒绝，而不是静默加载出零条规则）、或某条规则校验不通过 —— 都会抛出带路径的 `PermissionConfigError`，并中止会话构造。与其他配置文件的这种不对称是刻意的：丢掉一条 shell/web 工具的 `deny` 会降级成 *ask*，而丢掉一条 `mcp_*` 工具的 `deny` 会降级成**什么都不剩**（引擎返回无决策，runtime 落到工具自身的 `requires_confirmation`，于是 `trust: true` server 的工具直接无提示执行）。`agentao doctor` 会报告同样的失败但不会中止。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。
 - **来源标记。** 成功加载的文件会贡献 `loaded_sources` 标签（`user:<path>`），由 `PermissionEngine.active_permissions()` 与 `Agentao.active_permissions()` 暴露 —— 详见 [`docs/reference/host-api.md`](host-api.md)。
 - **公共 getter。** `PermissionEngine.active_permissions()` 返回一个缓存的、JSON 安全的 `ActivePermissions` 快照（`mode`、`rules`、`loaded_sources`）。叠加策略的宿主可调用 `add_loaded_source("injected:<name>")` 让快照反映其 provenance。`set_mode()` 与 `add_loaded_source()` 会使缓存失效。
 - **求值顺序。**
@@ -272,7 +272,7 @@ PowerShell 上会在它之上再叠一张 Windows 专属的不可恢复类别表
   2. `<cwd>/.agentao/mcp.json`（项目级）—— **仅可新增**：可以声明*新*的 server name，但不能覆盖用户级同名条目。冲突时打 warning + 跳过项目项。
 - **Loader。** `mcp/config.py`。`env`、`headers`、`args` 和 `oauth.client_secret` 里的环境变量会被展开（`$VAR` 和 `${VAR}` 形式）。`headers` 或 `oauth.client_secret` 引用了未设置或为空的变量时，该服务器不会连接，报错写明变量名：否则 `"Authorization": "Bearer ${TOKEN}"` 在 `TOKEN` 未设置时会发出 `Bearer `，而 `Authorization` 头会关闭 OAuth。`env` 或 `args` 里未设置的变量展开为空字符串，并记一条写明变量名的警告。
 - **工具名。** 每个工具注册为 `mcp_<server>_<tool>`，`[A-Za-z0-9_]` 以外的字符替换为 `_`。超过 64 个字符（Chat Completions 的上限）的名字，以及由含非 ASCII 字符的服务器名或工具名生成的名字，会被截断并加上一个由原始服务器名和工具名算出的 8 位哈希，每次连接都相同。仍然映射到同一名字的两个工具（`my-srv` 与 `my_srv`）不会都注册：先列出的保留这个名字，另一个不注册，并在 `agentao.log` 记一条错误。
-- **失败行为。** 文件缺失 → 静默。文件不可读、不是合法 UTF-8、或 JSON 损坏 → 打一条带路径的 warning，然后退回默认值（该文件不贡献任何 server）。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。`/mcp add` 和 `/mcp remove` 会回写项目文件，因此改为拒绝：文件无法读成 JSON object、其 `mcpServers` 不是 object、或含有 JSON 无法表示的数、或 UTF-8 无法编码的文本（如孤立代理项 `"\ud800"`）时，打印错误并保持文件不变，因为覆盖写入会删掉其中所有 server。`save_mcp_config` 在同样情况下抛出 `McpConfigWriteError`。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
+- **失败行为。** 文件缺失 → 静默。文件不可读、不是普通文件（目录或命名管道）、不是合法 UTF-8、或 JSON 损坏 → 打一条带路径的 warning，然后退回默认值（该文件不贡献任何 server）。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。`/mcp add` 和 `/mcp remove` 会回写项目文件，因此改为拒绝：文件无法读成 JSON object、其 `mcpServers` 不是 object、或含有 JSON 无法表示的数、或 UTF-8 无法编码的文本（如孤立代理项 `"\ud800"`）时，打印错误并保持文件不变，因为覆盖写入会删掉其中所有 server。`save_mcp_config` 在同样情况下抛出 `McpConfigWriteError`。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
 
 ### Schema
 
@@ -333,7 +333,7 @@ URL 类 server（`http` 或 `sse`）默认使用 **OAuth**，不需要任何键�
 
 - **路径。** 仅 `<cwd>/.agentao/acp.json`。**没有用户级变体**——ACP 服务器明确按项目隔离。
 - **Loader。** `acp_client/config.py::load_acp_config`（解析后通过 `acp_client/models.py::AcpServerConfig.from_dict` 转为 `AcpServerConfig`）。
-- **失败行为。** `command` / `args` / `env` / `cwd` 缺失会在配置加载时抛 `AcpConfigError`——直接启动失败。文件不可读、不是合法 UTF-8、或 JSON 损坏同样如此：这个面 fail closed，且所有失败都以 `AcpConfigError` 形式抛出，不会变成裸 traceback。按 `utf-8-sig` 读取。
+- **失败行为。** `command` / `args` / `env` / `cwd` 缺失会在配置加载时抛 `AcpConfigError`——直接启动失败。文件不可读、不是合法 UTF-8、JSON 损坏、或路径不是普通文件，同样如此：这个面 fail closed，且所有失败都以 `AcpConfigError` 形式抛出，不会变成裸 traceback。按 `utf-8-sig` 读取。
 - **热加载。** CLI 监听文件 mtime；编辑会在下一次 inbox 轮询时被发现（`cli/acp_inbox.py`）。
 - **子进程环境。** ACP 服务器是从配置里拉起的第三方二进制——和 MCP 服务器处在同一信任位置——所以它的基础环境来自 `capabilities/process.py::build_child_env()`，**不会**继承 agentao 自己的 provider 凭据。原本靠继承 `OPENAI_API_KEY` 跑通的 server 现在会拿到 401；请在它的 `env` 块里显式声明，或设 `AGENTAO_SCRUB_CHILD_ENV=0` 在整个进程范围恢复完整继承。
 
@@ -381,7 +381,7 @@ URL 类 server（`http` 或 `sse`）默认使用 **OAuth**，不需要任何键�
 
 - **路径。** `<cwd>/.agentao/skills_config.json`（仅项目级）。
 - **Loader。** `skills/manager.py`。
-- **失败行为。** 文件缺失 → 静默。文件不可读、不是合法 UTF-8、JSON 损坏、顶层不是对象、或 `disabled_skills` 的值不是数组 → 打一条带路径的 warning，然后退回默认值（不禁用任何 skill）；数组里的非字符串条目会被丢弃并打 warning，其余保留。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
+- **失败行为。** 文件缺失 → 静默。文件不可读、不是普通文件（目录或命名管道）、不是合法 UTF-8、JSON 损坏、顶层不是对象、或 `disabled_skills` 的值不是数组 → 打一条带路径的 warning，然后退回默认值（不禁用任何 skill）；数组里的非字符串条目会被丢弃并打 warning，其余保留。按 `utf-8-sig` 读取，带 BOM 的文件能正常加载。该 warning 走 `agentao` logger：只有在尚未挂上任何 handler 时才会到终端（Python 的 `lastResort`）。实际上 `settings.json` 的读取在此之前，`mcp.json` / `skills_config.json` 在 LLM client 挂上 file handler 之后，因此后两者只进 `agentao.log`。`agentao doctor` 三者都会呈现。
 - **写入行为。** `/skills disable` 与 `/skills enable` 做的是**单个名字**的读—改—写：先拿 `skills_config.json.lock` 上的 `filelock`（10 秒，与 `skills/registry.py` 同一套协议），**读和写都在锁内**，再经同目录临时文件 + `os.replace` 换入。文件里其余的禁用名字、以及其余的配置字段都会保留 —— 包括本进程启动之后由第二个 agentao 进程写入的；「已经禁用／未禁用」也以文件为准，而不是以本进程构造时读到的那份快照为准。写入路径的解析**比上面的加载严格**：JSON 损坏、顶层不是对象、`disabled_skills` 不是数组、数组里有非字符串条目、或解码失败，都会**拒绝写入**并返回带路径的错误 —— 加载时那套宽容视图一旦被写回去，删掉的正是文件里原有的那些名字。锁超时或写入失败同理。以上任一情况下，文件、内存集合、已激活技能三者都不动，也不会报告成功。该锁只约束遵循同一协议的 agentao 进程；文本编辑器同时保存不在保证范围内。
 
 ### Schema

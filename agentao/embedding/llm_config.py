@@ -60,6 +60,7 @@ from dotenv.variables import parse_variables
 
 from .factory import discover_llm_kwargs
 from .. import json_parse
+from ..config_file import read_config_text
 
 USER_LLM_CONFIG_FILENAME = "llm.json"
 
@@ -117,12 +118,12 @@ def load_user_llm_config(path: Path) -> Optional[Dict[str, str]]:
     values are dropped. Raises :class:`LLMConfigError` when the file exists
     but is unreadable, is not a JSON object, or carries a non-string field.
     """
-    if not path.exists():
-        return None
     try:
-        raw = path.read_text(encoding="utf-8-sig")
+        raw = read_config_text(path)
     except (OSError, UnicodeDecodeError) as exc:
         raise LLMConfigError(f"cannot read {path} ({type(exc).__name__})") from None
+    if raw is None:
+        return None
     try:
         data = json_parse.loads(raw)
     except json.JSONDecodeError as exc:

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .. import json_parse
+from ..config_file import read_config_text
 
 _logger = logging.getLogger(__name__)
 
@@ -428,12 +429,14 @@ def _read_json_object(path: Path) -> "tuple[Dict[str, Any], Optional[str]]":
     Missing is not a problem. Reads ``utf-8-sig`` so a BOM'd file loads, and
     catches ``UnicodeDecodeError`` explicitly — it subclasses ``ValueError``,
     so the original ``(json.JSONDecodeError, OSError)`` pair let a UTF-16 file
-    raise straight out of config loading.
+    raise straight out of config loading. A directory or a pipe at the path
+    is a problem, not a missing file (``config_file``).
     """
-    if not path.is_file():
-        return {}, None
     try:
-        data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
+        text = read_config_text(path)
+        if text is None:
+            return {}, None
+        data = json_parse.loads(text)
     except UnicodeDecodeError as exc:
         return {}, (
             f"not valid UTF-8 ({exc.reason} at byte {exc.start}). Re-save it as "
