@@ -163,7 +163,7 @@ ACP 是客户端驱动的——server 不能自己开会话——所以 `--resum
 }
 ```
 
-v1 `prompt` 数组里只能放 `{"type":"text", "text": ...}`。
+v1 `prompt` 数组里可以放 `text`、`resource_link`（作为引用写进提示词）和 `image`（`{"type":"image", "data": "<base64>", "mimeType": ...}`）。其他类型的块会以 `-32602` 拒绝。
 
 **响应**（一次 prompt 的最终**结果**）会在所有流式更新结束后返回：
 
@@ -227,7 +227,9 @@ v1 `prompt` 数组里只能放 `{"type":"text", "text": ...}`。
     },
     "options":[
       {"optionId":"allow_once","name":"Allow once","kind":"allow_once"},
-      {"optionId":"reject_once","name":"Reject","kind":"reject_once"}
+      {"optionId":"allow_always","name":"Always allow","kind":"allow_always"},
+      {"optionId":"reject_once","name":"Reject once","kind":"reject_once"},
+      {"optionId":"reject_always","name":"Always reject","kind":"reject_always"}
     ]
   }
 }
@@ -294,7 +296,7 @@ sequenceDiagram
     Note over H: 用户点击 Stop
     H-)S: session/cancel {sessionId}
     Note over S: 触发 CancellationToken；<br/>正在执行的工具收到取消钩子
-    S--)H: session/update {tool_call_update cancelled}
+    S--)H: session/update {tool_call_update failed}
     S-->>H: result {id:<prompt_id>, stopReason:"cancelled"}
     Note over H,S: 连接保持开启；<br/>下一次 session/prompt 可立即发起
 ```
@@ -303,7 +305,7 @@ sequenceDiagram
 
 ## 恢复会话 `session/load`
 
-用于**持久化会话**场景：你把 `sessionId` + 历史消息存到数据库，进程重启后 restore。Agentao 在 `initialize` 响应里声明 `loadSession:true` 表示支持。
+用于**持久化会话**场景：保存好 `sessionId`，进程重启后恢复。Agentao 在 `initialize` 响应里声明 `loadSession:true` 表示支持。客户端不用发送历史：Agentao 把每个会话存在 `<cwd>/.agentao/sessions/` 下，从那里读回，并在应答前以 `session/update` 通知回放历史。参数是 `sessionId`、`cwd` 和可选的 `mcpServers`。加载一个仍在活动的 id 会以 `-32600` 拒绝。
 
 ```json
 {
@@ -312,11 +314,7 @@ sequenceDiagram
   "method":"session/load",
   "params":{
     "sessionId":"sess-restored",
-    "cwd":"/path/to/project",
-    "history":[
-      {"role":"user","content":[{"type":"text","text":"先前的问题"}]},
-      {"role":"assistant","content":[{"type":"text","text":"先前的答复"}]}
-    ]
+    "cwd":"/path/to/project"
   }
 }
 ```

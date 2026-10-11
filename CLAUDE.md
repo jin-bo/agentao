@@ -165,7 +165,7 @@ Agentao.chat() / Agentao.arun()
          └─ else: return assistant text
 ```
 
-`arun()` is the async path. The sync `chat()` wraps it.
+`arun()` is the async path. It wraps the sync `chat()`: it submits `chat()` to its own worker pool (`_get_arun_pool`) and awaits the result.
 
 ### Compaction
 

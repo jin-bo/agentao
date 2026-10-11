@@ -3,7 +3,7 @@
 Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端到端叙事（握手 → 提示 → 流式 → 取消）见 [Part 3](/zh/part-3/)。本附录是你在调试畸形消息时打开的那一页。
 
 **约定**：
-- `→` 请求；`←` 响应；`⇠` 服务器到客户端通知
+- `→` 请求；`←` 响应；`⇠` 服务器发给客户端（通知，或客户端必须应答的请求）
 - 所有消息都是 stdio 上的 NDJSON JSON-RPC 2.0
 - `{…}` = 对象；`[…]` = 数组；`T|U` = 联合；`?` = 可选
 
@@ -94,8 +94,10 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `type` | `"text"` | v1 基线仅 text |
-| `text` | `string` | 用户消息 |
+| `type` | `"text"` \| `"resource_link"` \| `"image"` | 其他类型以 `-32602` 拒绝 |
+| `text` | `string` | `text` 块：用户消息 |
+| `uri`、`name`? | `string` | `resource_link` 块：作为引用写进提示词 |
+| `data`、`mimeType` | `string` | `image` 块：base64 字节与图片类型 |
 
 ### ← 响应
 
@@ -119,8 +121,8 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 | 值 | Agentao 事件 | 额外字段 |
 |----|--------------|----------|
 | `user_message_chunk` | （回放） | `content: {type:"text", text}` |
-| `agent_message_chunk` | `LLM_TEXT` | `content: {type:"text", text}` |
-| `agent_thought_chunk` | `THINKING` / `ERROR` | `content: {type:"text", text}` |
+| `agent_message_chunk` | `LLM_TEXT` / `ERROR` | `content: {type:"text", text}`；`ERROR` 的文本以 `Error: ` 开头 |
+| `agent_thought_chunk` | `THINKING` | `content: {type:"text", text}` |
 | `tool_call` | `TOOL_START` | `toolCallId`、`title`、`kind`、`status:"pending"`、`rawInput`；文件编辑另带一个只含 `diff` 条目的 `content[]` |
 | `tool_call_update` | `TOOL_OUTPUT` / `TOOL_COMPLETE` | `toolCallId`、`status`，可选 `content[]` —— 它**替换**整个集合，所以每条更新都要把集合整个重述一遍 |
 
@@ -145,7 +147,7 @@ ACP v1 还有第三种 `terminal`。Agentao 从不发它：它不调用 `termina
 | `completed` | 工具成功 |
 | `failed` | 工具抛错或返回错误 |
 
-## C.5 `session/request_permission` ⇠ 通知
+## C.5 `session/request_permission` ⇠ 请求
 
 服务器请客户端确认工具调用。
 
@@ -155,7 +157,7 @@ ACP v1 还有第三种 `terminal`。Agentao 从不发它：它不调用 `termina
 |------|------|------|
 | `sessionId` | `string` | |
 | `toolCall` | `object` | 形状同 `session/update.tool_call` |
-| `options` | `[{optionId, name, kind}]` | 通常 `["allow", "allow_always", "reject"]` |
+| `options` | `[{optionId, name, kind}]` | `allow_once`、`allow_always`、`reject_once`、`reject_always`（`optionId` 与 `kind` 相同）。MCP Skills 闸门发起的确认只给两个 `*_once` 选项 |
 
 ### 期望响应（客户端 → 服务器）
 
@@ -178,7 +180,7 @@ ACP v1 还有第三种 `terminal`。Agentao 从不发它：它不调用 `termina
 
 ### ← 响应
 
-空对象 `{}`。进行中的 `session/prompt` 最终以 `stopReason: "cancelled"` 解决。
+ACP 把 `session/cancel` 定义为 notification（无 `id`），所以服务器不回复。客户端若以 request 形式发送（带 `id`），会收到 `"result": null`。进行中的 `session/prompt` 最终以 `stopReason: "cancelled"` 解决。
 
 ## C.7 `session/load`
 
@@ -278,7 +280,7 @@ Agentao 独有的自由文本换模型——`session/set_config_option` 裸值�
 - 命中预设**要求**会话有 `PermissionEngine`，否则 `-32600` Invalid Request。未知 modeId 不需要引擎——纯 UI 状态。
 - 按会话隔离：每个会话拥有自己的引擎，会话 A 的预设变更绝不影响会话 B。
 
-## C.11 `_agentao.cn/ask_user` ⇠ 通知（扩展）
+## C.11 `_agentao.cn/ask_user` ⇠ 请求（扩展）
 
 Agentao 独有，服务器向用户问一个自由文本问题。
 
@@ -293,9 +295,10 @@ Agentao 独有，服务器向用户问一个自由文本问题。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `answer` | `string` | 用户自由文本回答 |
+| `outcome` | `"answered"` \| `"cancelled"` | 用户作答为 `"answered"`，关闭提问为 `"cancelled"` |
+| `text` | `string` | `"answered"` 时：用户的回答，一个字符串 |
 
-用户不可达时，客户端可回返哨兵 `"(user unavailable)"`（常量 `ASK_USER_UNAVAILABLE_SENTINEL`）。
+其他形状一律拒绝（`extra="forbid"`）。取消、`text` 为空、错误响应或格式不对的结果，模型收到的都是哨兵 `"(user unavailable)"`（常量 `ASK_USER_UNAVAILABLE_SENTINEL`）。
 
 ## C.12 JSON-RPC 错误码速查
 

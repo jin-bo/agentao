@@ -365,7 +365,7 @@ Missing the leading dot means **exact**. For subdomain matches write `".github.c
 
 - Two layers: **rule engine** (zero-latency, ALLOW / DENY / ASK) → **`confirm_tool`** (seconds, only for ASK).
 - Pick a preset to start: `WORKSPACE_WRITE` is the production default. `READ_ONLY` for audit. `FULL_ACCESS` only for trusted local dev. `PLAN` for read-only pre-commit review.
-- Domain rules: `".github.com"` (leading dot) = suffix; `"github.com"` (no dot) = exact. SSRF blocklist (localhost / `169.254.169.254` / RFC1918) is on by default.
+- Domain rules: `".github.com"` (leading dot) = suffix; `"github.com"` (no dot) = exact. The default preset's `web_fetch` blocklist denies `localhost`, `127.0.0.1`, `0.0.0.0`, `::1`, `169.254.169.254`, `.internal` and `.local`. It holds no RFC 1918 ranges: private addresses are refused separately, when the request is made, by the URL policy ([6.3 Layer 2](/en/part-6/3-network-ssrf#layer-2-·-http-client-behavior)).
 - Layer rules over presets — write rules for *your* tools and MCP servers; defaults rarely cover them.
 
 → Next: [5.5 Memory System](./5-memory)

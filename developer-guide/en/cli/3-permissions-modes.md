@@ -130,9 +130,9 @@ Linux and Windows don't have this; the command is a no-op there.
 ```text
 > /sandbox
 Sandbox: enabled
-  Default profile: workspace-only
+  Default profile: workspace-write-no-network
   Workspace root:  /Users/you/projects/my-app
-  Available:       workspace-only, network-allowed, strict-readonly
+  Available:       readonly, workspace-write, workspace-write-no-network
 ```
 
 Subcommands:
@@ -143,6 +143,7 @@ Subcommands:
 | `/sandbox on` | Enable for this session |
 | `/sandbox off` | Disable for this session |
 | `/sandbox profile <name>` | Switch profile (session only) |
+| `/sandbox profiles` | List the available profiles |
 | `/sandbox profiles` | List available profile names |
 
 ::: danger Fail-closed on broken config

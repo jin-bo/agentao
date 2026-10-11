@@ -26,9 +26,11 @@ macOS 自带 `sandbox-exec` 工具，内核级隔离文件写入和网络访问�
 
 | Profile | 能写文件 | 能联网 | 典型场景 |
 |---------|---------|------|---------|
-| `readonly` | ❌ | ❌ | 纯读分析、审计 |
-| `workspace-write-no-network` | 仅 `_RW1` 下 | ❌ | 代码编辑（无网） |
-| `workspace-write` | 仅 `_RW1` 下 | ✅ | 默认开发用 |
+| `readonly` | 仅临时目录 | ❌ | 纯读分析、审计 |
+| `workspace-write-no-network` | `_RW1` + 临时目录 | ❌ | 代码编辑（无网；内置默认） |
+| `workspace-write` | `_RW1` + 临时目录 | ✅ | 需要联网的开发工作 |
+
+"临时目录"指 `/tmp`、`/var/tmp` 及对应的 `/private/...` 路径：每个 profile 都允许写，因为很多工具会往那里写临时文件。
 
 `_RW1` 是 sandbox profile 里声明的可写路径变量，Agentao 会传入 `workspace_root`（默认 = 项目根）。
 

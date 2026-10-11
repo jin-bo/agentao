@@ -4,7 +4,7 @@
 
 ## `/replay` — 录制 / 列表 / 检视 / 清理会话
 
-录制开启后，agent 发出的每个事件（LLM 回复、工具调用、工具结果、权限决策、记忆写入...）都被追加到 `.agentao/replay/` 下的 JSONL 文件。之后你可以列表、渲染、看尾部、清理这些文件。
+录制开启后，agent 发出的每个事件（LLM 回复、工具调用、工具结果、权限决策、记忆写入...）都被追加到 `.agentao/replays/` 下的 JSONL 文件，文件名是 `<session_id>.<instance_id>.jsonl`。每次 `/clear`、`/new` 或加载会话都会开一个新 instance，所以一个会话可以有多个文件。之后你可以列表、渲染、看尾部、清理这些文件。
 
 ### `/replay on` 和 `/replay off`
 
@@ -25,24 +25,24 @@ Replay recording: on  (max_instances=20)
 
 Saved Replays (3):
 
-  • a1b2c3
+  • 3f9c2a1b.7d41e0
     Refactor the auth module to use middleware…
     47 events · 8 turns  ⚠ has errors
     Created: 2026-04-30 14:08  Updated: 2026-04-30 14:42
-    File: a1b2c3-2026-04-30T14-08-12.jsonl
+    File: 3f9c2a1b-5e6d-4c3b-9a8f-0e1d2c3b4a59.7d41e0a9c2b4.jsonl
 
-  • d4e5f6
+  • b81e44d0.c08b52
     Find the 3 largest files under cwd
     12 events · 2 turns
     Created: 2026-04-30 13:50  Updated: 2026-04-30 13:51
-    File: d4e5f6-2026-04-30T13-50-04.jsonl
+    File: b81e44d0-27c4-4f1a-8e2b-6a5d9c0f3e17.c08b52f1e3a7.jsonl
   ...
 
 Usage: /replay show <id>  or  /replay tail <id> [n]  or  /replay prune
 ```
 
 每条显示：
-- Short ID（6 字符前缀，其他命令都用它）
+- Short ID：会话 id 的前 8 个字符、一个点、instance id 的前 6 个字符。其他子命令都用它
 - 第一条用户消息预览
 - 事件 / 轮次计数；有错误事件会标 `⚠ has errors`
 - 创建 / 更新时间（本地）
@@ -53,24 +53,24 @@ Usage: /replay show <id>  or  /replay tail <id> [n]  or  /replay prune
 ### `/replay show <id>` — 完整渲染
 
 ```text
-> /replay show a1b2c3
+> /replay show 3f9c2a1b.7d41e0
 ```
 
-按轮分组渲染所有事件。默认视图把相关事件聚到一起（`tool_call` + `tool_result`），加 flag 改切片方式：
+按轮分组渲染所有事件。默认视图把相关事件聚到一起（`tool_started` + `tool_completed`），加 flag 改切片方式：
 
 | Flag | 效果 |
 |---|---|
 | `--raw` | 扁平按时间序展示，不分组 |
 | `--turn <tid>` | 只看某一轮 |
-| `--kind <kind>` | 按事件类型过滤（`tool_call` `permission_decision` `memory_write` ...） |
+| `--kind <kind>` | 按事件类型过滤（`tool_started` `permission_decision` `memory_write` ...） |
 | `--errors` | 只看标为 error 的事件 |
 
-`<id>` 是 short ID 的**前缀**。`/replay show a1` 在唯一时就能定位；多个 `a1*` 都匹配时 CLI 把候选列出来让你确认。
+`<id>` 可以是 short ID、完整的 `session.instance` id、会话 id 或 instance id 的**前缀**。`/replay show 3f9c` 在唯一时就能定位；多个都匹配时 CLI 把候选列出来让你确认。与任一 id 完全相等的匹配总是优先。
 
 ### `/replay tail <id> [n]` — 尾部 N 个事件
 
 ```text
-> /replay tail a1b2c3 30
+> /replay tail 3f9c2a1b.7d41e0 30
 ```
 
 最后 `n` 个事件的扁平视图（默认 20）。长 replay 末尾出问题、只关心尾巴时用。
@@ -87,8 +87,8 @@ Pruned 5 replay(s) beyond max_instances=20.
 ### `/replay delete <id>` 和 `/replay delete all`
 
 ```text
-> /replay delete a1b2c3
-Deleted replay a1b2c3.
+> /replay delete 3f9c2a1b.7d41e0
+Deleted replay 3f9c2a1b.7d41e0 (3f9c2a1b-5e6d-4c3b-9a8f-0e1d2c3b4a59.7d41e0a9c2b4.jsonl).
 
 > /replay delete all
 Are you sure? This deletes all replays except the active one. [y/N]: y
@@ -171,9 +171,9 @@ Markdown rendering: OFF
 ---
 
 ::: info 这一章在体系里的位置
-Replay 实现在 `agentao.replay`。嵌入式宿主可以直接读相同的 JSONL 文件，用 `agentao.replay.read_replay()` 反序列化。事件 schema 在 CLI 和嵌入两条路径上一致。CI 里可以用 replay 验证行为改动不破坏过去的会话。
+Replay 实现在 `agentao.replay`。嵌入式宿主可以用 `agentao.replay.ReplayReader` 读取相同的 JSONL 文件。事件 schema 在 CLI 和嵌入两条路径上一致。CI 里可以用 replay 验证行为改动不破坏过去的会话。
 :::
 
 ::: tip 真相源头
-命令语法：`/help`。行为：[`agentao/cli/replay_commands.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/replay_commands.py)。渲染逻辑：[`agentao/cli/replay_render.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/replay_render.py)。存储：[`agentao/replay/`](https://github.com/jin-bo/agentao/blob/main/agentao/replay/)。
+命令语法：`/help`。行为：[`agentao/cli/replay_commands.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/replay_commands.py)。渲染逻辑：[`agentao/cli/replay_render/`](https://github.com/jin-bo/agentao/tree/main/agentao/cli/replay_render)。存储：[`agentao/replay/`](https://github.com/jin-bo/agentao/blob/main/agentao/replay/)。
 :::

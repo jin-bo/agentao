@@ -167,8 +167,8 @@ sequenceDiagram
 
 协议标准里 Server 只能**请求权限**而不能**向用户追问文本**。Agentao 通过 `_meta["_agentao.cn/extensions"]`（ACP 标准的扩展通道）宣告了一个私有扩展方法 `_agentao.cn/ask_user`，用来从 Server 向 Client 反问任意问题。Client 可以：
 
-- 实现它：把问题弹给用户、拿到答复后返回字符串
-- 不实现：Agent 会 fallback 到 `"[ask_user: not available in non-interactive mode]"`
+- 实现它：把问题弹给用户，回复 `{"outcome":"answered","text":"..."}`（见 [C.11](/zh/appendix/c-acp-messages#c-11-agentao-cn-ask-user-⇠-请求-扩展)）
+- 不实现：错误响应会变成哨兵 `"(user unavailable)"`，轮次继续
 
 ## ACP v1 的边界
 

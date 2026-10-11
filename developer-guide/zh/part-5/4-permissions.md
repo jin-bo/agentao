@@ -365,7 +365,7 @@ JSON 里 `\` 要写两次：`"rm\\s+-rf"`。
 
 - 两层：**规则引擎**（零延迟，ALLOW / DENY / ASK）→ **`confirm_tool`**（秒级，只在 ASK 时触发）。
 - 起步选预设：`WORKSPACE_WRITE` 是生产默认；`READ_ONLY` 用于审计；`FULL_ACCESS` 仅给可信本地开发；`PLAN` 用于只读 pre-commit review。
-- 域名规则：`".github.com"`（前导点）= 后缀匹配；`"github.com"`（无点）= 精确匹配。SSRF 黑名单（localhost / `169.254.169.254` / RFC1918）默认开。
+- 域名规则：`".github.com"`（前导点）= 后缀匹配；`"github.com"`（无点）= 精确匹配。默认预设的 `web_fetch` 黑名单拒绝 `localhost`、`127.0.0.1`、`0.0.0.0`、`::1`、`169.254.169.254`、`.internal` 和 `.local`。它不含 RFC 1918 网段：私有地址由 URL 策略在发出请求时另行拒绝（[6.3 层 2](/zh/part-6/3-network-ssrf#层-2-·-http-客户端行为)）。
 - 在预设之上**叠加规则**——为你自己的工具和 MCP server 写规则；默认规则覆盖不到它们。
 
 → 下一节：[5.5 记忆系统](./5-memory)

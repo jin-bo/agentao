@@ -11,8 +11,10 @@ construction time instead, see [../design/host-tool-injection.md](../design/host
    Both live in `agentao/tools/base.py`; `RegistrableTool = Tool | AsyncToolBase`.
    `web_fetch` (`agentao/tools/web.py`) is the built-in `AsyncToolBase` to copy from.
 2. Set `requires_confirmation=True` for anything dangerous: arbitrary shell, network
-   requests, file writes, deletions. This is what routes the tool through
-   `PermissionEngine` — see [tool-confirmation.md](tool-confirmation.md).
+   requests, file writes, deletions. This does not decide whether `PermissionEngine`
+   runs: the engine checks every tool call, and its `ALLOW` or `DENY` is final.
+   `requires_confirmation` is the fallback, used only when the engine answers `ASK`
+   or no rule matches — see [Permissions](../../developer-guide/en/part-5/4-permissions.md).
 3. Register in `agentao/tooling/registry.py::register_builtin_tools()`.
 4. Write the description and the parameter text in Simplified Technical English
    (ASD-STE100), as the system prompt does since #402: no semicolons, active voice,

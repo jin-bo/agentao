@@ -28,12 +28,12 @@ Agent 有一层持久化记忆。它在工作过程中把关于你和项目的�
 
 ## 记忆怎么进入 prompt
 
-每一轮，系统提示里加两个块：
+每一轮，模型会收到两个块：
 
-- **`<memory-stable>`** — 核心、慢变的记忆（你的角色、项目锚点）。从上往下渲染，有预算上限。
-- **`<memory-context>`** — Top-K 召回候选，按当前用户消息评分。易变，每轮重建。
+- **`<memory-stable>`** — 核心、慢变的记忆（你的角色、项目锚点），位于缓存的系统提示末尾。从上往下渲染，有预算上限。
+- **`<memory-context>`** — Top-K 召回候选，按当前用户消息评分。易变：每轮重建，放在每次请求的 `<system-reminder>` 里，不在系统提示里。
 
-会话摘要*不*在 `<memory-stable>` 里 — 它们以 `[Conversation Summary]` 块的形式存在于会话历史中，是压缩时塞进去的。
+`<memory-stable>` 还带有本项目*以往*会话的摘要，最多 3 条。当前会话自己的摘要不会重复放进去：它们已经以 `[Conversation Summary]` 块的形式在会话历史里，是压缩时加入的。
 
 ## `/memory` — 列全部
 
@@ -68,7 +68,7 @@ Found 2 memory(ies) matching 'oauth':
   • Auth token storage [project]: Tokens go through SealedStorage...
 ```
 
-在 title / content / tags 里搜。大小写不敏感、子串匹配。
+在 title / content / 规范化键 / tags / 提取的关键词里搜。大小写不敏感、子串匹配。
 
 ## `/memory tag <tag>` — 按标签过滤
 
@@ -96,7 +96,7 @@ Found 2 memory(ies) with tag 'feature':
 Successfully deleted memory: OAuth integration plan
 ```
 
-参数是条目**标题**，不是 tag 或 ID。完全匹配（大小写敏感）；规范化键作为兜底匹配。
+参数是条目**标题**，不是 tag 或 ID。必须整个标题匹配，不区分大小写。两个作用域里所有同名条目都会被删除。
 
 软删除：DB 里行还在，只是写了 `deleted_at` 时间戳，从所有可见地方过滤掉。Agent 下一轮看不到。
 

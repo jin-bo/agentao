@@ -168,8 +168,8 @@ sequenceDiagram
 
 The base spec only lets the server **request permission** — it does not let the server ask the user a free-form question. Agentao advertises a private extension method `_agentao.cn/ask_user` under `_meta["_agentao.cn/extensions"]` (ACP's standard extension channel) to do exactly that. Client options:
 
-- Implement it: prompt the user, return the answer string
-- Don't implement: the agent falls back to `"[ask_user: not available in non-interactive mode]"`
+- Implement it: prompt the user, reply `{"outcome":"answered","text":"..."}` (see [C.11](/en/appendix/c-acp-messages#c-11-agentao-cn-ask-user-⇠-request-extension))
+- Don't implement: the error response resolves to the sentinel `"(user unavailable)"`, and the turn continues
 
 ## ACP v1 boundaries
 

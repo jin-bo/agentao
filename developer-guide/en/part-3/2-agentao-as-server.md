@@ -163,7 +163,7 @@ The store is keyed by the client-supplied `cwd`, so the lookup runs at request t
 }
 ```
 
-In v1, `prompt` array entries may only be `{"type":"text", "text": ...}`.
+In v1, `prompt` array entries may be `text`, `resource_link` (rendered into the prompt as a reference) or `image` (`{"type":"image", "data": "<base64>", "mimeType": ...}`). Any other block type is rejected with `-32602`.
 
 **Final response** (returned after all streaming updates complete):
 
@@ -227,7 +227,9 @@ When Agentao attempts a `requires_confirmation=True` tool:
     },
     "options":[
       {"optionId":"allow_once","name":"Allow once","kind":"allow_once"},
-      {"optionId":"reject_once","name":"Reject","kind":"reject_once"}
+      {"optionId":"allow_always","name":"Always allow","kind":"allow_always"},
+      {"optionId":"reject_once","name":"Reject once","kind":"reject_once"},
+      {"optionId":"reject_always","name":"Always reject","kind":"reject_always"}
     ]
   }
 }
@@ -295,7 +297,7 @@ sequenceDiagram
     Note over H: User clicks Stop
     H-)S: session/cancel {sessionId}
     Note over S: signal CancellationToken;<br/>any in-flight tool gets a cancel hook
-    S--)H: session/update {tool_call_update cancelled}
+    S--)H: session/update {tool_call_update failed}
     S-->>H: result {id:<prompt_id>, stopReason:"cancelled"}
     Note over H,S: Connection stays open;<br/>next session/prompt can run immediately
 ```
@@ -304,7 +306,7 @@ sequenceDiagram
 
 ## Restoring sessions `session/load`
 
-For **persistent session** scenarios: store `sessionId` + history in your DB, restore after a process restart. Agentao advertises `loadSession:true` in the handshake.
+For **persistent session** scenarios: keep the `sessionId`, and restore it after a process restart. Agentao advertises `loadSession:true` in the handshake. The client does not send history: Agentao saves each session under `<cwd>/.agentao/sessions/`, reads it back from there, and replays it as `session/update` notifications before it answers. The params are `sessionId`, `cwd` and an optional `mcpServers`. Loading an id that is already active is refused with `-32600`.
 
 ```json
 {
@@ -313,11 +315,7 @@ For **persistent session** scenarios: store `sessionId` + history in your DB, re
   "method":"session/load",
   "params":{
     "sessionId":"sess-restored",
-    "cwd":"/path/to/project",
-    "history":[
-      {"role":"user","content":[{"type":"text","text":"previous question"}]},
-      {"role":"assistant","content":[{"type":"text","text":"previous answer"}]}
-    ]
+    "cwd":"/path/to/project"
   }
 }
 ```
