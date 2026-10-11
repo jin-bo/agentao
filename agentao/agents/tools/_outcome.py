@@ -163,7 +163,7 @@ def _terminal_state(incomplete: Optional[_IncompleteOutcome]) -> BgTaskStatus:
     """What to call a finished sub-agent run — the one mapping both paths use.
 
     Answers in the ``BgTaskStatus`` vocabulary that the background store, the
-    foreground ``SubagentProgress`` and the public ``SubagentLifecycleEvent``
+    foreground ``AGENT_END`` event and the public ``SubagentLifecycleEvent``
     phase all share, so a cancel cannot land in one terminal state on the
     foreground path and another on the background one.
 

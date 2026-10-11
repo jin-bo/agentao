@@ -1,10 +1,11 @@
 """Sub-agent tool registration.
 
 Extracted from ``Agentao._register_agent_tools``. Wires the
-``AgentManager``-produced sub-agent tools onto ``agent.tools`` and
-bridges their runtime events (start/end, per-step tool calls, output
-chunks) onto the session transport so the CLI / ACP observe them the
-same way as top-level tool calls.
+``AgentManager``-produced sub-agent tools onto ``agent.tools``, with the
+session transport as the sink for their events (start/end, per-step tool
+calls, output chunks), so the CLI / ACP observe them the same way as
+top-level tool calls. The wrapper forwards a whitelist of the child's
+events (``AgentToolWrapper._make_forwarder``).
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable
 
 from ..agents.tools import AgentToolWrapper
-from ..transport import AgentEvent, EventType
 from ..transport.sdk import invoke_ask_user_callback
 
 if TYPE_CHECKING:
@@ -56,62 +56,6 @@ def register_agent_tools(agent: "Agentao") -> None:
     if agent.agent_manager is None:
         return
 
-    def _agent_step_cb(name, args):
-        if name is None:
-            agent.transport.emit(AgentEvent(EventType.TURN_START, (
-                {"display_reset": True}
-                if isinstance(args, dict) and args.get("display_reset") else {}
-            )))
-        elif name == "__agent_start__":
-            agent.transport.emit(AgentEvent(EventType.AGENT_START, {
-                "agent": args.agent_name,
-                "task": args.task,
-                "max_turns": args.max_turns,
-            }))
-        elif name == "__agent_end__":
-            data = {"agent": args.agent_name, "state": args.state}
-            # A counter that is not known is left out, not sent as ``None``.
-            # The CLI and ACP leave a missing counter out of their lines; the
-            # compat ``step_callback`` reads it as 0; replay records ``None``.
-            for key in ("turns", "tool_calls", "tokens", "duration_ms"):
-                value = getattr(args, key)
-                if value is not None:
-                    data[key] = value
-            data["error"] = args.error
-            agent.transport.emit(AgentEvent(EventType.AGENT_END, data))
-        else:
-            # call_id is injected by build_compat_transport; fall back to name.
-            _args = dict(args) if isinstance(args, dict) else {}
-            call_id = _args.pop("__call_id__", None) or name
-            agent.transport.emit(AgentEvent(EventType.TOOL_START, {
-                "tool": name, "args": _args, "call_id": call_id,
-            }))
-
-    # TOOL_OUTPUT / TOOL_COMPLETE receive the stable ``call_id`` (and, for
-    # completion, the real status / duration / error) forwarded by
-    # build_compat_transport, so a same-named parallel batch (e.g. four
-    # concurrent ``read_file``) stays correlatable with its matching
-    # TOOL_START *and* a failed or permission-denied sub-agent tool is
-    # reported as a failure rather than a hardcoded success. The tool-name
-    # fallback fires only when the id is genuinely absent (``None``) — an
-    # empty-string id is preserved so it is not silently collapsed.
-    def _agent_output_cb(name, chunk, call_id=None):
-        agent.transport.emit(AgentEvent(EventType.TOOL_OUTPUT, {
-            "tool": name, "chunk": chunk,
-            "call_id": call_id if call_id is not None else name,
-        }))
-
-    def _agent_tool_complete_cb(
-        name, call_id=None, status=None, duration_ms=None, error=None,
-    ):
-        agent.transport.emit(AgentEvent(EventType.TOOL_COMPLETE, {
-            "tool": name,
-            "call_id": call_id if call_id is not None else name,
-            "status": status if status is not None else "ok",
-            "duration_ms": duration_ms if duration_ms is not None else 0,
-            "error": error,
-        }))
-
     agent_tools = agent.agent_manager.create_agent_tools(
         all_tools=agent.tools.tools,
         # How a sub-agent tells the parent's built-ins from host tools that
@@ -122,12 +66,13 @@ def register_agent_tools(agent: "Agentao") -> None:
         # values rather than the snapshot frozen at registration time.
         llm_config_getter=lambda: agent._llm_config,
         bg_store=agent.bg_store,
-        confirmation_callback=lambda *a, **kw: agent.transport.confirm_tool(*a, **kw),
-        confirmation_event_callback=lambda event: agent.transport.emit(event),
-        step_callback=_agent_step_cb,
-        output_callback=_agent_output_cb,
-        tool_complete_callback=_agent_tool_complete_cb,
-        ask_user_callback=transport_ask_user(agent),
+        # A foreground sub-agent's events go to the parent's transport as
+        # they are, and its confirmations and questions are answered there.
+        # Each lambda reads ``agent.transport`` per call: replay replaces it
+        # after this registration, and a bound method would keep the old one.
+        event_sink=lambda event: agent.transport.emit(event),
+        confirm_tool=lambda *a, **kw: agent.transport.confirm_tool(*a, **kw),
+        ask_user=transport_ask_user(agent),
         max_context_tokens=agent.context_manager.max_tokens,
         parent_messages_getter=lambda: agent.messages,
         cancellation_token_getter=lambda: agent._current_token,

@@ -6,7 +6,7 @@ three tools here take a store reference at construction time and read
 or write through it.
 
 Layout (each row only depends on rows above):
-    _progress   ← SubagentProgress (lifecycle event dataclass)
+    _progress   ← SubagentProgress (the compat step_callback payload)
     _complete   ← TaskComplete + CompleteTaskTool (terminal signal)
     _bg_tools   ← CheckBackgroundAgentTool + CancelBackgroundAgentTool
     _inherit    ← what a sub-agent takes from its parent at spawn

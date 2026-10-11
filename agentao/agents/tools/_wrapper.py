@@ -9,8 +9,8 @@ spawns a fresh :class:`Agentao` for the sub-task, and emits public
 ``SubagentLifecycleEvent`` pairs so hosts can observe lineage.
 
 The class stays in one file because its sub-helpers (parent-context
-builder, sync runner, background launcher, prefixed step callback) all read
-the same constructor-captured callbacks. The free functions that read none
+builder, sync runner, background launcher, child-event forwarder) all read
+the same constructor-captured entry points. The free functions that read none
 of that state live beside it: what a sub-agent inherits in ``_inherit``,
 how its run is classified in ``_outcome``.
 """
@@ -22,13 +22,14 @@ import threading
 import time
 import uuid
 from dataclasses import replace
-from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...llm._usage import positive_int
 from ...tools.base import SHELL_TOOL_NAME, RegistrableTool, Tool
+from ...transport.events import AgentEvent, EventType
+from ...transport.sdk import SdkTransport
 from ..bg_store import BackgroundTaskStore
 from ._complete import CompleteTaskTool, TaskComplete
 from ._inherit import (
@@ -44,14 +45,8 @@ from ._outcome import (
     _is_harness_notice,
     _terminal_state,
 )
-from ._progress import SubagentProgress
 
 logger = logging.getLogger(__name__)
-
-# The end event's counters when the sub-agent never ran: not known, not zero.
-_UNKNOWN_COUNTS: Dict[str, Any] = {
-    "turns": None, "tool_calls": None, "tokens": None, "duration_ms": None,
-}
 
 
 _USAGE_KEYS = (
@@ -131,11 +126,9 @@ class AgentToolWrapper(Tool):
         llm_config_getter: Callable[[], Dict[str, Any]],
         working_directory: Path,
         bg_store: Optional[BackgroundTaskStore] = None,
-        confirmation_callback: Optional[Callable] = None,
-        step_callback: Optional[Callable] = None,
-        output_callback: Optional[Callable] = None,
-        tool_complete_callback: Optional[Callable] = None,
-        ask_user_callback: Optional[Callable] = None,
+        event_sink: Optional[Callable[[AgentEvent], None]] = None,
+        confirm_tool: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
+        ask_user: Optional[Callable[..., str]] = None,
         max_context_tokens: Optional[int] = None,
         parent_messages_getter: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         cancellation_token_getter: Optional[Callable] = None,
@@ -148,7 +141,6 @@ class AgentToolWrapper(Tool):
         tool_origin_getter: Optional[Callable[[str], str]] = None,
         skill_manager_getter: Optional[Callable[[], Any]] = None,
         usage_sink: Optional[Callable[..., None]] = None,
-        confirmation_event_callback: Optional[Callable] = None,
     ):
         self._definition = definition
         # The parent's live registry: tools it adds or removes between turns
@@ -164,12 +156,14 @@ class AgentToolWrapper(Tool):
         # construction; matches the static-value idiom used for sandbox_policy.
         self._working_directory = working_directory
         self._bg_store = bg_store
-        self._confirmation_callback = confirmation_callback
-        self._confirmation_event_callback = confirmation_event_callback
-        self._step_callback = step_callback
-        self._output_callback = output_callback
-        self._tool_complete_callback = tool_complete_callback
-        self._ask_user_callback = ask_user_callback
+        # The parent's side of a foreground run: where its events go, who
+        # answers its confirmations and questions. Each reads the parent's
+        # transport per call, since replay swaps that transport after the
+        # agent tools are registered. ``None``: nothing shown, and no one
+        # asked (``SdkTransport``'s defaults).
+        self._event_sink = event_sink
+        self._confirm_tool = confirm_tool
+        self._ask_user = ask_user
         self._max_context_tokens = max_context_tokens
         self._parent_messages_getter = parent_messages_getter
         self._cancellation_token_getter = cancellation_token_getter
@@ -263,10 +257,6 @@ class AgentToolWrapper(Tool):
     # Public execute — dispatches sync vs background
     # ------------------------------------------------------------------
 
-    # Sentinel tool names used to signal sub-agent lifecycle to the step callback
-    _AGENT_START = "__agent_start__"
-    _AGENT_END   = "__agent_end__"
-
     def execute(self, task: str, run_in_background: bool = False) -> str:
         # The child's skill manager is derived here, on the launching thread
         # and *before* the parent's messages are read: deriving it registers
@@ -302,15 +292,15 @@ class AgentToolWrapper(Tool):
         agent_name = self._definition["name"]
         max_turns  = self._definition.get("max_turns", 15)
 
-        # The fields every progress event of this run shares.
-        progress = partial(
-            SubagentProgress, agent_name=agent_name,
-            task=task[:80], max_turns=max_turns,
-        )
-
-        # Signal sub-agent start to the CLI
-        if self._step_callback:
-            self._step_callback(self._AGENT_START, progress(state="running"))
+        # Signal sub-agent start to the CLI. Not guarded, unlike the end
+        # event, and on purpose: a sink that raises here fails the tool call
+        # before anything has run, as it always has. Guarding it would let
+        # the run go ahead without a start, a behaviour change of its own
+        # (``docs/design/subagent-event-bridge.md`` §5 guards only the end).
+        if self._event_sink:
+            self._event_sink(AgentEvent(EventType.AGENT_START, {
+                "agent": agent_name, "task": task[:80], "max_turns": max_turns,
+            }))
 
         # ``task`` is user-supplied free-form text (and may carry the
         # parent's tool output, secrets, or sensitive instructions);
@@ -341,21 +331,21 @@ class AgentToolWrapper(Tool):
             # Neither raising path has ``stats``. ``settled["counts"]`` has
             # what the sub-agent's history and clock showed when it raised;
             # without it — the sub-agent was never run — every counter is
-            # ``None``, "not known", which the displays leave out rather than
-            # show as zero. A cancel leaves ``error`` empty, as on the
+            # "not known" and left out of the event, so the displays do not
+            # show it as zero. A cancel leaves ``error`` empty, as on the
             # ordinary path below.
-            self._send_agent_end(progress(
-                state="cancelled", **settled.get("counts", _UNKNOWN_COUNTS),
-            ))
+            self._send_agent_end(
+                "cancelled", **settled.get("counts", {}),
+            )
             self._terminal_subagent_event(
                 subagent_ctx, "cancelled", task_summary, usage=settled.get("usage"),
             )
             raise
         except Exception as exc:
-            self._send_agent_end(progress(
-                state="failed", error=type(exc).__name__,
-                **settled.get("counts", _UNKNOWN_COUNTS),
-            ))
+            self._send_agent_end(
+                "failed", error=type(exc).__name__,
+                **settled.get("counts", {}),
+            )
             self._terminal_subagent_event(
                 subagent_ctx, "failed", task_summary, error_type=type(exc).__name__,
                 usage=settled.get("usage"),
@@ -366,8 +356,8 @@ class AgentToolWrapper(Tool):
         state = _terminal_state(incomplete)
 
         # Signal sub-agent end to the CLI
-        self._send_agent_end(progress(
-            state=state,
+        self._send_agent_end(
+            state,
             turns=stats["turns"],
             tool_calls=stats["tool_calls"],
             tokens=stats["tokens"],
@@ -377,7 +367,7 @@ class AgentToolWrapper(Tool):
             # labels it. Filling it in would put "it was cancelled"
             # where the CLI renders a crash reason.
             error=incomplete.detail if state == "failed" else None,
-        ))
+        )
 
         if state == "failed":
             # The run did not raise, but it did not answer either. Reporting
@@ -402,23 +392,45 @@ class AgentToolWrapper(Tool):
     # Public-event helpers
     # ------------------------------------------------------------------
 
-    def _send_agent_end(self, progress: SubagentProgress) -> None:
-        """Send ``__agent_end__`` without letting the send mask anything.
+    def _send_agent_end(
+        self,
+        state: str,
+        *,
+        error: Optional[str] = None,
+        turns: Optional[int] = None,
+        tool_calls: Optional[int] = None,
+        tokens: Optional[int] = None,
+        duration_ms: Optional[int] = None,
+    ) -> None:
+        """Send ``AGENT_END`` without letting the send mask anything.
 
-        Every foreground run that sent ``__agent_start__`` sends this exactly
+        Every foreground run that sent ``AGENT_START`` sends this exactly
         once, on a return and on an ``Exception`` alike, and always before the
         public terminal event. The CLI and ACP transports swallow their own
         errors, but an embedding host's may not: a raise here would replace
         the run's own exception, or skip the public terminal event.
+
+        A counter (``turns``, ``tool_calls``, ``tokens``,
+        ``duration_ms``) that is ``None`` is not known and is left out of
+        the event, not sent as ``None``: the CLI and ACP leave a missing
+        counter out of their lines, the compat ``step_callback`` reads it as
+        0, and replay records ``None``.
         """
-        if not self._step_callback:
+        if not self._event_sink:
             return
+        data: Dict[str, Any] = {"agent": self._definition["name"], "state": state}
+        counts = {
+            "turns": turns, "tool_calls": tool_calls,
+            "tokens": tokens, "duration_ms": duration_ms,
+        }
+        data.update((k, v) for k, v in counts.items() if v is not None)
+        data["error"] = error
         try:
-            self._step_callback(self._AGENT_END, progress)
+            self._event_sink(AgentEvent(EventType.AGENT_END, data))
         except Exception:
             logger.warning(
-                "sub-agent %s: the end-of-run progress callback raised",
-                progress.agent_name, exc_info=True,
+                "sub-agent %s: sending the end-of-run event raised",
+                self._definition["name"], exc_info=True,
             )
 
     def _spawn_subagent_event(
@@ -548,9 +560,9 @@ class AgentToolWrapper(Tool):
         in a different order — see ``_launch_background``.
 
         Args:
-            suppress_output: When True, all live display callbacks are
-                suppressed so a background thread does not interleave output
-                with the foreground session.
+            suppress_output: When True, the child's events are not
+                forwarded to the parent, so a background thread does not
+                interleave output with the foreground session.
         """
         sub_agent, setup = self._build_sub_agent(suppress_output, skill_manager)
         # Everything after construction runs under ``finally``: the sub-agent
@@ -631,52 +643,7 @@ class AgentToolWrapper(Tool):
 
         max_turns = self._definition.get("max_turns", 15)
         agent_name = self._definition["name"]
-        # One counter for both labels: the ACP ``tool_call`` a confirmation
-        # opens carries this label until the ``TOOL_START`` update restates
-        # it, so the two should name the call identically from the start.
-        turn_counter = [0]
-        step_cb = (
-            None if suppress_output
-            else self._make_prefixed_step_callback(max_turns, turn_counter)
-        )
-
-        # A foreground sub-agent asks through the parent: the callback prepends
-        # "[agent_name]" to the tool name so the user knows which one is asking.
-        # Its callbacks ride one compat transport — with none of them set that
-        # transport answers exactly as a ``NullTransport`` does (approve, the
-        # non-interactive ``ask_user`` sentinel, stop at max iterations).
-        #
-        # A background sub-agent has nobody to ask, and must not read stdin from
-        # its thread (that corrupts the terminal's raw mode). So it refuses every
-        # call that needs confirmation, through a transport of its own: with no
-        # callbacks at all it would get a ``NullTransport``, which approves them
-        # all. It can still run whatever permission rules allow outright, and a
-        # denial still denies. ``NullTransport`` itself keeps approving, since
-        # that is the documented default for a host with no callbacks.
-        if suppress_output:
-            from ...transport import SdkTransport
-
-            transport = SdkTransport(confirm_tool=lambda *_: False)
-        else:
-            from ...transport import build_compat_transport
-
-            confirm_cb = None
-            if self._confirmation_callback:
-                _parent_cb = self._confirmation_callback
-                def confirm_cb(tool_name: str, tool_desc: str, tool_args: dict) -> bool:
-                    return _parent_cb(f"[{agent_name}] {tool_name}", tool_desc, tool_args)
-
-            # No ``thinking_callback``: a sub-agent's reasoning is not shown.
-            transport = build_compat_transport(
-                confirmation_callback=confirm_cb,
-                confirmation_event_callback=self._make_prefixed_confirmation_event_callback(
-                    max_turns, turn_counter
-                ),
-                step_callback=step_cb,
-                output_callback=self._output_callback,
-                tool_complete_callback=self._tool_complete_callback,
-                ask_user_callback=self._ask_user_callback,
-            )
+        transport = self._child_transport(suppress_output, max_turns)
 
         # Built here, so a constructor that raises does not leak it: to
         # ``Agentao`` it is injected, and an injected manager is the caller's.
@@ -886,11 +853,11 @@ class AgentToolWrapper(Tool):
 
     def _history_counts(
         self, sub_agent: Any, started: float,
-    ) -> Dict[str, Optional[int]]:
+    ) -> Dict[str, int]:
         """The end event's counters for a run that raised.
 
         Best effort, so the run's own exception is the one that propagates:
-        when the history cannot be read, its counters are ``None`` ("not
+        when the history cannot be read, its counters are left out ("not
         known") and only the measured duration is kept.
         """
         duration_ms = int((time.monotonic() - started) * 1000)
@@ -901,7 +868,7 @@ class AgentToolWrapper(Tool):
                 "Reading a sub-agent's history after it raised failed (%s)",
                 self._definition["name"], exc_info=True,
             )
-            return {**_UNKNOWN_COUNTS, "duration_ms": duration_ms}
+            return {"duration_ms": duration_ms}
         return {
             "turns": turns, "tool_calls": tool_calls,
             "tokens": tokens, "duration_ms": duration_ms,
@@ -1313,8 +1280,9 @@ class AgentToolWrapper(Tool):
                     _settle()
                     self._close_sub_agent(sub_agent)
 
-        # Background agents run silently: suppress_output=True ensures no callbacks
-        # fire on the background thread, preventing interleaving with foreground output.
+        # Background agents run silently: suppress_output=True ensures no events
+        # reach the parent from the background thread, preventing interleaving
+        # with foreground output.
         t = threading.Thread(target=_run, daemon=True, name=f"bg-agent-{agent_id}")
         t.start()
 
@@ -1328,52 +1296,117 @@ class AgentToolWrapper(Tool):
             f"check_background_agent(agent_id='{agent_id}', wait_seconds=N) once."
         )
 
-    # ------------------------------------------------------------------
-    # Progress callback with turn counter
-    # ------------------------------------------------------------------
+    def _child_transport(self, suppress_output: bool, max_turns: int) -> SdkTransport:
+        """The transport a sub-agent is built with.
 
-    def _make_prefixed_step_callback(
-        self, max_turns: int, turn_counter: Optional[List[int]] = None
-    ) -> Optional[Callable]:
-        parent_cb = self._step_callback
-        if not parent_cb:
-            return None
-        agent_name = self._definition["name"]
-        if turn_counter is None:
-            turn_counter = [0]  # mutable cell
+        A foreground sub-agent reports to the parent through
+        :meth:`_make_forwarder` and asks through it: ``confirm`` prepends
+        "[agent_name]" to the tool name so the user knows which one is asking.
+        Unset, the child's ``SdkTransport`` answers exactly as a
+        ``NullTransport`` does (approve, the non-interactive ``ask_user``
+        sentinel, stop at max iterations).
 
-        def prefixed(tool_name: Optional[str], tool_args: dict) -> None:
-            if tool_name is None:
-                # Called before each LLM iteration — increment turn counter —
-                # and after a rejected confirmation, which only resets the
-                # display and is not a turn.
-                if not (tool_args or {}).get("display_reset"):
-                    turn_counter[0] += 1
-                parent_cb(None, tool_args)  # keep the "Thinking…" reset
-            else:
-                label = f"[{agent_name} {turn_counter[0]}/{max_turns}] {tool_name}"
-                parent_cb(label, tool_args)
-
-        return prefixed
-
-    def _make_prefixed_confirmation_event_callback(
-        self, max_turns: int, turn_counter: List[int]
-    ) -> Optional[Callable]:
-        """Forward a sub-agent's ``TOOL_CONFIRMATION`` under the step label.
-
-        ACP opens the call's ``tool_call`` from this event, before the
-        permission request, so the attribution has to be here or the client
-        shows an unattributed call while the user is being asked about it.
+        A background sub-agent has nobody to ask, and must not read stdin from
+        its thread (that corrupts the terminal's raw mode). So its transport
+        refuses every call that needs confirmation: a transport that answered
+        as ``NullTransport`` does would approve them all. It can still run
+        whatever permission rules allow outright, and a denial still denies.
+        ``NullTransport`` itself keeps approving, since that is the documented
+        default for a host with no callbacks. Nothing it emits reaches the
+        parent.
         """
-        parent_cb = self._confirmation_event_callback
-        if not parent_cb:
+        if suppress_output:
+            return SdkTransport(confirm_tool=lambda *_: False)
+        agent_name = self._definition["name"]
+        confirm = None
+        if self._confirm_tool:
+            _parent_confirm = self._confirm_tool
+
+            def confirm(tool_name: str, tool_desc: str, tool_args: dict) -> bool:
+                return _parent_confirm(f"[{agent_name}] {tool_name}", tool_desc, tool_args)
+
+        return SdkTransport(
+            on_event=self._make_forwarder(max_turns),
+            confirm_tool=confirm,
+            ask_user=self._ask_user,
+        )
+
+    # ------------------------------------------------------------------
+    # The foreground child's events, forwarded to the parent
+    # ------------------------------------------------------------------
+
+    def _make_forwarder(self, max_turns: int) -> Optional[Callable[[AgentEvent], None]]:
+        """The ``on_event`` of a foreground child's transport, or ``None``.
+
+        A whitelist: only the events the parent shows as the child's tool
+        rows reach it. ``THINKING`` and ``LLM_TEXT`` stay with the child (its
+        reasoning is not shown), and so do ``TURN_BEGIN`` / ``TURN_END`` /
+        ``LLM_CALL_*`` / ``TOOL_RESULT``, which replay would record as the
+        parent's own turns.
+
+        The defaults below are the ones the parent applied before this was
+        a forwarder (``docs/design/subagent-event-bridge.md`` §6.3). Every
+        event sent is a new one: the child's transport hands the same object
+        to its own subscribers, so it is never changed in place.
+        """
+        sink = self._event_sink
+        if sink is None:
             return None
         agent_name = self._definition["name"]
+        # One counter for both labels: the ACP ``tool_call`` a confirmation
+        # opens carries this label until the ``TOOL_START`` update restates
+        # it, so the two should name the call identically from the start.
+        turn = [0]
 
-        def prefixed(event: Any) -> None:
-            data = dict(event.data)
-            label = f"[{agent_name} {turn_counter[0]}/{max_turns}] {data.get('tool', '')}"
-            data["tool"] = label
-            parent_cb(replace(event, data=data))
+        def label(tool: Any) -> str:
+            return f"[{agent_name} {turn[0]}/{max_turns}] {tool}"
 
-        return prefixed
+        def forward(event: AgentEvent) -> None:
+            t, d = event.type, event.data
+            if t == EventType.TURN_START:
+                # Before each LLM iteration, and after a rejected
+                # confirmation, which only resets the display and is not a
+                # turn.
+                reset = bool(d.get("display_reset"))
+                if not reset:
+                    turn[0] += 1
+                sink(AgentEvent(EventType.TURN_START, {"display_reset": True} if reset else {}))
+            elif t == EventType.TOOL_START:
+                tool = label(d.get("tool", ""))
+                args = d.get("args", {})
+                sink(AgentEvent(EventType.TOOL_START, {
+                    "tool": tool,
+                    "args": dict(args) if isinstance(args, dict) else {},
+                    # A missing or empty id falls back to the label.
+                    "call_id": d.get("call_id") or tool,
+                }))
+            elif t == EventType.TOOL_CONFIRMATION:
+                # ACP opens the call's ``tool_call`` from this event, before
+                # the permission request, so the attribution has to be here or
+                # the client shows an unattributed call while the user is
+                # being asked about it.
+                data = dict(d)
+                data["tool"] = label(d.get("tool", ""))
+                sink(replace(event, data=data))
+            elif t == EventType.TOOL_OUTPUT:
+                tool, call_id = d.get("tool", ""), d.get("call_id")
+                sink(AgentEvent(EventType.TOOL_OUTPUT, {
+                    "tool": tool, "chunk": d.get("chunk", ""),
+                    # Only a missing id falls back to the name; an empty one
+                    # is kept, so it is not silently collapsed.
+                    "call_id": call_id if call_id is not None else tool,
+                }))
+            elif t == EventType.TOOL_COMPLETE:
+                tool, call_id = d.get("tool", ""), d.get("call_id")
+                status, duration_ms = d.get("status"), d.get("duration_ms")
+                sink(AgentEvent(EventType.TOOL_COMPLETE, {
+                    "tool": tool,
+                    "call_id": call_id if call_id is not None else tool,
+                    # The real outcome, so a failed or denied tool is not
+                    # reported as a success.
+                    "status": status if status is not None else "ok",
+                    "duration_ms": duration_ms if duration_ms is not None else 0,
+                    "error": d.get("error"),
+                }))
+
+        return forward

@@ -1,6 +1,6 @@
-"""A foreground sub-agent that raises still sends ``__agent_end__``.
+"""A foreground sub-agent that raises still sends ``AGENT_END``.
 
-``execute()`` sent ``__agent_start__`` and then, on a raising run, only the
+``execute()`` sent ``AGENT_START`` and then, on a raising run, only the
 public terminal event: the CLI and ACP never heard that the child ended, and
 the start had no matching end.
 
@@ -11,6 +11,7 @@ the two is asserted along with the counts.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, List, Tuple
 
 import pytest
@@ -19,6 +20,7 @@ from agentao.agent import Agentao
 from agentao.cancellation import AgentCancelledError, CancellationToken
 from agentao.host.projection import HostSubagentEmitter
 from agentao.permissions import PermissionEngine
+from agentao.transport import EventType
 
 
 @pytest.fixture(autouse=True)
@@ -60,27 +62,31 @@ def _watch(wrapper, *, end_raises: bool = False) -> List[Tuple[str, Any]]:
         _Stream(log), parent_session_id_provider=lambda: "parent-s",
     )
 
-    def step(name, payload):
-        log.append((name, payload))
-        if end_raises and name == "__agent_end__":
-            raise RuntimeError("host callback broke")
+    def sink(event):
+        log.append((event.type.value, event.data))
+        if end_raises and event.type is EventType.AGENT_END:
+            raise RuntimeError("host sink broke")
 
-    wrapper._step_callback = step
+    wrapper._event_sink = sink
     return log
 
 
 def _shape(log):
     """``[(kind, state-or-phase), ...]`` in arrival order."""
     return [
-        (kind, payload.phase if kind == "public" else payload.state)
+        (kind, payload.phase if kind == "public" else payload.get("state", "running"))
         for kind, payload in log
     ]
 
 
 def _end(log):
-    ends = [payload for kind, payload in log if kind == "__agent_end__"]
-    assert len(ends) == 1, f"expected one __agent_end__, got {len(ends)}"
-    return ends[0]
+    ends = [payload for kind, payload in log if kind == "agent_end"]
+    assert len(ends) == 1, f"expected one agent_end, got {len(ends)}"
+    # Attribute access; a counter the event left out reads as ``None``.
+    return SimpleNamespace(**{
+        key: ends[0].get(key)
+        for key in ("agent", "state", "error", "turns", "tool_calls", "tokens", "duration_ms")
+    })
 
 
 def _chat_raising(monkeypatch, exc: BaseException) -> None:
@@ -112,9 +118,9 @@ def test_an_ordinary_exception_ends_the_run_as_failed(parent, monkeypatch):
         wrapper.execute(task="x")
 
     assert _shape(log) == [
-        ("__agent_start__", "running"),
+        ("agent_start", "running"),
         ("public", "spawned"),
-        ("__agent_end__", "failed"),
+        ("agent_end", "failed"),
         ("public", "failed"),
     ]
     end = _end(log)
@@ -127,7 +133,7 @@ def test_an_ordinary_exception_ends_the_run_as_failed(parent, monkeypatch):
     assert (end.turns, end.tool_calls) == (1, 1)
     assert isinstance(end.tokens, int) and end.tokens > 0
     assert isinstance(end.duration_ms, int) and end.duration_ms >= 0
-    assert end.agent_name == "generalist"
+    assert end.agent == "generalist"
 
 
 def test_a_construction_failure_ends_the_run_as_failed(parent):
@@ -141,9 +147,9 @@ def test_a_construction_failure_ends_the_run_as_failed(parent):
         wrapper.execute(task="x")
 
     assert _shape(log) == [
-        ("__agent_start__", "running"),
+        ("agent_start", "running"),
         ("public", "spawned"),
-        ("__agent_end__", "failed"),
+        ("agent_end", "failed"),
         ("public", "failed"),
     ]
     end = _end(log)
@@ -163,9 +169,9 @@ def test_a_raised_cancel_ends_the_run_as_cancelled(parent, monkeypatch):
         wrapper.execute(task="x")
 
     assert _shape(log) == [
-        ("__agent_start__", "running"),
+        ("agent_start", "running"),
         ("public", "spawned"),
-        ("__agent_end__", "cancelled"),
+        ("agent_end", "cancelled"),
         ("public", "cancelled"),
     ]
     # A cancel is not an error; the state carries it.
@@ -183,12 +189,12 @@ def test_a_base_exception_sends_no_end_and_no_public_terminal(parent, monkeypatc
         wrapper.execute(task="x")
 
     assert _shape(log) == [
-        ("__agent_start__", "running"),
+        ("agent_start", "running"),
         ("public", "spawned"),
     ]
 
 
-def test_a_raising_end_callback_does_not_mask_the_run_exception(parent, monkeypatch):
+def test_a_raising_end_sink_does_not_mask_the_run_exception(parent, monkeypatch):
     wrapper = parent.tools.tools["agent_generalist"]
     log = _watch(wrapper, end_raises=True)
     _chat_raising(monkeypatch, ValueError("the real one"))
@@ -197,10 +203,10 @@ def test_a_raising_end_callback_does_not_mask_the_run_exception(parent, monkeypa
         wrapper.execute(task="x")
 
     # The public terminal event still went out after the failed send.
-    assert _shape(log)[-2:] == [("__agent_end__", "failed"), ("public", "failed")]
+    assert _shape(log)[-2:] == [("agent_end", "failed"), ("public", "failed")]
 
 
-def test_a_raising_end_callback_does_not_lose_a_finished_run(parent):
+def test_a_raising_end_sink_does_not_lose_a_finished_run(parent):
     """On the ordinary path too: the run's result comes back and the public
     terminal event is sent. The cancelled token stops the real ``chat()``
     before its first request, so nothing is sent to a model."""
@@ -214,44 +220,36 @@ def test_a_raising_end_callback_does_not_lose_a_finished_run(parent):
 
     assert "did not finish: it was cancelled" in out
     assert _shape(log)[-2:] == [
-        ("__agent_end__", "cancelled"), ("public", "cancelled"),
+        ("agent_end", "cancelled"), ("public", "cancelled"),
     ]
 
 
 # ── what the readers make of a counter that is not known ───────────────────
 
 
-def _end_event(parent, progress):
-    """Run a ``__agent_end__`` through the production step callback."""
+def _end_event(parent, state, **fields):
+    """Send an end event through the production sink: the wrapper's
+    ``event_sink``, which reads the parent's transport per call."""
     seen = []
     parent.transport.emit = seen.append
     wrapper = parent.tools.tools["agent_generalist"]
-    wrapper._step_callback("__agent_end__", progress)
+    wrapper._send_agent_end(state, **fields)
     (event,) = seen
     return event
 
 
-def _unknown(state="failed", error="KeyError"):
-    from agentao.agents.tools import SubagentProgress
-
-    return SubagentProgress(
-        agent_name="generalist", state=state, error=error,
+def test_an_unknown_counter_is_left_out_of_agent_end(parent):
+    event = _end_event(
+        parent, "failed", error="KeyError",
         turns=None, tool_calls=None, tokens=None, duration_ms=None,
     )
-
-
-def test_an_unknown_counter_is_left_out_of_agent_end(parent):
-    event = _end_event(parent, _unknown())
     assert event.data == {"agent": "generalist", "state": "failed", "error": "KeyError"}
 
 
 def test_a_known_zero_is_still_sent(parent):
-    from agentao.agents.tools import SubagentProgress
-
-    event = _end_event(parent, SubagentProgress(
-        agent_name="generalist", state="completed",
-        turns=0, tool_calls=0, tokens=0, duration_ms=0,
-    ))
+    event = _end_event(
+        parent, "completed", turns=0, tool_calls=0, tokens=0, duration_ms=0,
+    )
     assert (event.data["turns"], event.data["duration_ms"]) == (0, 0)
 
 

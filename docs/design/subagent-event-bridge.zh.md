@@ -1,9 +1,9 @@
 # 子 Agent 事件桥：回调出去，事件回来
 
-**状态：** A **已实施**（#514、#515，2026-10-10）；B 为提案，**未授权**。决策（rev 2）：两个方案都实施，分两步走——先 A，后 B。rev 3 完成对 rev 2 的复审；rev 4 记录 A 的落地情况（§5）。
+**状态：** **已实施。** A 在 #514、#515，B 在加入 rev 5 的 PR 中（2026-10-10）。决策（rev 2）：两个方案都实施，分两步走——先 A，后 B。rev 3 完成对 rev 2 的复审；rev 4 记录 A 的落地情况（§5），rev 5 记录 B 的落地情况（§6.4）。
 **锚点：** agentao `main@60fcca9`（2026-10-11）。下文行号均以该提交为准，即 A 落地之前。
 **相关：** `0-5-0-removal-checklist.zh.md` §C（子 Agent 工厂今天为什么用 `build_compat_transport`）；`host-tool-injection.zh.md`；`embedded-host-contract.md`（公共事件 `SubagentLifecycleEvent`，本文不改它）。
-**修订记录：** rev 1（`af7b014`）把 B 暂缓，并提出给子 Agent 的 id 加命名空间。rev 2 采纳先 A 后 B，删掉 id 命名空间，公开的 `build_compat_transport` 一行不删（rev 1 错把其中一部分算作可删），并把字段默认值、异常范围和事件顺序写死。rev 3 要求父侧入口在每次调用时读取 `agent.transport`（rev 2 传的是绑定方法，会绕过回放对 transport 的替换），并把 `tests/test_subagent_cancelled_terminal_state.py` 加入测试迁移范围。rev 4 标记 A 已实施：#514 发出结束事件，#515 把其中为 0 的计数（§5 中划掉的一句）换成真实值或省略。
+**修订记录：** rev 1（`af7b014`）把 B 暂缓，并提出给子 Agent 的 id 加命名空间。rev 2 采纳先 A 后 B，删掉 id 命名空间，公开的 `build_compat_transport` 一行不删（rev 1 错把其中一部分算作可删），并把字段默认值、异常范围和事件顺序写死。rev 3 要求父侧入口在每次调用时读取 `agent.transport`（rev 2 传的是绑定方法，会绕过回放对 transport 的替换），并把 `tests/test_subagent_cancelled_terminal_state.py` 加入测试迁移范围。rev 4 标记 A 已实施：#514 发出结束事件，#515 把其中为 0 的计数（§5 中划掉的一句）换成真实值或省略。rev 5 标记 B 已实施，并写明现在钉住不变量 4–7、9、11 的测试。
 
 ## 1. 概要
 
@@ -172,6 +172,8 @@ ask_user=transport_ask_user(agent),
 
 测试：`tests/test_subagent_tool_call_id.py` 用 `build_compat_transport` 和 `_make_prefixed_step_callback` 搭夹具，并按关键字名伪造 `create_agent_tools`。它的夹具改为经过实际的生产转发函数（§8）。`tests/test_subagent_cancelled_terminal_state.py` 也依赖旧入口：它的 `_watch()` 直接设置 `wrapper._step_callback`，`_agent_end()` 按哨兵 `__agent_end__` 读取结束事件。它的夹具改为捕获 `AgentEvent`，保留原有的取消状态和结束次数断言。另外三个测试构造 `AgentToolWrapper` 时不传回调，`tests/test_async_tool.py` 读取 `create_agent_tools` 的类型注解。
 
+**实际落地（B）：** `AgentToolWrapper._child_transport` 构造子 transport，`_make_forwarder` 是白名单转发函数；`AGENT_START` / `AGENT_END` 经 `event_sink` 发出（`_send_agent_end` 沿用 #515 的规则）。`tooling/agent_tools.py` 传三个每次调用都读取 transport 的 lambda；`SubagentProgress` 现在只由 `build_compat_transport` 构造。`tests/test_subagent_tool_call_id.py` 用 `register_agent_tools` 实际传入的入口驱动生产代码里的 `_child_transport`。
+
 ## 7. 不变量
 
 | # | 不变量 | 由谁钉住 |
@@ -179,14 +181,14 @@ ask_user=transport_ask_user(agent),
 | 1 | 每个子工具行在开始、确认、输出、完成之间保持自己的 `call_id`，包括同名的并行批次。 | `test_same_name_parallel_completions_keep_distinct_call_ids`、`test_tool_output_carries_call_id`、`test_confirmation_event_keeps_subagent_call_id` |
 | 2 | `TOOL_COMPLETE` 转发真实的 `status`、`duration_ms` 和 `error`；缺失字段取 §6.3 的默认值。 | `test_completion_forwards_real_status_and_error`、`test_completion_without_call_id_falls_back_to_name` |
 | 3 | 确认开启时带的 `[name n/max]` 标签与随后的 `TOOL_START` 相同；被拒绝的确认（`display_reset`）不推进计数器。 | `test_confirmation_opening_carries_the_subagent_label`、`test_a_rejected_confirmation_does_not_advance_the_turn_label` |
-| 4 | 只有在转发开始事件时才转发 `TOOL_CONFIRMATION`，否则 ACP 会打开一个没人关闭的调用。B 里前台子 Agent 两者都转发，后台都不转发。 | `test_confirmation_is_not_forwarded_without_a_step_callback`（随 B 改写） |
-| 5 | `confirm_tool` 以带 `[name]` 前缀的名称到达父 transport，MCP Skills 门禁的说明和 CLI 提示走的路径与今天相同。 | 目前未钉住；随 B 补上 |
-| 6 | 子 Agent 发出的其他事件都不到达父 Agent：没有 `THINKING` 或 `LLM_TEXT`（不显示子 Agent 的推理），没有 `TURN_BEGIN` / `TURN_END` / `LLM_CALL_*` / `TOOL_RESULT`（否则回放会把子 Agent 的 turn 记成父 Agent 的），没有权限或记忆事件。 | 目前未钉住；随 B 补上 |
-| 7 | 后台子 Agent 拒绝所有确认，其子 transport 不向父 Agent 发任何进度事件。它的公共 `SubagentLifecycleEvent` 不受影响。 | 拒绝：`test_background_subagent_approval.py::test_a_call_that_needs_confirmation_runs_only_where_someone_can_approve_it`；"不发进度事件"：随 B 补上 |
+| 4 | 只有在转发开始事件时才转发 `TOOL_CONFIRMATION`，否则 ACP 会打开一个没人关闭的调用。B 里前台子 Agent 两者都转发，后台都不转发。 | `tests/test_subagent_tool_call_id.py`：`test_a_foreground_child_without_a_sink_forwards_nothing`、`test_a_background_child_sends_the_parent_nothing_and_refuses` |
+| 5 | `confirm_tool` 以带 `[name]` 前缀的名称到达父 transport，MCP Skills 门禁的说明和 CLI 提示走的路径与今天相同。 | `test_confirmation_and_questions_reach_the_parent_transport`、`test_a_rejected_confirmation_does_not_advance_the_turn_label` |
+| 6 | 子 Agent 发出的其他事件都不到达父 Agent：没有 `THINKING` 或 `LLM_TEXT`（不显示子 Agent 的推理），没有 `TURN_BEGIN` / `TURN_END` / `LLM_CALL_*` / `TOOL_RESULT`（否则回放会把子 Agent 的 turn 记成父 Agent 的），没有权限或记忆事件。 | `test_events_outside_the_whitelist_stay_with_the_child` |
+| 7 | 后台子 Agent 拒绝所有确认，其子 transport 不向父 Agent 发任何进度事件。它的公共 `SubagentLifecycleEvent` 不受影响。 | 拒绝：`test_background_subagent_approval.py::test_a_call_that_needs_confirmation_runs_only_where_someone_can_approve_it`；"不发进度事件"：`test_a_background_child_sends_the_parent_nothing_and_refuses` |
 | 8 | 正常返回、`Exception` 和 `AgentCancelledError` 时，每个 `AGENT_START` 之后恰好跟一个 `AGENT_END`；它在公共终态事件之前；发送失败不掩盖任何东西。 | `tests/test_subagent_agent_end_on_raise.py`（#514） |
-| 9 | 子 Agent 跑满迭代上限后停止。 | 目前未钉住；随 B 补上 |
+| 9 | 子 Agent 跑满迭代上限后停止。 | `test_running_out_of_turns_stops` |
 | 10 | 公开的 `build_compat_transport` 对外部调用者保持原有契约。 | `tests/test_transport.py` |
-| 11 | 在 agent 工具注册之后替换父 transport（启动或结束回放），子 Agent 的事件和确认仍到达新的 transport。 | 目前未钉住；随 B 补上 |
+| 11 | 在 agent 工具注册之后替换父 transport（启动或结束回放），子 Agent 的事件和确认仍到达新的 transport。 | `test_a_transport_replaced_after_registration_gets_the_events` |
 
 ## 8. 验收与测试
 

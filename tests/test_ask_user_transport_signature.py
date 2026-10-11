@@ -18,7 +18,7 @@ import pytest
 
 from agentao import Agentao
 from agentao.agents.tools import AgentToolWrapper
-from agentao.transport import NullTransport, build_compat_transport
+from agentao.transport import NullTransport, SdkTransport
 
 
 class _QuestionOnly(NullTransport):
@@ -62,11 +62,11 @@ def test_subagent_callback_respects_transport_signature(tmp_path, transport, exp
     try:
         wrappers = [t for t in agent.tools.tools.values() if isinstance(t, AgentToolWrapper)]
         assert wrappers, "enable_builtin_agents=True registered no agent tools"
-        callback = wrappers[0]._ask_user_callback
+        callback = wrappers[0]._ask_user
         assert callback("q?", header="H", options=["a"], multiple=False, allow_custom=True) == expected
-        # The path a child actually takes: its compat transport wraps the
-        # callback, and must hand the hints on rather than drop them.
-        child = build_compat_transport(ask_user_callback=callback)
+        # The path a child actually takes: its transport wraps the callback,
+        # and must hand the hints on rather than drop them.
+        child = SdkTransport(ask_user=callback)
         assert child.ask_user("q?", header="H", options=["a"]) == expected
     finally:
         agent.close()

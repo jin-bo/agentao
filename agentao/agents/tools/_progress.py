@@ -1,8 +1,10 @@
-"""``SubagentProgress`` — structured sub-agent lifecycle event.
+"""``SubagentProgress`` — the sub-agent lifecycle payload of the legacy
+``step_callback``.
 
-Replaces plain-text sentinel strings (``_AGENT_START`` / ``_AGENT_END``)
-that the step callback used to receive. The CLI's display layer pattern-
-matches on the sentinel + reads structured fields off this dataclass.
+Only ``build_compat_transport`` builds one now: it maps ``AGENT_START`` /
+``AGENT_END`` events back to ``step_callback("__agent_start__" |
+"__agent_end__", SubagentProgress(...))`` for hosts still on the callback
+API. Agentao's own sub-agents send those events directly.
 """
 
 from __future__ import annotations
@@ -17,21 +19,17 @@ from ..bg_store import BgTaskStatus
 class SubagentProgress:
     """Structured sub-agent lifecycle event, passed via step_callback.
 
-    Replaces plain-text sentinel strings (_AGENT_START / _AGENT_END).
-    The step_callback receives (sentinel_name, SubagentProgress) where
-    sentinel_name is AgentToolWrapper._AGENT_START or _AGENT_END.
-
-    On ``_AGENT_END`` a counter is ``None`` when it is not known, not zero:
-    a foreground run that raised before its sub-agent ran has no history to
-    count and no run to time.
+    The step_callback receives ``(sentinel_name, SubagentProgress)``, where
+    ``sentinel_name`` is ``"__agent_start__"`` or ``"__agent_end__"``. A
+    counter the ``AGENT_END`` event left out (not known) reads as 0 here.
     """
     agent_name: str
     state: BgTaskStatus
     task: str = ""
     max_turns: int = 0
-    turns: Optional[int] = 0
-    tool_calls: Optional[int] = 0
-    tokens: Optional[int] = 0
-    duration_ms: Optional[int] = 0
+    turns: int = 0
+    tool_calls: int = 0
+    tokens: int = 0
+    duration_ms: int = 0
     result: Optional[str] = None
     error: Optional[str] = None
