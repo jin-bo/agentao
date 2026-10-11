@@ -48,6 +48,11 @@ from ._progress import SubagentProgress
 
 logger = logging.getLogger(__name__)
 
+# The end event's counters when the sub-agent never ran: not known, not zero.
+_UNKNOWN_COUNTS: Dict[str, Any] = {
+    "turns": None, "tool_calls": None, "tokens": None, "duration_ms": None,
+}
+
 
 _USAGE_KEYS = (
     "prompt_tokens", "completion_tokens", "cache_read_tokens", "cache_creation_tokens",
@@ -333,16 +338,24 @@ class AgentToolWrapper(Tool):
             # cancellation raised outside the turn — building or closing the
             # sub-agent — where there is no classification to read.
             #
-            # Neither raising path has ``stats``, so the end event's counters
-            # keep their zero defaults. A cancel leaves ``error`` empty, as on
-            # the ordinary path below.
-            self._send_agent_end(progress(state="cancelled"))
+            # Neither raising path has ``stats``. ``settled["counts"]`` has
+            # what the sub-agent's history and clock showed when it raised;
+            # without it — the sub-agent was never run — every counter is
+            # ``None``, "not known", which the displays leave out rather than
+            # show as zero. A cancel leaves ``error`` empty, as on the
+            # ordinary path below.
+            self._send_agent_end(progress(
+                state="cancelled", **settled.get("counts", _UNKNOWN_COUNTS),
+            ))
             self._terminal_subagent_event(
                 subagent_ctx, "cancelled", task_summary, usage=settled.get("usage"),
             )
             raise
         except Exception as exc:
-            self._send_agent_end(progress(state="failed", error=type(exc).__name__))
+            self._send_agent_end(progress(
+                state="failed", error=type(exc).__name__,
+                **settled.get("counts", _UNKNOWN_COUNTS),
+            ))
             self._terminal_subagent_event(
                 subagent_ctx, "failed", task_summary, error_type=type(exc).__name__,
                 usage=settled.get("usage"),
@@ -527,7 +540,9 @@ class AgentToolWrapper(Tool):
 
         ``settled``, when given, receives ``"usage"`` from the ``finally`` —
         an out-parameter because the caller needs it on the raising paths too,
-        where there is no return value to carry it.
+        where there is no return value to carry it. For the same reason, a
+        run that raised after the sub-agent started leaves ``"counts"``: the
+        counters ``stats`` would have held, read at the raise.
 
         The foreground path. A background run composes the same three steps
         in a different order — see ``_launch_background``.
@@ -549,8 +564,15 @@ class AgentToolWrapper(Tool):
                 task=task,
                 parent_context=parent_context,
                 cancellation_token=cancellation_token,
+                started=settled,
                 **setup,
             )
+        except Exception:
+            if settled is not None and "started" in settled:
+                counts = self._history_counts(sub_agent, settled["started"])
+                if counts is not None:
+                    settled["counts"] = counts
+            raise
         finally:
             usage = self._roll_up_usage(sub_agent)
             if settled is not None:
@@ -850,6 +872,39 @@ class AgentToolWrapper(Tool):
                 agent_name, ", ".join(unavailable),
             )
 
+    @staticmethod
+    def _count_history(sub_agent: Any) -> Tuple[int, int, int]:
+        """``(turns, tool_calls, tokens)`` from the sub-agent's history.
+
+        ``tokens`` is the estimated size of that history, not what its
+        requests were billed: that is ``_roll_up_usage``.
+        """
+        messages = sub_agent.messages
+        turns = sum(1 for m in messages if m.get("role") == "assistant")
+        tool_calls = sum(1 for m in messages if m.get("role") == "tool")
+        return turns, tool_calls, sub_agent.context_manager.estimate_tokens(messages)
+
+    def _history_counts(
+        self, sub_agent: Any, started: float,
+    ) -> Optional[Dict[str, int]]:
+        """The end event's counters for a run that raised, or ``None``.
+
+        Best effort, so the run's own exception is the one that propagates.
+        """
+        duration_ms = int((time.monotonic() - started) * 1000)
+        try:
+            turns, tool_calls, tokens = self._count_history(sub_agent)
+        except Exception:
+            logger.warning(
+                "Reading a sub-agent's history after it raised failed (%s)",
+                self._definition["name"], exc_info=True,
+            )
+            return None
+        return {
+            "turns": turns, "tool_calls": tool_calls,
+            "tokens": tokens, "duration_ms": duration_ms,
+        }
+
     def _roll_up_usage(self, sub_agent: Any) -> Optional[Dict[str, int]]:
         """Add what this sub-agent's requests cost to the parent's totals,
         and return it for the record and the terminal event.
@@ -926,12 +981,15 @@ class AgentToolWrapper(Tool):
         omit_temperature: bool,
         max_turns: int,
         cancellation_token: Optional[Any],
+        started: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Configure a constructed sub-agent, run it, and collect its stats.
 
         The caller owns the sub-agent's lifetime and closes it whatever this
         raises; stats read the sub-agent's history, so they are taken here,
-        before that close.
+        before that close. ``started``, when given, receives ``"started"``,
+        the clock reading the run's duration is measured from, so a caller
+        whose run raised can still time it.
         """
         sub_agent.llm.omit_temperature = omit_temperature
         self._narrow_tools(sub_agent)
@@ -1005,6 +1063,8 @@ class AgentToolWrapper(Tool):
             pass
 
         t0 = time.monotonic()
+        if started is not None:
+            started["started"] = t0
         task_complete = False
         try:
             # Foreground sub-agents share the parent's cancellation token so
@@ -1041,9 +1101,7 @@ class AgentToolWrapper(Tool):
                 result = completed_payload
 
         # Collect stats from executed sub-agent
-        turns = sum(1 for m in sub_agent.messages if m.get("role") == "assistant")
-        tool_calls = sum(1 for m in sub_agent.messages if m.get("role") == "tool")
-        approx_tokens = sub_agent.context_manager.estimate_tokens(sub_agent.messages)
+        turns, tool_calls, approx_tokens = self._count_history(sub_agent)
 
         from ...skills.provenance import skill_origins
 

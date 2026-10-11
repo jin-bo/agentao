@@ -69,15 +69,15 @@ def register_agent_tools(agent: "Agentao") -> None:
                 "max_turns": args.max_turns,
             }))
         elif name == "__agent_end__":
-            agent.transport.emit(AgentEvent(EventType.AGENT_END, {
-                "agent": args.agent_name,
-                "state": args.state,
-                "turns": args.turns,
-                "tool_calls": args.tool_calls,
-                "tokens": args.tokens,
-                "duration_ms": args.duration_ms,
-                "error": args.error,
-            }))
+            data = {"agent": args.agent_name, "state": args.state}
+            # A counter that is not known is left out, not sent as ``None``:
+            # every reader already treats a missing counter as absent.
+            for key in ("turns", "tool_calls", "tokens", "duration_ms"):
+                value = getattr(args, key)
+                if value is not None:
+                    data[key] = value
+            data["error"] = args.error
+            agent.transport.emit(AgentEvent(EventType.AGENT_END, data))
         else:
             # call_id is injected by build_compat_transport; fall back to name.
             _args = dict(args) if isinstance(args, dict) else {}

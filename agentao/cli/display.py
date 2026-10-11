@@ -676,15 +676,22 @@ class DisplayController:
     def _on_agent_end(self, d: dict) -> None:
         agent = d.get("agent", "agent")
         state = d.get("state", "completed")
-        turns = d.get("turns", 0)
-        tool_calls = d.get("tool_calls", 0)
-        tokens = d.get("tokens", 0)
-        ms = d.get("duration_ms", 0)
         error = d.get("error")
 
-        stats = f"{turns} turns · {tool_calls} tool calls · ~{tokens:,} tokens · {_fmt_duration(ms)}"
+        # A counter that is missing is not known — the sub-agent raised before
+        # it could be read — so it is left out rather than shown as zero.
+        parts = []
+        if d.get("turns") is not None:
+            parts.append(f"{d['turns']} turns")
+        if d.get("tool_calls") is not None:
+            parts.append(f"{d['tool_calls']} tool calls")
+        if d.get("tokens") is not None:
+            parts.append(f"~{d['tokens']:,} tokens")
+        if d.get("duration_ms") is not None:
+            parts.append(_fmt_duration(d["duration_ms"]))
         if error:
-            stats += f" · {_shorten(error, 50)}"
+            parts.append(_shorten(error, 50))
+        stats = " · ".join(parts)
 
         if state == "completed":
             style = "cyan"
@@ -693,7 +700,7 @@ class DisplayController:
             # path by design, so without the label the rule would be a bare
             # line of statistics — and red would report the cancel as a
             # failure, which is the surface half of #244.
-            style, stats = "dim", f"cancelled · {stats}"
+            style, stats = "dim", " · ".join(["cancelled"] + parts)
         else:
             style = "red"
         self._stop_spinner()
