@@ -1,6 +1,6 @@
 # 子 Agent 事件桥：回调出去，事件回来
 
-**状态：** **已实施。** A 在 #514、#515，B 在加入 rev 5 的 PR 中（2026-10-10）。决策（rev 2）：两个方案都实施，分两步走——先 A，后 B。rev 3 完成对 rev 2 的复审；rev 4 记录 A 的落地情况（§5），rev 5 记录 B 的落地情况（§6.4）。
+**状态：** **已实施。** A 在 #514、#515，B 在 #517（2026-10-11）。决策（rev 2）：两个方案都实施，分两步走——先 A，后 B。rev 3 完成对 rev 2 的复审；rev 4 记录 A 的落地情况（§5），rev 5 记录 B 的落地情况（§6.4）。
 **锚点：** agentao `main@60fcca9`（2026-10-11）。下文行号均以该提交为准，即 A 落地之前。
 **相关：** `0-5-0-removal-checklist.zh.md` §C（子 Agent 工厂今天为什么用 `build_compat_transport`）；`host-tool-injection.zh.md`；`embedded-host-contract.md`（公共事件 `SubagentLifecycleEvent`，本文不改它）。
 **修订记录：** rev 1（`af7b014`）把 B 暂缓，并提出给子 Agent 的 id 加命名空间。rev 2 采纳先 A 后 B，删掉 id 命名空间，公开的 `build_compat_transport` 一行不删（rev 1 错把其中一部分算作可删），并把字段默认值、异常范围和事件顺序写死。rev 3 要求父侧入口在每次调用时读取 `agent.transport`（rev 2 传的是绑定方法，会绕过回放对 transport 的替换），并把 `tests/test_subagent_cancelled_terminal_state.py` 加入测试迁移范围。rev 4 标记 A 已实施：#514 发出结束事件，#515 把其中为 0 的计数（§5 中划掉的一句）换成真实值或省略。rev 5 标记 B 已实施，并写明现在钉住不变量 4–7、9、11 的测试。
@@ -172,7 +172,7 @@ ask_user=transport_ask_user(agent),
 
 测试：`tests/test_subagent_tool_call_id.py` 用 `build_compat_transport` 和 `_make_prefixed_step_callback` 搭夹具，并按关键字名伪造 `create_agent_tools`。它的夹具改为经过实际的生产转发函数（§8）。`tests/test_subagent_cancelled_terminal_state.py` 也依赖旧入口：它的 `_watch()` 直接设置 `wrapper._step_callback`，`_agent_end()` 按哨兵 `__agent_end__` 读取结束事件。它的夹具改为捕获 `AgentEvent`，保留原有的取消状态和结束次数断言。另外三个测试构造 `AgentToolWrapper` 时不传回调，`tests/test_async_tool.py` 读取 `create_agent_tools` 的类型注解。
 
-**实际落地（B）：** `AgentToolWrapper._child_transport` 构造子 transport，`_make_forwarder` 是白名单转发函数；`AGENT_START` / `AGENT_END` 经 `event_sink` 发出（`_send_agent_end` 沿用 #515 的规则）。`tooling/agent_tools.py` 传三个每次调用都读取 transport 的 lambda；`SubagentProgress` 现在只由 `build_compat_transport` 构造。`tests/test_subagent_tool_call_id.py` 用 `register_agent_tools` 实际传入的入口驱动生产代码里的 `_child_transport`。
+**实际落地（B，#517）：** `AgentToolWrapper._child_transport` 构造子 transport，`_make_forwarder` 是白名单转发函数；`AGENT_START` / `AGENT_END` 经 `event_sink` 发出（`_send_agent_end` 沿用 #515 的规则）。`tooling/agent_tools.py` 传三个每次调用都读取 transport 的 lambda；`SubagentProgress` 现在只由 `build_compat_transport` 构造。`tests/test_subagent_tool_call_id.py` 用 `register_agent_tools` 实际传入的入口驱动生产代码里的 `_child_transport`。
 
 ## 7. 不变量
 
