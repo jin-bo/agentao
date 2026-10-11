@@ -47,11 +47,6 @@ from ._outcome import (
 
 logger = logging.getLogger(__name__)
 
-# The end event's counters when the sub-agent never ran: not known, not zero.
-_UNKNOWN_COUNTS: Dict[str, Any] = {
-    "turns": None, "tool_calls": None, "tokens": None, "duration_ms": None,
-}
-
 
 _USAGE_KEYS = (
     "prompt_tokens", "completion_tokens", "cache_read_tokens", "cache_creation_tokens",
@@ -331,11 +326,11 @@ class AgentToolWrapper(Tool):
             # Neither raising path has ``stats``. ``settled["counts"]`` has
             # what the sub-agent's history and clock showed when it raised;
             # without it — the sub-agent was never run — every counter is
-            # ``None``, "not known", which the displays leave out rather than
-            # show as zero. A cancel leaves ``error`` empty, as on the
+            # "not known" and left out of the event, so the displays do not
+            # show it as zero. A cancel leaves ``error`` empty, as on the
             # ordinary path below.
             self._send_agent_end(
-                "cancelled", **settled.get("counts", _UNKNOWN_COUNTS),
+                "cancelled", **settled.get("counts", {}),
             )
             self._terminal_subagent_event(
                 subagent_ctx, "cancelled", task_summary, usage=settled.get("usage"),
@@ -344,7 +339,7 @@ class AgentToolWrapper(Tool):
         except Exception as exc:
             self._send_agent_end(
                 "failed", error=type(exc).__name__,
-                **settled.get("counts", _UNKNOWN_COUNTS),
+                **settled.get("counts", {}),
             )
             self._terminal_subagent_event(
                 subagent_ctx, "failed", task_summary, error_type=type(exc).__name__,
@@ -397,7 +392,10 @@ class AgentToolWrapper(Tool):
         state: str,
         *,
         error: Optional[str] = None,
-        **counts: Optional[int],
+        turns: Optional[int] = None,
+        tool_calls: Optional[int] = None,
+        tokens: Optional[int] = None,
+        duration_ms: Optional[int] = None,
     ) -> None:
         """Send ``AGENT_END`` without letting the send mask anything.
 
@@ -407,8 +405,8 @@ class AgentToolWrapper(Tool):
         errors, but an embedding host's may not: a raise here would replace
         the run's own exception, or skip the public terminal event.
 
-        ``counts`` are ``turns``, ``tool_calls``, ``tokens`` and
-        ``duration_ms``. One that is ``None`` is not known and is left out of
+        A counter (``turns``, ``tool_calls``, ``tokens``,
+        ``duration_ms``) that is ``None`` is not known and is left out of
         the event, not sent as ``None``: the CLI and ACP leave a missing
         counter out of their lines, the compat ``step_callback`` reads it as
         0, and replay records ``None``.
@@ -416,9 +414,11 @@ class AgentToolWrapper(Tool):
         if not self._event_sink:
             return
         data: Dict[str, Any] = {"agent": self._definition["name"], "state": state}
-        for key in ("turns", "tool_calls", "tokens", "duration_ms"):
-            if counts.get(key) is not None:
-                data[key] = counts[key]
+        counts = {
+            "turns": turns, "tool_calls": tool_calls,
+            "tokens": tokens, "duration_ms": duration_ms,
+        }
+        data.update((k, v) for k, v in counts.items() if v is not None)
         data["error"] = error
         try:
             self._event_sink(AgentEvent(EventType.AGENT_END, data))
@@ -848,11 +848,11 @@ class AgentToolWrapper(Tool):
 
     def _history_counts(
         self, sub_agent: Any, started: float,
-    ) -> Dict[str, Optional[int]]:
+    ) -> Dict[str, int]:
         """The end event's counters for a run that raised.
 
         Best effort, so the run's own exception is the one that propagates:
-        when the history cannot be read, its counters are ``None`` ("not
+        when the history cannot be read, its counters are left out ("not
         known") and only the measured duration is kept.
         """
         duration_ms = int((time.monotonic() - started) * 1000)
@@ -863,7 +863,7 @@ class AgentToolWrapper(Tool):
                 "Reading a sub-agent's history after it raised failed (%s)",
                 self._definition["name"], exc_info=True,
             )
-            return {**_UNKNOWN_COUNTS, "duration_ms": duration_ms}
+            return {"duration_ms": duration_ms}
         return {
             "turns": turns, "tool_calls": tool_calls,
             "tokens": tokens, "duration_ms": duration_ms,
@@ -1301,13 +1301,13 @@ class AgentToolWrapper(Tool):
         sentinel, stop at max iterations).
 
         A background sub-agent has nobody to ask, and must not read stdin from
-        its thread (that corrupts the terminal's raw mode). So it refuses every
-        call that needs confirmation, through a transport of its own: with no
-        callbacks at all it would get a ``NullTransport``, which approves them
-        all. It can still run whatever permission rules allow outright, and a
-        denial still denies. ``NullTransport`` itself keeps approving, since
-        that is the documented default for a host with no callbacks. Nothing
-        it emits reaches the parent.
+        its thread (that corrupts the terminal's raw mode). So its transport
+        refuses every call that needs confirmation: a transport that answered
+        as ``NullTransport`` does would approve them all. It can still run
+        whatever permission rules allow outright, and a denial still denies.
+        ``NullTransport`` itself keeps approving, since that is the documented
+        default for a host with no callbacks. Nothing it emits reaches the
+        parent.
         """
         from ...transport import SdkTransport
 
@@ -1368,7 +1368,7 @@ class AgentToolWrapper(Tool):
                     turn[0] += 1
                 sink(AgentEvent(EventType.TURN_START, {"display_reset": True} if reset else {}))
             elif t == EventType.TOOL_START:
-                tool = label(d.get("tool"))
+                tool = label(d.get("tool", ""))
                 args = d.get("args", {})
                 sink(AgentEvent(EventType.TOOL_START, {
                     "tool": tool,
