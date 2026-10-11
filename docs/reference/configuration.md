@@ -6,7 +6,7 @@
 
 中文版本：[CONFIGURATION.zh.md](configuration.zh.md)。Both docs share the same structure, section numbering, and field tables — when editing one, update the other in the same change.
 
-> **Quick check.** To verify any of the files below without booting an agent, run `agentao config validate` (or `agentao doctor` for plugin / ACP / optional-dep coverage as well). Both support `--json`; errors exit 1, warnings exit 0. See [developer-guide CLI ch. 12](https://github.com/jin-bo/agentao/blob/main/developer-guide/en/cli/12-non-interactive.md#agentao-doctor-health-snapshot).
+> **Quick check.** To verify any of the files below without booting an agent, run `agentao config validate` (or `agentao doctor` for plugin / ACP / optional-dep coverage as well). Both support `--json`; errors exit 1, warnings exit 0. See [developer-guide CLI ch. 12](https://github.com/jin-bo/agentao/blob/main/developer-guide/en/cli/12-non-interactive.md#agentao-doctor--health-snapshot).
 
 ---
 
@@ -20,13 +20,13 @@ User-facing configuration files (the surfaces you may hand-edit):
 | 2 | Runtime mode + builtin agents | `.agentao/settings.json` | — | `embedding/factory.py::_load_settings`, `plan/controller.py::_load_settings` | [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) |
 | 3 | Tool permissions | — *(user-only; project file is ignored)* | `~/.agentao/permissions.json` | `permissions.py::PermissionEngine` | [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) |
 | 4 | MCP servers | `.agentao/mcp.json` *(add-only — cannot override user-scope names)* | `~/.agentao/mcp.json` | `mcp/FileBackedMCPRegistry` (see `mcp/config.py`) | `CLAUDE.md` § MCP |
-| 5 | ACP subagents | `.agentao/acp.json` | — *(project-only)* | `acp_client/config.py` | [acp-client.md](../guides/acp-client.md) / [acp-embedding.md](../guides/acp-embedding.md) |
+| 5 | ACP subagents | `.agentao/acp.json` | — *(project-only)* | `acp_client/config.py` | [CLI 8 · `/acp`](../../developer-guide/en/cli/8-mcp-acp-plugins.md) / [developer guide 3.4](../../developer-guide/en/part-3/4-reverse-acp-call.md) |
 | 6 | Skills disable list | `.agentao/skills_config.json` | — | `skills/manager.py` | [SKILLS_GUIDE.md](../guides/skills.md) |
 | 7 | Project instructions | `AGENTAO.md` (cwd), else `AGENTS.md` | — | `prompts/helpers.py::load_project_instructions` | [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) |
 | 8 | Memory store | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](../guides/memory-management.md) |
 | 9 | Run spec (`agentao run`) | any path passed to `--spec` (or stdin) | — | `cli/run_models.py::RunSpec`, `cli/run_template.py::render_spec` | [run-spec-parameters.md](../design/run-spec-parameters.md) |
 | 10 | Plugin hooks | `<plugin>/hooks/hooks.json`, or inline/declared via the plugin manifest's `hooks` | — *(travels with the plugin)* | `embedding/plugins/manager.py` (discovery) → `plugins/hooks/_parser.py` (parse) | §11 below; Developer Guide §5.7 |
-| 11 | LLM login (ACP sessions) | — | `~/.agentao/llm.json` *(written by `agentao --login`)* | `embedding/llm_config.py::resolve_session_llm_config` | §2a below; [acp.md](../guides/acp.md#provider-configuration-and-login-acp-registry-installs) |
+| 11 | LLM login (ACP sessions) | — | `~/.agentao/llm.json` *(written by `agentao --login`)* | `embedding/llm_config.py::resolve_session_llm_config` | §2a below; [developer guide 3.2 · Provider configuration and login](../../developer-guide/en/part-3/2-agentao-as-server.md) |
 
 Internal state files (auto-managed; documented for awareness, not for editing):
 
@@ -433,7 +433,7 @@ Tools are registered as `mcp_{server}_{tool}`. See `CLAUDE.md` → "MCP" section
 | `maxRecoverableRestarts` | int | no | `3` | Cap for auto-restarts after recoverable subprocess deaths; reset on first successful turn. |
 | `nonInteractivePolicy` | object | no | `{"mode": "reject_all"}` | Object form **only** — bare-string form is rejected with a migration error. Allowed `mode`: `"reject_all"`, `"accept_all"`. |
 
-Full ACP semantics → [acp-client.md](../guides/acp-client.md) and [acp-embedding.md](../guides/acp-embedding.md).
+Full ACP semantics → [CLI 8 · `/acp`](../../developer-guide/en/cli/8-mcp-acp-plugins.md) and [developer guide 3.4](../../developer-guide/en/part-3/4-reverse-acp-call.md).
 
 ---
 

@@ -46,7 +46,8 @@ class RecoveryMixin:
         ``datetime.now(timezone.utc)`` — i.e., at store-time, not at
         the time the error was raised. Consumers read it via
         :meth:`get_status` to judge staleness. See the state-vs-error
-        contract in ``docs/guides/headless-runtime.md``.
+        contract in ``developer-guide/en/appendix/d-error-codes.md``
+        (D.5).
         """
         if name not in self._handles:
             return

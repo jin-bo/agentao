@@ -142,13 +142,13 @@ Likely a version mismatch. Agentao v0.2.x speaks `protocolVersion: 1` (integer).
 
 ### `server_busy` from `prompt_once`
 
-Fail-fast semantics — someone else is already in a turn. Options:
+Fail-fast semantics — someone else is already in a turn. `send_prompt` is fail-fast too, and the manager has no queue. Options:
 
-- Wait + retry
-- Use the session-based API (`send_prompt`) if queueing is acceptable
+- Gate on `readiness(name)`, then wait + retry
+- Queue the work in your own host
 - Spawn a dedicated subprocess per tenant
 
-See [Appendix D.5](./d-error-codes#d-6-retry-guidance).
+See [Appendix D.6](./d-error-codes#d-6-retry-guidance) and [3.4 One active turn per server](/en/part-3/4-reverse-acp-call#one-active-turn-per-server).
 
 ### "session/cancel doesn't stop my long tool"
 
@@ -164,9 +164,11 @@ if mgr.is_ready("my-server"):
 ```
 
 - `"ready"` — safe to submit.
-- `"busy"` — a turn is in flight; retrying will raise `SERVER_BUSY`.
-- `"failed"` — auto-recovery already handles recoverable idle exits (capped by `maxRecoverableRestarts`, default 3); once the sticky fatal flag is set or the cap is exhausted, an explicit `restart_server()` / `start_server()` by the operator is required.
-- `"not_ready"` — server is still starting up or winding down.
+- `"busy"` — a turn is in flight; submitting now raises `SERVER_BUSY`.
+- `"failed"` — the server is sticky-fatal, or it is in `failed` and its process never started or has exited. An operator must call `restart_server()` / `start_server()`. (Recoverable deaths do not land here: auto-recovery rebuilds them, up to `maxRecoverableRestarts`, default 3.)
+- `"not_ready"` — the server is still starting up or winding down. You also get it when `state` is `failed` but the process is still alive (a per-call error, such as a rejected `cwd` override, that the next call can clear), and right after a recoverable death that the next submit will rebuild.
+
+The full table is in [3.4 Readiness classes](/en/part-3/4-reverse-acp-call#readiness-classes).
 
 ### "Why is `last_error` still set even though my last turn succeeded?"
 
@@ -188,16 +190,16 @@ The failure is deliberately loud and raised at config-load time (`AcpClientConfi
 
 ### "A server crashed mid-turn. How do I recover?"
 
-Depends on how it died (Week 4 classifier):
+Depends on how it died (full matrix in [3.4 Process-death classification](/en/part-3/4-reverse-acp-call#process-death-classification)):
 
-- **Recoverable death** (clean exit, non-zero idle exit within cap, stdio EOF, death during active turn): no operator action needed. The next `send_prompt` / `prompt_once` automatically rebuilds the client; `mgr.restart_count(name)` shows how many auto-rebuilds happened.
-- **Fatal death** (OOM / SIGKILL / `exit 137` / consecutive handshake failure / beyond `maxRecoverableRestarts`): the server is marked sticky-fatal. `mgr.is_fatal(name)` returns `True`; all `ensure_connected` calls raise `AcpClientError(code=TRANSPORT_DISCONNECT, details={"recovery": "fatal"})`. Call `mgr.restart_server(name)` or `mgr.start_server(name)` to acknowledge and re-enable auto-recovery.
+- **Recoverable death** (clean exit, non-zero idle exit within cap, stdio EOF, non-signal death during an active turn): no operator action needed. The next `send_prompt` / `prompt_once` automatically rebuilds the client; `mgr.restart_count(name)` shows how many auto-rebuilds happened.
+- **Fatal death** (killed by a signal — OOM / SIGKILL / `exit 137` — / a second consecutive handshake failure / beyond `maxRecoverableRestarts`): the server is marked sticky-fatal. `mgr.is_fatal(name)` returns `True`; all `ensure_connected` calls raise `AcpClientError(code=TRANSPORT_DISCONNECT, details={"recovery": "fatal"})`. Call `mgr.restart_server(name)` or `mgr.start_server(name)` to acknowledge and re-enable auto-recovery.
 
 To tune the retry cap, set `maxRecoverableRestarts` on the server config (default 3).
 
 ### "Is `ensure_connected` safe to call after `cancel_turn`?"
 
-Yes. Week 4's cleanup guarantees (see [§7.1 of the headless runtime doc](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md)):
+Yes. The cleanup guarantees (see [3.4 Cleanup order after a cancel or timeout](/en/part-3/4-reverse-acp-call#cleanup-order-after-a-cancel-or-timeout)):
 
 1. The pending slot is dropped before `session/cancel` is sent.
 2. The turn slot and the per-server lock are released in `finally` blocks.

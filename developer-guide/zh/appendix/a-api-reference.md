@@ -456,7 +456,7 @@ token 被取消时在 agent 循环里抛出。`chat()` 会捕获并返回 `[Canc
 | `start_all` | `start_all(only_auto=True)` | 启动所有 auto-start 服务器 |
 | `start_server(name)` / `stop_server(name)` / `restart_server(name)` | | |
 | `ensure_connected(name, cwd=?, mcp_servers=?)` | | 幂等连接 + 新建会话 |
-| `send_prompt(name, prompt, timeout=?)` | `-> PromptResult` | 交互式一轮（public） |
+| `send_prompt(name, text, timeout=?, interactive=True, cwd=?, mcp_servers=?, interaction_policy=?)` | `-> dict`（`session/prompt` 的结果） | 在长连会话上跑一轮。fail-fast：已有活跃 turn 时抛 `SERVER_BUSY`（public） |
 | `prompt_once(name, prompt, cwd=?, mcp_servers=?, timeout=?, interactive=False, stop_process=True)` | `-> PromptResult` | Fail-fast 一次性，自动清理（public） |
 | `send_prompt_nonblocking` / `finish_prompt_nonblocking` / `cancel_prompt_nonblocking` | | 底层异步版本（**internal / unstable**，不在 embedding contract 内） |
 | `stop_all()` | | 停所有子进程 |
@@ -526,8 +526,9 @@ Week 2 字段语义要点：
 - `SERVER_BUSY` 与 `SERVER_NOT_FOUND` **不**写入 `last_error`，因为它们是
   调用方侧信号，不是服务端状态。
 
-完整 state-vs-error 合约和 readiness 分级见
-[`docs/guides/headless-runtime.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md)。
+各字段的确切含义和 readiness 分级见 [3.4 状态字段](/zh/part-3/4-reverse-acp-call#状态字段)
+与[就绪分级](/zh/part-3/4-reverse-acp-call#就绪分级)；state-vs-error 合约见
+[附录 D.5](./d-error-codes#d-5-状态与错误合约-headless)。
 
 ### 异常类
 

@@ -310,7 +310,7 @@ acceptable but lossy.
 > TODO below was waiting on) plus a per-turn `max_iterations_hit` flag on the
 > ACP transport onto `end_turn` / `cancelled` / `max_tokens` /
 > `max_turn_requests`. `refusal` stays unemitted by design. See
-> `session_prompt.py::_stop_reason_for` and `docs/guides/acp.md`. The analysis
+> `session_prompt.py::_stop_reason_for` and developer guide 3.2 (`developer-guide/en/part-3/2-agentao-as-server.md`). The analysis
 > below is kept as the record of why.
 >
 > **The one open decision it left is closed in 0.5.4.** `llm_error` mapped to

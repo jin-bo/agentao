@@ -60,17 +60,36 @@ Public surface:
 | `prompt_once(name, prompt, ...)` | One fire-and-forget turn — **recommended entry point** |
 | `send_prompt(name, prompt, ...)` | Long-lived session variant (keeps subprocess alive) |
 | `cancel_turn(name)` | Cancel an in-flight turn |
-| `get_status()` | Typed `list[ServerStatus]` snapshot (see 3.4.8) |
+| `get_status()` | Typed `list[ServerStatus]` snapshot (see 3.4.9) |
+| `readiness(name)` / `is_ready(name)` | Coarse "can I submit now?" answer (see [3.4.11](#readiness-classes)) |
+| `get_server_logs(name, n=50)` | Last *n* stderr lines of the subprocess |
 
 `send_prompt_nonblocking` / `finish_prompt_nonblocking` /
 `cancel_prompt_nonblocking` also exist on `ACPManager` but are
 **internal / unstable** — used by Agentao's own interactive CLI
 inline-confirmation pipeline. Headless embedders should call
-`send_prompt` or `prompt_once` instead. See
-[`docs/guides/headless-runtime.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md)
-for the authoritative support-level table.
+`send_prompt` or `prompt_once` instead. The support level of each
+entry point is in [3.4.11](#entry-points-and-support-levels).
 
 Full API details in [Appendix A · ACP Client](/en/appendix/a-api-reference#a-8-acp-client).
+
+### Supported imports
+
+The only semver-stable import root is `agentao.acp_client`. The embedding contract is this set:
+
+```python
+from agentao.acp_client import (
+    ACPManager,
+    AcpClientConfig, AcpServerConfig, load_acp_client_config,
+    AcpConfigError, AcpClientError, AcpRpcError, AcpErrorCode,
+    AcpInteractionRequiredError,
+    InteractionPolicy, PromptResult,
+    ServerState, ServerStatus, AcpProcessInfo,
+    classify_process_death,
+)
+```
+
+The package also re-exports `ACPClient`, `ACPProcessHandle`, `AcpConnectionInfo`, `Inbox`, `InteractionRegistry` and the router helpers, but only for older embedders. They are implementation details and can change between releases. If you need one, import it from its submodule (`agentao.acp_client.client`, `.process`, `.inbox`, `.interaction`, `.router`). The full move table is in [Appendix E.10](/en/appendix/e-migration#e-10-acp-client-—-internal-names-move-to-submodules).
 
 ## 3.4.3 `prompt_once()` — the 95% use case
 
@@ -85,14 +104,17 @@ def prompt_once(
     timeout: Optional[float] = None,
     interactive: bool = False,
     stop_process: bool = True,
+    interaction_policy: InteractionPolicy | str | None = None,
 ) -> PromptResult:
 ```
 
 Semantics:
 
 - Acquires the per-server lock in **fail-fast** mode. If another turn is already running for that server, raises `AcpClientError(code=SERVER_BUSY)` — no waiting and no hidden queue
-- Spawns an **ephemeral client** if no long-lived one exists; tears it down on exit
+- Spawns an **ephemeral client** if no long-lived one exists; tears it down on exit. An ephemeral client is never registered as the server's long-lived client
+- `stop_process=True` (the default) stops the subprocess on exit **only** if this call started it. A subprocess that was already running survives
 - If a long-lived client exists (you called `start_server(name)` earlier), it's reused — and the subprocess survives past this call
+- `interactive=False` is the default, so server-initiated permission and input requests follow the non-interactive policy (see [3.4.11](#non-interactive-turns))
 - Returns `PromptResult` with `stop_reason`, `session_id`, `cwd`, and the raw payload
 
 That is also why this is the default headless entry point: the behavior is narrow and predictable. In practice you usually handle only three outcome classes:
@@ -203,7 +225,7 @@ Required fields: `command`, `args`, `env`, `cwd`. Optional: `autoStart`, `startu
 
 - Relative `cwd` resolves against the project root (the dir containing `.agentao/`)
 - `$VAR` / `${VAR}` in `env` values expand against the host process's environment
-- `nonInteractivePolicy` is a structured object `{"mode": "reject_all" | "accept_all"}`. Missing ⇒ implicit `{"mode": "reject_all"}`. The pre-Week-3 bare string form (`"reject_all"` / `"accept_all"`) is rejected at config-load time — migrate via [Appendix E](/en/appendix/e-migration).
+- `nonInteractivePolicy` is a structured object `{"mode": "reject_all" | "accept_all"}`. Missing ⇒ implicit `{"mode": "reject_all"}`. The old bare string form (`"reject_all"` / `"accept_all"`) is rejected at config-load time — migrate via [Appendix E](/en/appendix/e-migration).
 - Use `reject_all` for production. Per-call `interaction_policy=` on `send_prompt` / `prompt_once` overrides the server default for a single turn.
 
 See [Appendix B · Config keys](/en/appendix/b-config-keys) for the full field reference.
@@ -248,7 +270,7 @@ config = add_server_entry("gemini", entry.config, project_root=Path("/app"))  # 
 mgr.add_server("gemini", config)
 ```
 
-Each step is separate — query, convert, write `acp.json`, register — so a host can stop after any of them. `entry_to_server_config` writes `autoStart: false` and `startupTimeoutMs: 120000` (the first launch downloads the package); `add_server_entry` refuses a name collision or an invalid existing file, and writes atomically. Scope and rules: [`docs/guides/acp-client.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/acp-client.md#adding-agents-from-the-acp-registry).
+Each step is separate — query, convert, write `acp.json`, register — so a host can stop after any of them. `entry_to_server_config` writes `autoStart: false` and `startupTimeoutMs: 120000` (the first launch downloads the package); `add_server_entry` refuses a name collision or an invalid existing file, and writes atomically. Scope and rules: [CLI 8 · Adding agents from the ACP Registry](/en/cli/8-mcp-acp-plugins#adding-agents-from-the-acp-registry-0-5-8).
 
 ## 3.4.6 Long-lived vs. ephemeral clients
 
@@ -275,6 +297,31 @@ From a headless-operations point of view, you can reduce that further:
 - **Need isolation / cleanliness**: use plain `prompt_once()` and let it start/stop
 - **Unsure**: default to `prompt_once()` because the runtime surface is smaller
 
+### Session reuse with `send_prompt()`
+
+Use `send_prompt()` to keep one session across many tasks while each call still passes its own `cwd` and `mcp_servers`:
+
+```python
+mgr = ACPManager.from_project()
+mgr.start_all()
+try:
+    raw = mgr.send_prompt(
+        "codex-reviewer",
+        "Review the diff",
+        cwd="/path/to/task-checkout",
+        mcp_servers=[],
+        timeout=120,
+        interactive=False,      # send_prompt defaults to True
+    )
+    print(raw["stopReason"])    # send_prompt returns the raw result dict
+finally:
+    mgr.stop_all()
+```
+
+- The cached session is reused only if **both** `cwd` and `mcp_servers` match the values it was created with. `None` means the server's configured `cwd` and an empty MCP list, and the comparison uses those resolved values.
+- On a mismatch, the manager sends a new `session/new` on the same client and transport. The subprocess does not restart.
+- `send_prompt()` defaults to `interactive=True`, which is the CLI's mode. A headless host must pass `interactive=False`.
+
 ## 3.4.7 Lifecycle & recovery
 
 Three common failure scenarios have pinned behaviour so embedders don't have to hand-roll recovery:
@@ -299,7 +346,60 @@ except AcpClientError as e:
         # Later: mgr.restart_server("searcher")
 ```
 
-The classifier is a pure function — `classify_process_death` — exported from `agentao.acp_client` and testable in isolation. See [`docs/guides/headless-runtime.md` §7.2](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md) for the full decision matrix.
+The classifier is a pure function — `classify_process_death` — exported from `agentao.acp_client` and testable in isolation. The full decision matrix is below.
+
+### Cleanup order after a cancel or timeout
+
+Every failure path of `send_prompt` / `prompt_once` releases its state exactly once, in this order:
+
+1. **Pending prompt slot.** On a timeout, the client drops the pending `session/prompt` slot *before* it sends `session/cancel`. The drop is idempotent and never raises, so a broken pipe cannot leave the client stuck for the next turn.
+2. **Turn slot.** The manager's single-active-turn slot is cleared in a `finally` block. This happens on success, timeout, cancel and transport error alike.
+3. **`last_error`.** The error is recorded before the lock is released, so a `get_status()` call on the same tick already sees it.
+4. **Per-server lock.** The outer `finally` releases the lock, whatever was raised above.
+
+Result: a `cancel_turn` or a timeout never leaves the server busy or locked for the next call. Source: [`agentao/acp_client/manager/turns.py`](https://github.com/jin-bo/agentao/blob/main/agentao/acp_client/manager/turns.py).
+
+### Process-death classification
+
+When the subprocess dies — between calls or under an active turn — the manager decides whether to rebuild or give up:
+
+| Trigger | Classification | What happens |
+|---------|----------------|--------------|
+| Idle process exits with code 0 | recoverable | Lazy rebuild on the next call |
+| Idle process exits non-zero | recoverable up to the cap, then fatal | Bumps `restart_count(name)`. The cap is `maxRecoverableRestarts` (default 3) |
+| Process dies during an active turn (any non-signal exit) | recoverable, the cap does not apply | The current turn fails and records `last_error`. The next call rebuilds |
+| Stdio transport breaks while the process still runs | recoverable | The client is rebuilt. The process is not respawned |
+| Killed by a signal (negative exit code, or exit 137 / 139 / 143 — OOM, SIGKILL, SIGSEGV, SIGTERM) | fatal | No auto-respawn. `state` becomes `failed`. An explicit restart is required |
+| Second consecutive handshake failure | fatal | An environment or config problem, not a transient fault |
+| `auth_required` (`-32000`) from `initialize` / `session/new` | not counted | The agent needs credentials. Retrying never makes the server fatal (see [Authentication](#authentication-auth-required)) |
+| `cancel_turn` from the host | not a death | Handled by the cleanup order above |
+
+How the manager applies it:
+
+- Before it reuses a cached client, the manager checks the process. A recoverable death closes the dead client, bumps the restart count and connects again. A fatal death marks the server sticky-fatal and raises `AcpClientError(code=TRANSPORT_DISCONNECT, details={"recovery": "fatal"})`.
+- The restart count and the handshake-failure streak reset to 0 after the first successful turn.
+- Only `restart_server(name)` or `start_server(name)` clears the fatal mark. A passing turn never does. An operator must acknowledge a fatal server before it is rebuilt.
+- Use `is_fatal(name)` and the `(state, last_error)` pair on `ServerStatus` to tell the two cases apart.
+
+Source: `classify_process_death` in [`agentao/acp_client/models.py`](https://github.com/jin-bo/agentao/blob/main/agentao/acp_client/models.py) and [`manager/recovery.py`](https://github.com/jin-bo/agentao/blob/main/agentao/acp_client/manager/recovery.py).
+
+### Tuning `maxRecoverableRestarts`
+
+```json
+{
+  "servers": {
+    "searcher": {
+      "command": "my-searcher",
+      "args": [],
+      "env": {},
+      "cwd": ".",
+      "maxRecoverableRestarts": 3
+    }
+  }
+}
+```
+
+The default is 3. The value must be a non-negative integer. A negative number or any other type (including `true`) raises `AcpConfigError` when the config loads, not when a turn runs. `0` means the first idle non-zero exit is fatal.
 
 ## 3.4.8 Cancellation & errors
 
@@ -328,6 +428,21 @@ except AcpClientError as e:
 ```
 
 Full error taxonomy (including the `AcpRpcError` contract and the `details["underlying_code"]` / `details["phase"]` signals) in [Appendix D · Error codes](/en/appendix/d-error-codes).
+
+`cancel_turn(name)` does not wait for the per-server lock, so you can call it from another thread while the turn runs. It sends `session/cancel` and marks the turn as cancelled. A cancelled turn returns normally, even if a non-interactive interaction error was latched earlier in it.
+
+### `AcpInteractionRequiredError`
+
+A non-interactive turn raises this error when the server asked for permission or input and the policy did not approve it (see [Non-interactive turns](#non-interactive-turns)). Its stable public fields:
+
+| Field | Content |
+|-------|---------|
+| `server` | Server name |
+| `prompt` | The text the server showed with the request |
+| `options` | The options the server offered (list of dicts) |
+| `code` | Always `AcpErrorCode.INTERACTION_REQUIRED` |
+
+The raw server method (`session/request_permission` or `_agentao.cn/ask_user`) is in `exc.details["method"]`. Use it for logs only, and do not branch on it. The method names can change.
 
 ### Authentication (`auth_required`)
 
@@ -369,28 +484,13 @@ from agentao.acp_client import ServerStatus
 for s in mgr.get_status():             # each s: ServerStatus
     print(s.server, s.state, s.pid, s.has_active_turn)
     if s.state == ServerState.FAILED.value:
-        info = mgr.get_handle(s.server).info
-        print(f"{s.server} failed: {info.last_error}")
+        print(f"{s.server} failed: {s.last_error}")
+        print("\n".join(mgr.get_server_logs(s.server, n=50)))
 ```
 
-Core fields:
+Core fields: `server`, `state`, `pid`, `has_active_turn`. Diagnostic fields on the same dataclass: `last_error`, `last_error_at`, `active_session_id`, `inbox_pending`, `interaction_pending`, `config_warnings`. The exact meaning of each field is in [3.4.11](#status-fields). `mgr.get_handle(name).info`, `mgr.inbox` and `mgr.interactions` remain available for the raw handle view. If you still read the old `list[dict]` shape, see [Appendix E.11](/en/appendix/e-migration#e-11-acp-client-—-get-status-returns-serverstatus).
 
-- `server: str` — name from `.agentao/acp.json`
-- `state: str` — `ServerState` enum value
-- `pid: int | None`
-- `has_active_turn: bool` — derived from the manager's active turn
-  slot; stays `True` for the full lifetime of a turn, including
-  in-flight interactions
-
-Diagnostic fields (additive on the same dataclass):
-`last_error`, `last_error_at`, `active_session_id`, `inbox_pending`,
-`interaction_pending`, `config_warnings`.
-Read them directly off `ServerStatus`; `mgr.get_handle(name).info` and
-`mgr.inbox` / `mgr.interactions` remain available for the raw handle
-view. See
-[`docs/guides/headless-runtime.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md)
-for the full field list and migration table from the pre-typed dict
-shape.
+`mgr.get_server_logs(name, n=50)` returns the last *n* stderr lines the manager captured from the subprocess. Look there first when an RPC fails in a daemon. It raises `SERVER_NOT_FOUND` for an unknown name.
 
 Log files from the sub-agent land in `<server cwd>/agentao.log` (for Agentao-type sub-agents) or wherever that agent chooses. Always set `cwd` in `.agentao/acp.json` to a writable dir so logs don't get lost.
 
@@ -410,6 +510,89 @@ mgr.stop_all()             # kills subprocesses gracefully
 ```
 
 Wrap with try/finally or a context manager — orphaned ACP subprocesses are a common source of leaked resources on hot reloads.
+
+## 3.4.11 Headless contract
+
+This section is the reference for a host that runs `ACPManager` unattended: a daemon, a CI worker, a queue consumer. It pins what such a host can rely on. Where this page and the code disagree, the code wins. Please file a bug.
+
+The runnable sample is [`examples/headless_worker.py`](https://github.com/jin-bo/agentao/blob/main/examples/headless_worker.py). It starts an inline mock ACP server, runs the success, error and cancel paths, and prints a typed status snapshot after each. Run it from the repository root with `uv run python examples/headless_worker.py`. Exit code `0` means every path worked.
+
+### Entry points and support levels
+
+| Entry point | Support level | Use |
+|-------------|---------------|-----|
+| `prompt_once(name, prompt, …)` | **public** | One turn with deterministic cleanup. Uses an ephemeral client when no long-lived one exists |
+| `send_prompt(name, prompt, …)` | **public** | Turns on a long-lived session |
+| `send_prompt_nonblocking(…)` + `finish_prompt_nonblocking` / `cancel_prompt_nonblocking` | **internal / unstable** | The interactive CLI's inline-confirmation pipeline. Signatures can change without notice. These do not take `interaction_policy=` |
+
+A headless host calls `prompt_once` or `send_prompt`, and nothing else, to submit turns.
+
+### One active turn per server
+
+Each named server has **one active turn slot**, and there is **no queue**.
+
+- A turn starts when an entry point takes the per-server lock and installs the turn slot. It ends when the entry point's `finally` clears the slot, on every outcome.
+- Both public entry points take the lock in **fail-fast** mode. A second concurrent `send_prompt` or `prompt_once` on the same server raises `AcpClientError(code=SERVER_BUSY)` at once. It never blocks a worker thread behind a slow turn.
+- `timeout=` covers the RPC wait (and the handshake RPCs, when the call has to connect first). No time is spent waiting for the lock, because the lock never waits. For a non-interactive turn, `timeout=None` uses the server's `requestTimeoutMs`.
+- To wait for capacity, poll `readiness(name)` or `get_status()` and retry. The manager never queues for you.
+
+| Situation | Result |
+|-----------|--------|
+| Two `send_prompt` calls, same server | The second raises `SERVER_BUSY` |
+| Two `prompt_once` calls, same server | The second raises `SERVER_BUSY` |
+| `prompt_once` while a `send_prompt` turn runs | `prompt_once` raises `SERVER_BUSY` |
+| `cancel_turn` during a non-interactive turn | The latched interaction error is dropped. The prompt RPC runs to completion and returns normally |
+| `prompt_once` while a long-lived client exists | Reuses that client. `stop_process=True` does not stop the subprocess |
+| Any turn from another thread while `reserve_for_login(name)` is held | `SERVER_BUSY` |
+
+`SERVER_BUSY` is a backpressure signal from the caller's side. It is never written to `last_error` (see [Appendix D.5](/en/appendix/d-error-codes#d-5-state-vs-error-contract-headless)).
+
+### Non-interactive turns
+
+A daemon has no user to ask. With `interactive=False` (the default of `prompt_once`, not of `send_prompt`), the manager answers `session/request_permission` and `_agentao.cn/ask_user` itself, by policy. The handle never enters `WAITING_FOR_USER` for these.
+
+| Policy `mode` | `session/request_permission` | `_agentao.cn/ask_user` |
+|---------------|------------------------------|------------------------|
+| `reject_all` (default) | Rejected. The turn raises `AcpInteractionRequiredError` | Error reply. The turn raises `AcpInteractionRequiredError` |
+| `accept_all` | Approved if the server offered an allow-type option. Otherwise rejected, and the turn raises | Error reply. The turn raises — `accept_all` cannot invent a user's answer |
+
+The policy comes from the per-call `interaction_policy=` if given, else from the server's `nonInteractivePolicy` (see [3.4.5](#per-call-policy-override)). The manager resolves it once, at turn start.
+
+**Latching.** A rejected request does not abort the turn. The `session/prompt` RPC keeps running until the server ends it. The manager keeps the **first** rejected request, and raises it as `AcpInteractionRequiredError` after the RPC ends. If the host calls `cancel_turn` during the turn, the cancel wins and the turn returns normally.
+
+### Status fields
+
+`get_status()` returns one frozen `ServerStatus` per configured server. A `prompt_once` ephemeral client adds no row of its own. While it runs, the server's row shows `has_active_turn` and the ephemeral session id.
+
+| Field | Meaning |
+|-------|---------|
+| `server` | The name in `.agentao/acp.json` |
+| `state` | The `ServerState` value as a string. The primary readiness signal |
+| `pid` | OS process id while the subprocess runs, else `None` |
+| `has_active_turn` | `True` for the whole life of a turn in the manager's turn slot, including its interaction phase. It comes from the turn slot, not the handle state, so a handle in `WAITING_FOR_USER` does not flip it to `False` |
+| `active_session_id` | The current `sessionId` of the long-lived client, or of the ephemeral client of a running `prompt_once`. `None` until a session exists. Set whether or not a turn runs |
+| `last_error` | The latest error raised out of a public entry point. If the manager has none, it falls back to the handle's own error (for example a `start_server` failure) |
+| `last_error_at` | UTC-aware `datetime`, taken when the manager **stored** the error, not when it was raised. `None` when `last_error` came from the handle fallback |
+| `inbox_pending` | Messages in the shared inbox from this server |
+| `interaction_pending` | Unresolved permission or input requests from this server |
+| `config_warnings` | Reserved for non-fatal per-server config deprecations. Always empty in the current release |
+
+Read `state` (or `readiness()`) first to gate, then `last_error` for diagnosis. `last_error` is sticky across successful turns. The full rules are in [Appendix D.5](/en/appendix/d-error-codes#d-5-state-vs-error-contract-headless).
+
+### Readiness classes
+
+`readiness(name)` returns one of four strings. `is_ready(name)` is `readiness(name) == "ready"`. Prefer these to string-matching on `state`.
+
+| Class | When |
+|-------|------|
+| `"ready"` | `state` is `ready`, no turn slot is active, and the process is alive. Safe to submit |
+| `"busy"` | A turn slot is active, or `state` is `busy` / `waiting_for_user`, and the process is alive. A submit now raises `SERVER_BUSY` |
+| `"failed"` | The server is sticky-fatal. Or `state` is `failed` and the process never started or has exited. Or the process just died and the death classifies as fatal. Needs `restart_server` / `start_server` |
+| `"not_ready"` | `state` is `configured`, `starting`, `initializing`, `stopping` or `stopped`. Also: `state` is `failed` but the process is still alive — a per-call error such as a rejected `cwd` override, which the next call can clear. Also: the process just died with a recoverable classification — the next submit rebuilds it |
+
+`readiness()` and `get_status()` are not purely passive. If they find a dead process, they classify the death and evict the dead client, so the answer reflects the real state. A poll never charges the restart budget. Source: [`agentao/acp_client/manager/status.py`](https://github.com/jin-bo/agentao/blob/main/agentao/acp_client/manager/status.py).
+
+Out of scope for this contract: multi-dimension policies (per-tool or timeout rules), auto-respawn after a fatal death, and a socket or TCP daemon transport. The runtime stays on stdio.
 
 ---
 

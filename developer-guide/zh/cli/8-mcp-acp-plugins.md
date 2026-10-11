@@ -150,7 +150,39 @@ MCP 工具注册成 `mcp_{server}_{tool}`。所以 `filesystem.read_file` 在 ag
 
 ### 配置文件
 
-实时配置：`.agentao/acp.json`。格式类似 `mcp.json`，每条描述一个完整的 agent 进程。
+实时配置：项目根下的 `.agentao/acp.json`。`servers` 下每一条描述一个完整的 agent 进程，它通过 stdio 说 ACP（JSON-RPC 2.0，每行一条 JSON 消息）。
+
+```json
+{
+  "servers": {
+    "planner": {
+      "command": "node",
+      "args": ["./agents/planner/index.js"],
+      "env": { "LOG_LEVEL": "info" },
+      "cwd": ".",
+      "description": "规划 agent"
+    },
+    "reviewer": {
+      "command": "python",
+      "args": ["-m", "review_agent"],
+      "env": { "REVIEW_API_KEY": "${REVIEW_API_KEY}" },
+      "cwd": "./agents/reviewer",
+      "description": "代码评审 agent",
+      "requestTimeoutMs": 120000
+    }
+  }
+}
+```
+
+`command`、`args`、`env`、`cwd` 必填。相对 `cwd` 相对项目根解析。`env` 里的值会从 shell 或 `.env` 展开 `$VAR` / `${VAR}`，所以密钥不必写进文件。所有键及默认值见 [附录 B.3.4](/zh/appendix/b-config-keys#b-3-4-acp-json)。
+
+要点：
+
+- **只有项目级。** 没有用户全局的 `~/.agentao/acp.json`。
+- **不会自己启动。** CLI 在第一次 `/acp` 命令或第一条被路由的消息时才读 `acp.json`，启动时不读。`autoStart` 为 `true` 也不会让 CLI 拉起服务器。第一次 `/acp start` 或 `/acp send` 才启动它，`/acp send` 还会顺带建立连接。
+- **改动会被读到。** `acp.json` 变了之后，下一条被路由的消息会重新加载它。
+- **回复单独存放。** 服务器的输出进 ACP inbox 并显示在屏幕上，永远不进主 agent 的对话。
+- **超时。** `startupTimeoutMs` 是等 `initialize` 回应的时长，不管设多少，实际都不少于 30 秒。`requestTimeoutMs`（默认 60 秒）限制一轮 `/acp send`。
 
 ### 子命令
 
@@ -171,11 +203,80 @@ MCP 工具注册成 `mcp_{server}_{tool}`。所以 `filesystem.read_file` 在 ag
 
 ### 从 ACP Registry 添加 agent（0.5.8+）
 
-`/acp registry add <id>` 会显示 agent、钉住的版本和启动命令，确认之后才把一条 `npx` / `uvx` 条目写入 `.agentao/acp.json`。在第一次 `/acp send` 或 `/acp start` 之前什么都不会启动，那一次会下载包（需事先装好 Node.js 或 uv）。只有二进制分发的条目会被拒绝。
+[ACP Registry](https://github.com/agentclientprotocol/registry) 列出各个 ACP agent 及其启动方式。Agentao 读取它的稳定索引 `https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`。
 
-没有凭据的 agent 会回 `auth_required`，`/acp` 随即把它列为 `needs login`。如果它提供 `terminal` 登录方法，`/acp login <name>` 会在你的终端里运行登录，退出码为 `0` 时重启服务器并重新连接。其他登录方法请在 Agentao 之外完成，再 `/acp restart <name>`。
+```text
+> /acp registry search claude
+> /acp registry add claude-acp            # 服务器名默认取 id
+> /acp registry add gemini my-gemini      # 也可以自己起名
+```
 
-状态机：
+`add` 会显示 agent、版本和启动命令，你确认之前什么都不写。两个命令都不会启动 agent。第一次 `/acp send` 或 `/acp start` 才启动，这一次会下载包。新条目马上可用，不用重启 CLI，正在运行的服务器也不受影响。
+
+`add` 写入的就是一条普通的 `acp.json` 条目：
+
+```json
+"claude-acp": {
+  "command": "npx",
+  "args": ["--yes", "@agentclientprotocol/claude-agent-acp@0.84.0"],
+  "env": {},
+  "cwd": ".",
+  "autoStart": false,
+  "startupTimeoutMs": 120000,
+  "description": "Claude Agent 0.84.0 (ACP Registry: claude-acp)"
+}
+```
+
+规则：
+
+- **只支持 `npx` 和 `uvx`。** Node.js（用于 `npx`）或 [uv](https://docs.astral.sh/uv/)（用于 `uvx`）必须已在 `PATH` 上，Agentao 不替你安装。两者都提供时用 `npx`。只有二进制分发的条目会被拒绝。
+- **只接受钉死的版本。** 包规格必须钉住条目自身的版本：`name@1.2.3`、`@scope/name@1.2.3` 或 `name==1.2.3`（uv 可带 `[extras]`）。其他写法一律拒绝，不做猜测。
+- **不会悄悄覆盖。** 名字已存在就拒绝，换个名字即可。现有 `acp.json` 读不了或不合法时也拒绝，而不是重写。其他条目和键原样保留，文件以原子方式替换。
+- **含 `$` 的 `env` 值会被拒绝。** `acp.json` 会展开 `env` 里的 `$VAR`，而且没有字面 `$` 的转义写法。这类 agent 请手工添加。
+- **不写入任何凭据。** 见 [认证与 `/acp login`](#认证与-acp-login)。
+
+嵌入 Agentao 的宿主不经 CLI 也能走同样的步骤，见 [3.4.5 · 运行时添加 server](/zh/part-3/4-reverse-acp-call#运行时添加-server)。源码：[`agentao/acp_client/registry.py`](https://github.com/jin-bo/agentao/blob/main/agentao/acp_client/registry.py)。
+
+### 认证与 `/acp login`
+
+需要凭据的 agent 会对 `session/new` 回 `auth_required`（JSON-RPC `-32000`）。Agentao 会如实报告，并列出 agent 提供的登录方法。这不算握手失败，所以登录前再发一次也不会把服务器标成失败。在会话打开之前，`/acp list` 和 `/acp status` 把它显示为 `needs login`。
+
+#### 终端登录
+
+agent 提供 `terminal` 登录方法时，运行：
+
+```text
+> /acp login <name>              # 只有一个终端方法：直接运行
+> /acp login <name> <method-id>  # 有多个：指定一个（或从编号列表里选）
+```
+
+运行方式：
+
+- **命令就是服务器自己的。** Agentao 用服务器的 `command`、`args` 和 `cwd`，追加该方法的 `args`，再把该方法的 `env` 叠加到服务器环境上。这遵循 ACP 认证规范。
+- **登录独占终端。** 在 macOS 和 Linux 上，登录作为前台作业在自己的进程组里运行。Ctrl+C 只取消登录，不会打断 Agentao。在 Windows 上，登录共用控制台，并运行在一个 job object 里。
+- **失败会清理干净。** 取消或失败的登录会连同它启动的一切一起结束，比如 `npx` 或 `uvx` 启动器的子进程。
+- **退出码 `0` 才算成功。** 其他退出码、取消或启动失败都报告为失败，不会重启任何东西。
+- **成功之后**，Agentao 重启服务器、重新初始化并打开会话，同时清除记录下的 `auth_required` 错误。如果 agent 仍要求认证，只提示一次，不会再次运行登录。
+- **服务器被预留。** 登录期间，对该服务器发起一轮或再发起一次登录都会得到 `SERVER_BUSY`。有进行中的一轮时，登录会被拒绝。其他服务器不受影响。
+- **必须有终端。** 只有 stdin 和 stdout 都是 TTY 时，Agentao 才向 agent 声明支持 Terminal Auth。agent 只会向声明过的客户端提供 `terminal` 方法，所以 `/acp login` 需要交互式终端会话。
+
+源码：[`agentao/cli/commands_ext/acp_login.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands_ext/acp_login.py)。
+
+#### 其他认证方法
+
+Agentao 里只能运行 `terminal` 方法。`agent` 方法（方法没写 `type` 时的默认值）或其他类型，请在 Agentao 之外完成认证，然后运行 `/acp restart <name>`。
+
+#### 不继承服务商密钥
+
+Agentao 启动 ACP 服务器时，会从环境里去掉自己的服务商密钥（`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY` 等），与 MCP 服务器和 hooks 相同。因此从环境读密钥的 agent 会回 `auth_required`，哪怕你的 shell 里设了这个密钥。请登录，或在该服务器的 `env` 块里显式传入：
+
+```json
+"env": { "GEMINI_API_KEY": "${GEMINI_API_KEY}" }
+```
+
+终端登录拿到的是同一份环境，规则相同。
+
+### 服务器生命周期
 
 ```
 configured → starting → initializing → ready → busy → ready
@@ -183,6 +284,10 @@ configured → starting → initializing → ready → busy → ready
                                             ↘ stopping → stopped
                                               ↘ failed
 ```
+
+- `initializing` 是 ACP 握手（先 `initialize`，再 `session/new`）。
+- `busy` 表示一轮正在进行。`waiting_for_user` 表示服务器在问你问题（见 [权限请求与输入请求](#权限请求与输入请求)）。
+- 服务器挂掉后，会在下一次调用时重建；空闲时最多重建 `maxRecoverableRestarts` 次（默认 3）。一轮成功后计数清零。被信号杀掉、连续两次握手失败或重建次数超限，服务器会停在 `failed`，直到你运行 `/acp restart <name>` 或 `/acp start <name>`。
 
 `/acp list` 显示运行中数量 + inbox / pending interaction 队列：
 
@@ -200,7 +305,60 @@ Pending interactions: 1
 - `starting`/`initializing`/`stopping`（黄）
 - `configured`/`stopped`（暗）
 - `failed`（红）
-- `needs login`（黄）——服务器回了 `auth_required`；在打开会话之前代替 `failed` / `stopped` 显示
+- `needs login`（黄）——服务器回了 `auth_required`；在打开会话之前代替 `configured` / `stopped` / `failed` 显示
+
+### 权限请求与输入请求
+
+服务器可以请你批准它的某次工具调用，也可以向你要一段自由文本（[`_agentao.cn/ask_user`](/zh/appendix/c-acp-messages#c-11-agentao-cn-ask-user-⇠-请求-扩展) 扩展）。请求会成为一条**待处理交互**，CLI 内联地问你：`/acp send` 期间当场问，其他时候在下一个空闲点问。
+
+权限请求会显示工具、类型和最多六个参数。按一个键作答：
+
+```text
+ 1. Approve once  2. Approve all  3. Reject once  4. Reject all
+ Press 1-4 · Esc to reject
+```
+
+输入请求则在 `>` 提示符后输入回复。空回复会取消该请求。
+
+`/acp status <name>` 列出仍待处理的请求，`/status` 显示其数量。你作答所花的时间不计入 `requestTimeoutMs`，每次作答后计时重新开始。
+
+### 把消息路由给服务器
+
+不用 `/acp send` 也能把一轮交给已配置的服务器。消息以服务器名开头，写成下面任一形式：
+
+```text
+> @reviewer check the latest diff
+> reviewer: check the latest diff
+> 让 reviewer 检查最新的 diff
+> 请 reviewer 检查最新的 diff
+```
+
+CLI 打印 `ACP Delegation → reviewer`，然后与 `/acp send` 完全一样地执行这一轮，权限和输入请求同样内联处理。
+
+- **只匹配已配置的名字。** 未知名字会作为普通消息交给主 agent。名字有重叠时取最长的（`qa.bot` 优先于 `qa`）。
+- **`让` / `请` 后面要有空格**再接名字，这样 `请问…` 这类普通中文不会被路由。冒号形式也接受全角 `：`。
+- **没有任务就不发。** 名字后面没有任务文本时，只打印用法提示。
+- **`acp.json` 坏了怎么办。** `@`、`让`、`请` 三种形式会打印加载错误并吞掉这条消息，免得你的委派意图误交给主 agent。`name:` 形式在普通文字里很常见（`Note: …`），所以只警告一次，然后交给主 agent。
+- **主 agent 看不到结果。** 路由的含义是“把这一轮交给那个服务器”，而不是“告诉主 agent”。回复留在 ACP inbox 里。
+
+路由不靠猜，只认上面这几种前缀。（曾有一个把服务器结果推进主对话的设计，在发布前就放弃了。）源码：[`agentao/acp_client/router.py`](https://github.com/jin-bo/agentao/blob/main/agentao/acp_client/router.py)。
+
+### 日志与状态
+
+Agentao 为每个服务器保留最近 200 行 stderr。
+
+```text
+> /acp logs reviewer        # 最后 50 行
+> /acp logs reviewer 100    # 最后 100 行
+```
+
+`/acp status <name>` 显示状态、PID、最近错误、最近活动时间、会话 ID、协议版本、待处理交互和最后 5 行 stderr。配置了服务器时，`/status` 会附上一段摘要：
+
+```text
+ACP servers: 1/2 running
+ACP inbox: 3 queued
+ACP interactions: 1 pending
+```
 
 ### ACP 还是 MCP
 
@@ -213,10 +371,35 @@ Pending interactions: 1
 
 ### 容易踩的坑
 
-- **`/acp send` 默认阻塞 REPL** — ACP 一轮跑得长，你这边的本地 agent 就要等。需要时 `/acp cancel`。
-- **`waiting_for_user` 状态意味着远端要你输入** — `/acp status <name>` 看 prompt，用 `/acp send` 应答。
-- **Inbox 不处理会越积越多** — 没回的 ACP 服务器消息排队，用 `/acp send` 回应清空，或重启。
-- **ACP 服务器带着死掉的 PID** — 主机重启了但 `acp.json` 还指着旧 pid。`/acp restart <name>` 修。
+- **`/acp send` 会阻塞 REPL** — 这一轮结束或 `requestTimeoutMs` 用完之前，你没法跟本地 agent 对话。按 Ctrl+C 取消这一轮。路由出去的 `@name` 消息同样会阻塞。
+- **`waiting_for_user` 表示服务器在问你** — CLI 会内联显示问题，不需要用 `/acp send` 回答。
+- **Inbox 有上限** — 最多存 256 条，满了会丢掉最旧的。消息在空闲点显示：提示符出现前、斜杠命令之后、agent 回复之后。
+- **反复崩溃后服务器会停在 `failed`** — 自动重建到 `maxRecoverableRestarts` 次就停止。先看 `/acp logs <name>`，排除原因后再 `/acp restart <name>`。
+
+### 排错
+
+**服务器启动失败。**
+1. 在 `/acp status <name>` 里看错误。
+2. 在 `/acp logs <name>` 里看 stderr。
+3. 确认 `command` 存在且可执行，`cwd` 是一个目录。
+
+**`requires authentication`。**
+- agent 回了 `auth_required`。如果它提供终端登录，运行 `/acp login <name>`；否则在 Agentao 之外完成认证，再运行 `/acp restart <name>`。
+- 从环境读服务商密钥的 agent 看不到你 shell 里的密钥，见 [不继承服务商密钥](#不继承服务商密钥)。
+
+**Registry agent 第一次启动超时。**
+- 第一次 `npx` 或 `uvx` 运行要下载包。Registry 条目等 `initialize` 最多 120 秒。网络慢就调大 `startupTimeoutMs`，或先在 shell 里跑一次启动命令，把启动器的缓存填好。
+- `npx` 或 `uvx` 必须在 `PATH` 上。
+
+**服务器启动了，但握手失败。**
+- 服务器必须用合法的 ACP 响应回答 `initialize`，并在 `session/new` 的回答里给出 `sessionId`。
+- 在 `/acp logs <name>` 里找协议错误。
+
+**提示已有进行中的一轮。**
+- `/acp send` 会取消那一轮旧的，再发一次。仍然失败的话，运行 `/acp cancel <name>` 或 `/acp restart <name>`。
+
+**`Timeout waiting for response`。**
+- 这一轮超过了 `requestTimeoutMs`，CLI 已将其取消。调大该服务器的 `requestTimeoutMs`。
 
 ## `/plugins` — 生命周期 hooks
 
@@ -277,13 +460,13 @@ Errors: 0
 
 ::: info 这一章在体系里的位置
 - MCP：`agent.mcp_manager` — 嵌入式宿主可以调 `manager.get_server_status()` 拿到本页一样的数据
-- ACP：`agent.acp_manager` — ACP 状态、send、cancel 同上
+- ACP：CLI 持有自己的 `ACPManager`。宿主用 `ACPManager.from_project()` 建一个，就能拿到同样的状态、send、cancel，见 [3.4 · 调用外部 ACP Agent](/zh/part-3/4-reverse-acp-call)
 - Plugins：`PluginManager`（在 `agentao.embedding.plugins.manager`）— 诊断报告由 `agentao.embedding.plugins.diagnostics.build_diagnostics` 生成，宿主也可以调。完整的可编程接口见 [Part 5.7](/zh/part-5/7-plugin-hooks)
 :::
 
 ::: tip 真相源头
 命令语法：`/help`。行为锚点：
-- [`agentao/cli/commands.py:handle_mcp_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands.py)
+- [`agentao/cli/commands/mcp.py:handle_mcp_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/mcp.py)
 - [`agentao/cli/commands_ext/acp.py:handle_acp_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands_ext/acp.py)
 - [`agentao/cli/subcommands.py:_handle_plugins_interactive`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/subcommands.py)
 :::

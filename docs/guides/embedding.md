@@ -847,15 +847,15 @@ What stays internal (do **not** depend on for forward compatibility):
 
 | Area | Location |
 |---|---|
-| `Agentao(...)` signature | [`agentao/agent.py`](../agentao/agent.py) |
-| `build_from_environment(...)` | [`agentao/embedding/factory.py`](../agentao/embedding/factory.py) |
-| Capability protocols (public surface) | [`agentao/host/protocols.py`](../agentao/host/protocols.py) — re-exports `FileSystem`, `ShellExecutor`, `MCPRegistry`, `MemoryStore` and their value shapes |
-| Capability defaults / reference impls | [`agentao/capabilities/`](../agentao/capabilities/) — `LocalFileSystem`, `LocalShellExecutor`, etc. (not part of the public surface) |
+| `Agentao(...)` signature | [`agentao/agent.py`](../../agentao/agent.py) |
+| `build_from_environment(...)` | [`agentao/embedding/factory.py`](../../agentao/embedding/factory.py) |
+| Capability protocols (public surface) | [`agentao/host/protocols.py`](../../agentao/host/protocols.py) — re-exports `FileSystem`, `ShellExecutor`, `MCPRegistry`, `MemoryStore` and their value shapes |
+| Capability defaults / reference impls | [`agentao/capabilities/`](../../agentao/capabilities/) — `LocalFileSystem`, `LocalShellExecutor`, etc. (not part of the public surface) |
 | Default IO impls | `LocalFileSystem`, `LocalShellExecutor`, `SQLiteMemoryStore`, `FileBackedMCPRegistry` |
-| Host-facing harness contract | [`agentao/host/`](../agentao/host/) — public types; full reference at [`docs/reference/host-api.md`](../reference/host-api.md) |
+| Host-facing harness contract | [`agentao/host/`](../../agentao/host/) — public types; full reference at [`docs/reference/host-api.md`](../reference/host-api.md) |
 | Schema snapshots | [`docs/schema/host.events.v1.json`](../schema/host.events.v1.json), [`docs/schema/host.acp.v1.json`](../schema/host.acp.v1.json) |
-| Working examples | [`examples/`](../examples/) — `data-workbench`, `batch-scheduler`, `ticket-automation`, `saas-assistant`, `headless_worker.py` |
-| Transport API | [`docs/guides/acp.md`](acp.md) (also covers headless / SDK transport) |
+| Working examples | [`examples/`](../../examples/) — `data-workbench`, `batch-scheduler`, `ticket-automation`, `saas-assistant`, `headless_worker.py` |
+| Transport API | [developer guide 3.2](../../developer-guide/en/part-3/2-agentao-as-server.md) (ACP server) · [3.4](../../developer-guide/en/part-3/4-reverse-acp-call.md) (headless ACP client) |
 | Permission rules | [`docs/guides/tool-confirmation.md`](tool-confirmation.md) |
 | Logging | [`docs/guides/logging.md`](logging.md) |
 | Skills | [`docs/guides/skills.md`](skills.md) |

@@ -12,8 +12,8 @@ below points you there.
 - Full embedding reference: [`docs/guides/embedding.md`](embedding.md)
 - Stable host API: [`docs/reference/host-api.md`](../reference/host-api.md)
 - Design / stability boundary: [`docs/design/embedded-host-contract.md`](../design/embedded-host-contract.md)
-- Non-Python hosts (stdio): [`docs/guides/acp.md`](acp.md)
-- Working examples: [`examples/`](../examples/)
+- Non-Python hosts (stdio): [developer guide 3.2 · Agentao as an ACP Server](../../developer-guide/en/part-3/2-agentao-as-server.md)
+- Working examples: [`examples/`](../../examples/)
 
 > ⚠️ This doc is for embedding Agentao **into other projects**. It is
 > NOT the same as the repo's `CLAUDE.md` (which guides agents editing

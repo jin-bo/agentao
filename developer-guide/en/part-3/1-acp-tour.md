@@ -19,7 +19,7 @@ The process now reads JSON-RPC requests on stdin and writes responses + notifica
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
-{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp"}}
+{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}
 {"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"<id from step 2>","prompt":[{"type":"text","text":"hello"}]}}
 ```
 

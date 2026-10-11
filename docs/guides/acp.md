@@ -1,607 +1,143 @@
 # Agent Client Protocol (ACP) Support
 
-Agentao implements a stdio-based [Agent Client Protocol](https://github.com/zed-industries/agent-client-protocol) server so ACP-compatible clients (e.g. Zed) can drive Agentao as their agent runtime. This document covers what ships, how to launch it, and the explicit limits of the v1 implementation.
-
-ACP support landed across `docs/implementation/acp-issues/01` through `14`. Tests live in `tests/test_acp_*.py`. Version examples below track the current release line (`0.2.14` as of this document revision).
-
----
+This guide moved. Protocol behaviour is in the developer guide: **[3.2 · Agentao as an ACP Server](https://agentao.cn/en/part-3/2-agentao-as-server)** ([中文](https://agentao.cn/zh/part-3/2-agentao-as-server)), with field-level tables in [Appendix C](https://agentao.cn/en/appendix/c-acp-messages) ([中文](https://agentao.cn/zh/appendix/c-acp-messages)). Server internals for contributors are in [docs/design/acp-server-internals.md](../design/acp-server-internals.md). The headings below are kept so that old links still land on the right section.
 
 ## Quick Start
 
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#launch-command) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E5%90%AF%E5%8A%A8%E5%91%BD%E4%BB%A4)
+
 ### Launch
 
-```bash
-# Console script
-agentao --acp --stdio
-
-# Module form (works without the console script on PATH)
-python -m agentao --acp --stdio
-```
-
-Both commands block reading newline-delimited JSON-RPC 2.0 messages from `stdin`, write responses and notifications to `stdout`, and route logs + any stray `print` to `stderr`. Press Ctrl-D (or close stdin) to shut the server down cleanly.
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#launch-command) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E5%90%AF%E5%8A%A8%E5%91%BD%E4%BB%A4)
 
 ### Resume a session on startup
 
-Pass `--resume` to have the server reattach to a previously saved session the first time the client opens one:
-
-```bash
-agentao --acp --resume                 # resume the latest saved session
-agentao --acp --resume <SESSION_ID>    # resume a specific session (UUID / prefix / timestamp)
-```
-
-ACP is client-driven — the server cannot create a session on its own — so the directive is **one-shot and consumed by the first `session/new`**: that request hydrates the persisted message history, re-activates the skills the session was saved with, and replays the history as `session/update` notifications (exactly like `session/load`), then returns the persisted `sessionId` instead of a freshly generated one. Every later `session/new` on the connection starts a normal blank session. The session store is keyed by the client-provided `cwd`, so the lookup happens at request time against `<cwd>/.agentao/sessions`.
-
-The fallback is permissive — any recoverable problem degrades to a normal fresh session (logged at WARNING) rather than failing the client's first `session/new`: an empty store, an unknown id, an unreadable/corrupt session file, or a resolved id that is already live in the registry (e.g. the client `session/load`-ed it earlier on the same connection).
-
-> **Note:** because the resumed `sessionId` is only returned in the `session/new` *response*, the replayed `session/update` notifications are written *before* the client learns that id. Clients that strictly validate `session/update.sessionId` against sessions they explicitly opened may drop those early updates. This is inherent to resume-on-`session/new` (the server has no way to announce the id earlier) — the conversation still continues correctly from the next prompt regardless.
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#resume-a-session-on-startup) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E5%90%AF%E5%8A%A8%E6%97%B6%E6%81%A2%E5%A4%8D%E4%BC%9A%E8%AF%9D)
 
 ### Smoke test by hand
 
-```bash
-OPENAI_API_KEY=sk-... agentao --acp --stdio <<'EOF'
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}
-{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}
-EOF
-```
-
-Expected — two NDJSON response envelopes on stdout:
-
-```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":true,"audio":false,"embeddedContext":false},"mcpCapabilities":{"http":true,"sse":true}},"authMethods":[],"agentInfo":{"name":"agentao","title":"Agentao","version":"0.2.14"}}}
-{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_<32hex>"}}
-```
-
-> **Note:** `agentInfo.version` in the response is sourced from
-> `agentao.__version__`, so the literal above tracks whatever release
-> line you have installed — it is illustrative, not a pinned value.
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#smoke-test-by-hand) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E6%89%8B%E5%8A%A8%E5%86%92%E7%83%9F%E6%B5%8B%E8%AF%95)
 
 ### From a real ACP client
 
-A reference Zed configuration (`<home>/.config/zed/settings.json`):
-
-```json
-{
-  "agent_servers": {
-    "Agentao": {
-      "command": "agentao",
-      "args": ["--acp", "--stdio"],
-      "env": {
-        "OPENAI_API_KEY": "sk-..."
-      }
-    }
-  }
-}
-```
-
-The same shape works for any client that launches an ACP agent over stdio: pass `--acp --stdio` and an environment with whatever provider key Agentao needs (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) — or leave the key out and log in once (next section).
+Moved to [English](https://agentao.cn/en/part-3/5-zed-ide-integration#_3-5-2-registering-agentao-with-zed) · [中文](https://agentao.cn/zh/part-3/5-zed-ide-integration#_3-5-2-%E5%9C%A8-zed-%E9%87%8C%E6%B3%A8%E5%86%8C-agentao)
 
 ### Provider configuration and login (ACP Registry installs)
 
-A client that installs Agentao from the [ACP Registry](https://agentclientprotocol.com/registry) launches it through `uvx` (`uvx agentao@<version> --acp`), so there is no `.env` to edit and no `agentao` on `PATH`. Since 0.5.9, `--acp` and `--login` need none of the `[cli]` extras (`rich`, `prompt_toolkit`, …); the login falls back to plain terminal prompts without them. Agentao supports ACP **Terminal Auth** for that case:
-
-1. When the client declares Terminal Auth in `initialize` — `clientCapabilities.auth.terminal: true`, or the legacy `clientCapabilities._meta["terminal-auth"]: true` (either counts, and only as the boolean `true`) — `authMethods` carries one `terminal` method whose `args` are `["--login"]`. Clients that declare neither get `authMethods: []`.
-2. `initialize` never needs credentials. `session/new` and `session/load` answer `auth_required` (`-32000`) when no provider is configured; the message names the missing fields and, for a client without Terminal Auth, a login command that works without `agentao` on `PATH`: `uvx agentao@<version> --login`.
-3. The client runs the login as a separate terminal process — appending `--login` to its launch args (ACP spec) or replacing them (Registry docs); both work and both take precedence over `--acp`. The login asks for provider, API key (hidden), base URL, model and wire protocol (`api_format`; `anthropic-messages` is the default for ANTHROPIC, `openai-completions` otherwise), writes `~/.agentao/llm.json` with mode `0600`, and exits `0`. Cancelling (Ctrl-C → `130`, end of input → `1`), a failed save, or declining to replace an incomplete file all exit non-zero.
-4. The next `session/new` reads the new file — on a reconnect (DeepChat) or on the same process (Brokk retries there). A session that already exists keeps the configuration it was created with.
-
-`agentao --login` works from any terminal too. Unknown arguments are refused in `--acp` and `--login` mode (exit `2`) instead of being ignored.
-
-**Where a session's LLM settings come from.** Each `session/new` / `session/load` resolves them afresh from three layers, highest first: the server's **launch environment**, the session's **project `<cwd>/.env`**, and the **login file**. An empty value counts as unset. The provider is chosen first — the highest layer that names one (`LLM_PROVIDER` in the two env layers, `provider` in the file), else `OPENAI` — and an API key's presence plays no part in that choice: a shell that exports `OPENAI_API_KEY` for another tool does not turn a DeepSeek login into an OpenAI session. Fields are then read only under that provider's prefix, and the login file contributes only when its `provider` matches. The API key, base URL and wire format are taken **together** from the highest layer that sets the key; a key with no URL beside it leaves the URL missing rather than borrowing the login's, so a key exported for another tool is never sent to the endpoint you logged in with, and a layer with no format gets the default wire rather than the login's. A `session/set_config_option` provider switch resolves against the session's own snapshot, never the process environment.
-
-> **Changed in 0.5.8 — the project `.env` supplies only LLM settings on this path.** One ACP process serves sessions from several projects, and loading a project's `.env` into the shared environment carried its credentials into every later session. The default session path no longer writes anything into `os.environ` and no longer searches for a `.env` above `cwd`. Settings other code reads from the environment — MCP `${VAR}` expansion in `mcp.json`, web-tool keys (`JINA_API_KEY`, `BOCHA_API_KEY`), `GITHUB_TOKEN`, the URL-policy allowlist — must now come from the **launch environment** (the client's `env` block). A host that injects its own `agent_factory` / `provider_resolver` keeps the previous behaviour.
-
-**Client notes.** DeepChat is the client this flow is accepted against: login → reconnect → `session/new` → first task was verified live on DeepChat v1.1.2 (bundled uv 0.9.18) with Agentao 0.5.11 (2026-10-06). Its Registry support handles `uvx` entries and Terminal Auth; discovery of the Registry entry itself waits on the listing being merged. Zed (as of `e8c6c67fad`) skips Registry entries whose only distribution is `uvx`; configure Agentao there as a custom agent server (above). Agentao provides baseline ACP interop — it does not use the client's `fs/*` / `terminal/*` (unsaved buffers, editor diff review); see [Client-host capability routing](#client-host-capability-routing).
-
----
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#provider-configuration-and-login) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E6%8F%90%E4%BE%9B%E6%96%B9%E9%85%8D%E7%BD%AE%E4%B8%8E%E7%99%BB%E5%BD%95)
 
 ## Supported Methods
 
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#full-method-catalog) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E5%AE%8C%E6%95%B4%E6%96%B9%E6%B3%95%E6%B8%85%E5%8D%95)
+
 ### Client → server (requests Agentao handles)
 
-| Method | Status | Notes |
-|---|---|---|
-| `initialize` | ✅ | Echoes the client's `protocolVersion` if supported (currently `1`); falls back to ours otherwise. Records `clientCapabilities` per connection. |
-| `session/new` | ✅ | Creates a fresh session bound to a per-session `cwd` and (optionally) per-session MCP servers. Returns `{"sessionId": "sess_…", "configOptions": [...]}` (model/provider selection options — see `session/set_config_option`). |
-| `session/prompt` | ✅ | Runs one Agentao turn against the named session; returns `{"stopReason": …}` — `end_turn`, `cancelled`, `max_tokens`, or `max_turn_requests`. A turn whose model call failed answers with a JSON-RPC error instead (see [stop reasons](#sessionprompt-stop-reasons) below). |
-| `session/cancel` | ✅ | Fires the session's active `CancellationToken`. Idempotent; no-op on closed sessions or sessions with no active turn. Accepted both as a notification (no `id`) and as a request. |
-| `session/load` | ✅ | Reuses `agentao/embedding/sessions.py`'s persistence layer, hydrates the runtime's message history, re-activates the session's persisted skills, and replays each persisted message as a `session/update` notification before responding. Response includes `configOptions` (same as `session/new`). An unknown id — or a session file that is unreadable or corrupt — is `-32600` INVALID_REQUEST, never an internal error. |
-| `session/set_config_option` | ✅ | ACP-standard model/provider switch (`configId="model"`, `value="provider/model"` or bare `model`). Credentials resolve **server-side** via an injectable `provider_resolver` — `apiKey`/`baseUrl`/`_meta` are rejected. Returns refreshed `configOptions`. |
-| `_agentao.cn/set_model` | ✅ | Vendor free-form model switch (`{sessionId, model}`); secret-free, shares the `set_config_option` core path. Returns `{"model": …}`. |
-| `session/set_mode` | ✅ | Sets the session's ACP `modeId` (open string). Exact match to a preset (`read-only`/`workspace-write`/`full-access`/`plan`) changes permission posture; any other value persists + echoes without changing it. Returns `{"modeId": …}`. |
-| `session/set_model`, `session/list_models` | ✅ (compat) | Pre-standard model methods, kept as one-release compatibility aliases. Prefer `session/set_config_option`. |
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#host-%E2%86%92-agent-request-methods) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E5%AE%BF%E4%B8%BB-%E2%86%92-agent-%E8%AF%B7%E6%B1%82%E6%96%B9%E6%B3%95)
 
 ### Server → client (sent by Agentao)
 
-| Method | Direction | Notes |
-|---|---|---|
-| `session/update` | notification | Streams turn output: text, thinking, tool calls, sub-agent markers. See [Event Mapping](#event-mapping) below. |
-| `session/request_permission` | request | Sent when a tool with `requires_confirmation=True` is about to run. Blocks the turn until the client responds. See [Permissions](#permissions) below. |
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#agent-%E2%86%92-host-1-request-1-notification-1-extension) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#agent-%E2%86%92-%E5%AE%BF%E4%B8%BB-1-%E4%B8%AA%E8%AF%B7%E6%B1%82%E3%80%811-%E4%B8%AA%E9%80%9A%E7%9F%A5%E3%80%811-%E4%B8%AA%E6%89%A9%E5%B1%95)
 
 ### Capabilities Advertised in `initialize`
 
-Source: `agentao/acp/initialize.py`.
-
-```jsonc
-{
-  "loadSession": true,
-  "promptCapabilities": {
-    "image": true,
-    "audio": false,
-    "embeddedContext": false
-  },
-  "mcpCapabilities": {
-    "http": true,
-    "sse": true
-  }
-}
-```
-
-`authMethods` is one `terminal` login method when the client declared Terminal Auth, otherwise `[]` — see [Provider configuration and login](#provider-configuration-and-login-acp-registry-installs). Provider credentials never travel through the ACP wire.
-
----
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#handshake-initialize) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E6%8F%A1%E6%89%8B-initialize)
 
 ## Scope and Limitations
 
-ACP defines a large surface area; v1 deliberately implements a working subset. Anything in the **Not in v1** column is rejected explicitly rather than silently degraded — clients see a JSON-RPC error or a documented capability flag set to `false`, not unexpected behavior.
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#client-capabilities-agentao-does-not-use) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#agentao-%E4%B8%8D%E4%BD%BF%E7%94%A8%E7%9A%84%E5%AE%A2%E6%88%B7%E7%AB%AF%E8%83%BD%E5%8A%9B)
 
 ### Transport
 
-| Feature | Status | Notes |
-|---|---|---|
-| stdio | ✅ | The only supported transport in v1. NDJSON framing (one compact JSON object per line). |
-| WebSocket / TCP | ❌ | Not in v1. The `--stdio` flag exists for future-proofing; passing it without `--acp` is rejected with exit code 2 so a typo doesn't fall through to interactive mode. |
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#launch-command) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E5%90%AF%E5%8A%A8%E5%91%BD%E4%BB%A4)
 
 ### `session/prompt` content blocks
 
-Source: `agentao/acp/session_prompt.py::_parse_prompt`.
-
-| Block type | Status | Notes |
-|---|---|---|
-| `text` | ✅ | Multiple text blocks are joined with `\n\n`. |
-| `resource_link` | ✅ | Rendered as `[Resource: {title or name or uri}](../{uri})` so the LLM sees the reference; Agentao does **not** dereference the URI in v1. |
-| `image` | ✅ | Inline `{data, mimeType}` — surfaced to the LLM as an OpenAI `image_url` data-URL part. `mimeType` must be `image/*`, `data` valid base64 within the per-image size cap, ≤ `MAX_IMAGES_PER_TURN` per prompt. The decoded bytes must be PNG, JPEG, GIF or WEBP; the image is forwarded under the type its bytes show, so a wrong label (`image/png` over JPEG bytes, `image/jpg`) is corrected with a warning in `agentao.log` rather than refused. The spec's optional `annotations` and `_meta` are accepted and ignored; they never reach the model. A by-reference `uri`, or any key the spec does not define, is **rejected** (`INVALID_PARAMS`). `promptCapabilities.image` is `true`. If the selected model rejects image input, the turn degrades the images to `<attachment uri=... mimetype=.../>` text tags (canonical format description: `agentao/runtime/chat_loop/_runner.py::_render_image_reference_fallback`; developer guide appendix A.1). |
-| `audio` | ❌ | `INVALID_PARAMS`. `promptCapabilities.audio` is `false`. |
-| `resource` (embedded) | ❌ | `INVALID_PARAMS`. `promptCapabilities.embeddedContext` is `false`. |
+Moved to [English](https://agentao.cn/en/appendix/c-acp-messages#contentblock-shape) · [中文](https://agentao.cn/zh/appendix/c-acp-messages#contentblock-%E5%BD%A2%E7%8A%B6)
 
 ### Client-host capability routing
 
-Per the [ACP epic](../history/implementation/acp-github-epic.md) non-goals:
-
-| Feature | Status | Notes |
-|---|---|---|
-| `fs/read_text_file` / `fs/write_text_file` proxy | ❌ | Agentao always reads and writes files **locally** in the session's `cwd`. The client's `fs` capability flags are recorded on the session for future use but not consulted. |
-| `terminal/*` proxy | ❌ | Shell commands run locally via Agentao's existing `run_shell_command` tool, not via an ACP terminal session. |
-| MCP-over-ACP extension | ❌ | Use `mcpServers` in `session/new` instead — that's the supported injection point. |
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#client-capabilities-agentao-does-not-use) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#agentao-%E4%B8%8D%E4%BD%BF%E7%94%A8%E7%9A%84%E5%AE%A2%E6%88%B7%E7%AB%AF%E8%83%BD%E5%8A%9B)
 
 ### MCP server injection (`session/new` → `mcpServers`)
 
-Source: `agentao/acp/mcp_translate.py`.
-
-| Transport in entry | Status | Notes |
-|---|---|---|
-| stdio (`{name, command, args, env}`) | ✅ | Translated to Agentao's internal `{command, args, env: {…}}` config. Always created with `trust: false`. |
-| sse (`{type:"sse", name, url, headers}`) | ✅ | `mcpCapabilities.sse` is `true`. Legacy transport. Headers translated from `[{name,value}]` to `{name: value}`. The explicit `type:"sse"` is stamped into the produced config so it survives the native bare-`url`-defaults-to-HTTP resolution. |
-| http (`{type:"http", name, url, headers}`) | ✅ | `mcpCapabilities.http` is `true`. Streamable HTTP transport (`agentao/mcp/client.py` ships `streamable_http_client`). Headers translated the same way; `type:"http"` stamped into the config. |
-
-ACP-provided MCP servers **override** any same-named entries in the project's `.agentao/mcp.json`. They are **session-scoped** — they are torn down when the session closes and never leak to sibling sessions.
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#mcp-servers-from-the-client) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E5%AE%A2%E6%88%B7%E7%AB%AF%E6%B3%A8%E5%85%A5%E7%9A%84-mcp-%E6%9C%8D%E5%8A%A1%E5%99%A8)
 
 ### Session management
 
-| Behavior | Status | Notes |
-|---|---|---|
-| Per-session `cwd` | ✅ | Each session sees its own working directory; the `Agentao` runtime is constructed with `working_directory=cwd` so memory db, AGENTAO.md lookup, MCP config lookup, and file/shell tools all resolve against it. |
-| Per-session `agent.messages` history | ✅ | Two sessions on the same server have independent conversations. |
-| Per-session permission overrides | ✅ | `allow_always`/`reject_always` decisions are stored on `AcpSessionState.permission_overrides` and never leak to sibling sessions. Cleared on session close. |
-| Concurrent prompts on different sessions | ✅ | Issue 08's `ThreadPoolExecutor(max_workers=8)` lets handlers run in parallel; verified end-to-end in `tests/test_acp_multi_session.py::TestTurnLockIsolation`. |
-| Concurrent prompts on the **same** session | ❌ | Per-session `turn_lock` is acquired non-blocking; a second concurrent prompt for the same session returns `INVALID_REQUEST`. Queueing was rejected as a DoS footgun. |
-| Reload an already-active session id | ❌ | `session/load` for a sessionId already in the registry is rejected with `INVALID_REQUEST`. Cancel and tear down before reloading. |
-| Resume a saved session at startup | ✅ | `--resume [SESSION_ID]` arms a one-shot `ResumeDirective` consumed by the first `session/new`, which hydrates + replays the persisted session (see [Resume a session on startup](#resume-a-session-on-startup)). |
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#sessions-and-concurrency) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E4%BC%9A%E8%AF%9D%E4%B8%8E%E5%B9%B6%E5%8F%91)
 
 ### `session/prompt` stop reasons
 
-Source: `agentao/acp/session_prompt.py`.
-
-| `stopReason` | Meaning |
-|---|---|
-| `end_turn` | The Agentao chat loop returned normally. Also covers a turn where the model produced no prose (`no_output` / `reasoning_only`) — the turn genuinely ended, it just said nothing — and a turn a plugin hook ended with `continue: false` (`hook_stop`), which is an operator decision rather than a budget the harness enforced, so no ACP member describes it. |
-| `cancelled` | The session's `CancellationToken` was fired (via `session/cancel`, connection close, or session teardown) before the loop returned. Takes precedence over every other reason. |
-| `max_tokens` | The turn was halted after the model's response was cut off at the token limit (`TurnOutcome.incomplete_reason == "length_truncated"`). |
-| `max_turn_requests` | The harness capped requests within the turn — either the tool-iteration budget was exhausted, or a doom loop (repeated identical calls) was halted. |
-| `refusal` | Listed in the ACP enum and accepted by the schema, but **never emitted**: Agentao has no content-refusal detection, and reporting an infrastructure failure as a refusal would be a different kind of lie. |
-
-Precedence is `cancelled` → iteration budget → `incomplete_reason`. An
-unrecognized future reason degrades to `end_turn` rather than failing the turn.
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#stop-reasons) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E5%81%9C%E6%AD%A2%E5%8E%9F%E5%9B%A0)
 
 #### A failed model call is an error, not a stop reason
 
-Since 0.5.4, a turn whose LLM call failed (`TurnOutcome.incomplete_reason ==
-"llm_error"` — a provider 5xx, rate limit or auth failure that survived the
-retries) does **not** return a result. `session/prompt` answers with a JSON-RPC
-error:
-
-```json
-{"jsonrpc":"2.0","id":3,"error":{
-  "code":-32603,
-  "message":"[LLM API error: 502 Bad Gateway]",
-  "data":{"reason":"llm_error"}
-}}
-```
-
-`message` is the notice the client already received on the stream, verbatim, so
-one failure is not narrated twice in two different wordings. `data.reason` lets
-a client tell this from any other internal error without matching on prose.
-
-**This is a behaviour change for clients** that previously read
-`{"stopReason": "end_turn"}` for such a turn. The reasoning: ACP v1's
-`StopReason` is a closed five-member enum with no "the model call failed"
-member, and the spec does not rule on the case (`docs/protocol/v1/error.mdx` is
-still "Documentation coming soon"; read at
-`agentclientprotocol/agent-client-protocol@bf6d1ec`, 2026-09-23). Reporting an
-outage as `end_turn` told the client the turn ended normally — the same turn
-that makes `agentao run` exit non-zero. `refusal` was never an option: it means
-the agent declined on content grounds. gemini-cli draws the same line, turning
-a stream error into an `acp.RequestError` while keeping a stream that merely
-produced nothing as `end_turn`.
-
-A cancel still wins: an aborted provider call can surface as a failure on the
-way out, and the spec's one MUST about swallowing errors is that it be reported
-as `cancelled`. The turn lock is released either way, so a provider blip cannot
-wedge the session.
-
----
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#a-failed-model-call-is-an-error) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E6%A8%A1%E5%9E%8B%E8%B0%83%E7%94%A8%E5%A4%B1%E8%B4%A5%E8%BF%94%E5%9B%9E%E9%94%99%E8%AF%AF)
 
 ## Architecture Overview
 
-```
-                   ┌────────────────────────────────────────────────┐
-                   │                AcpServer (server.py)            │
-                   │                                                 │
-       stdin ───►  │   read loop ──┐                                 │
-                   │                │                                │
-                   │                ├─► classify request/response    │
-                   │                │                                │
-                   │                ▼                                │
-                   │   ┌─ handler dispatch ─ ThreadPoolExecutor(8) ─┐│
-                   │   │                                            ││
-                   │   │  initialize  ── initialize.py              ││
-                   │   │  session/new  ─ session_new.py             ││
-                   │   │  session/prompt session_prompt.py          ││
-                   │   │  session/cancel session_cancel.py          ││
-                   │   │  session/load   session_load.py            ││
-                   │   │                                            ││
-                   │   └────┬───────────────────┬───────────────────┘│
-                   │        │                   │                    │
-                   │        │ writes via        │ server.call(...)   │
-                   │        │ write_lock        │ (session/request_  │
-                   │        │                   │  permission)       │
-                   │        ▼                   ▼                    │
-       stdout ◄────┤   JSON-RPC envelopes / notifications            │
-                   │                                                 │
-                   │   _pending_requests ◄── route response (read    │
-                   │   (server → client)     loop fills + wakes)     │
-                   │                                                 │
-                   │   sessions: AcpSessionManager (session_manager) │
-                   │     │                                           │
-                   │     ├─ AcpSessionState ─ Agentao runtime        │
-                   │     ├─ AcpSessionState ─ Agentao runtime        │
-                   │     └─ ...                                      │
-                   │                                                 │
-       stderr ◄────┤   sys.stdout reassigned to sys.stderr; logger   │
-                   │   handler installed on the agentao package      │
-                   └────────────────────────────────────────────────┘
-```
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.md#process-layout) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.zh.md#%E8%BF%9B%E7%A8%8B%E7%BB%93%E6%9E%84)
 
 ### Stdout hygiene
 
-When `AcpServer` is constructed with no explicit `stdout`/`stdin` (the production launch path), it:
-
-1. **Captures** the real `sys.stdout` into a private handle that all JSON-RPC writes use.
-2. **Reassigns** `sys.stdout = sys.stderr` so any stray `print()` anywhere in the process — application code, third-party libraries, the LLM client's debug output — lands on stderr.
-3. **Installs** a `StreamHandler(sys.stderr)` on the `agentao` package logger if no handler is attached yet, so logs are visible from the moment the server starts (before `LLMClient` would normally configure logging).
-
-The acceptance criterion *"stdout contains only ACP messages"* is enforced by `tests/test_acp_cli_entrypoint.py::TestAcpSubprocessSmoke::test_logs_go_to_stderr_not_stdout`.
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.md#stdout-hygiene) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.zh.md#stdout-%E5%8D%AB%E7%94%9F)
 
 ### Concurrent dispatch
 
-The dispatcher is a `ThreadPoolExecutor(max_workers=8)`. This is required because `transport.confirm_tool` blocks waiting for a `session/request_permission` response — and **that response itself arrives on the read loop**. A synchronous dispatcher would deadlock the moment a tool needed confirmation.
-
-The shutdown sequence (in `AcpServer.run`'s `finally` clause) is order-sensitive:
-
-1. **Cancel pending server→client requests first.** Any worker stuck inside `transport.confirm_tool` wakes up and returns `False` (deterministic "tool rejected").
-2. **Drain the executor** with `shutdown(wait=True)`. Workers that just unblocked complete the current request.
-3. **Tear down sessions** (`AcpSessionManager.close_all`). Each session's MCP connections disconnect and active turns get their cancel token tripped.
-
-Reversing steps 1 and 2 deadlocks. There's a comment in `server.py:327` and a regression test in `tests/test_acp_request_permission.py` to enforce this.
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.md#concurrent-dispatch) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.zh.md#%E5%B9%B6%E5%8F%91%E5%88%86%E5%8F%91)
 
 ### File layout
 
-```
-agentao/acp/
-├── __init__.py
-├── __main__.py            # `python -m agentao.acp` entry; main() registers all handlers
-├── protocol.py            # METHOD_*, ACP_PROTOCOL_VERSION, error code constants
-├── server.py              # AcpServer + JsonRpcHandlerError + concurrent dispatch
-├── session_manager.py     # AcpSessionManager: thread-safe registry, close_all
-├── models.py              # JsonRpcRequest/Response/Error, AcpSessionState, AcpConnectionState
-├── transport.py           # ACPTransport: emit() event mapping + confirm_tool() permission flow
-├── mcp_translate.py       # ACP {name, command, args, env} → Agentao internal MCP config
-├── initialize.py          # initialize handler + AGENT_CAPABILITIES
-├── session_new.py         # session/new handler + agent_factory DI seam
-├── session_prompt.py      # session/prompt handler + ContentBlock parser
-├── session_cancel.py      # session/cancel handler (idempotent)
-└── session_load.py        # session/load handler + history hydration + replay
-```
-
-The CLI wiring (`agentao --acp --stdio`) lives in `agentao/cli/entrypoints.py::run_acp_mode` and `agentao/__main__.py`; both delegate to `agentao.acp.__main__.main`. The `--resume` selector is threaded through `run_acp_mode(resume=...)` → `main(resume=...)`, which builds a `ResumeDirective` (`agentao/acp/models.py`) and injects it into `AcpServer`; the first `session/new` consumes it via `session_load.resume_session_on_new`.
-
----
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.md#file-layout) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.zh.md#%E6%96%87%E4%BB%B6%E5%B8%83%E5%B1%80)
 
 ## Annotated NDJSON Transcript
 
-Below is a complete client→server→client conversation. Each line on the wire is exactly one JSON object terminated by `\n`.
-
-```jsonc
-// 1. Handshake — required before any session/* method.
-→ {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-    "protocolVersion":1,
-    "clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true},"terminal":true},
-    "clientInfo":{"name":"my-acp-client","version":"0.1.0"}
-  }}
-
-← {"jsonrpc":"2.0","id":1,"result":{
-    "protocolVersion":1,
-    "agentCapabilities":{
-      "loadSession":true,
-      "promptCapabilities":{"image":true,"audio":false,"embeddedContext":false},
-      "mcpCapabilities":{"http":true,"sse":true}
-    },
-    "authMethods":[],
-    // agentInfo.version is sourced from agentao.__version__ — tracks the installed release line.
-    "agentInfo":{"name":"agentao","title":"Agentao","version":"0.2.14"}
-  }}
-
-// 2. Open a session bound to a working directory.
-→ {"jsonrpc":"2.0","id":2,"method":"session/new","params":{
-    "cwd":"<project-root>",
-    "mcpServers":[]
-  }}
-
-← {"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_3a8f1b2c...","configOptions":[{"id":"model","name":"Model","category":"model","type":"select","currentValue":"openai/gpt-4o","options":[...]}]}}
-
-// 3. Send a prompt. Agentao runs one chat() turn, streaming events as
-//    session/update notifications, then returns a final stopReason.
-→ {"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{
-    "sessionId":"sess_3a8f1b2c...",
-    "prompt":[{"type":"text","text":"List the python files at the repo root."}]
-  }}
-
-// While the turn runs, the server emits notifications (no id, method = session/update).
-// Each is a one-line NDJSON envelope. Order is preserved per session.
-← {"jsonrpc":"2.0","method":"session/update","params":{
-    "sessionId":"sess_3a8f1b2c...",
-    "update":{
-      "sessionUpdate":"agent_message_chunk",
-      "content":{"type":"text","text":"I'll list the Python files now.\n"}
-    }
-  }}
-
-← {"jsonrpc":"2.0","method":"session/update","params":{
-    "sessionId":"sess_3a8f1b2c...",
-    "update":{
-      "sessionUpdate":"tool_call",
-      "toolCallId":"call_<12hex>",
-      "title":"glob",
-      "kind":"search",
-      "status":"pending",
-      "rawInput":{"pattern":"*.py"}
-    }
-  }}
-
-← {"jsonrpc":"2.0","method":"session/update","params":{
-    "sessionId":"sess_3a8f1b2c...",
-    "update":{
-      "sessionUpdate":"tool_call_update",
-      "toolCallId":"call_<12hex>",
-      "status":"completed"
-    }
-  }}
-
-← {"jsonrpc":"2.0","method":"session/update","params":{
-    "sessionId":"sess_3a8f1b2c...",
-    "update":{
-      "sessionUpdate":"agent_message_chunk",
-      "content":{"type":"text","text":"Found main.py, setup.py, and 12 files in agentao/.\n"}
-    }
-  }}
-
-// Final response to the session/prompt request.
-← {"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}
-
-// 4. Optional: cancel an in-flight turn (from a different request id while
-//    a session/prompt is still streaming notifications). Acceptable as a
-//    notification (no id) or as a request that returns null.
-→ {"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"sess_3a8f1b2c..."}}
-
-// 5. EOF on stdin → clean shutdown. AcpServer.run() returns; the process
-//    exits with code 0 after every session has been torn down.
-```
-
----
+Moved to [English](https://agentao.cn/en/part-3/5-zed-ide-integration#_3-5-3-end-to-end-wire-trace) · [中文](https://agentao.cn/zh/part-3/5-zed-ide-integration#_3-5-3-%E7%AB%AF%E5%88%B0%E7%AB%AF%E7%BA%BF%E5%8D%8F%E8%AE%AE%E8%BD%A8%E8%BF%B9)
 
 ## Event Mapping
 
-`ACPTransport.emit` (in `agentao/acp/transport.py`) is the single source of truth for how Agentao runtime events become ACP `session/update` notifications. The full table:
-
-| Agentao `EventType` | ACP `sessionUpdate` | Notes |
-|---|---|---|
-| `TURN_START` | (silent) | Returns `None`; no notification written. |
-| `LLM_TEXT` | `agent_message_chunk` | `content` is a single text block carrying the chunk. |
-| `THINKING` | `agent_thought_chunk` | Same shape as `agent_message_chunk` but a different `sessionUpdate` so clients can render reasoning differently. |
-| `TOOL_CONFIRMATION` | `tool_call` | Opens the call — same payload as `TOOL_START` below, under the runtime `call_id` — immediately before the `session/request_permission` (server→client request) that asks about it; the request's `toolCall.toolCallId` is that same id. An event without a `call_id` stays silent. |
-| `TOOL_START` | `tool_call` | For a call a confirmation already opened, a `tool_call_update` under the same id instead (no `status`: a rejected call also gets `TOOL_START`, so the call stays `pending` until output or completion) — so one call is one `toolCallId` from the prompt to the result. It restates `title` and `content` (the opening diff, or empty), because the permission request's `toolCall` is an update to that same call and carried the confirm label and the tool description. A `todo_write` that would render as a `plan` is not opened. Otherwise: `status: "pending"`, `kind` mapped from tool name (`read`, `edit`, `search`, `execute`, `think`, `fetch`, `other`), `rawInput` is the JSON-safe argument dict. A file-editing call also carries a `diff` content entry — see *A file edit arrives as a diff* below. |
-| `TOOL_OUTPUT` | `tool_call_update` | `status: "in_progress"`, `content` restates the **whole** collection accumulated so far (ACP replaces a tool call's collections, it does not extend them), coalesced into one text entry. Throttled — see *Streamed tool output* below. |
-| `TOOL_COMPLETE` | `tool_call_update` | `status: "completed"` for `ok`, `"failed"` for `error` or `cancelled` (ACP has no cancelled status for tool calls — only for turns via `stopReason`). `content` is restated for every call that streamed — the only update guaranteed to arrive after both of a shell command's reader threads have flushed — and whenever there is an error line to append *beside* the output. A call that streamed nothing and had no error omits it, leaving any opening `diff` standing. |
-| `AGENT_START` | `agent_thought_chunk` | Sub-agent start marker `[sub-agent started: <name>] <task>`. |
-| `AGENT_END` | `agent_thought_chunk` | Sub-agent end marker `[sub-agent finished: <name> (<state>, <N> turns)]`. The `, <N> turns` part is left out when the turn count is not known (a sub-agent that raised before it ran). |
-| `ERROR` | `agent_message_chunk` | Prefixed with `Error: `. |
-
-Failures inside `emit()` are logged and swallowed — a misbehaving client or a JSON-safety slip cannot interrupt an in-progress turn.
+Moved to [English](https://agentao.cn/en/appendix/c-acp-messages#event-mapping) · [中文](https://agentao.cn/zh/appendix/c-acp-messages#%E4%BA%8B%E4%BB%B6%E6%98%A0%E5%B0%84)
 
 #### A file edit arrives as a diff
 
-`replace` and an appending `write_file` open their `tool_call` with a `diff` content entry, and the matching `session/request_permission` leads with the same entry — which is the moment it exists for, since the user is being asked to approve a change that `"replace"` plus a raw argument dict does not describe.
-
-```jsonc
-{"sessionUpdate":"tool_call","toolCallId":"c1","title":"replace","kind":"edit","status":"pending",
- "rawInput":{"file_path":"src/config.py","old_text":"DEBUG = False","new_text":"DEBUG = True"},
- "content":[{"type":"diff","path":"/home/u/proj/src/config.py",
-             "oldText":"DEBUG = False","newText":"DEBUG = True"}]}
-```
-
-An ACP `Diff` is a **hunk, not a whole file** — ACP's own reference adapter emits one entry per hunk of a structured patch — so `replace`'s `old_text`/`new_text` pair is exactly the shape the field wants. `oldText` is `null` when nothing is replaced (a pure append). `path` is absolute whenever the session's `cwd` is known.
-
-The entry describes what was **requested**, at `status: "pending"`; the terminal update says whether it applied. `replace` matches whitespace- and typography-flexibly and `replace_all` can hit several sites, so the text that actually moved may differ from the text shown — `rawInput` carries the flag.
-
-**A non-append `write_file` deliberately gets no diff.** Its arguments give `newText` but say nothing about whether the file already exists, and the transport cannot find out: it holds no filesystem, and a host may have injected one that does not answer to local paths. Emitting `oldText: null` would render an overwrite as a creation — all-green, at exactly the moment the user is being asked to approve destroying what was there. Closing that means a tool-side pre-write snapshot; see [G2](../design/acp-server-conformance-review.md).
-
-`locations` (follow-along highlighting) is the editor-only half of G2 and stays deferred with G1.
+Moved to [English](https://agentao.cn/en/appendix/c-acp-messages#a-file-edit-arrives-as-a-diff) · [中文](https://agentao.cn/zh/appendix/c-acp-messages#%E6%96%87%E4%BB%B6%E7%BC%96%E8%BE%91%E4%BB%A5-diff-%E9%80%81%E8%BE%BE)
 
 #### Streamed tool output
 
-ACP v1 is explicit that a `tool_call_update`'s collections are **overwritten, not extended** (the normative schema source says so on three separate fields). Only `run_shell_command` streams in agentao, and mapping each chunk to an update carrying that chunk alone therefore left a conformant client showing just the *latest* chunk — and a failing command replaced even that with the bare `Error: …` line, losing the output that said why it failed.
-
-So each update restates the whole collection. Two bounds come with that, both in `agentao/acp/_tool_call_content.py`:
-
-| Bound | Value | Why |
-|---|---|---|
-| `FLUSH_CHARS` | 4 000 | Restating per chunk is quadratic in the output size. The first chunk always flushes (it carries `pending` → `in_progress`); after that an update goes out once another `FLUSH_CHARS` have accumulated. Held-back text is not dropped — it rides the next update, or the terminal one. |
-| `MAX_CHARS` / `HEAD_CHARS` | 16 000 / 4 000 | The excerpt the client renders is capped, kept as head + tail with a `[… N characters elided …]` marker between them. |
-
-A shell command streams from **two** threads — `LocalShellExecutor.run` reads the child's stdout and stderr in separate readers and calls back from both — so the per-call buffer takes a lock; every mutation in it is a read-modify-write. Those readers are joined with a bounded timeout, so a chunk can arrive after the tool returned; it is dropped rather than re-opening a call the client already saw `completed`.
-
-The cap applies to the **client's copy only**: the model still gets the result through `runtime/tool_result_formatter.py` (80 000 chars, or a file under `.agentao/tool-outputs/`), and replay still records it. A client that wants unbounded live output wants a `terminal` content entry backed by `terminal/create` — that is the G1 fs/terminal proxy, a [documented non-goal](../design/acp-server-conformance-review.md).
+Moved to [English](https://agentao.cn/en/appendix/c-acp-messages#streamed-tool-output) · [中文](https://agentao.cn/zh/appendix/c-acp-messages#%E6%B5%81%E5%BC%8F%E5%B7%A5%E5%85%B7%E8%BE%93%E5%87%BA)
 
 ### History replay (`session/load`)
 
-When `session/load` runs, `ACPTransport.replay_history` walks the persisted message list and emits one notification per entry **before** responding to the load request. The mapping is intentionally a 1:1 walk (no chunking) and `<system-reminder>` blocks are stripped from replayed user messages so internal date/plan-mode reminders don't leak to the client:
-
-| Persisted role | ACP `sessionUpdate` |
-|---|---|
-| `system` | (skipped) |
-| `user` | `user_message_chunk` |
-| `assistant` (text) | `agent_message_chunk` |
-| `assistant` (with `tool_calls`) | one `tool_call` per call, `status: "completed"`; a file edit carries the same `diff` entry it carried live |
-| `tool` (result) | `tool_call_update`, `status: "completed"`, the result text — preceded by the call's `diff` when it had one, since the update replaces the content collection |
-
-ACP clients that wait for the load response before sending the next prompt will therefore observe the full replayed history before any new turn.
-
----
+Moved to [English](https://agentao.cn/en/appendix/c-acp-messages#history-replay) · [中文](https://agentao.cn/zh/appendix/c-acp-messages#%E5%8E%86%E5%8F%B2%E5%9B%9E%E6%94%BE)
 
 ## Permissions
 
-When a tool with `requires_confirmation=True` is about to run, `ACPTransport.confirm_tool` sends a server→client `session/request_permission` request and **blocks** until the client responds. The four option ids Agentao always offers:
-
-| `optionId` | Outcome |
-|---|---|
-| `allow_once` | Allow this single tool call. Next call to the same tool re-prompts. |
-| `allow_always` | Allow this tool for the rest of the **session**. Stored in `AcpSessionState.permission_overrides[tool_name] = True`; subsequent calls short-circuit without a round trip. |
-| `reject_once` | Reject this single tool call. |
-| `reject_always` | Reject this tool for the rest of the session. Stored as `False`; subsequent calls also short-circuit. |
-
-**Exception: a confirmation the MCP Skills gate asks.** While an MCP skill is loaded, activating an MCP skill, `run_shell_command`, a shell-capable sub-agent and a `read_mcp_resource` on another server are gated. For a gated call the server offers only `allow_once` and `reject_once`, puts the reason in the tool call's `content`, ignores a stored `allow_always`, and stores nothing. A stored `reject_always` still rejects without a round trip. See `docs/reference/host-api.md`, *Answering a confirmation the MCP Skills gate asks*.
-
-Per-session overrides are **never** shared across sessions and are cleared on session close — see `tests/test_acp_multi_session.py::TestPermissionOverrideIsolation` for the isolation regression tests.
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#tool-confirmation-session-request-permission-request) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E5%B7%A5%E5%85%B7%E7%A1%AE%E8%AE%A4-session-request-permission-%E8%AF%B7%E6%B1%82)
 
 ### Failure modes (all resolve to "tool rejected")
 
-- Connection drops while waiting → `PendingRequestCancelled` → `False`
-- Client returns a JSON-RPC error response → `False` (logged at error level)
-- Wait times out → `False`
-- Malformed outcome shape → `False`
-
-A crashing confirmation path would propagate through `chat()` and crash the turn with an unhelpful traceback, so `confirm_tool` is defensively robust.
-
----
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#failures-that-reject-the-tool) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E4%BC%9A%E8%A2%AB%E8%A7%86%E4%B8%BA%E6%8B%92%E7%BB%9D%E7%9A%84%E5%A4%B1%E8%B4%A5)
 
 ## Cancellation
 
-`session/cancel` fires the session's active `CancellationToken`. The token is bound to the session by `session/prompt` immediately before calling `agent.chat()` and cleared in a `finally` block. The cancellation propagates to:
-
-- The LLM call (via `cancellation_token.is_cancelled` polling between iterations)
-- Tool execution (the same token is passed into `ToolRunner`)
-- Sub-agents (they share the parent's token)
-
-The handler is **idempotent** and **silent on no-ops**:
-
-| Situation | Behavior |
-|---|---|
-| Session is closed | Silent no-op (logged) |
-| Session has no active turn (`cancel_token is None`) | Silent no-op |
-| Token already cancelled | Silent no-op |
-| Unknown sessionId | `INVALID_REQUEST` (request mode); silently dropped (notification mode) |
-
-After cancellation, the still-running `session/prompt` returns `{"stopReason": "cancelled"}` once the chat loop's next poll observes the token. End-to-end coverage lives in `tests/test_acp_session_cancel.py::TestEndToEndCancel`.
-
----
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#cancellation-session-cancel) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E5%8F%96%E6%B6%88-session-cancel)
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Client never sees a response to `initialize` | Client is sending pretty-printed JSON across multiple lines | NDJSON requires one compact JSON object per line. Each newline ends a message. |
-| `session/new` returns `SERVER_NOT_INITIALIZED` (-32002) | `initialize` was not called, or returned an error | Send `initialize` first and check the response for an `error` field. |
-| `session/new` / `session/load` returns `-32000` (`auth_required`) | No provider is configured for the session's project: no API key, base URL or model in the launch environment, the project `.env`, or `~/.agentao/llm.json` | Run the client's Terminal Auth login, or `uvx agentao@<version> --login` in a terminal, then reconnect. The message names the missing fields. |
-| `session/new` returns `INTERNAL_ERROR` (-32603) "LLM configuration error" | `~/.agentao/llm.json` or the project `.env` exists but is unusable (bad JSON, a non-string field, `LLM_TEMPERATURE` that is not a number) | Fix or delete the named file; logging in again rewrites `llm.json`. |
-| A tool, MCP `${VAR}` or `GITHUB_TOKEN` setting in the project `.env` has no effect under ACP | Since 0.5.8 the ACP session path reads only LLM settings from the project `.env` | Put the variable in the client's launch `env` block instead. |
-| `session/new` returns `INVALID_PARAMS` (-32602) for `cwd` | `cwd` is not absolute, doesn't exist, or is a file | Pass an absolute path to an existing directory. The check is in `session_new.py::_parse_cwd`. |
-| `session/prompt` returns `INVALID_REQUEST` "session already has an active turn" | A second `session/prompt` arrived while the first is still running | Wait for the first turn's response before sending the next, or use a different session id. |
-| `session/prompt` with an `image` block returns `INVALID_PARAMS` | The block carries a by-reference `uri` or a key ACP does not define (`annotations` and `_meta` are accepted), a non-`image/*` `mimeType`, invalid/oversized base64 `data`, data that is not PNG, JPEG, GIF or WEBP (`image data is not …`), or exceeds the per-prompt image count | Send inline `{data, mimeType}` (optionally `annotations` / `_meta`; no `uri`), with `image/*` and base64 within the size/count caps. Convert SVG, BMP, HEIC and other formats to PNG or JPEG, and send image data uncompressed. |
-| `session/prompt` with `audio`/embedded `resource` block returns `INVALID_PARAMS` | Those block types are intentionally not supported in v1 | Use only `text`, `resource_link`, and inline `image` blocks. The capability flags in `initialize` advertise this. |
-| Server hangs forever waiting for `session/request_permission` | Client is not handling server→client requests | Check that the client routes incoming requests with `srv_*` ids back as JSON-RPC responses. |
-| Process exits with garbage on stdout | Some library is calling `print()` and you constructed `AcpServer` with explicit streams | The stdout guard only installs when `AcpServer()` is constructed with no `stdin`/`stdout` arguments. Use `agentao --acp --stdio` for production launches; the test path passes streams explicitly to avoid mutating global state. |
-| `python -m agentao --acp --stdio`: `No module named agentao.__main__` | Pre-v0.2.6 install | Upgrade — `agentao/__main__.py` ships from v0.2.6. |
-
----
+Moved to [English](https://agentao.cn/en/part-3/2-agentao-as-server#troubleshooting) · [中文](https://agentao.cn/zh/part-3/2-agentao-as-server#%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5)
 
 ## For Contributors
 
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.md#tests) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.zh.md#%E6%B5%8B%E8%AF%95)
+
 ### Tests
 
-Each issue's tests live in a dedicated file. The ACP suite has expanded significantly since the initial v0.2.6 rollout; rely on the current CI or local `pytest` output for exact pass counts rather than the historical numbers from older release notes.
-
-| File | Issue | Coverage focus |
-|---|---|---|
-| `test_acp_protocol.py` | 01 | NDJSON framing, error code constants |
-| `test_acp_session_manager.py` | 03 | Registry create/get/require/delete, `close_all` |
-| `test_acp_initialize.py` | 02 | Handshake, capability negotiation, version echo |
-| `test_acp_session_new.py` | 04, 05 | `cwd` validation, `mcpServers` parsing, factory DI, capability snapshot |
-| `test_acp_session_prompt.py` | 06 | ContentBlock parsing, turn lock, stop reason, end-to-end wire |
-| `test_acp_transport.py` | 07 | `emit()` event mapping for every `EventType` |
-| `test_acp_request_permission.py` | 08 | Pending registry, server→client `call()`, all 4 option ids, override scoping |
-| `test_acp_session_cancel.py` | 09 | Idempotency, no-op paths, end-to-end cancel of an in-flight turn |
-| `test_acp_session_load.py` | 10 | History replay mapping, registry collision, hydration before replay |
-| `test_acp_mcp_injection.py` | 11 | Translation table for stdio/sse/http, env/headers, per-session isolation |
-| `test_acp_cli_entrypoint.py` | 12 | Argparse routing, `--acp` precedence, subprocess smoke tests, stdout hygiene |
-| `test_acp_multi_session.py` | 13 | Cross-session invariants: registry/cwd/lock/cancel/permission/messages isolation |
-
-Run them all with:
-
-```bash
-uv run python -m pytest tests/test_acp_ -v
-```
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.md#tests) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.zh.md#%E6%B5%8B%E8%AF%95)
 
 ### Implementation issue specs
 
-The `docs/implementation/acp-issues/` directory holds one Markdown spec per issue (01–14). Each spec includes the design decisions, scope vs. limits, and acceptance criteria as they were defined when the issue shipped — read the spec for the issue you're modifying before changing the code.
-
-The umbrella epic is `docs/history/implementation/acp-github-epic.md`, which lists goals, non-goals, and risks for the v1 milestone.
+Removed: the list of implementation issue specs was outdated. The specs are kept under `docs/history/implementation/acp-issues/`.
 
 ### Adding a new method handler
 
-The pattern (mirrored across `initialize.py`, `session_new.py`, `session_prompt.py`, `session_cancel.py`, `session_load.py`):
-
-1. Define the handler: `def handle_<method>(server, params, *, <deps>) -> dict:`
-2. Validate params: raise `TypeError` for shape errors → `-32602`; raise `JsonRpcHandlerError(code, message)` for everything else.
-3. Add a `register(server, *, <deps>)` helper that wires the handler into `server._handlers` via `server.register(METHOD_X, lambda params: handle_<method>(server, params, ...))`.
-4. Wire `register(server)` into `agentao/acp/__main__.py::main()` so `python -m agentao --acp --stdio` picks it up.
-5. Write tests that exercise both the unit-level handler and the end-to-end wire path. Use a `FakeAgent` factory injected via the same `agent_factory` kwarg `session_new` exposes — it lets the test avoid pulling in the LLM stack.
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.md#adding-a-method-handler) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/design/acp-server-internals.zh.md#%E6%96%B0%E5%A2%9E%E6%96%B9%E6%B3%95-handler)

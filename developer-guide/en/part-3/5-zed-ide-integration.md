@@ -20,9 +20,9 @@ Zed reads its agent config from `~/.config/zed/settings.json` (or the UI's **Set
 
 ```json
 {
-  "agents": [
-    {
-      "name": "agentao",
+  "agent_servers": {
+    "agentao": {
+      "type": "custom",
       "command": "agentao",
       "args": ["--acp", "--stdio"],
       "env": {
@@ -30,7 +30,7 @@ Zed reads its agent config from `~/.config/zed/settings.json` (or the UI's **Set
         "OPENAI_MODEL": "gpt-5.4"
       }
     }
-  ]
+  }
 }
 ```
 

@@ -468,7 +468,7 @@ In unattended environments (CI / workers / cron / queue consumers), this same ob
 | `start_all` | `start_all(only_auto=True)` | Spawn all auto-start servers |
 | `start_server(name)` / `stop_server(name)` / `restart_server(name)` | | |
 | `ensure_connected(name, cwd=?, mcp_servers=?)` | | Idempotent connect + session |
-| `send_prompt(name, prompt, timeout=?)` | `-> PromptResult` | Interactive turn (public) |
+| `send_prompt(name, text, timeout=?, interactive=True, cwd=?, mcp_servers=?, interaction_policy=?)` | `-> dict` (the `session/prompt` result) | Turn on a long-lived session. Fail-fast: raises `SERVER_BUSY` if a turn is active (public) |
 | `prompt_once(name, prompt, cwd=?, mcp_servers=?, timeout=?, interactive=False, stop_process=True)` | `-> PromptResult` | Fail-fast one-shot, cleans up (public) |
 | `send_prompt_nonblocking` / `finish_prompt_nonblocking` / `cancel_prompt_nonblocking` | | Lower-level async variants (**internal / unstable** — not part of the embedding contract) |
 | `stop_all()` | | Shut down all subprocesses |
@@ -537,8 +537,11 @@ Week 2 field notes:
 - `SERVER_BUSY` and `SERVER_NOT_FOUND` are **not** recorded — they are
   caller-side signals.
 
-See [`docs/guides/headless-runtime.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md)
-for the full state-vs-error contract and the readiness classifier.
+See [3.4 Status fields](/en/part-3/4-reverse-acp-call#status-fields) and
+[Readiness classes](/en/part-3/4-reverse-acp-call#readiness-classes) for the
+exact field meanings and the readiness classifier, and
+[Appendix D.5](./d-error-codes#d-5-state-vs-error-contract-headless) for the
+state-vs-error contract.
 
 ### Exception classes
 

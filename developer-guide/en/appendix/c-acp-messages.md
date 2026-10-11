@@ -56,18 +56,20 @@ Create a fresh session.
 | Field | Type | Notes |
 |-------|------|-------|
 | `name` | `string` | Non-empty |
-| `type` | `"stdio"` / `"http"` / `"sse"` | All three accepted; a bare `url` (no `type`) defaults to Streamable HTTP (`http`) |
+| `type` | `"http"` / `"sse"`, or omitted | Omitted means `stdio`, which needs `command`. A `url` entry must say `"http"` or `"sse"`: unlike `mcp.json`, a bare `url` is not HTTP here. Any other value → `-32602` |
 | `command` | `string` | stdio only |
 | `args` | `[string]` | stdio only |
 | `env` | `[{name, value}]` | stdio only — note **list of name/value objects**, not a map |
 | `url` | `string` | sse / http only |
 | `headers` | `[{name, value}]` | sse / http only |
 
+Every entry gets `trust: false` and `oauth: false`, replaces a same-named `.agentao/mcp.json` entry, and lives only as long as the session. See [3.2 → MCP servers from the client](/en/part-3/2-agentao-as-server#mcp-servers-from-the-client).
+
 ### ← Response
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `sessionId` | `string` | UUID. Keep it — needed for every subsequent call |
+| `sessionId` | `string` | Opaque id, currently `sess_` + 32 hex characters. Keep it — needed for every subsequent call |
 | `configOptions` | `[object]` | Model/provider selection options (`configId: "model"`); drive a switch via `session/set_config_option`. Empty list if the agent can't enumerate a catalog |
 
 ### Common failures
@@ -75,7 +77,9 @@ Create a fresh session.
 | JSON-RPC code | Cause |
 |---------------|-------|
 | `-32002` | Called before `initialize` (SERVER_NOT_INITIALIZED) |
-| `-32602` | `cwd` not absolute / doesn't exist / `mcpServers` malformed |
+| `-32602` | `cwd` not absolute / doesn't exist / `mcpServers` missing or malformed |
+| `-32000` | No LLM provider configured (`auth_required`) |
+| `-32603` | `~/.agentao/llm.json` or the project `.env` is unusable ("LLM configuration error") |
 
 > **Startup resume.** When the server was launched with `agentao --acp --resume [SESSION_ID]`, the **first** `session/new` resumes a persisted session instead of starting blank: it replays history as `session/update` notifications and returns the persisted `sessionId`. A miss (empty store / unknown id / corrupt file / id already active) silently degrades to a normal fresh session. See [3.2 → Resume a session on startup](/en/part-3/2-agentao-as-server#resume-a-session-on-startup).
 
@@ -99,6 +103,9 @@ Run one user turn. Returns when the agent stops.
 | `uri`, `name`? | `string` | For `resource_link`: written into the prompt as a reference |
 | `data`, `mimeType` | `string` | For `image`: base64 bytes and the image type |
 
+- Several `text` blocks are joined with a blank line. A `resource_link` becomes a Markdown link to its URI, with the text `Resource: <title, name or uri>`. Agentao does not fetch the URI.
+- An `image` must be inline: `mimeType` is `image/*`, `data` is base64 within the per-image size cap, the bytes are PNG, JPEG, GIF or WEBP, and a prompt has at most 16 images. `annotations` and `_meta` are accepted and ignored. A `uri` or any other key → `-32602`. A wrong label (`image/png` over JPEG bytes) is corrected, with a warning in `agentao.log`. A model without vision gets text tags instead — see [A.1](/en/appendix/a-api-reference#image-input-and-vision-degradation).
+
 ### ← Response
 
 | Field | Type | Notes |
@@ -115,16 +122,64 @@ Server-to-client streaming updates during a prompt turn.
 |-------|------|-------|
 | `sessionId` | `string` | The active session |
 | `update` | `object` | Variants keyed by `sessionUpdate` |
+| `update.schema_version` | `int` | Agentao's runtime-payload version (`1`), on live updates only. Independent of `protocolVersion` |
 
 ### Variants (`update.sessionUpdate`)
 
-| Value | Agentao event | Extra fields |
-|-------|---------------|--------------|
-| `user_message_chunk` | (replay) | `content: {type:"text", text}` |
-| `agent_message_chunk` | `LLM_TEXT` / `ERROR` | `content: {type:"text", text}`. For `ERROR` the text starts with `Error: ` |
-| `agent_thought_chunk` | `THINKING` | `content: {type:"text", text}` |
-| `tool_call` | `TOOL_START` | `toolCallId`, `title`, `kind`, `status:"pending"`, `rawInput`, and for a file edit a `content[]` holding one `diff` entry |
-| `tool_call_update` | `TOOL_OUTPUT` / `TOOL_COMPLETE` | `toolCallId`, `status`, optional `content[]` — **replaces** the collection, so each update restates it whole |
+| Value | Extra fields |
+|-------|--------------|
+| `user_message_chunk` | `content: {type:"text", text}` (replay only) |
+| `agent_message_chunk` | `content: {type:"text", text}` |
+| `agent_thought_chunk` | `content: {type:"text", text}` |
+| `tool_call` | `toolCallId`, `title`, `kind`, `status:"pending"`, `rawInput`, and for a file edit a `content[]` holding one `diff` entry |
+| `tool_call_update` | `toolCallId`, `status`, optional `title`, optional `content[]` — **replaces** the collection, so each update restates it whole |
+| `plan` | `entries: [{content, priority:"medium", status}]` — the whole checklist each time |
+
+### Event mapping
+
+The live mapping from runtime events, in [`agentao/acp/transport.py`](https://github.com/jin-bo/agentao/blob/main/agentao/acp/transport.py). A failure inside this mapping is logged and swallowed. It never interrupts the turn.
+
+| Agentao event | `sessionUpdate` | Notes |
+|---------------|-----------------|-------|
+| `TURN_START` | — | Not sent |
+| `LLM_TEXT` | `agent_message_chunk` | One text chunk |
+| `THINKING` | `agent_thought_chunk` | Same shape, so clients can render reasoning apart |
+| `TOOL_CONFIRMATION` | `tool_call` | Opens the call just before `session/request_permission`. The request's `toolCall.toolCallId` is the same id. Not sent without a call id |
+| `TOOL_START` | `tool_call` | For a call a confirmation already opened: a `tool_call_update` under the same id instead. It restates `title` and `content` and has no `status`, so a rejected call stays `pending` until it completes |
+| `TOOL_OUTPUT` | `tool_call_update` | `status:"in_progress"`, the whole output so far as one text entry. Throttled — see *Streamed tool output* |
+| `TOOL_COMPLETE` | `tool_call_update` | `status:"completed"` for `ok`, `"failed"` for `error` or `cancelled`. `content` is restated when the call streamed or has an error line. Otherwise it is left out, so an opening `diff` stays |
+| `todo_write` (valid checklist) | `plan` | Sent at `TOOL_COMPLETE`, only when the call applied. No `tool_call` is opened. A malformed checklist falls back to a normal `tool_call` |
+| `AGENT_START` | `agent_thought_chunk` | `[sub-agent started: <name>] <task>` |
+| `AGENT_END` | `agent_thought_chunk` | `[sub-agent finished: <name> (<state>, <N> turns)]`. `, <N> turns` is left out when the count is unknown |
+| `PLUGIN_HOOK_FIRED` (user notices) | `agent_message_chunk` | One `⚠ ` line per hook notice |
+| `ERROR` | `agent_message_chunk` | `Error: <message>`, plus ` — <detail>` when there is one |
+
+### A file edit arrives as a diff
+
+`replace` and an appending `write_file` open their `tool_call` with a `diff` entry. The matching `session/request_permission` leads with the same entry, so the user approves a change they can read:
+
+```json
+{"sessionUpdate":"tool_call","toolCallId":"c1","title":"replace","kind":"edit","status":"pending",
+ "rawInput":{"file_path":"src/config.py","old_text":"DEBUG = False","new_text":"DEBUG = True"},
+ "content":[{"type":"diff","path":"/home/u/proj/src/config.py","oldText":"DEBUG = False","newText":"DEBUG = True"}]}
+```
+
+- A `diff` is **one hunk, not a whole file**. `oldText` is `null` for a pure append. `path` is absolute when the session `cwd` is known.
+- It shows what was **requested**. `replace` matches whitespace and typography flexibly, and `replace_all` can hit several sites, so the applied text can differ. The terminal update says whether the edit applied.
+- **A non-append `write_file` gets no diff.** Its arguments do not say whether the file exists, so `oldText: null` could show an overwrite as a creation.
+- `locations` (follow-along highlighting) is not sent.
+
+### Streamed tool output
+
+Only `run_shell_command` streams. ACP **replaces** a tool call's `content` on every update, so each update restates the whole output so far. Two bounds apply, both in [`agentao/acp/_tool_call_content.py`](https://github.com/jin-bo/agentao/blob/main/agentao/acp/_tool_call_content.py):
+
+| Bound | Value | Effect |
+|-------|-------|--------|
+| `FLUSH_CHARS` | 4 000 | The first chunk always goes out (it moves `pending` → `in_progress`). After that, an update goes out once another 4 000 characters have collected. Held-back text rides the next update or the terminal one |
+| `MAX_CHARS` / `HEAD_CHARS` | 16 000 / 4 000 | The client's copy keeps the first 4 000 and the last 12 000 characters, with `[… N characters elided …]` between them |
+
+- The cap is for the **client's copy only**. The model still gets the full result (up to 80 000 characters, or a file under `.agentao/tool-outputs/`), and replay records it.
+- A chunk that arrives after the call completed is dropped. It never re-opens the call.
 
 ### `tool_call.kind` (closed enum)
 
@@ -134,7 +189,7 @@ Server-to-client streaming updates during a prompt turn.
 
 | `type` | Shape | When |
 |--------|-------|------|
-| `content` | `{content: {type:"text", text}}` | Tool description in a confirmation dialog; streamed output, restated whole |
+| `content` | `{content: {type:"text", text}}` | The tool description in a confirmation dialog, streamed output (restated whole), a trailing `Error: …` line on failure, or a replayed result |
 | `diff` | `{path, oldText?, newText}` | A file edit, at `status:"pending"` — a hunk, not a whole file; `oldText` is `null` when nothing is replaced |
 
 ACP v1 has a third variant, `terminal`. Agentao never emits it: it does not call `terminal/create` (the G1 fs/terminal proxy is a documented non-goal).
@@ -144,8 +199,8 @@ ACP v1 has a third variant, `terminal`. Agentao never emits it: it does not call
 | Value | When |
 |-------|------|
 | `in_progress` | Streaming output chunk |
-| `completed` | Tool succeeded |
-| `failed` | Tool raised / returned error |
+| `completed` | Tool succeeded (and every replayed call) |
+| `failed` | Tool raised, returned an error, or was cancelled. ACP has no cancelled status for tool calls |
 
 ## C.5 `session/request_permission` ⇠ request
 
@@ -156,7 +211,7 @@ Server asks client to confirm a tool call.
 | Field | Type | Notes |
 |-------|------|-------|
 | `sessionId` | `string` | |
-| `toolCall` | `object` | Same shape as `session/update.tool_call` |
+| `toolCall` | `object` | Same shape as `session/update.tool_call`, under the id that `tool_call` opened. `content[]` leads with the `diff` for a file edit, then the tool description |
 | `options` | `[{optionId, name, kind}]` | `allow_once`, `allow_always`, `reject_once`, `reject_always` (`optionId` equals `kind`). A call the MCP Skills gate asks gets only the two `*_once` options |
 
 ### Expected response (client → server)
@@ -166,11 +221,13 @@ Server asks client to confirm a tool call.
 | `outcome.outcome` | `"selected"` or `"cancelled"` | |
 | `outcome.optionId` | `string` | Required when `selected` |
 
-**Cancellation rule**: if the client never answers and the turn is cancelled, the agent resolves all pending permission requests with `cancelled`. See [7.2 pitfall](/en/part-7/2-ide-plugin#⚠️-pitfalls).
+**No timeout**: the server waits until the client answers or the connection closes. `session/cancel` does not answer an open request for you. After a cancel, reply `{"outcome":"cancelled"}` to every open request, as the ACP spec requires. A closed connection, a JSON-RPC error reply, a malformed result and `cancelled` all reject the tool.
+
+**Remembered answers**: `allow_always` / `reject_always` are stored per tool name for that session. Later calls skip the request. A call the MCP Skills gate asks ignores a stored `allow_always` and stores nothing.
 
 ## C.6 `session/cancel`
 
-Abort the current turn and all pending permission requests.
+Abort the current turn. Open `session/request_permission` and `_agentao.cn/ask_user` requests stay open until the client answers them.
 
 ### → Request
 
@@ -182,6 +239,8 @@ Abort the current turn and all pending permission requests.
 
 ACP defines `session/cancel` as a notification (no `id`), so the server sends no response. A client that sends it as a request (with an `id`) gets `"result": null`. The ongoing `session/prompt` eventually resolves with `stopReason: "cancelled"`.
 
+No turn running, a turn already cancelled, or a closed session: silent no-op. An unknown `sessionId`: `-32600` as a request, dropped as a notification.
+
 ## C.7 `session/load`
 
 Resume a session by id. Only usable when the agent advertises `loadSession: true` in its capabilities.
@@ -190,17 +249,35 @@ Resume a session by id. Only usable when the agent advertises `loadSession: true
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `sessionId` | `string` | Must have been created earlier |
-| `cwd` | `string` | Absolute path; must match the session's original cwd |
-| `mcpServers` | `[object]` | Re-declare — fingerprint must match prior `session/new` |
+| `sessionId` | `string` | The id of a saved session. Must not be live on this connection |
+| `cwd` | `string` | Absolute path. The session is read from `<cwd>/.agentao/sessions/` |
+| `mcpServers` | `[object]` | Required (`[]` ok), same shape as `session/new`. Attached fresh to the loaded session |
 
 ### ← Response
 
 `{configOptions: [...]}` — the same model/provider selection options as `session/new` (empty list if no catalog). The agent also replays prior turns as `session/update` notifications (reconstructed from persisted history) before it's ready for the next `session/prompt`.
 
-### Fingerprint rule
+### Common failures
 
-`mcpServers` is hashed during `session/new`. If `session/load` passes a different set (added / removed / reordered), Agentao may either reject the call or silently re-init — depends on implementation phase. When in doubt, use the **same** list you originally passed.
+| JSON-RPC code | Cause |
+|---------------|-------|
+| `-32600` | Unknown id, unreadable or corrupt session file, or the id is already live on this connection |
+| `-32000` | No LLM provider configured (`auth_required`) |
+
+### History replay
+
+Before it answers, the server walks the saved messages and sends one or more notifications per message. ACP clients that wait for the response therefore see the whole history before the next turn.
+
+| Saved message | `sessionUpdate` |
+|---------------|-----------------|
+| `system` | — (skipped) |
+| `user` | `user_message_chunk`, with `<system-reminder>` blocks removed |
+| `assistant` text | `agent_message_chunk` |
+| `assistant` `tool_calls` | One `tool_call` per call, `status:"completed"`. A file edit carries the same `diff` it carried live |
+| `assistant` `todo_write` call | `plan`. Its `tool` result is skipped |
+| `tool` result | `tool_call_update`, `status:"completed"`, the result text — after the call's `diff` when it had one |
+
+The saved messages carry no success or failure, so a call that failed or was rejected also replays as `completed`.
 
 ## C.8 `session/set_config_option`
 

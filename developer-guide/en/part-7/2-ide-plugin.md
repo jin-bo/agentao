@@ -201,7 +201,7 @@ Each row below is a real production incident. Skim them before you ship — the 
 |-----------|------------|-----|
 | Plugin hangs after crash | Child process orphaned on SIGKILL | On `exit`, `stderr close`, restart with exponential backoff |
 | Huge stdout line crashes `readline` | NDJSON frame > default buffer | Use `readline.createInterface({ input, crlfDelay: Infinity })` + raise max |
-| Permission prompts stack up | User clicked a pending ask mid-reply; cancel didn't cascade | `session/cancel` **rejects** all outstanding permission requests with `cancelled` |
+| Permission prompts stack up | User clicked a pending ask mid-reply; cancel didn't cascade | `session/cancel` only stops the turn: it does **not** answer open `session/request_permission` requests. After a cancel, close your own pending prompts and answer each with `{"outcome":"cancelled"}` |
 | Path traversal via tool args | Tool called on a path outside workspace | Rely on `working_directory` pin (6.4 golden rule) |
 | Multi-root workspaces | Single ACPClient can't service two roots | Spawn one subprocess per root |
 

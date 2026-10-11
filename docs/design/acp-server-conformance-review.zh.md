@@ -246,7 +246,7 @@ schema 拒绝的值。因此实现 G2 意味着：更新 `agentao/acp/schema.py`
 > 运行时现在把 `TurnOutcome.incomplete_reason`（0.4.15 交付，正是下方 TODO 等待的那份
 > 元数据）与 ACP transport 上的每轮 `max_iterations_hit` 标志，映射到 `end_turn` /
 > `cancelled` / `max_tokens` / `max_turn_requests`。`refusal` 按设计不发出。见
-> `session_prompt.py::_stop_reason_for` 与 `docs/guides/acp.md`。下方分析保留为"为什么"
+> `session_prompt.py::_stop_reason_for` 与开发者指南 3.2（`developer-guide/zh/part-3/2-agentao-as-server.md`）。下方分析保留为"为什么"
 > 的记录。
 >
 > **它留下的唯一未决项已在 0.5.4 闭合。** 当时 `llm_error` 映射到 `end_turn`，并写明这是

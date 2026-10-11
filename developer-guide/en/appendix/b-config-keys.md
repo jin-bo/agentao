@@ -177,7 +177,7 @@ Project-scope `<cwd>/.agentao/permissions.json` is **not** loaded — see B.2.
 
 ### B.3.4 `acp.json`
 
-Only consumed when **Agentao itself is an ACP client** (see [3.4 ACPManager](/en/part-3/) — forthcoming). Structure mirrors `mcp.json` but under `acpServers`. Safe to omit for most integrations.
+Only consumed when **Agentao itself is an ACP client**: the CLI's `/acp` command ([CLI · `/acp`](/en/cli/8-mcp-acp-plugins#acp-—-acp-servers)) or a host's `ACPManager` ([3.4](/en/part-3/4-reverse-acp-call)). Project-level only (`<project>/.agentao/acp.json`). Servers sit under a top-level `servers` object, not `mcpServers`. Safe to omit for most integrations.
 
 Per-server keys under `servers.{name}`:
 
@@ -187,9 +187,9 @@ Per-server keys under `servers.{name}`:
 | `args` | list[str] | — | Required |
 | `env` | dict | — | Required; `$VAR` / `${VAR}` expanded |
 | `cwd` | string | — | Required; relative paths resolve against project root |
-| `autoStart` | bool | `true` | |
-| `startupTimeoutMs` | int | `10000` | |
-| `requestTimeoutMs` | int | `60000` | |
+| `autoStart` | bool | `true` | Read by `ACPManager.start_all()`. The CLI never auto-starts. Registry entries are written with `false` |
+| `startupTimeoutMs` | int | `10000` | Wait for the `initialize` answer. Never less than 30 s in effect. Registry entries are written with `120000` |
+| `requestTimeoutMs` | int | `60000` | Per-request timeout. Also bounds one CLI `/acp send` turn |
 | `maxRecoverableRestarts` | int | `3` | Cap for auto-restarts after recoverable subprocess deaths; reset on first successful turn |
 | `capabilities` | dict | `{}` | |
 | `description` | string | `""` | |
