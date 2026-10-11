@@ -372,6 +372,27 @@ class TestWarnAndDegrade:
             assert _load_settings(tmp_path) == {}
         assert "not a regular file" in caplog.text
 
+    @pytest.mark.skipif(
+        os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+        reason="needs POSIX permissions and a non-root user",
+    )
+    def test_settings_json_unsearchable_dir_warns_not_raises(self, tmp_path, caplog):
+        # ``Path.exists`` raises ``PermissionError`` when ``.agentao`` has no
+        # search permission. The reader must report it as a problem, so the
+        # writers refuse; startup itself still stops at ``permissions.json``.
+        from agentao.embedding.factory import _load_settings
+
+        cfg = tmp_path / ".agentao"
+        cfg.mkdir()
+        (cfg / "settings.json").write_text("{}", encoding="utf-8")
+        cfg.chmod(0)
+        try:
+            with caplog.at_level(logging.WARNING):
+                assert _load_settings(tmp_path) == {}
+        finally:
+            cfg.chmod(0o755)
+        assert "PermissionError" in caplog.text
+
     def test_mcp_json(self, tmp_path, caplog):
         from agentao.mcp.config import load_mcp_config
 
