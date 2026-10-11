@@ -30,7 +30,7 @@ Pick the path that matches your goal:
 - Embed in your Python project (primary use case): [guides/embedding.md](guides/embedding.md) → [reference/host-api.md](reference/host-api.md)
 - First-time CLI setup: [start/quickstart.md](start/quickstart.md)
 - Daily command lookup: [start/quick-reference.md](start/quick-reference.md)
-- Cross-language protocol entrypoints: [guides/acp.md](guides/acp.md)
+- Cross-language protocol entrypoints: [developer guide 3.2 · Agentao as an ACP server](../developer-guide/en/part-3/2-agentao-as-server.md)
 - Configuration reference (every file, env var, public API): [reference/configuration.md](reference/configuration.md)
 - Logging and debugging: [guides/logging.md](guides/logging.md)
 - Model and provider switching: [guides/model-switching.md](guides/model-switching.md)
@@ -53,9 +53,9 @@ Task-oriented how-to guides and per-feature documentation.
 |----------|----------------|
 | [guides/embed-for-agents.md](guides/embed-for-agents.md) | You are a coding agent embedding Agentao into another project — distilled, copy-paste playbook |
 | [guides/embedding.md](guides/embedding.md) | You are a developer embedding Agentao in a Python host — full reference |
-| [guides/acp.md](guides/acp.md) | You are running Agentao as an ACP server |
-| [guides/acp-client.md](guides/acp-client.md) | You manage project-local ACP client/servers |
-| [guides/acp-embedding.md](guides/acp-embedding.md) | You embed the ACP surface specifically |
+| [developer guide 3.2](../developer-guide/en/part-3/2-agentao-as-server.md) | You are running Agentao as an ACP server |
+| [developer guide CLI 8 · `/acp`](../developer-guide/en/cli/8-mcp-acp-plugins.md) | You manage project-local ACP client/servers |
+| [developer guide 3.4](../developer-guide/en/part-3/4-reverse-acp-call.md) | You embed the ACP surface specifically |
 | [guides/logging.md](guides/logging.md) | You are debugging sessions, tool calls, or model behavior |
 | [guides/model-switching.md](guides/model-switching.md) | You want to switch providers or models cleanly |
 | [guides/skills.md](guides/skills.md) | You are creating, installing, or managing skills |
@@ -67,7 +67,7 @@ Task-oriented how-to guides and per-feature documentation.
 | [guides/tool-confirmation.md](guides/tool-confirmation.md) | Tool confirmation behavior and safety model |
 | [guides/date-context.md](guides/date-context.md) | Date/time context injection |
 | [guides/chatagent-md.md](guides/chatagent-md.md) | Project instruction auto-loading (`AGENTAO.md`) |
-| [guides/headless-runtime.md](guides/headless-runtime.md) | Non-interactive / headless runtime behavior |
+| [developer guide 3.4](../developer-guide/en/part-3/4-reverse-acp-call.md) | Non-interactive / headless runtime behavior |
 | [guides/funds-data-cleaning-parallelism.md](guides/funds-data-cleaning-parallelism.md) | A feature-specific workflow note |
 
 ## Reference
@@ -118,7 +118,7 @@ Superseded plans, archived dev-notes, and old change logs. Useful for archaeolog
 1. [../README.md](../README.md)
 2. [start/quickstart.md](start/quickstart.md)
 3. [start/quick-reference.md](start/quick-reference.md)
-4. One deeper guide that matches the runtime surface you need: [guides/acp.md](guides/acp.md), [guides/model-switching.md](guides/model-switching.md), [guides/skills.md](guides/skills.md), or another file under [guides/](guides)
+4. One deeper guide that matches the runtime surface you need: [developer guide 3.2](../developer-guide/en/part-3/2-agentao-as-server.md), [guides/model-switching.md](guides/model-switching.md), [guides/skills.md](guides/skills.md), or another file under [guides/](guides)
 
 ### For Contributors
 
@@ -132,7 +132,7 @@ Superseded plans, archived dev-notes, and old change logs. Useful for archaeolog
 
 Use these rules when adding or updating docs:
 
-1. Put current user-facing behavior in the root `README.md` and the matching guide under `docs/guides/`.
+1. Put current user-facing behavior in the root `README.md` and the matching page of the developer guide (`developer-guide/en/` and its `developer-guide/zh/` twin). Do not start a parallel copy under `docs/guides/`: a guide there whose topic the developer guide covers is being folded into it, and the old file becomes a pointer. `docs/guides/` keeps only material with no developer-guide home, such as the coding-agent playbook `embed-for-agents.md` and the contributor guide `adding-components.md`.
 2. Put canonical schema-level reference (config, host API) in `docs/reference/`.
 3. Put architecture decisions and host-contract records in `docs/design/`.
 4. Put release-specific summaries in `docs/releases/` and upgrade guides in `docs/migration/`.

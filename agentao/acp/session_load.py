@@ -67,9 +67,11 @@ Out of scope for v1
 - **Loading a session that already has the same id registered.** ACP
   spec says ``session/load`` is for sessions the client knows about
   but the server may have torn down (e.g. after a process restart).
-  We treat a duplicate id as :class:`INTERNAL_ERROR` rather than
-  silently replacing the running session — the client should issue
-  ``session/cancel`` first if they want to overwrite a live session.
+  We refuse a duplicate id with :class:`INVALID_REQUEST` rather than
+  silently replacing the running session. There is no wire method that
+  tears a live session down (``session/cancel`` only stops its turn), so
+  a client keeps using the live session or loads it in a new server
+  process.
 
 - **Restoring tool execution state, sub-agents, plan mode, or the
   model.** Beyond the message history and the active skills, nothing

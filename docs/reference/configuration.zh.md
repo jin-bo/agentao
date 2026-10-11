@@ -6,7 +6,7 @@
 
 英文原版：[CONFIGURATION.md](configuration.md)。两份文档结构、段号、字段表完全一致；如果某次改动只更新了其中一份，请同步另一份。
 
-> **快速校验。** 想不启动 agent 直接检查下面任意文件，跑 `agentao config validate`（或 `agentao doctor`，同时还覆盖插件 / ACP / 可选依赖）。两者都支持 `--json`：error 退出 1，warning 退出 0。详见 [developer-guide CLI 第 12 章](https://github.com/jin-bo/agentao/blob/main/developer-guide/zh/cli/12-non-interactive.md#agentao-doctor-健康快照)。
+> **快速校验。** 想不启动 agent 直接检查下面任意文件，跑 `agentao config validate`（或 `agentao doctor`，同时还覆盖插件 / ACP / 可选依赖）。两者都支持 `--json`：error 退出 1，warning 退出 0。详见 [developer-guide CLI 第 12 章](https://github.com/jin-bo/agentao/blob/main/developer-guide/zh/cli/12-non-interactive.md#agentao-doctor--健康快照)。
 
 ---
 
@@ -20,13 +20,13 @@
 | 2 | 运行模式 + 内置子代理 | `.agentao/settings.json` | — | `embedding/factory.py::_load_settings`、`plan/controller.py::_load_settings` | [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) |
 | 3 | 工具权限规则 | — *（仅用户级；项目级文件被忽略）* | `~/.agentao/permissions.json` | `permissions.py::PermissionEngine` | [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) |
 | 4 | MCP 服务器 | `.agentao/mcp.json` *（仅可新增名字，不能覆盖用户级同名服务器）* | `~/.agentao/mcp.json` | `mcp/FileBackedMCPRegistry`（见 `mcp/config.py`） | `CLAUDE.md` § MCP |
-| 5 | ACP 子代理 | `.agentao/acp.json` | — *（仅项目级）* | `acp_client/config.py` | [acp-client.md](../guides/acp-client.md) / [acp-embedding.md](../guides/acp-embedding.md) |
+| 5 | ACP 子代理 | `.agentao/acp.json` | — *（仅项目级）* | `acp_client/config.py` | [CLI 8 · `/acp`](../../developer-guide/zh/cli/8-mcp-acp-plugins.md) / [开发者指南 3.4](../../developer-guide/zh/part-3/4-reverse-acp-call.md) |
 | 6 | 禁用 skill 列表 | `.agentao/skills_config.json` | — | `skills/manager.py` | [SKILLS_GUIDE.md](../guides/skills.md) |
 | 7 | 项目说明 | `AGENTAO.md`（cwd），不存在时读 `AGENTS.md` | — | `prompts/helpers.py::load_project_instructions` | [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) |
 | 8 | 记忆库 | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](../guides/memory-management.md) |
 | 9 | Run spec（`agentao run`） | `--spec` 传入的任意路径（或 stdin） | — | `cli/run_models.py::RunSpec`、`cli/run_template.py::render_spec` | [run-spec-parameters.zh.md](../design/run-spec-parameters.zh.md) |
 | 10 | 插件 hooks | `<plugin>/hooks/hooks.json`，或经插件 manifest 的 `hooks` 声明/内联 | — *（随插件走）* | `embedding/plugins/manager.py`（发现）→ `plugins/hooks/_parser.py`（解析） | 见下文 §11；Developer Guide §5.7 |
-| 11 | LLM 登录配置（ACP session） | — | `~/.agentao/llm.json` *（由 `agentao --login` 写入）* | `embedding/llm_config.py::resolve_session_llm_config` | 见下文 §2a；[acp.md](../guides/acp.md#provider-configuration-and-login-acp-registry-installs) |
+| 11 | LLM 登录配置（ACP session） | — | `~/.agentao/llm.json` *（由 `agentao --login` 写入）* | `embedding/llm_config.py::resolve_session_llm_config` | 见下文 §2a；[开发者指南 3.2 · 提供方配置与登录](../../developer-guide/zh/part-3/2-agentao-as-server.md) |
 
 **内部状态文件**（自动管理；列出仅为告知，请勿手动编辑）：
 
@@ -373,7 +373,7 @@ URL 类 server（`http` 或 `sse`）默认使用 **OAuth**，不需要任何键�
 | `maxRecoverableRestarts` | int | 否 | `3` | 可恢复型子进程死亡时的自动重启上限；首次成功一轮后清零。 |
 | `nonInteractivePolicy` | object | 否 | `{"mode": "reject_all"}` | **只**接受对象形式——裸字符串形式会被拒绝并提示迁移信息。`mode` 合法值：`"reject_all"`、`"accept_all"`。 |
 
-完整 ACP 语义 → [acp-client.md](../guides/acp-client.md) 与 [acp-embedding.md](../guides/acp-embedding.md)。
+完整 ACP 语义 → [CLI 8 · `/acp`](../../developer-guide/zh/cli/8-mcp-acp-plugins.md) 与 [开发者指南 3.4](../../developer-guide/zh/part-3/4-reverse-acp-call.md)。
 
 ---
 

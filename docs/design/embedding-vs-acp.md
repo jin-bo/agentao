@@ -10,8 +10,8 @@
 | Surface | What it is | Entry point | Reference |
 |---|---|---|---|
 | **In-process embedding** | Run Agentao as a Python library inside your own process. Drive turns with `Agentao.arun()`; observe with `agent.events()`; gate with the permission engine. | `from agentao import Agentao` | [EMBEDDING.md](../guides/embedding.md), [api/host.md](../reference/host-api.md) |
-| **ACP server** | Run Agentao as a standalone subprocess speaking JSON-RPC 2.0 over stdio. External clients (Zed, Cursor, IDE extensions) launch and drive it. | `agentao --acp --stdio` | [ACP.md](../guides/acp.md) |
-| **ACP client** | Embed Agentao in your runtime *and* have it call out to other ACP-speaking agents (Claude Code, Codex, …) as backends for specific roles. | `from agentao.acp_client import ACPManager` | [features/acp-client.md](../guides/acp-client.md) |
+| **ACP server** | Run Agentao as a standalone subprocess speaking JSON-RPC 2.0 over stdio. External clients (Zed, Cursor, IDE extensions) launch and drive it. | `agentao --acp --stdio` | [developer guide 3.2](../../developer-guide/en/part-3/2-agentao-as-server.md) |
+| **ACP client** | Embed Agentao in your runtime *and* have it call out to other ACP-speaking agents (Claude Code, Codex, …) as backends for specific roles. | `from agentao.acp_client import ACPManager` | [developer guide 3.4](../../developer-guide/en/part-3/4-reverse-acp-call.md) |
 | **ACP schema surface** | Versioned Pydantic types for ACP wire payloads, plus the checked-in `host.acp.v1.json` snapshot. Only relevant if your in-process host *also* exposes Agentao via ACP to its own clients. | `from agentao.host import export_host_acp_json_schema` | [api/host.md §Schema snapshot policy](../reference/host-api.md#schema-snapshot-policy) |
 
 ## Decision tree
@@ -61,5 +61,5 @@ If you only need in-process embedding, you can ignore (1), (2), and the ACP expo
 - [docs/guides/embedding.md](../guides/embedding.md) — in-process embedding tutorial.
 - [docs/reference/host-api.md](../reference/host-api.md) — public host API reference.
 - [docs/design/embedded-host-contract.md](embedded-host-contract.md) — design record for the host contract.
-- [docs/guides/acp.md](../guides/acp.md) — ACP server reference.
-- [docs/guides/acp-client.md](../guides/acp-client.md) — ACP client reference.
+- [developer guide 3.2](../../developer-guide/en/part-3/2-agentao-as-server.md) — ACP server reference.
+- [developer guide 3.4](../../developer-guide/en/part-3/4-reverse-acp-call.md) — ACP client reference (embedding); [CLI 8 · `/acp`](../../developer-guide/en/cli/8-mcp-acp-plugins.md) for the CLI.

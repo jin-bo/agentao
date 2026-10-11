@@ -207,6 +207,37 @@ pytest -W error::DeprecationWarning tests/
 
 此命令将所有 `DeprecationWarning` 转为测试失败，在 0.3.0 静默破坏之前暴露仍在发出 0.2.x 警告的调用点。
 
+## E.10 ACP 客户端——内部名字迁到子模块
+
+`agentao.acp_client` 的嵌入合约见 [3.4 受支持的导入](/zh/part-3/4-reverse-acp-call#受支持的导入)。包根目录仍为老代码重新导出下面这些名字，但它们属于实现细节，请改从子模块导入：
+
+| 之前 | 之后 |
+|------|------|
+| `from agentao.acp_client import ACPClient` | `from agentao.acp_client.client import ACPClient` |
+| `from agentao.acp_client import ACPProcessHandle` | `from agentao.acp_client.process import ACPProcessHandle` |
+| `from agentao.acp_client import AcpConnectionInfo` | `from agentao.acp_client.client import AcpConnectionInfo` |
+| `from agentao.acp_client import Inbox, InboxMessage, MessageKind` | `from agentao.acp_client.inbox import ...` |
+| `from agentao.acp_client import InteractionKind, InteractionRegistry, PendingInteraction` | `from agentao.acp_client.interaction import ...` |
+| `from agentao.acp_client import AcpExplicitRoute, detect_explicit_route` | `from agentao.acp_client.router import ...` |
+
+这些子模块路径供 Agentao 自己的 CLI 代码使用，不属于嵌入合约，只能算尽力而为。
+
+## E.11 ACP 客户端——`get_status()` 返回 `ServerStatus`
+
+`ACPManager.get_status()` 过去返回 `list[dict]`，键为 `name`、`state`、`pid`、`last_error`、`last_activity`、`description`、`inbox_pending`、`interactions_pending`、`stderr_lines`。现在返回 `list[ServerStatus]`，一个冻结的 dataclass（字段含义见 [3.4 状态字段](/zh/part-3/4-reverse-acp-call#状态字段)）。没有 dict 别名，也没有旁路接口。
+
+| 旧写法 | 新写法 |
+|--------|--------|
+| `s["name"]` | `s.server` |
+| `s["state"]` | `s.state` |
+| `s["pid"]` | `s.pid` |
+| `s["last_error"]` | `s.last_error` |
+| `s["last_activity"]` | `mgr.get_handle(s.server).info.last_activity` |
+| `s["description"]` | `mgr.get_handle(s.server).config.description` |
+| `s["inbox_pending"]` | `s.inbox_pending`（该 server 的消息数）或 `mgr.inbox.pending_count`（全部 server） |
+| `s["interactions_pending"]` | `s.interaction_pending`（单数） |
+| `s["stderr_lines"]` | `len(mgr.get_server_logs(s.server, n=200))` |
+
 ---
 
 附录至此结束。

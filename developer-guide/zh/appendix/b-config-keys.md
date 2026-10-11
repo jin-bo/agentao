@@ -175,7 +175,7 @@ cmd。什么都不配置时，Windows 仍旧是 `%COMSPEC% /c`，与过去完全
 
 ### B.3.4 `acp.json`
 
-仅在 **Agentao 作为 ACP 客户端**时读取（见 [3.4 ACPManager](/zh/part-3/)——待补）。结构与 `mcp.json` 一致，只是键为 `acpServers`。大部分集成无需关心。
+仅在 **Agentao 作为 ACP 客户端**时读取：CLI 的 `/acp` 命令（[CLI · `/acp`](/zh/cli/8-mcp-acp-plugins#acp-—-acp-服务器)）或宿主的 `ACPManager`（[3.4](/zh/part-3/4-reverse-acp-call)）。只有项目级（`<project>/.agentao/acp.json`）。服务器放在顶层 `servers` 对象下，不是 `mcpServers`。大部分集成无需关心。
 
 `servers.{name}` 下的每服务器键：
 
@@ -185,9 +185,9 @@ cmd。什么都不配置时，Windows 仍旧是 `%COMSPEC% /c`，与过去完全
 | `args` | list[str] | — | 必填 |
 | `env` | dict | — | 必填；`$VAR` / `${VAR}` 会被展开 |
 | `cwd` | string | — | 必填；相对路径相对项目根解析 |
-| `autoStart` | bool | `true` | |
-| `startupTimeoutMs` | int | `10000` | |
-| `requestTimeoutMs` | int | `60000` | |
+| `autoStart` | bool | `true` | 由 `ACPManager.start_all()` 读取。CLI 从不自动启动。Registry 条目写为 `false` |
+| `startupTimeoutMs` | int | `10000` | 等待 `initialize` 回应的时长，实际不少于 30 秒。Registry 条目写为 `120000` |
+| `requestTimeoutMs` | int | `60000` | 单个请求的超时，也限制 CLI 里一轮 `/acp send` |
 | `maxRecoverableRestarts` | int | `3` | 子进程可恢复死亡后的自动重启上限；首次成功对话后清零 |
 | `capabilities` | dict | `{}` | |
 | `description` | string | `""` | |

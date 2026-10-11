@@ -207,6 +207,37 @@ pytest -W error::DeprecationWarning tests/
 
 This turns every `DeprecationWarning` into a test failure, surfacing any remaining call sites that still emit the 0.2.x warning before they silently break in 0.3.0.
 
+## E.10 ACP client — internal names move to submodules
+
+The embedding contract of `agentao.acp_client` is the set in [3.4 Supported imports](/en/part-3/4-reverse-acp-call#supported-imports). The package root still re-exports the names below for older code, but they are implementation details. Import them from their submodule:
+
+| Before | After |
+|--------|-------|
+| `from agentao.acp_client import ACPClient` | `from agentao.acp_client.client import ACPClient` |
+| `from agentao.acp_client import ACPProcessHandle` | `from agentao.acp_client.process import ACPProcessHandle` |
+| `from agentao.acp_client import AcpConnectionInfo` | `from agentao.acp_client.client import AcpConnectionInfo` |
+| `from agentao.acp_client import Inbox, InboxMessage, MessageKind` | `from agentao.acp_client.inbox import ...` |
+| `from agentao.acp_client import InteractionKind, InteractionRegistry, PendingInteraction` | `from agentao.acp_client.interaction import ...` |
+| `from agentao.acp_client import AcpExplicitRoute, detect_explicit_route` | `from agentao.acp_client.router import ...` |
+
+The submodule paths are supported for Agentao's own CLI code. They are not part of the embedding contract, so treat them as best-effort.
+
+## E.11 ACP client — `get_status()` returns `ServerStatus`
+
+`ACPManager.get_status()` used to return `list[dict]` with the keys `name`, `state`, `pid`, `last_error`, `last_activity`, `description`, `inbox_pending`, `interactions_pending` and `stderr_lines`. It now returns `list[ServerStatus]`, a frozen dataclass (field meanings in [3.4 Status fields](/en/part-3/4-reverse-acp-call#status-fields)). There is no dict alias and no side channel.
+
+| Old access | New access |
+|------------|------------|
+| `s["name"]` | `s.server` |
+| `s["state"]` | `s.state` |
+| `s["pid"]` | `s.pid` |
+| `s["last_error"]` | `s.last_error` |
+| `s["last_activity"]` | `mgr.get_handle(s.server).info.last_activity` |
+| `s["description"]` | `mgr.get_handle(s.server).config.description` |
+| `s["inbox_pending"]` | `s.inbox_pending` (this server's messages) or `mgr.inbox.pending_count` (all servers) |
+| `s["interactions_pending"]` | `s.interaction_pending` (singular) |
+| `s["stderr_lines"]` | `len(mgr.get_server_logs(s.server, n=200))` |
+
 ---
 
 End of appendix.

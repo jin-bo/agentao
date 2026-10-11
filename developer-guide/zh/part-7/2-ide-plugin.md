@@ -201,7 +201,7 @@ ctx.globalState.update("agentao.sessionId", sessionId);
 |------------------|------|------|
 | 崩溃后插件一直卡住 | 子进程 SIGKILL 后成为孤儿 | 监听 `exit` / `stderr close`，指数退避重启 |
 | 超长 stdout 行让 readline 崩溃 | NDJSON 帧超出默认缓冲 | `readline.createInterface({ input, crlfDelay: Infinity })` + 调大上限 |
-| 权限弹窗堆积 | 用户回复到一半又取消了，级联没做干净 | `session/cancel` **会** 把所有未答复的权限请求以 `cancelled` 拒绝 |
+| 权限弹窗堆积 | 用户回复到一半又取消了，级联没做干净 | `session/cancel` 只停止本轮，**不会**替你答复未完成的 `session/request_permission` 请求。取消后要自己关掉待处理的弹窗，并对每个请求回复 `{"outcome":"cancelled"}` |
 | 工具参数里带路径穿越 | 调了工作区外的路径 | 依赖 `working_directory` 锁定（6.4 黄金规则） |
 | 多根 workspace | 一个 ACPClient 不能服务两个根 | 每个根启一个子进程 |
 

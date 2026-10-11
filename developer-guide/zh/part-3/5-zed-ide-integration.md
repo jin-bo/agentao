@@ -20,9 +20,9 @@ Zed 从 `~/.config/zed/settings.json`（或 UI 的 **Settings → Agents**）读
 
 ```json
 {
-  "agents": [
-    {
-      "name": "agentao",
+  "agent_servers": {
+    "agentao": {
+      "type": "custom",
       "command": "agentao",
       "args": ["--acp", "--stdio"],
       "env": {
@@ -30,7 +30,7 @@ Zed 从 `~/.config/zed/settings.json`（或 UI 的 **Settings → Agents**）读
         "OPENAI_MODEL": "gpt-5.4"
       }
     }
-  ]
+  }
 }
 ```
 

@@ -28,7 +28,7 @@ docs/
 
 - 第一次安装和启动：[start/quickstart.md](start/quickstart.md)
 - 日常命令速查：[start/quick-reference.md](start/quick-reference.md)
-- ACP 服务端模式：[guides/acp.md](guides/acp.md)
+- ACP 服务端模式：[开发者指南 3.2 · Agentao 作为 ACP 服务端](../developer-guide/zh/part-3/2-agentao-as-server.md)
 - 配置参考（每个文件、环境变量、公开 API）：[reference/configuration.md](reference/configuration.md)
 - 日志与调试：[guides/logging.md](guides/logging.md)
 - 模型和 provider 切换：[guides/model-switching.md](guides/model-switching.md)
@@ -50,9 +50,9 @@ docs/
 |------|----------|
 | [guides/embed-for-agents.md](guides/embed-for-agents.md) | 你是编码 agent，要把 Agentao 嵌入另一个项目——精炼可复制手册 |
 | [guides/embedding.md](guides/embedding.md) | 你是开发者，在 Python 宿主中嵌入 Agentao——完整参考 |
-| [guides/acp.md](guides/acp.md) | 你要把 Agentao 作为 ACP 服务端运行 |
-| [guides/acp-client.md](guides/acp-client.md) | 项目级 ACP 客户端/服务管理 |
-| [guides/acp-embedding.md](guides/acp-embedding.md) | 专门嵌入 ACP 面 |
+| [开发者指南 3.2](../developer-guide/zh/part-3/2-agentao-as-server.md) | 你要把 Agentao 作为 ACP 服务端运行 |
+| [开发者指南 CLI 8 · `/acp`](../developer-guide/zh/cli/8-mcp-acp-plugins.md) | 项目级 ACP 客户端/服务管理 |
+| [开发者指南 3.4](../developer-guide/zh/part-3/4-reverse-acp-call.md) | 专门嵌入 ACP 面 |
 | [guides/logging.md](guides/logging.md) | 你在排查会话、工具调用或模型行为 |
 | [guides/model-switching.md](guides/model-switching.md) | 你要切换 provider 或模型 |
 | [guides/skills.md](guides/skills.md) | 你要创建、安装或管理技能 |
@@ -63,7 +63,7 @@ docs/
 | [guides/tool-confirmation.md](guides/tool-confirmation.md) | 工具确认与安全模型 |
 | [guides/date-context.md](guides/date-context.md) | 日期时间上下文注入 |
 | [guides/chatagent-md.md](guides/chatagent-md.md) | 项目指令自动加载（`AGENTAO.md`） |
-| [guides/headless-runtime.md](guides/headless-runtime.md) | 非交互 / headless 运行时行为 |
+| [开发者指南 3.4](../developer-guide/zh/part-3/4-reverse-acp-call.md) | 非交互 / headless 运行时行为 |
 | [guides/funds-data-cleaning-parallelism.md](guides/funds-data-cleaning-parallelism.md) | 一个特定功能工作流说明 |
 
 ## reference —— 参考
@@ -113,7 +113,7 @@ Schema 快照已 check-in。任何改变 wire form 的 model 变更必须在同�
 1. [../README.zh.md](../README.zh.md)
 2. [start/quickstart.md](start/quickstart.md)
 3. [start/quick-reference.md](start/quick-reference.md)
-4. 再根据任务进入一篇更深的文档：[guides/acp.md](guides/acp.md)、[guides/model-switching.md](guides/model-switching.md)、[guides/skills.md](guides/skills.md) 或 [guides/](guides) 下其他文件
+4. 再根据任务进入一篇更深的文档：[开发者指南 3.2](../developer-guide/zh/part-3/2-agentao-as-server.md)、[guides/model-switching.md](guides/model-switching.md)、[guides/skills.md](guides/skills.md) 或 [guides/](guides) 下其他文件
 
 ### 面向贡献者
 
@@ -127,7 +127,7 @@ Schema 快照已 check-in。任何改变 wire form 的 model 变更必须在同�
 
 新增或修改文档时，建议遵循这些规则：
 
-1. 当前用户可见行为优先写在根目录 `README.md` / `README.zh.md`，并在 `docs/guides/` 中补对应专题文档。
+1. 当前用户可见行为优先写在根目录 `README.md` / `README.zh.md`，并写进开发者指南的对应页面（`developer-guide/en/` 及其 `developer-guide/zh/` 双语版）。不要在 `docs/guides/` 下另写一份：开发者指南已覆盖其主题的指南正在并入开发者指南，原文件改为指向说明。`docs/guides/` 只保留开发者指南里没有合适位置的内容，例如面向编码 Agent 的 `embed-for-agents.md` 和贡献者指南 `adding-components.md`。
 2. 权威 schema 级参考（配置、宿主 API）放在 `docs/reference/`。
 3. 架构决策与宿主面合约记录放在 `docs/design/`。
 4. 版本发布说明放在 `docs/releases/`，升级指南放在 `docs/migration/`。

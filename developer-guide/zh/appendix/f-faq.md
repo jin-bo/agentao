@@ -142,13 +142,13 @@ agent.memory.clear(scope="project")
 
 ### `prompt_once` 报 `server_busy`
 
-Fail-fast 语义——已有别人在 turn 里。两条路：
+Fail-fast 语义——已有别人在 turn 里。`send_prompt` 同样是 fail-fast，manager 也没有队列。几条路：
 
-- 等 + 重试
-- 可排队的场景改用会话式 API（`send_prompt`）
+- 先用 `readiness(name)` 做门禁，再等 + 重试
+- 在宿主里自己排队
 - 或每租户独立子进程
 
-见 [附录 D.5](./d-error-codes#d-6-重试策略)。
+见 [附录 D.6](./d-error-codes#d-6-重试策略) 和 [3.4 每个 server 只有一个活跃 turn](/zh/part-3/4-reverse-acp-call#每个-server-只有一个活跃-turn)。
 
 ### "session/cancel 停不下我的长工具"
 
@@ -164,9 +164,11 @@ if mgr.is_ready("my-server"):
 ```
 
 - `"ready"` —— 可以直接提交。
-- `"busy"` —— 当前已有 turn 在跑，再提交会得到 `SERVER_BUSY`。
-- `"failed"` —— 自动恢复已对"可恢复的 idle 退出"生效（由 `maxRecoverableRestarts` 封顶，默认 3 次）；一旦进入粘性 fatal 或用光配额，就需要运维显式调 `restart_server()` / `start_server()`。
-- `"not_ready"` —— 仍在启动或收尾阶段。
+- `"busy"` —— 当前已有 turn 在跑，此时提交会得到 `SERVER_BUSY`。
+- `"failed"` —— server 已粘性 fatal，或处于 `failed` 且进程从未启动或已退出，需要运维显式调 `restart_server()` / `start_server()`。（可恢复的死亡不会落到这里：自动恢复会重建它们，上限是 `maxRecoverableRestarts`，默认 3 次。）
+- `"not_ready"` —— 仍在启动或收尾阶段。另外两种情况也会返回它：`state` 为 `failed` 但进程还活着（单次调用的错误，如 `cwd` 覆盖被拒，下次调用即可恢复）；进程刚死且被判为可恢复，下次提交会重建。
+
+完整表格见 [3.4 就绪分级](/zh/part-3/4-reverse-acp-call#就绪分级)。
 
 ### "为什么上一次 turn 成功了，`last_error` 还在？"
 
@@ -188,16 +190,16 @@ Week 3 把历史裸字符串形式下掉了。新形态是结构化对象：
 
 ### "server 中途挂了，怎么恢复？"
 
-看怎么挂的（Week 4 classifier）：
+看怎么挂的（完整矩阵见 [3.4 进程死亡分类](/zh/part-3/4-reverse-acp-call#进程死亡分类)）：
 
-- **可恢复死亡**（干净退出、idle 非零退出且在重试上限内、stdio EOF、active turn 期间死亡）：不需要人工干预。下一次 `send_prompt` / `prompt_once` 会自动重建 client；`mgr.restart_count(name)` 能看到目前自动重建了几次
-- **致命死亡**（OOM / SIGKILL / `exit 137` / 连续 handshake 失败 / 超过 `maxRecoverableRestarts`）：server 被打上 sticky-fatal 标记。`mgr.is_fatal(name)` 返回 `True`，所有 `ensure_connected` 调用都会抛 `AcpClientError(code=TRANSPORT_DISCONNECT, details={"recovery": "fatal"})`。运维需要显式调 `mgr.restart_server(name)` 或 `mgr.start_server(name)` 来确认并重新开启自动恢复
+- **可恢复死亡**（干净退出、idle 非零退出且在重试上限内、stdio EOF、active turn 期间的非信号死亡）：不需要人工干预。下一次 `send_prompt` / `prompt_once` 会自动重建 client；`mgr.restart_count(name)` 能看到目前自动重建了几次
+- **致命死亡**（被信号杀死——OOM / SIGKILL / `exit 137`——/ 连续第二次 handshake 失败 / 超过 `maxRecoverableRestarts`）：server 被打上 sticky-fatal 标记。`mgr.is_fatal(name)` 返回 `True`，所有 `ensure_connected` 调用都会抛 `AcpClientError(code=TRANSPORT_DISCONNECT, details={"recovery": "fatal"})`。运维需要显式调 `mgr.restart_server(name)` 或 `mgr.start_server(name)` 来确认并重新开启自动恢复
 
 重试上限通过 server 配置中的 `maxRecoverableRestarts` 调（默认 3）。
 
 ### "`cancel_turn` 之后再调 `ensure_connected` 安全吗？"
 
-安全。Week 4 的清理保证（见 [headless runtime 文档 §7.1](https://github.com/jin-bo/agentao/blob/main/docs/guides/headless-runtime.md)）：
+安全。清理保证（见 [3.4 取消或超时后的清理顺序](/zh/part-3/4-reverse-acp-call#取消或超时后的清理顺序)）：
 
 1. `session/cancel` 发出去之前，pending slot 已经先 drop 掉了
 2. turn slot 与 per-server lock 都在 `finally` 里释放

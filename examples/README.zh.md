@@ -34,7 +34,7 @@
 
 | 文件 | 演示内容 | 启动 |
 |------|---------|------|
-| [`headless_worker.py`](./headless_worker.py) | `ACPManager` 驱动一个内联的 mock ACP server（成功 / interaction-required / cancel 三条路径）。Week 1 回归基线 fixture，对应 [`docs/guides/headless-runtime.md`](../docs/guides/headless-runtime.md)。 | `uv run python examples/headless_worker.py` |
+| [`headless_worker.py`](./headless_worker.py) | `ACPManager` 驱动一个内联的 mock ACP server（成功 / interaction-required / cancel 三条路径）。见[开发者指南 3.4](../developer-guide/zh/part-3/4-reverse-acp-call.md) 的 headless 合约。 | `uv run python examples/headless_worker.py` |
 | [`host_events.py`](./host_events.py) | 公开的 harness 契约（自 0.3.1 起）：`agent.events()` 异步迭代器 + `agent.active_permissions()` 快照，与 `agent.arun(...)` 通过 `asyncio.gather` 并跑。详见 [`docs/reference/host-api.zh.md`](../docs/reference/host-api.zh.md)。 | `OPENAI_API_KEY=sk-... uv run python examples/host_events.py` |
 | [`host_audit_pipeline.py`](./host_audit_pipeline.py) | 端到端的多租户审计管线：把 `agent.events()` 写入本地 SQLite 的 `agent_audit` 表，会话开始时 pin 一份 `active_permissions()` 快照，对话结束后 dump 整张表。配套 [`developer-guide §4.7`](../developer-guide/zh/part-4/7-host-contract.md)。 | `OPENAI_API_KEY=sk-... uv run python examples/host_audit_pipeline.py` |
 
