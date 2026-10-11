@@ -114,6 +114,9 @@ class AgentEvent:
         AGENT_END         {"agent": "codebase-investigator", "state": "completed",
                        "turns": 3, "tool_calls": 5, "tokens": 1200,
                        "duration_ms": 8000, "error": None}
+                      A counter that is not known is left out: a sub-agent
+                      that raised before it ran sends no turns / tool_calls /
+                      tokens / duration_ms.
     """
 
     type: EventType

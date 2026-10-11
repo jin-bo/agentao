@@ -436,6 +436,17 @@ def test_agent_end_emits_thought_marker_with_turns(transport):
     assert "3 turns" in text
 
 
+def test_agent_end_without_turns_leaves_the_count_out(transport):
+    """A sub-agent that raised before it ran sends no ``turns``: not known,
+    so the marker says nothing rather than "0 turns"."""
+    t, server = transport
+    t.emit(AgentEvent(EventType.AGENT_END, {
+        "agent": "generalist", "state": "failed", "error": "KeyError",
+    }))
+    text = _last_update(server)["content"]["text"]
+    assert text == "[sub-agent finished: generalist (failed)]"
+
+
 # ---------------------------------------------------------------------------
 # ERROR → agent_message_chunk
 # ---------------------------------------------------------------------------

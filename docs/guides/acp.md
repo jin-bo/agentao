@@ -442,7 +442,7 @@ Below is a complete client→server→client conversation. Each line on the wire
 | `TOOL_OUTPUT` | `tool_call_update` | `status: "in_progress"`, `content` restates the **whole** collection accumulated so far (ACP replaces a tool call's collections, it does not extend them), coalesced into one text entry. Throttled — see *Streamed tool output* below. |
 | `TOOL_COMPLETE` | `tool_call_update` | `status: "completed"` for `ok`, `"failed"` for `error` or `cancelled` (ACP has no cancelled status for tool calls — only for turns via `stopReason`). `content` is restated for every call that streamed — the only update guaranteed to arrive after both of a shell command's reader threads have flushed — and whenever there is an error line to append *beside* the output. A call that streamed nothing and had no error omits it, leaving any opening `diff` standing. |
 | `AGENT_START` | `agent_thought_chunk` | Sub-agent start marker `[sub-agent started: <name>] <task>`. |
-| `AGENT_END` | `agent_thought_chunk` | Sub-agent end marker `[sub-agent finished: <name> (<state>, <N> turns)]`. |
+| `AGENT_END` | `agent_thought_chunk` | Sub-agent end marker `[sub-agent finished: <name> (<state>, <N> turns)]`. The `, <N> turns` part is left out when the turn count is not known (a sub-agent that raised before it ran). |
 | `ERROR` | `agent_message_chunk` | Prefixed with `Error: `. |
 
 Failures inside `emit()` are logged and swallowed — a misbehaving client or a JSON-safety slip cannot interrupt an in-progress turn.

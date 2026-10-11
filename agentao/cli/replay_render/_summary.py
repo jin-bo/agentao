@@ -144,9 +144,13 @@ def _summarize_replay_event(event: dict) -> str:
             f"task={markup_escape(task[:80])}[/dim]"
         )
     if kind == "subagent_completed":
+        # ``turns`` is ``None`` for a sub-agent that raised before it ran.
+        turns = payload.get("turns")
         return (
             f"[dim]agent={markup_escape(str(payload.get('agent', '')))} "
-            f"state={markup_escape(str(payload.get('state', '')))} turns={payload.get('turns')}[/dim]"
+            f"state={markup_escape(str(payload.get('state', '')))}"
+            + (f" turns={turns}" if turns is not None else "")
+            + "[/dim]"
         )
     if kind == "turn_completed":
         final = str(payload.get("final_text", ""))

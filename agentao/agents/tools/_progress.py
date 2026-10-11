@@ -20,14 +20,18 @@ class SubagentProgress:
     Replaces plain-text sentinel strings (_AGENT_START / _AGENT_END).
     The step_callback receives (sentinel_name, SubagentProgress) where
     sentinel_name is AgentToolWrapper._AGENT_START or _AGENT_END.
+
+    On ``_AGENT_END`` a counter is ``None`` when it is not known, not zero:
+    a foreground run that raised before its sub-agent ran has no history to
+    count and no run to time.
     """
     agent_name: str
     state: BgTaskStatus
     task: str = ""
     max_turns: int = 0
-    turns: int = 0
-    tool_calls: int = 0
-    tokens: int = 0
-    duration_ms: int = 0
+    turns: Optional[int] = 0
+    tool_calls: Optional[int] = 0
+    tokens: Optional[int] = 0
+    duration_ms: Optional[int] = 0
     result: Optional[str] = None
     error: Optional[str] = None

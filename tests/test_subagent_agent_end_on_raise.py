@@ -93,7 +93,20 @@ def _chat_raising(monkeypatch, exc: BaseException) -> None:
 def test_an_ordinary_exception_ends_the_run_as_failed(parent, monkeypatch):
     wrapper = parent.tools.tools["agent_generalist"]
     log = _watch(wrapper)
-    _chat_raising(monkeypatch, RuntimeError("boom"))
+
+    def chat(self, *args, **kwargs):
+        # A run that got somewhere before it raised.
+        self.messages.extend([
+            {"role": "user", "content": "x"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "read_file", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "c1", "content": "data"},
+        ])
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(Agentao, "chat", chat)
 
     with pytest.raises(RuntimeError, match="boom"):
         wrapper.execute(task="x")
@@ -109,8 +122,11 @@ def test_an_ordinary_exception_ends_the_run_as_failed(parent, monkeypatch):
     # carry anything the child was handed.
     assert end.error == "RuntimeError"
     assert log[-1][1].error_type == "RuntimeError"
-    # No stats came back, so the counters keep their defaults.
-    assert (end.turns, end.tool_calls, end.tokens, end.duration_ms) == (0, 0, 0, 0)
+    # No stats came back, but the history and the clock were there to read:
+    # the same measures the ordinary path reports.
+    assert (end.turns, end.tool_calls) == (1, 1)
+    assert isinstance(end.tokens, int) and end.tokens > 0
+    assert isinstance(end.duration_ms, int) and end.duration_ms >= 0
     assert end.agent_name == "generalist"
 
 
@@ -132,7 +148,10 @@ def test_a_construction_failure_ends_the_run_as_failed(parent):
     ]
     end = _end(log)
     assert end.error == "KeyError"
-    assert (end.turns, end.tool_calls, end.tokens, end.duration_ms) == (0, 0, 0, 0)
+    # Nothing ran, so nothing is known — ``None``, not a run of zero.
+    assert (end.turns, end.tool_calls, end.tokens, end.duration_ms) == (
+        None, None, None, None,
+    )
 
 
 def test_a_raised_cancel_ends_the_run_as_cancelled(parent, monkeypatch):
@@ -197,3 +216,145 @@ def test_a_raising_end_callback_does_not_lose_a_finished_run(parent):
     assert _shape(log)[-2:] == [
         ("__agent_end__", "cancelled"), ("public", "cancelled"),
     ]
+
+
+# ── what the readers make of a counter that is not known ───────────────────
+
+
+def _end_event(parent, progress):
+    """Run a ``__agent_end__`` through the production step callback."""
+    seen = []
+    parent.transport.emit = seen.append
+    wrapper = parent.tools.tools["agent_generalist"]
+    wrapper._step_callback("__agent_end__", progress)
+    (event,) = seen
+    return event
+
+
+def _unknown(state="failed", error="KeyError"):
+    from agentao.agents.tools import SubagentProgress
+
+    return SubagentProgress(
+        agent_name="generalist", state=state, error=error,
+        turns=None, tool_calls=None, tokens=None, duration_ms=None,
+    )
+
+
+def test_an_unknown_counter_is_left_out_of_agent_end(parent):
+    event = _end_event(parent, _unknown())
+    assert event.data == {"agent": "generalist", "state": "failed", "error": "KeyError"}
+
+
+def test_a_known_zero_is_still_sent(parent):
+    from agentao.agents.tools import SubagentProgress
+
+    event = _end_event(parent, SubagentProgress(
+        agent_name="generalist", state="completed",
+        turns=0, tool_calls=0, tokens=0, duration_ms=0,
+    ))
+    assert (event.data["turns"], event.data["duration_ms"]) == (0, 0)
+
+
+def _render_end(data):
+    from rich.console import Console
+
+    from agentao.cli.display import DisplayController
+    from agentao.transport import AgentEvent, EventType
+
+    console = Console(record=True, width=200, color_system=None)
+    DisplayController(console, lambda: None).on_event(
+        AgentEvent(EventType.AGENT_END, data),
+    )
+    return console.export_text()
+
+
+def test_the_cli_leaves_out_what_is_not_known():
+    out = _render_end({"agent": "generalist", "state": "failed", "error": "KeyError"})
+    assert "◀ [generalist]  KeyError" in out
+    assert "turns" not in out and "tokens" not in out
+
+
+def test_the_cli_shows_what_is_known():
+    out = _render_end({
+        "agent": "generalist", "state": "failed", "error": "RuntimeError",
+        "turns": 1, "tool_calls": 1, "tokens": 1200, "duration_ms": 2500,
+    })
+    assert "1 turns · 1 tool calls · ~1,200 tokens" in out
+    assert "RuntimeError" in out
+
+
+def test_the_cli_labels_an_unknown_cancel():
+    out = _render_end({"agent": "generalist", "state": "cancelled", "error": None})
+    assert "◀ [generalist]  cancelled" in out
+    assert "turns" not in out
+
+
+def test_the_compat_step_callback_still_reads_zero():
+    """``build_compat_transport`` is public, and its ``SubagentProgress``
+    carried 0 for these counters. A missing counter keeps it there."""
+    from agentao.embedding.compat import build_compat_transport
+    from agentao.transport import AgentEvent, EventType
+
+    got = []
+    transport = build_compat_transport(step_callback=lambda n, p: got.append((n, p)))
+    transport.emit(AgentEvent(EventType.AGENT_END, {
+        "agent": "generalist", "state": "failed", "error": "KeyError",
+    }))
+    ((name, progress),) = got
+    assert name == "__agent_end__"
+    assert (progress.turns, progress.tool_calls, progress.tokens, progress.duration_ms) == (
+        0, 0, 0, 0,
+    )
+
+
+def _render_start(data):
+    from rich.console import Console
+
+    from agentao.cli.display import DisplayController
+    from agentao.transport import AgentEvent, EventType
+
+    console = Console(record=True, width=200, color_system=None)
+    DisplayController(console, lambda: None).on_event(
+        AgentEvent(EventType.AGENT_START, data),
+    )
+    return console.export_text()
+
+
+def test_the_cli_rules_keep_the_agent_name():
+    """Rich read ``[generalist]`` as a markup tag and dropped it."""
+    assert "▶ [generalist]: look" in _render_start(
+        {"agent": "generalist", "task": "look", "max_turns": 15},
+    )
+    assert "◀ [generalist]  1 turns" in _render_end(
+        {"agent": "generalist", "state": "completed", "turns": 1},
+    )
+
+
+def test_the_task_cannot_restyle_the_start_rule():
+    """The task is the model's text; markup in it is shown, not applied."""
+    out = _render_start(
+        {"agent": "generalist", "task": "[/dim][red]x[/red] [bold]y", "max_turns": 15},
+    )
+    assert "[/dim][red]x[/red] [bold]y" in out
+
+
+def test_an_unreadable_history_keeps_the_measured_duration(parent, monkeypatch):
+    """Counting the history after a raise is best effort: when it fails, the
+    counts are not known, but the run was still timed."""
+    from agentao.agents.tools._wrapper import AgentToolWrapper
+
+    wrapper = parent.tools.tools["agent_generalist"]
+    log = _watch(wrapper)
+    _chat_raising(monkeypatch, RuntimeError("boom"))
+
+    def broken(sub_agent):
+        raise ValueError("unreadable")
+
+    monkeypatch.setattr(AgentToolWrapper, "_count_history", staticmethod(broken))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        wrapper.execute(task="x")
+
+    end = _end(log)
+    assert (end.turns, end.tool_calls, end.tokens) == (None, None, None)
+    assert isinstance(end.duration_ms, int) and end.duration_ms >= 0
