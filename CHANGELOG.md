@@ -15,6 +15,7 @@ _Targeting 0.5.13. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **`AgentManager.create_agent_tools` and `AgentToolWrapper` take `event_sink`, `confirm_tool` and `ask_user` instead of six callbacks.** `confirmation_callback`, `confirmation_event_callback`, `step_callback`, `output_callback`, `tool_complete_callback` and `ask_user_callback` are removed from both, and passing one raises `TypeError`. A foreground sub-agent now gets an `SdkTransport` whose `on_event` forwards its tool rows to `event_sink` as `AgentEvent`s, and `AGENT_START` / `AGENT_END` go to `event_sink` directly; `SubagentProgress` is built only by `build_compat_transport`, whose contract is unchanged. What the CLI, ACP and replay show for a sub-agent does not change.
 - **A directory or a named pipe at `permissions.json` now stops startup with `PermissionConfigError`.** It used to read as a missing file, so every rule in it was dropped without a word, the fail-open this file's fail-closed policy exists to prevent. A missing file still loads as an empty rule list.
 - **`import agentao.agent` is about 80 ms faster.** The shell hardline floor's 23 regexes, each opening with a ~4 KB command-position prefix, were compiled at import, about half of the import's ~190 ms. They are now compiled on the first shell-command decision, so a process that runs no shell command never compiles them; one that does pays the cost once, on its first command. Which commands the floor denies is unchanged.
 

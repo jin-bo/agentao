@@ -294,7 +294,11 @@ class AgentToolWrapper(Tool):
         agent_name = self._definition["name"]
         max_turns  = self._definition.get("max_turns", 15)
 
-        # Signal sub-agent start to the CLI
+        # Signal sub-agent start to the CLI. Not guarded, unlike the end
+        # event, and on purpose: a sink that raises here fails the tool call
+        # before anything has run, as it always has. Guarding it would let
+        # the run go ahead without a start, a behaviour change of its own
+        # (``docs/design/subagent-event-bridge.md`` §5 guards only the end).
         if self._event_sink:
             self._event_sink(AgentEvent(EventType.AGENT_START, {
                 "agent": agent_name, "task": task[:80], "max_turns": max_turns,
