@@ -282,6 +282,63 @@ class TestWarnAndDegrade:
             assert _load_settings(tmp_path) == {}
         assert str(path) in caplog.text
 
+    def test_settings_json_factory_warns_on_a_non_object(self, tmp_path, caplog):
+        # The factory used to drop this silently, so ``agentao run`` and ACP
+        # ignored the file without a word while the CLI warned.
+        from agentao.embedding.factory import _load_settings
+
+        cfg = tmp_path / ".agentao"
+        cfg.mkdir()
+        path = cfg / "settings.json"
+        path.write_text('["mode", "full-access"]', encoding="utf-8")
+        with caplog.at_level(logging.WARNING):
+            assert _load_settings(tmp_path) == {}
+        assert str(path) in caplog.text
+        assert "top-level value must be a JSON object, got list" in caplog.text
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            (utf16le_bom({"mode": "full-access"}), "not valid UTF-8"),
+            (b'{"mode": ', "JSONDecodeError"),
+            (b"[1]", "top-level value must be a JSON object, got list"),
+        ],
+        ids=["utf16", "invalid-json", "not-an-object"],
+    )
+    def test_settings_json_cli_reader(self, tmp_path, monkeypatch, raw, expected):
+        from types import SimpleNamespace
+
+        from agentao.cli import app as cli_app
+
+        cfg = tmp_path / ".agentao"
+        cfg.mkdir()
+        (cfg / "settings.json").write_bytes(raw)
+        printed = []
+        monkeypatch.setattr(cli_app.console, "print", lambda *a, **k: printed.append(a))
+        cli = SimpleNamespace(_project_root=tmp_path)
+        assert cli_app.AgentaoCLI._load_settings(cli) == {}
+        assert len(printed) == 1
+        assert expected in str(printed[0][0])
+
+    def test_settings_json_cli_reader_escapes_markup(self, tmp_path, monkeypatch):
+        # An unbalanced ``[/...]`` in the path must not reach Rich as markup.
+        from types import SimpleNamespace
+
+        from rich.console import Console
+
+        from agentao.cli import app as cli_app
+        from agentao.cli._globals import custom_theme
+
+        root = tmp_path / "[/oops]"
+        (root / ".agentao").mkdir(parents=True)
+        (root / ".agentao" / "settings.json").write_text("[1]", encoding="utf-8")
+        console = Console(file=open(os.devnull, "w"), theme=custom_theme)
+        monkeypatch.setattr(cli_app, "console", console)
+        try:
+            assert cli_app.AgentaoCLI._load_settings(SimpleNamespace(_project_root=root)) == {}
+        finally:
+            console.file.close()
+
     def test_mcp_json(self, tmp_path, caplog):
         from agentao.mcp.config import load_mcp_config
 

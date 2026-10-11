@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional
 
 from .._env import safe_load_dotenv
-from .. import json_parse
 
 if TYPE_CHECKING:
     from ..agent import Agentao
@@ -36,22 +35,15 @@ logger = logging.getLogger(__name__)
 
 
 def _load_settings(wd: Path) -> Dict[str, Any]:
+    # The same reader as the CLI and replay, so a file whose top level is not
+    # an object warns here too instead of being dropped silently.
+    from ..replay.config import _read_settings
+
     path = wd / ".agentao" / "settings.json"
-    if not path.is_file():
-        return {}
-    try:
-        data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
-    except UnicodeDecodeError as exc:
-        logger.warning(
-            "Ignoring %s: not valid UTF-8 (%s at byte %d). Re-save it as "
-            "UTF-8 — PowerShell 5.1 writes UTF-16LE from `>` and `Out-File`.",
-            path, exc.reason, exc.start,
-        )
-        return {}
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("Ignoring %s: %s: %s", path, type(exc).__name__, exc)
-        return {}
-    return data if isinstance(data, dict) else {}
+    data, problem = _read_settings(path)
+    if problem is not None:
+        logger.warning("Ignoring %s: %s", path, problem)
+    return data
 
 
 def _builtin_agents_enabled(settings: Dict[str, Any]) -> bool:
