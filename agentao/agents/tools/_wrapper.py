@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -296,13 +297,15 @@ class AgentToolWrapper(Tool):
         agent_name = self._definition["name"]
         max_turns  = self._definition.get("max_turns", 15)
 
+        # The fields every progress event of this run shares.
+        progress = partial(
+            SubagentProgress, agent_name=agent_name,
+            task=task[:80], max_turns=max_turns,
+        )
+
         # Signal sub-agent start to the CLI
         if self._step_callback:
-            self._step_callback(
-                self._AGENT_START,
-                SubagentProgress(agent_name=agent_name, state="running",
-                                 task=task[:80], max_turns=max_turns),
-            )
+            self._step_callback(self._AGENT_START, progress(state="running"))
 
         # ``task`` is user-supplied free-form text (and may carry the
         # parent's tool output, secrets, or sensitive instructions);
@@ -333,20 +336,13 @@ class AgentToolWrapper(Tool):
             # Neither raising path has ``stats``, so the end event's counters
             # keep their zero defaults. A cancel leaves ``error`` empty, as on
             # the ordinary path below.
-            self._send_agent_end(SubagentProgress(
-                agent_name=agent_name, state="cancelled",
-                task=task[:80], max_turns=max_turns,
-            ))
+            self._send_agent_end(progress(state="cancelled"))
             self._terminal_subagent_event(
                 subagent_ctx, "cancelled", task_summary, usage=settled.get("usage"),
             )
             raise
         except Exception as exc:
-            self._send_agent_end(SubagentProgress(
-                agent_name=agent_name, state="failed",
-                task=task[:80], max_turns=max_turns,
-                error=type(exc).__name__,
-            ))
+            self._send_agent_end(progress(state="failed", error=type(exc).__name__))
             self._terminal_subagent_event(
                 subagent_ctx, "failed", task_summary, error_type=type(exc).__name__,
                 usage=settled.get("usage"),
@@ -357,11 +353,8 @@ class AgentToolWrapper(Tool):
         state = _terminal_state(incomplete)
 
         # Signal sub-agent end to the CLI
-        self._send_agent_end(SubagentProgress(
-            agent_name=agent_name,
+        self._send_agent_end(progress(
             state=state,
-            task=task[:80],
-            max_turns=max_turns,
             turns=stats["turns"],
             tool_calls=stats["tool_calls"],
             tokens=stats["tokens"],

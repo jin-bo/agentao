@@ -2,7 +2,7 @@
 
 ``execute()`` sent ``__agent_start__`` and then, on a raising run, only the
 public terminal event: the CLI and ACP never heard that the child ended, and
-the start had no matching end (``docs/design/subagent-event-bridge.md`` §5).
+the start had no matching end.
 
 These tests drive the real wrapper against a real parent. They record the
 progress callback and the public event stream into one list, so the order of
