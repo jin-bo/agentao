@@ -339,6 +339,39 @@ class TestWarnAndDegrade:
         finally:
             console.file.close()
 
+    def test_settings_json_cli_reader_escapes_the_problem(self, tmp_path, monkeypatch):
+        # The path test above is a no-op on Windows (``\\`` separators, and
+        # ``\\[`` is a Rich escape), so pin the escape of the problem text too.
+        from types import SimpleNamespace
+
+        from rich.console import Console
+
+        from agentao.cli import app as cli_app
+        from agentao.cli._globals import custom_theme
+        from agentao.replay import config as replay_config
+
+        monkeypatch.setattr(
+            replay_config, "_read_settings", lambda path: ({}, "bad [/oops] value")
+        )
+        console = Console(file=open(os.devnull, "w"), theme=custom_theme)
+        monkeypatch.setattr(cli_app, "console", console)
+        try:
+            assert cli_app.AgentaoCLI._load_settings(SimpleNamespace(_project_root=tmp_path)) == {}
+        finally:
+            console.file.close()
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs a FIFO")
+    def test_settings_json_fifo_is_refused_not_read(self, tmp_path, caplog):
+        # ``read_text`` on a FIFO blocks until a writer appears: startup hung.
+        from agentao.embedding.factory import _load_settings
+
+        cfg = tmp_path / ".agentao"
+        cfg.mkdir()
+        os.mkfifo(cfg / "settings.json")
+        with caplog.at_level(logging.WARNING):
+            assert _load_settings(tmp_path) == {}
+        assert "not a regular file" in caplog.text
+
     def test_mcp_json(self, tmp_path, caplog):
         from agentao.mcp.config import load_mcp_config
 

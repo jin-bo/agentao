@@ -175,6 +175,10 @@ def _read_settings(path: Path) -> Tuple[Dict[str, Any], Optional[str]]:
     """``(data, problem)``: the parsed object, or ``({}, why it is unusable)``."""
     if not path.exists():
         return {}, None
+    if not path.is_file():
+        # A FIFO here would block ``read_text`` forever, at startup of every
+        # entry path. Still a problem, not ``{}``: the writers must refuse.
+        return {}, "not a regular file"
     try:
         data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
     except UnicodeDecodeError as exc:
