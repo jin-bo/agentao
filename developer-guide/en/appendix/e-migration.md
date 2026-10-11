@@ -160,6 +160,8 @@ Notes:
 
 `working_directory=` is now a required keyword argument. The `DeprecationWarning` emitted by 0.2.16 when the argument was omitted has been replaced by a `TypeError` raised at construction time — there is no longer a `Path.cwd()` lazy fallback.
 
+The full upgrade path from 0.2.15 through 0.3.3, including the `MemoryManager` store change and the 0.3.1 host contract, is in [`docs/migration/0.2.15-to-0.3.3.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md).
+
 ### Recipe 1 — Pass an explicit `Path` (simplest)
 
 ```python

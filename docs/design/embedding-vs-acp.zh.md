@@ -9,7 +9,7 @@ English: [embedding-vs-acp.md](embedding-vs-acp.md).
 
 | 使用面 | 含义 | 入口 | 参考 |
 |---|---|---|---|
-| **In-process embedding** | 把 Agentao 当 Python 库放进自己的进程。用 `Agentao.arun()` 驱动一轮；用 `agent.events()` 观测；用权限引擎做拦截。 | `from agentao import Agentao` | [EMBEDDING.md](../guides/embedding.md)、[api/host.md](../reference/host-api.md) |
+| **In-process embedding** | 把 Agentao 当 Python 库放进自己的进程。用 `Agentao.arun()` 驱动一轮；用 `agent.events()` 观测；用权限引擎做拦截。 | `from agentao import Agentao` | [开发者指南 2.2](../../developer-guide/zh/part-2/2-constructor-reference.md)、[api/host.md](../reference/host-api.md) |
 | **ACP server** | 把 Agentao 当独立子进程运行，通过 stdio 收发 JSON-RPC 2.0。外部客户端（Zed、Cursor、IDE 插件）来启动并驱动它。 | `agentao --acp --stdio` | [开发者指南 3.2](../../developer-guide/zh/part-3/2-agentao-as-server.md) |
 | **ACP client** | 在自己的 runtime 里嵌入 Agentao，**同时**让它再去调用其它 ACP agent（Claude Code、Codex 等）作为某些角色的后端。 | `from agentao.acp_client import ACPManager` | [开发者指南 3.4](../../developer-guide/zh/part-3/4-reverse-acp-call.md) |
 | **ACP schema surface** | ACP wire payload 的版本化 Pydantic 类型，加上签入的 `host.acp.v1.json` 快照。**只在**你的 in-process 宿主自己也对外讲 ACP 时才用得到。 | `from agentao.host import export_host_acp_json_schema` | [api/host.md §Schema snapshot policy](../reference/host-api.md#schema-snapshot-policy) |
@@ -55,7 +55,7 @@ English: [embedding-vs-acp.md](embedding-vs-acp.md).
 
 ## 另请参阅
 
-- [docs/guides/embedding.md](../guides/embedding.md)——in-process embedding 教程。
+- [开发者指南第 2 部分](../../developer-guide/zh/part-2/2-constructor-reference.md)——in-process embedding 教程。
 - [docs/reference/host-api.md](../reference/host-api.md)——公共 host API 参考。
 - [docs/design/embedded-host-contract.md](embedded-host-contract.md)——host contract 设计记录。
 - [开发者指南 3.2](../../developer-guide/zh/part-3/2-agentao-as-server.md)——ACP 服务端参考。

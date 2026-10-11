@@ -21,7 +21,7 @@ The core class — see [Part 2.2](/en/part-2/2-constructor-reference) for the fu
 
 ### Constructor
 
-See [Part 2.2](/en/part-2/2-constructor-reference) for the full parameter table. **Since 0.3.0**, `Agentao()` without `working_directory=` raises `TypeError` from Python signature dispatch — the soft-deprecation cycle ended. End-to-end embedding patterns live in [`docs/guides/embedding.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md).
+See [Part 2.2](/en/part-2/2-constructor-reference) for the full parameter table. **Since 0.3.0**, `Agentao()` without `working_directory=` raises `TypeError` from Python signature dispatch — the soft-deprecation cycle ended. Upgrading from 0.2.15: [`docs/migration/0.2.15-to-0.3.3.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md).
 
 ```python
 Agentao(
@@ -75,7 +75,7 @@ Opt-in subsystem semantics (defaults are `None` since 0.2.16):
 
 - `replay_config=None` — the `replay` block of `<wd>/.agentao/settings.json` is not read at construction time and no `ReplayManager` is attached: `agent.replay_manager` is `None` until `start_replay()` / `reload_replay_config()` creates one.
 - `sandbox_policy=None` — `ToolRunner` runs shell commands without the macOS `sandbox-exec` wrapper.
-- `bg_store=None` — `check_background_agent` / `cancel_background_agent` are not registered, the chat loop's background-notification drain short-circuits, and the `run_in_background` field is **schema-level removed** from sub-agent tool definitions (the LLM cannot call a disabled feature). `/agent bg|dashboard|cancel|delete|logs|result` CLI subcommands short-circuit with a clear warning. Pass it for a one-shot process, as `agentao run` does (0.5.6): background workers are daemon threads and die with it.
+- `bg_store=None` — `check_background_agent` / `cancel_background_agent` are not registered, the chat loop's background-notification drain short-circuits, and the `run_in_background` field is **schema-level removed** from sub-agent tool definitions (the LLM cannot call a disabled feature). `/agent bg|dashboard|cancel|delete|logs|result` CLI subcommands short-circuit with a clear warning. Leave it `None` in a one-shot process, as `agentao run` does (0.5.6): background workers are daemon threads and die with it.
 - With a store, a finished background sub-agent's update reaches the parent only on its **next** turn, and the runtime never starts that turn itself. Either continue from the terminal `SubagentLifecycleEvent` on your own turn driver (recipe in `docs/reference/host-api.md`, *Continuing after a background sub-agent*), or let the model wait in-turn with `check_background_agent(agent_id, wait_seconds=…)` (0.5.6, at most 1800 s; cancelling the turn ends the wait, not the child).
 - A store runs at most `max_concurrent` background sub-agents at once (keyword-only, default `6`; `None` for no cap; 0.5.7). A launch past it is refused, not queued: `register()` raises `BackgroundCapacityError` before anything is recorded, and the tool call fails with text telling the model to wait for one, cancel one, or run in the foreground. Only the store's own pending/running tasks count — not another process's records in the same `background_tasks.json`.
 
@@ -91,14 +91,14 @@ def build_from_environment(
     ...
 ```
 
-CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars, `~/.agentao/permissions.json` (project-scope file is intentionally not loaded — see [5.4](/en/part-5/4-permissions)), `<wd>/.agentao/mcp.json` + `~/.agentao/mcp.json` (user wins on name collision; project is add-only), memory roots; constructs `Agentao` with the discovered values. **Caller-supplied `**overrides` win** over auto-discovered ones. Raises `ValueError` on the same mutual-exclusion conflicts as the constructor (if `llm_client` is in `overrides`, the factory's discovered `api_key` / `base_url` / `model` are dropped before forwarding).
+CLI-style auto-discovery factory: reads `.env`, `LLM_PROVIDER`-prefixed env vars, `<wd>/.agentao/settings.json`, `~/.agentao/permissions.json` (project-scope file is intentionally not loaded — see [5.4](/en/part-5/4-permissions)), `<wd>/.agentao/mcp.json` + `~/.agentao/mcp.json` (user wins on name collision; project is add-only), memory roots; wires `bg_store`, `sandbox_policy` and `replay_config` (an explicit `None` disables each); constructs `Agentao` with the discovered values. **Caller-supplied `**overrides` win** over auto-discovered ones. A `~/.agentao/permissions.json` that exists but cannot be read or validated raises `agentao.embedding.PermissionConfigError` (fail closed). Step-by-step order: [2.2 Factory path](/en/part-2/2-constructor-reference#factory-path-build-from-environment). Raises `ValueError` on the same mutual-exclusion conflicts as the constructor (if `llm_client` is in `overrides`, the factory's discovered `api_key` / `base_url` / `model` are dropped before forwarding).
 
 ### Methods
 
 | Method | Signature | Purpose |
 |--------|-----------|---------|
 | `chat` | `chat(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | Run one turn. Returns final assistant text. `images` (0.4.8+): inline image attachments — see [Image input and vision degradation](#image-input-and-vision-degradation). |
-| `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | Async surface — bridges `chat()` through `loop.run_in_executor`. Same semantics for cancellation, replay, max_iterations, images. |
+| `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | Async surface — runs `chat()` on Agentao's own `agentao-arun-*` thread pool, never the loop's default executor ([2.3](/en/part-2/3-lifecycle#async-hosts-arun-and-the-turn-pool)). Same semantics for cancellation, replay, max_iterations, images. |
 | `astream` | `astream(user_message: str, *, max_iterations: int = 100, images: list[dict] | None = None, cancellation_token: CancellationToken | None = None) -> AsyncGenerator[TextDelta | TurnOutcome, None]` | Run one turn and stream it: yields `TextDelta` items, then the turn's `TurnOutcome` as the last item. Deltas are for display; the answer is `TurnOutcome.text`, checked with `.is_answer`. Wrap in `contextlib.aclosing(...)` — closing it (or cancelling the consumer) cancels the turn. Subscribes to the agent's transport, never replaces it. See [4.7](/en/part-4/7-host-contract#streaming-text-agent-astream). |
 | `clear_history` | `clear_history() -> None` | Reset `self.messages`, active skills, todos and token counters; does not touch memory DB. Background agents keep running, but their completion notifications no longer reach the history (read them via `check_background_agent`). |
 | `close` | `close() -> None` | Release the MCP subprocesses and DB handles the agent opened itself (an injected `mcp_manager=` / `memory_manager=` is yours to release). Safe to call more than once. Call in `finally:`, or use `with`. |
@@ -122,6 +122,8 @@ end of the user message:
 ```text
 <attachment uri="share/screenshot.png" mimetype="image/png"/>
 ```
+
+Each item needs a non-empty string `data` (base64) and `mimeType`, or the turn raises `ValueError` before it starts. An optional `_source` key (origin path or URL) is never sent as image content; it names the image in the tag above and in log labels. **The engine checks no size, count or type.** The CLI and ACP enforce `agentao.media_limits` (20 MB per image, 16 images per turn, the bytes sniffed with `sniff_image_mime`). A host that accepts untrusted images enforces its own caps before calling `chat()`.
 
 `uri` is the attachment's source path or URL when known (e.g. staged via the
 CLI `/image` command); wire images that carry no source degrade to

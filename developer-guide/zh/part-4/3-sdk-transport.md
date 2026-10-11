@@ -33,6 +33,8 @@ class SdkTransport:
 | `ask_user` | 返回固定字符串 `"[ask_user: not available in non-interactive mode]"` |
 | `on_max_iterations` | `{"action": "stop"}` |
 
+所以没有 `confirm_tool` 的 transport 会把每次询问都变成放行。此时（不论有没有权限引擎）还能拦住调用的东西，列在 [5.4](/zh/part-5/4-permissions#permissionmode-四种预设)。应当拒绝的无界面宿主传 `confirm_tool=lambda *_: False`。
+
 ## 最简用法
 
 ```python

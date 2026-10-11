@@ -48,6 +48,19 @@ This chapter focuses on **events** and **policy snapshot** — the parts most re
 `export_host_acp_json_schema()` exposes the Pydantic-typed wire schema for hosts that drive Agentao **out-of-process** (IDE plugin, Node/Go/Rust frontend, microservice) over the [ACP stdio protocol](/en/part-3/1-acp-tour). It isn't a consumption API like the three above — it's a contract artifact for protocol implementers. **In-process embedders can ignore it; out-of-process embedders should reference the snapshot rather than reverse-engineering payloads from runtime traces.**
 :::
 
+### Which names you need
+
+`agentao.host` exports more names than one integration meets. All of them are equally stable. The tiers say when you need each one. The full list with one line per name is [Appendix A.10](/en/appendix/a-api-reference#public-exports).
+
+| You are… | Names |
+|----------|-------|
+| Observing a running agent | `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `ActivePermissions`, and `SubagentUsage` (the type of a terminal sub-agent event's `usage`) |
+| Streaming text or reading how a turn ended | `TextDelta`, `TurnOutcome` ([below](#streaming-text-agent-astream)) |
+| Cancelling a turn from elsewhere | `CancellationToken` ([2.6](/en/part-2/6-cancellation-timeouts)) |
+| Writing a host tool | `Tool` (sync) or `AsyncToolBase` (async) to subclass. `RegistrableTool` only to annotate, for example a list passed as `extra_tools=` ([5.1](/en/part-5/1-custom-tools)) |
+| Attaching a second `events()` iterator | `StreamSubscribeError` ([4.7.5](#_4-7-5-end-to-end-tenant-scoped-audit-pipeline)) |
+| Reference only | `EventStream` (the runtime keeps its stream private; reach it through `agent.events()` or `agent.add_host_event_observer()`), `RFC3339UTCString`, `export_host_event_json_schema`, `export_host_acp_json_schema` ([4.7.7](#_4-7-7-forward-compatibility-guarantees)) |
+
 ## 4.7.3 The three event types
 
 Three orthogonal lifecycle facts. Each is a Pydantic model carrying just enough context for an audit row, with a **discriminator** field (`event_type`) so you can `isinstance`-dispatch.
@@ -221,6 +234,8 @@ async def handle_request(tenant_id: str, message: str, db):
 - Same-session ordering is guaranteed by the contract — your audit row order matches event order.
 - `PermissionDecisionEvent` precedes the matching `ToolLifecycleEvent(phase="started")` (same `tool_call_id`) so downstream views can stitch them.
 - Dropping a slow consumer doesn't drop events: backpressure is host-pulled via a bounded queue. Events block the producer rather than silently get dropped.
+- **Start the iterator before the turn.** There is no replay: events emitted before the first subscription are dropped, and a subscriber that starts mid-turn gets only later events. Cancelling the iterator releases its queue and subscription.
+- One async iterator per `session_id` filter. A second one on the same filter raises `StreamSubscribeError` on its first iteration while the first is open. For several consumers, use `agent.add_host_event_observer()` ([rule](https://github.com/jin-bo/agentao/blob/main/docs/reference/host-api.md#event-subscription-semantics)).
 - When a later Agentao release adds a new internal event variant, your audit pipeline doesn't notice — that event isn't projected to harness, and any new `HostEvent` variant the projection *does* gain only adds optional fields.
 
 ## 4.7.6 `agent.active_permissions()` — policy snapshots
@@ -241,6 +256,10 @@ snap.loaded_sources   # list[str] — provenance labels
 - `user:<path>` — user-scoped JSON from `~/.agentao/permissions.json`
 - `injected:<name>` — host-supplied policy via `add_loaded_source()`
 - `default:no-engine` — fallback when no engine is configured
+
+`default:no-engine` means the agent has no engine. The snapshot then reports `mode="workspace-write"` with empty `rules`, but **no rule is evaluated**, not even that preset's, and every ask goes to the transport ([5.4](/en/part-5/4-permissions)).
+
+The snapshot is cached. `set_mode()` and `add_loaded_source()` with a new label invalidate the cache. Mutating `engine.rules` in place does not ([5.4](/en/part-5/4-permissions#reading-the-active-policy-from-the-host)).
 
 > **No `project:<path>` label.** Project-scope `<wd>/.agentao/permissions.json` is intentionally **not** loaded — see [5.4](/en/part-5/4-permissions). Hosts that need project-aware policy should inject it via `add_loaded_source("injected:<name>")` plus their own rule layer.
 

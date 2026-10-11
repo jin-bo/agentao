@@ -48,6 +48,19 @@
 `export_host_acp_json_schema()` 暴露的是 Pydantic 化的 wire schema，给那些通过 [ACP stdio 协议](/zh/part-3/1-acp-tour) **进程外**驱动 Agentao 的宿主用（IDE 插件、Node/Go/Rust 前端、微服务）。它不像上面三个那样是"消费 API"——而是给协议实现方的合约产物。**进程内嵌入可以忽略；进程外嵌入应该参考这份 snapshot，而不是从运行时 trace 里反推 payload 形状。**
 :::
 
+### 你需要哪些名字
+
+`agentao.host` 导出的名字比一次集成会用到的多。它们稳定程度相同，分层只说明什么时候用到哪个。每个名字一行说明的完整清单见 [附录 A.10](/zh/appendix/a-api-reference#公共导出)。
+
+| 你在… | 名字 |
+|-------|------|
+| 观察运行中的 agent | `HostEvent`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`PermissionDecisionEvent`、`ActivePermissions`，以及 `SubagentUsage`（子代理终态事件 `usage` 的类型） |
+| 流式输出文本，或读取一轮怎么结束的 | `TextDelta`、`TurnOutcome`（[下文](#streaming-text-agent-astream)） |
+| 从别处取消一轮 | `CancellationToken`（[2.6](/zh/part-2/6-cancellation-timeouts)） |
+| 写宿主工具 | 继承 `Tool`（同步）或 `AsyncToolBase`（异步）。`RegistrableTool` 只用于类型标注，例如传给 `extra_tools=` 的列表（[5.1](/zh/part-5/1-custom-tools)） |
+| 挂第二个 `events()` 迭代器 | `StreamSubscribeError`（[4.7.5](#_4-7-5-端到端-租户级审计流水线)） |
+| 仅供参考 | `EventStream`（运行时把流设为私有，通过 `agent.events()` 或 `agent.add_host_event_observer()` 访问）、`RFC3339UTCString`、`export_host_event_json_schema`、`export_host_acp_json_schema`（[4.7.7](#_4-7-7-前向兼容承诺)） |
+
 ## 4.7.3 三种事件类型
 
 三个**正交**的生命周期事实。每个都是一个 Pydantic 模型，承载刚好够写一行审计的上下文，并通过 `event_type` 字段（discriminator）让你 `isinstance` 分派。
@@ -221,6 +234,8 @@ async def handle_request(tenant_id: str, message: str, db):
 - 同会话顺序由合约保证——你的审计行顺序就是事件顺序。
 - 同一个 `tool_call_id` 的 `PermissionDecisionEvent` 永远在 `ToolLifecycleEvent(phase="started")` 之前——下游可以拼起来。
 - 慢消费者不会丢事件：背压走有界队列，**生产者会被阻塞**而不是默默丢事件。
+- **先启动迭代器，再开始这一轮。** 事件不重放：第一次订阅之前发出的事件直接丢弃，中途开始的订阅者只收到之后的事件。取消迭代器会释放它的队列和订阅。
+- 每个 `session_id` 过滤条件只支持一个异步迭代器。第一个还开着时，同一过滤条件上的第二个会在首次迭代时抛 `StreamSubscribeError`。要多个消费者，用 `agent.add_host_event_observer()`（[规则](https://github.com/jin-bo/agentao/blob/main/docs/reference/host-api.md#event-subscription-semantics)）。
 - 之后某个 Agentao 版本新增了内部事件变体时，你的审计流水线根本不会注意到——那种事件不会被投影到 harness；harness 自己 *如果* 增加新变体，也只会加可选字段。
 
 ## 4.7.6 `agent.active_permissions()` —— 策略快照
@@ -241,6 +256,10 @@ snap.loaded_sources   # list[str] —— 来源标签
 - `user:<path>` —— `~/.agentao/permissions.json` 的用户级
 - `injected:<name>` —— 宿主用 `add_loaded_source()` 注入的策略
 - `default:no-engine` —— 没配引擎时的兜底
+
+`default:no-engine` 表示这个 agent 没有引擎。此时快照报告 `mode="workspace-write"`、`rules` 为空，但**不评估任何规则**，连那个预设的规则也不评估，所有询问都交给 transport（[5.4](/zh/part-5/4-permissions)）。
+
+快照有缓存。`set_mode()` 和带新标签的 `add_loaded_source()` 会使缓存失效，直接原地修改 `engine.rules` 不会（[5.4](/zh/part-5/4-permissions#从宿主侧读取当前策略)）。
 
 > **没有 `project:<path>` 标签。** 项目级 `<wd>/.agentao/permissions.json` 故意**不**加载 —— 见 [5.4](/zh/part-5/4-permissions)。需要项目感知策略的 host 应通过 `add_loaded_source("injected:<name>")` + 自己的规则层注入。
 

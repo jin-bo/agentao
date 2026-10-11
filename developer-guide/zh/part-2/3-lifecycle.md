@@ -45,7 +45,7 @@ def chat(
 
 这些情形下 `chat()` 不会抛异常，而是优雅返回——你的调用方需要识别前缀。
 
-**阻塞特性**：`chat()` 是**同步阻塞**调用，LLM 流式输出期间会持续调用 `transport.emit(...)`。如果你的宿主是 async 框架，参见 2.6 节的线程池包装。
+**阻塞特性**：`chat()` 是**同步阻塞**调用，LLM 流式输出期间会持续调用 `transport.emit(...)`。异步宿主改用 `await agent.arun(...)`（见[下文](#异步宿主-arun-与轮次线程池)）。
 
 ## `add_message()`
 
@@ -113,6 +113,24 @@ async def main() -> None:
 
 关闭前先结束 agent 的轮次：两种写法都不会等待或取消正在进行的轮次。用 `async with` 包住 `await agent.arun(...)` 时，即使任务被取消（客户端断开、超时）也满足这一点：被取消的 `arun()` 会取消本轮，并最多等 5 秒让它停下，然后才退出代码块。超过这个时间仍在运行的轮次（例如不检查取消令牌的阻塞工具）会在运行中被关闭；第二次取消打断了这段等待时也是如此。`close()` 可以重复调用，所以在块内显式调用 `close()` 也无妨。agent 的生命周期超出一个代码块时（例如按会话缓存），仍可用 `try/finally` 调用 `close()`。
 
+同一进程里有多个 agent 时，`agentao.log` 的记录写到最近构造、且仍未关闭的那个 agent。关掉它，日志会交还给下一个。见 [6.6](/zh/part-6/6-observability#同一进程里的多个-agent)。
+
+## 异步宿主：`arun()` 与轮次线程池
+
+`arun()` 的参数与 `chat()` 相同（`user_message`、`max_iterations`、`cancellation_token`、`images`），跑的是同一轮，但不阻塞事件循环：
+
+```python
+async def handle_request(req):
+    async with build_from_environment(working_directory=Path(req.workdir)) as agent:
+        return await agent.arun(req.prompt)
+```
+
+- **轮次跑在 Agentao 自己的线程池上**，不在事件循环的默认执行器上。线程名为 `agentao-arun-*`。池大小是 `min(32, os.cpu_count() + 4)`，和 asyncio 自己会选的一样。进程内所有 agent 共用这一个池，首次调用 `arun()` 时才创建，所以只用同步接口的宿主不会为它付出代价。
+- **为什么不用默认执行器。** 一轮会占住它的工作线程直到结束。中途它可能要等一个跑回你事件循环上的异步工具。如果轮次占满了默认执行器，循环上其他需要工作线程的东西就会饿死，其中包括 `loop.getaddrinfo`，而每个 `httpx.AsyncClient` 按主机名建连都要用它。这样一来，轮次等待的工作永远开始不了（[`_get_arun_pool`](https://github.com/jin-bo/agentao/blob/main/agentao/agent.py)）。
+- **容量。** `loop.set_default_executor(...)` 改变不了同时运行的轮次数。要限制并发轮次，在 `arun()` 外面套你自己的信号量。
+- **取消。** 取消正在 await 的任务（超时、客户端断开）会通过令牌取消本轮，`arun()` 最多等 5 秒让本轮收尾。也可以传入 `CancellationToken`，从别处取消（[2.6](./6-cancellation-timeouts)）。
+- **不要用 `asyncio.to_thread` 包 `chat()`。** 那会把轮次放到默认执行器上，正是上面说的问题。
+
 ## 运行时切换 LLM
 
 两个方法可以在会话中途更换模型或凭据：
@@ -164,17 +182,18 @@ agent.skill_manager.active_skills  # dict
 | 宿主场景 | 推荐模式 |
 |---------|---------|
 | 同步 Web（Flask、WSGI） | 请求进来 → 构造 / 从池拿 agent → `chat()` → 还回 / close |
-| 异步 Web（FastAPI、asyncio） | `chat()` 包 `asyncio.to_thread(agent.chat, msg)` |
+| 异步 Web（FastAPI、asyncio） | `await agent.arun(msg)` |
 | 后台批处理 | 每个 job 一个 agent，顺序跑 |
 | 多租户 SaaS | 按 tenant 缓存，TTL 过期后 `close()` |
 
 ## 完整生命周期示例（FastAPI + 异步 + 会话池）
 
 ```python
-from asyncio import to_thread, Lock
+from asyncio import Lock
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from agentao import Agentao
+from agentao.embedding import build_from_environment
 from agentao.transport import SdkTransport
 
 app = FastAPI()
@@ -184,7 +203,7 @@ _sessions: dict = {}
 
 async def get_or_create(session_id: str, workdir: Path) -> tuple[Agentao, Lock]:
     if session_id not in _sessions:
-        agent = Agentao(
+        agent = build_from_environment(   # 凭据来自环境变量 / .env
             working_directory=workdir,
             transport=SdkTransport(),  # 简单起见不订阅事件
         )
@@ -199,7 +218,7 @@ async def chat_endpoint(session_id: str, message: str):
         raise HTTPException(500, str(e))
 
     async with lock:               # 同一会话串行，避免并发 chat()
-        reply = await to_thread(agent.chat, message)
+        reply = await agent.arun(message)
     return {"reply": reply}
 
 @app.delete("/session/{session_id}")
@@ -209,7 +228,7 @@ async def end_session(session_id: str):
         agent, lock = entry
         try:
             async with lock:       # 等持锁的请求结束（被取消的请求会在
-                pass               # chat() 仍在运行时就释放锁）
+                pass               # 本轮仍在运行时就释放锁）
         finally:                   # 本请求在等待时被取消也要关闭：
             await agent.aclose()   # 条目已经弹出
     return {"ok": True}
@@ -218,7 +237,7 @@ async def end_session(session_id: str):
 关键要点：
 
 - `Lock` 保证同一会话**串行**（不能并发 `chat()` 同一实例）
-- `asyncio.to_thread` 让阻塞的 `chat()` 不堵事件循环
+- `arun()` 让本轮跑在 Agentao 自己的线程池上，不堵事件循环
 - 显式 `DELETE` 端点触发 `close()` 释放 MCP
 
 生产部署下你还需要加 TTL 淘汰、内存上限、崩溃重启等——见 [第 7 部分](/zh/part-7/)。
@@ -226,7 +245,7 @@ async def end_session(session_id: str):
 ## TL;DR
 
 - **一个 agent = 一个有状态会话**。不要每轮重建——会丢上下文。
-- `chat()` 是**阻塞且非线程安全**的。同会话加锁 + 异步宿主用 `asyncio.to_thread`。
+- `chat()` 是**阻塞且非线程安全**的。异步宿主用同会话锁 + `await agent.arun(...)`，它跑在 Agentao 自己的线程池上，不占事件循环的默认执行器。
 - 永远要关闭 agent：用 `with` / `async with`，或调用 `close()` / `await aclose()`——否则会泄露 MCP 子进程和 DB 句柄。
 - `clear_history()` 只清 `messages`；**记忆 DB 故意保留**。
 - 用 `set_provider()` / `set_model()` 运行时切换模型；历史不变。

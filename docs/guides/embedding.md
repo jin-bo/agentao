@@ -1,861 +1,107 @@
 # Embedding Agentao
 
-Agentao runs in three deployment shapes: as a CLI binary, as an
-`session/*` ACP agent, and as a library inside another host
-application. This document is the reference for the third —
-**embedding the runtime in your own process**.
-
-It assumes you have read the top-level [`README.md`](../../README.md) and
-know what skills, transports, and permission engines do. The goal here
-is to show how to wire those pieces from a host without reaching into
-Agentao internals.
-
-> Audience: developers integrating Agentao into a webapp, batch job,
-> IDE plugin, evaluation harness, sandbox runner, or research notebook.
-
-> **Are you a coding agent** (Claude Code, Codex, …) tasked with
-> embedding Agentao into another project? Start with the distilled
-> playbook in [`EMBED_FOR_AGENTS.md`](embed-for-agents.md), then return
-> here for the details it links to.
-
-> **Is in-process embedding what you want?** If your host is **not** a
-> Python process (an editor, IDE extension, non-Python sandbox runner),
-> see [`ACP.md`](acp.md) for the stdio ACP server instead. If you want
-> Agentao to drive *other* ACP agents (Claude Code, Codex, …) as
-> backends, see [`features/acp-client.md`](acp-client.md). For
-> a side-by-side comparison of all four surfaces, see
-> [`architecture/embedding-vs-acp.md`](../design/embedding-vs-acp.md).
-
----
+This guide moved into the developer guide: **[Part 2 · Embedding Agentao](https://agentao.cn/en/part-2/)** ([中文](https://agentao.cn/zh/part-2/)), chiefly [2.2 · Constructor Reference](https://agentao.cn/en/part-2/2-constructor-reference) and [4.7 · Host Contract](https://agentao.cn/en/part-4/7-host-contract). The 0.2.15 → 0.3.3 upgrade notes are in [docs/migration/0.2.15-to-0.3.3.md](../migration/0.2.15-to-0.3.3.md). Coding agents embedding Agentao into another project start with [embed-for-agents.md](embed-for-agents.md). The headings below are kept so that old links still land on the right section.
 
 ## TL;DR
 
-```python
-# 1. Drop-in: read .env / cwd / .agentao/* the way the CLI does.
-from pathlib import Path
-from agentao.embedding import build_from_environment
-
-with build_from_environment(working_directory=Path("/srv/myapp/run-1")) as agent:
-    reply = agent.chat("Summarize today's logs.")
-```
-
-```python
-# 2. Pure-injection: zero env / disk / cwd reads. Host owns every input.
-from pathlib import Path
-from agentao import Agentao
-from agentao.llm import LLMClient
-from agentao.transport import NullTransport
-
-with Agentao(
-    working_directory=Path("/srv/myapp/run-1"),
-    llm_client=LLMClient(api_key=..., base_url=..., model=...),
-    transport=NullTransport(),
-) as agent:
-    reply = agent.chat("Summarize today's logs.")
-```
-
-`with` calls `agent.close()` on the way out; `close()` is still there for
-an agent that outlives one block.
-
-The first form is what the CLI and ACP runtimes use under the hood and
-matches existing user expectations (`.env`, `~/.agentao/`,
-`<wd>/.agentao/`). The second form is what hosts that ship containers,
-sandboxes, multi-tenant deployments, or strict audit trails should
-prefer — every byte of context is explicit.
-
-Neither form asks anyone anything. Both use `NullTransport`, which
-**approves every tool call the permission layer would ask about**, and the
-second form has no permission engine at all. See [§2 *Permissions and the
-transport*](#permissions-and-the-transport) before shipping either.
-
----
+Moved to [English](https://agentao.cn/en/part-2/2-constructor-reference#two-construction-paths) · [中文](https://agentao.cn/zh/part-2/2-constructor-reference#%E4%B8%A4%E7%A7%8D%E6%9E%84%E9%80%A0%E8%B7%AF%E5%BE%84)
 
 ## When to use which form
 
-| Situation | Use |
-|---|---|
-| Drop-in replacement for the CLI in a notebook / script | `build_from_environment` |
-| Multi-tenant webapp with one Agentao per request | Pure injection |
-| Containerized sandbox, no `.env` shipping | Pure injection |
-| IDE plugin where the host already manages state | Pure injection |
-| Test harness that wants reproducibility | Pure injection |
-| One-off scripts that read your local config | `build_from_environment` |
-
-Mixing is fine: you can use `build_from_environment(...)` and override
-specific subsystems via keyword. Anything not overridden falls back to
-the env-discovered default.
-
-```python
-agent = build_from_environment(
-    working_directory=Path("/srv/run-1"),
-    permission_engine=my_custom_engine,    # override
-    mcp_registry=InMemoryMCPRegistry({...}),  # override
-    # bg_store, sandbox_policy, replay_config, llm_client, ... all overridable
-)
-```
-
----
+Moved to [English](https://agentao.cn/en/part-2/2-constructor-reference#two-construction-paths) · [中文](https://agentao.cn/zh/part-2/2-constructor-reference#%E4%B8%A4%E7%A7%8D%E6%9E%84%E9%80%A0%E8%B7%AF%E5%BE%84)
 
 ## 1. Minimal embedded construction (factory path)
 
-`build_from_environment` is the single entry point that touches
-`os.environ`, `Path.cwd()`, `Path.home()`, and `<wd>/.agentao/*` files.
-Everything else in `agentao.*` constructs from explicit arguments only.
-
-```python
-from pathlib import Path
-from agentao.embedding import build_from_environment
-
-agent = build_from_environment(
-    working_directory=Path("/srv/myapp"),
-    # All overrides are optional and forwarded to Agentao(...).
-)
-```
-
-What the factory does, in order:
-
-1. Resolves `working_directory` to an absolute path (or
-   `Path.cwd()` if you omit it — discouraged for embedded use).
-2. Loads `<wd>/.env` via `dotenv` if present, else `.env` in the
-   process cwd as a fallback.
-3. Discovers LLM credentials from `LLM_PROVIDER` (default `OPENAI`)
-   and the provider-prefixed env vars
-   (`{PROVIDER}_API_KEY`, `{PROVIDER}_BASE_URL`,
-   `{PROVIDER}_MODEL`, plus `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`).
-4. Builds `PermissionEngine(project_root=wd, user_root=user_root())`.
-   Raises `PermissionConfigError` if `~/.agentao/permissions.json`
-   exists but cannot be honored — this one config file fails closed,
-   because silently dropping a `deny` rule turns it into an *ask*
-   (or, for an `mcp_*` tool, into no prompt at all).
-5. Builds `MemoryManager` with `SQLiteMemoryStore.open_or_memory(...)`
-   for the project DB and `SQLiteMemoryStore.open(...)` for the user
-   DB (disabled with a warning if either path is unwritable).
-6. Builds `FileBackedMCPRegistry(project_root=wd, user_root=user_root())`.
-7. Wires opt-in defaults (`BackgroundTaskStore`, `SandboxPolicy`,
-   `replay_config`, read from the `replay` block of
-   `.agentao/settings.json`). Pass `None` to disable any of them.
-8. Reads `<wd>/.agentao/settings.json` for factory-level toggles such
-   as `agents.enable_builtin`.
-9. Constructs `Agentao(...)` with all of the above as explicit kwargs.
-
-The CLI and ACP `session/new` both go through this factory; their
-behaviour is unchanged after embedding.
-
----
+Moved to [English](https://agentao.cn/en/part-2/2-constructor-reference#factory-path-build-from-environment) · [中文](https://agentao.cn/zh/part-2/2-constructor-reference#%E5%B7%A5%E5%8E%82%E8%B7%AF%E5%BE%84-build-from-environment)
 
 ## 2. Pure-injection construction
 
-For hosts that need deterministic, side-effect-free construction
-(multi-tenant webapps, container-pinned runtimes, strict-mode tests),
-pass everything explicitly. After Issue #16 / #17, the constructor
-reads zero environment state.
-
-```python
-from pathlib import Path
-from agentao import Agentao
-from agentao.llm import LLMClient
-from agentao.permissions import PermissionEngine
-from agentao.memory import MemoryManager, SQLiteMemoryStore
-from agentao.mcp import InMemoryMCPRegistry
-from agentao.transport import NullTransport
-
-workdir = Path("/srv/myapp/run-1")
-
-agent = Agentao(
-    working_directory=workdir,                      # required since 0.3.0
-    llm_client=LLMClient(
-        api_key="sk-...",
-        base_url="https://api.openai.com/v1",
-        model="gpt-5.4",
-    ),
-    permission_engine=PermissionEngine(project_root=workdir),
-    memory_manager=MemoryManager(
-        project_store=SQLiteMemoryStore.open_or_memory(
-            workdir / ".agentao" / "memory.db"
-        ),
-    ),
-    mcp_registry=InMemoryMCPRegistry({
-        "my-tool-server": {
-            "command": "/usr/local/bin/my-mcp",
-            "args": ["--port", "0"],
-        },
-    }),
-    transport=NullTransport(),
-)
-```
-
-After construction, `agent.chat(prompt)` runs the same way it does
-under the CLI — your only ongoing responsibility is `agent.close()`
-when the host is done with the session.
+Moved to [English](https://agentao.cn/en/part-2/2-constructor-reference#tier-1-%C2%B7-the-smallest-call-that-works) · [中文](https://agentao.cn/zh/part-2/2-constructor-reference#%E7%AC%AC-1-%E6%A1%A3-%C2%B7-%E8%83%BD%E8%B7%91%E8%B5%B7%E6%9D%A5%E7%9A%84%E6%9C%80%E5%B0%8F%E8%B0%83%E7%94%A8)
 
 ### What you have to pass explicitly
 
-| Argument | Required? | Notes |
-|---|---|---|
-| `working_directory` | **Yes** (since 0.3.0) | Absolute or expandable path. Frozen at construction; an `os.chdir` in the host has no effect on the agent. |
-| `llm_client` *or* `api_key`+`base_url`+`model` | **Yes** | The constructor raises `ValueError` if both are missing. |
-| `permission_engine` | No | Defaults to **no engine** (`None`): no rule is evaluated, and `set_permission_mode` raises `ValueError`. Pass your own `PermissionEngine(project_root=..., rules=[...])` when you need rules. `build_from_environment` always builds one. |
-| `permission_mode` | No | `"read-only"` / `"workspace-write"` / `"full-access"` (`"plan"` is refused). Builds `PermissionEngine(project_root=working_directory, rules=[])` in that mode, reading no rule file; the agent starts in it without emitting an event. Default `None`: no engine. Passing it with `permission_engine=` raises `ValueError`. |
-| `memory_manager` | No | Defaults to a project-scoped `:memory:`-fallback store, which `close()` closes. One you pass in is yours to close. |
-| `mcp_registry` | No | Defaults to no MCP servers (the file-backed registry is only wired by the factory). |
-| `transport` | No | Defaults to `NullTransport()`, which approves every ask (below). |
+Moved to [English](https://agentao.cn/en/part-2/2-constructor-reference#tier-2-%C2%B7-common-production-params) · [中文](https://agentao.cn/zh/part-2/2-constructor-reference#%E7%AC%AC-2-%E6%A1%A3-%C2%B7-%E7%94%9F%E4%BA%A7%E5%B8%B8%E7%94%A8)
 
 ### Permissions and the transport
 
-Every tool call is decided in order: read-only mode, then the engine's
-rules (`allow` / `deny` are final), then — for an engine `ask` or no
-match — the tool's own `requires_confirmation`. **Whatever is left as an
-ask goes to `transport.confirm_tool`, and `NullTransport` answers yes** to
-everything except a confirmation the MCP Skills gate raises. Headless,
-"ask" therefore means "allow": shell commands outside the read-only
-allowlist, `web_fetch` to an unlisted domain, `web_search`, and writes into
-`.git/`, `.agentao/` or credential-shaped paths all run.
-
-What still stops a call: read-only mode, an engine `deny` rule (including
-the `workspace-write` preset's own — only when there *is* an engine), the
-hardline command floor, the MCP Skills gate, and `web_fetch`'s URL policy.
-
-For modes and the preset's `deny` rules, pass
-`permission_mode="workspace-write"` (or another mode) at construction; switch
-later with `agent.set_permission_mode("read-only")`, which returns the
-previous mode as the internal `PermissionMode` enum.
-
-A host with nobody to ask that should refuse instead passes a transport
-that says no:
-
-```python
-from agentao.transport import SdkTransport
-
-transport = SdkTransport(confirm_tool=lambda *_: False)  # every ask → refused
-```
-
-`agent.active_permissions()` on an agent with no engine reports
-`mode="workspace-write"` with `loaded_sources=["default:no-engine"]`. That
-label means no rule is evaluated, not that the preset applies.
+Moved to [English](https://agentao.cn/en/part-5/4-permissions#permissionmode-four-presets) · [中文](https://agentao.cn/zh/part-5/4-permissions#permissionmode-%E5%9B%9B%E7%A7%8D%E9%A2%84%E8%AE%BE)
 
 ### Optional: provider-specific request params (`extra_body`)
 
-The OpenAI-compatible request is built from a closed field set
-(`model` / `messages` / `temperature` / `tools` / `max_tokens`). To reach a
-param that set does not expose — `reasoning_effort`, `top_p`, `seed`,
-`response_format`, or any provider-specific body field — pass `extra_body`.
-It is forwarded verbatim to the SDK's `.create(extra_body=...)`, which merges
-it into the JSON request body:
-
-```python
-agent = Agentao(
-    working_directory=workdir,
-    api_key="sk-...", base_url="https://api.openai.com/v1", model="gpt-5.4",
-    extra_body={"reasoning_effort": "high", "seed": 7},   # keyword-only
-)
-```
-
-- **Keyword-only**, and **mutually exclusive with `llm_client=`** — a host
-  injecting its own client passes `extra_body=` to that `LLMClient(...)`
-  constructor instead (the guard makes the mistake a loud `ValueError`, not a
-  silent no-op).
-- **Sub-agents inherit it** (like `temperature` / `max_tokens`); values are
-  redacted in `agentao.log` if their keys look like credentials
-  (`api_key`, `authorization`, `x-api-key`, …).
-- **No auto-recovery on model switch** — a stale `reasoning_effort` after
-  switching to a non-reasoning model 400s every call until cleared; dropping
-  model-specific keys on switch is the host's responsibility.
-- **CLI / factory path:** set `LLM_EXTRA_BODY` to a JSON object.
-- **Keys are per wire protocol.** The examples above are Chat Completions
-  fields. With the keyword-only `api_format="anthropic-messages"` (Anthropic's
-  own API; `base_url` is the API root, no `/v1`; named, never inferred) the
-  body is a Messages request: `reasoning_effort` is rejected there and the
-  equivalent is `{"output_config": {"effort": "high"}}`, while `temperature`
-  is not sent at all. `set_provider(..., api_format=)` moves a live agent
-  between the two, keeping `extra_body` as it is — so a host that switches
-  wires owns swapping those keys, same rule as a model switch.
-
-Full contract: [`docs/design/host-llm-extra-params.md`](../design/host-llm-extra-params.md).
+Moved to [English](https://agentao.cn/en/part-2/2-constructor-reference#tier-3-%C2%B7-advanced-injections) · [中文](https://agentao.cn/zh/part-2/2-constructor-reference#%E7%AC%AC-3-%E6%A1%A3-%C2%B7-%E9%AB%98%E7%BA%A7%E6%B3%A8%E5%85%A5)
 
 ### Optional: silencing or redirecting `agentao.log`
 
-By default, `Agentao(...)` writes a rolling debug log to
-`<working_directory>/agentao.log` and elevates the package-root
-`"agentao"` logger to `DEBUG`. Both behaviors are knobs the embedded
-host can disable explicitly — `LLMClient.__init__`
-(`agentao/llm/client.py`) documents the contract:
-
-| What you want | How to pass it |
-|---|---|
-| Stop writing the `agentao.log` file | `log_file=None` on `LLMClient` |
-| Stop touching `logging.getLogger("agentao")` (no level set, no handlers attached, no marker eviction) | `logger=<your_logger>` on `Agentao` *or* `LLMClient` |
-| Both — full host control | inject `logger=` (sufficient on its own; see below) |
-
-The cleanest path is to inject a logger into the `Agentao(...)` call
-directly:
-
-```python
-import logging
-from pathlib import Path
-from agentao import Agentao
-
-quiet = logging.getLogger("myhost.agentao")
-quiet.addHandler(logging.NullHandler())   # full silence
-quiet.propagate = False                    # don't bubble up to root
-
-agent = Agentao(
-    api_key=..., base_url=..., model=...,
-    working_directory=Path("/srv/run-1"),
-    logger=quiet,                          # ← skips package-root mutation
-)
-```
-
-`Agentao` still passes `log_file=<wd>/agentao.log` to the internal
-`LLMClient` here, but the injected-logger branch in `LLMClient.__init__`
-short-circuits before any `FileHandler` is built — no file is created.
-
-If you build `LLMClient` yourself, you can be explicit on both axes:
-
-```python
-from agentao.llm import LLMClient
-from agentao import Agentao
-
-llm = LLMClient(
-    api_key=..., base_url=..., model=...,
-    log_file=None,        # don't write agentao.log
-    logger=quiet,         # don't mutate the "agentao" package logger
-)
-agent = Agentao(llm_client=llm, working_directory=Path("/srv/run-1"))
-```
-
-**Gotcha:** passing only `log_file=None` (without `logger=`) still
-elevates `logging.getLogger("agentao")` to `DEBUG` — the file handler
-is skipped, but every `getLogger(__name__)` inside `agentao.*` will
-emit at DEBUG into whatever handlers are attached upstream. Hosts that
-care about not having their root logger touched at all must pass
-`logger=`.
-
-`agent.close()` (and `with` / `async with` / `aclose()`) detaches and
-closes the file handler the agent's own `LLMClient` attached, so a host
-can delete the working directory afterwards, Windows included. A client
-you built yourself and passed as `llm_client=` is yours to close:
-`llm.close()` does the same for it. The handler lives on the shared
-`"agentao"` logger and each new `LLMClient` replaces the previous one's,
-so with several agents in one process records go to the `agentao.log` of
-the most recently built agent still open. Closing that agent hands the
-logger back to the next most recent open agent's own `agentao.log`, so the
-others keep logging; a client dropped without `close()` is not handed it
-back.
-
-The rest of the package — `getLogger("agentao.tools.web")`,
-`getLogger("agentao.acp_client")`, `getLogger("agentao.mcp")`, etc. —
-never attaches its own handlers. With a host-supplied `logger=`, those
-named loggers follow whatever propagation/handler config the host
-already has in place.
-
----
+Moved to [English](https://agentao.cn/en/part-6/6-observability#take-over-agentao-s-logger) · [中文](https://agentao.cn/zh/part-6/6-observability#%E6%8E%A5%E7%AE%A1-agentao-%E7%9A%84-logger)
 
 ## 3. Capability injection
 
-Beyond LLM / memory / MCP / permissions, four narrower capabilities
-let you intercept IO without subclassing tools. The Protocols are
-re-exported on the public harness surface — **always import from
-`agentao.host.protocols`** rather than reaching into
-`agentao.capabilities.*`, which is internal and may move:
-
-| Protocol | Default (in `agentao.capabilities`) | Purpose |
-|---|---|---|
-| `agentao.host.protocols.FileSystem` | `LocalFileSystem` | Backs `read_file`, `write_file`, `glob`, `search_file_content`, `list_directory`. Inject to redirect through Docker exec, virtual filesystems, audit proxies. **`write_text` must replace existing files atomically** — see the note below. |
-| `agentao.host.protocols.ShellExecutor` | `LocalShellExecutor` | Backs `run_shell_command`. Inject to route shell through a remote runner / sandbox. |
-| `agentao.host.protocols.MemoryStore` | `SQLiteMemoryStore` | Persistent-memory storage. Inject to back memory with Redis, Postgres, in-process dict, remote API. |
-| `agentao.host.protocols.MCPRegistry` | `FileBackedMCPRegistry` | Source of MCP server configs. Inject to register servers programmatically. |
-
-```python
-from agentao.host.protocols import FileSystem, ShellExecutor
-from agentao.capabilities import LocalFileSystem  # default impl
-
-class AuditedFileSystem:        # duck-types FileSystem
-    def __init__(self, inner): self.inner = inner
-    def read_bytes(self, p): log("read", p); return self.inner.read_bytes(p)
-    # ... 9 more methods, each calling self.inner
-
-agent = build_from_environment(
-    working_directory=workdir,
-    filesystem=AuditedFileSystem(LocalFileSystem()),
-    shell=my_remote_shell_executor,
-)
-```
-
-All four protocols are `Protocol`s (PEP 544) — no inheritance required;
-just match the method signatures. The reference implementations
-(`LocalFileSystem`, `LocalShellExecutor`, `SQLiteMemoryStore`,
-`FileBackedMCPRegistry`) stay in `agentao.capabilities` because they
-are not part of the public host-injection surface.
-
-Matching the signatures is not quite the whole contract: `write_text`
-must replace an existing file **atomically**, so that a process killed
-mid-write cannot leave the user's file truncated. A wrapper that
-delegates — like `AuditedFileSystem` above — inherits this for free. A
-from-scratch implementation must provide it: stage the new content
-somewhere and swap it in with a single operation the reader cannot
-observe halfway through. `LocalFileSystem` writes a sibling
-`.{name}.*.tmp` and `os.replace`s it, which is atomic at the VFS level;
-it also refuses a read-only target explicitly, because `os.replace`
-needs write permission on the *directory* and would otherwise silently
-defeat `chmod 444`. `append=True` and creating a new file keep the
-direct path — neither can destroy existing content.
-
----
+Moved to [English](https://agentao.cn/en/part-2/2-constructor-reference#tier-3-%C2%B7-advanced-injections) · [中文](https://agentao.cn/zh/part-2/2-constructor-reference#%E7%AC%AC-3-%E6%A1%A3-%C2%B7-%E9%AB%98%E7%BA%A7%E6%B3%A8%E5%85%A5)
 
 ## 4. Async usage
 
-Agentao's `chat()` method is synchronous and runs the LLM/tool loop on
-the calling thread. For hosts that already run an event loop
-(FastAPI / aiohttp / Discord bots / IDE plugins), use `arun()`:
-
-```python
-async def handle_request(req):
-    async with build_from_environment(working_directory=Path(req.workdir)) as agent:
-        return await agent.arun(req.prompt)
-```
-
-`async with` closes through `await agent.aclose()`, which runs `close()`
-on a thread of its own so the MCP disconnect does not
-block the loop. End the agent's turns before it closes: neither `aclose()`
-nor `close()` waits for or cancels one in progress.
-
-`arun()` is a thin wrapper over `chat()` that runs the synchronous
-loop in a worker thread — no loop is monopolised. To cancel, pass a
-`CancellationToken` into `arun()` (or `chat()`) and trip it from
-elsewhere; the worker thread checks the token cooperatively at every
-tool boundary and at each LLM streaming chunk. Cancelling the awaiting
-`asyncio` task (e.g. `asyncio.wait_for` timeout, client disconnect)
-also forwards into the same token.
-
-That worker comes from a pool agentao owns (threads named
-`agentao-arun-*`), **not** the event loop's default executor. A turn holds
-its worker for the whole turn and blocks partway through waiting on a tool
-coroutine back on your loop, so occupying default-executor workers would
-starve anything else on the loop that needs one — including
-`loop.getaddrinfo`, which is how every `httpx.AsyncClient` connect to a
-hostname resolves. Consequence for hosts: `loop.set_default_executor(...)`
-does not size agentao's turn concurrency. The pool matches what asyncio
-would have given (`min(32, cpu_count + 4)`) and is created on first
-`arun()`, so sync-only hosts never pay for the threads.
-
-```python
-from agentao.host import CancellationToken
-
-token = CancellationToken()
-task = asyncio.create_task(agent.arun(req.prompt, cancellation_token=token))
-# elsewhere: token.cancel("client-disconnect")
-```
+Moved to [English](https://agentao.cn/en/part-2/3-lifecycle#async-hosts-arun-and-the-turn-pool) · [中文](https://agentao.cn/zh/part-2/3-lifecycle#%E5%BC%82%E6%AD%A5%E5%AE%BF%E4%B8%BB-arun-%E4%B8%8E%E8%BD%AE%E6%AC%A1%E7%BA%BF%E7%A8%8B%E6%B1%A0)
 
 ### Streaming text (`astream()`)
 
-A chat UI that shows the answer as it arrives uses `agent.astream()`. It
-runs one turn like `arun()` and yields `TextDelta` items, then the turn's
-`TurnOutcome`:
-
-```python
-from contextlib import aclosing
-from agentao.host import TextDelta
-
-async with aclosing(agent.astream(req.prompt)) as stream:
-    async for item in stream:
-        if isinstance(item, TextDelta):
-            await sse.send(item.text)
-        else:
-            final = item          # TurnOutcome; store final.text if final.is_answer
-```
-
-- The deltas are for display. Store `TurnOutcome.text`, not the joined
-  deltas: narration before a tool call streams too, and a placeholder or
-  error text is never streamed.
-- Wrap it in `aclosing`. After a bare `break` the turn is not closed until the generator is garbage-collected or the event loop shuts down, and once its queue is full it waits there, still holding the agent; closing
-  the stream, or cancelling its task,
-  cancels the turn, the same as cancelling `arun()`.
-- It subscribes to the agent's transport and never replaces it. Do not
-  swap `agent.transport` per request to capture text: the tool runner
-  holds its own reference, so tool events and confirmations would still go
-  to the old transport, and replay would lose its adapter.
-
-Full contract: [`host-api.md`](../reference/host-api.md#streaming-text-agentaoastream).
+Moved to [English](https://agentao.cn/en/part-4/7-host-contract#streaming-text-agent-astream) · [中文](https://agentao.cn/zh/part-4/7-host-contract#streaming-text-agent-astream)
 
 ### Multimodal input (`images=`)
 
-`chat()` / `arun()` accept inline image attachments alongside the text
-(0.4.8+):
-
-```python
-reply = agent.chat(
-    "What does this screenshot show?",
-    images=[{
-        "data": b64_png,                     # base64, required
-        "mimeType": "image/png",             # image/*, required
-        "_source": "share/screenshot.png",   # optional — see below
-    }],
-)
-```
-
-The host-facing contract:
-
-- Each item must carry non-empty string `data` (base64) and `mimeType`
-  (`image/*`); anything else raises `ValueError` at the turn boundary.
-  The engine does **not** enforce size or count caps — those live at the
-  CLI/ACP boundaries (`agentao.media_limits`: 20 MB/image, 16
-  images/turn). An embedded host accepting untrusted images should
-  enforce its own caps before calling `chat()`.
-- The optional `_source` key (origin path or URL) is never sent to the
-  model as image content; it exists for the degradation tag below and
-  for log labels.
-- **Vision degradation convention.** If the selected model rejects image
-  input, the turn retries once with the multimodal user message rewritten
-  to plain text — one self-closing tag per image, appended at the end of
-  the user message:
-
-  ```text
-  <attachment uri="share/screenshot.png" mimetype="image/png"/>
-  ```
-
-  `uri` is the item's `_source` when present, else `inline-image-N`
-  (1-based). Hosts that inspect or persist `agent.messages` should expect
-  a multimodal user turn to have been rewritten into this plain-text form
-  after a degraded turn. Since 0.5.12, on a 400, 413 or 422, the retry also
-  replaces images left in history from earlier turns with `[Image removed from the conversation history because the current model does not accept image input. It can no longer be viewed.]`.
-  Implementation:
-  `agentao/runtime/chat_loop/_runner.py::_render_image_reference_fallback`;
-  canonical format description: developer guide appendix A.1.
-- **Provider-rejected images** (0.5.12+). When the provider refuses a
-  request because of an image (a 400, 413 or 422 whose body mentions an
-  image, on a request that carried one), **every** image part in
-  `agent.messages` is replaced with a text note, earlier turns' included,
-  since the provider does not say which one it refused. A body whose every
-  "image" sits in a run of words echoed from the conversation's user or tool text,
-  a whole line of it or at least five words (a gateway echoing "please
-  describe this image" back in an unrelated 400), does not count. Each message keeps
-  its role, text and other parts. The turn ends with the `[LLM API error: …]`
-  notice plus guidance to re-attach, switch model or continue from text.
-  Without this the image was re-sent, and refused, on every later turn.
-  Both this and the degradation above emit `IMAGES_REMOVED`. A host that
-  persists `agent.messages` should expect the rewrite. The engine checks
-  nothing about an image before sending it, so validating the bytes in the
-  host (as `/image` and ACP do via `agentao.media_limits.sniff_image_mime`)
-  avoids the round trip.
-- **Image URLs a wire cannot send** (0.5.12+). An `image_url` part that a
-  host wrote into `agent.messages` (or a session file it edited) may carry
-  a URL the wire cannot express: on `anthropic-messages` anything but a
-  base64 `data:` URL or an `http(s)` URL, on `openai-responses` a missing
-  or empty URL. The request carries
-  `[Image omitted: its URL cannot be sent to the model, so it cannot be viewed.]`
-  in its place, and `agentao.log` gets a warning; `agent.messages` is left
-  as written. Before, the adapter raised before sending, on every later
-  turn. `chat(images=...)` always builds a `data:` URL, so it never meets
-  this.
-
----
+Moved to [English](https://agentao.cn/en/appendix/a-api-reference#image-input-and-vision-degradation) · [中文](https://agentao.cn/zh/appendix/a-api-reference#%E5%9B%BE%E7%89%87%E8%BE%93%E5%85%A5%E4%B8%8E%E8%A7%86%E8%A7%89%E9%80%80%E5%8C%96)
 
 ## 5. Replay, Sandbox, BgStore (opt-in subsystems)
 
-Three subsystems default to `None` (disabled) on bare construction
-and are wired by `build_from_environment` from disk only when the
-caller does not override them:
-
-| Subsystem | What it does | When to enable |
-|---|---|---|
-| `replay_config` | Records every LLM/tool turn to `<wd>/.agentao/replays/*.jsonl` for later inspection (`/replay show`); it records, it does not re-run a session. Recording starts only when the host calls `agent.start_replay()` (or `agent.replay_manager.start()` when a manager is attached; the CLI and ACP do this per session; neither the factory nor `Agentao(...)` does). Reads the `replay` block of `<wd>/.agentao/settings.json`. | Debugging non-deterministic flake; A/B comparing prompt changes; reproducing user-reported issues. |
-| `sandbox_policy` | Restricts file/shell tool side-effects to a project root with explicit allow/deny rules. Reads `<wd>/.agentao/sandbox.json`. | Multi-tenant deployments; running untrusted prompts; CI evaluation harnesses. |
-| `bg_store` | Enables background **sub-agents**: the `run_in_background` option on agent tools, plus `check_background_agent` / `cancel_background_agent`. Records are kept in `<wd>/.agentao/background_tasks.json`; after a restart, a task that was still running is marked `failed` — the work itself does not survive. A finished task's update reaches the parent on its next turn, and the runtime never starts that turn itself (see host-api, *Continuing after a background sub-agent*). At most `max_concurrent` background sub-agents run at once (default 6; `BackgroundTaskStore(..., max_concurrent=None)` for no cap); a launch past that is refused, not queued. | Long-lived hosts that keep the process up while children run. Leave it `None` for a one-shot process — `agentao run` does — since workers are daemon threads cut off at exit. |
-
-Each is opt-out under the factory and opt-in under bare construction:
-
-```python
-# Factory: wire all three, override the policy
-agent = build_from_environment(
-    working_directory=workdir,
-    sandbox_policy=MyStrictSandbox(project_root=workdir),
-    # replay_config / bg_store unspecified → factory defaults; replay
-    # records only if settings.json has replay.enabled and the host
-    # calls agent.start_replay()
-)
-
-# Factory: disable replay specifically. The ``replay`` block of
-# settings.json is not read and no manager is attached. A later ``agent.reload_replay_config()``
-# still reads settings.json, and a ``start_replay()`` after it records
-# if that file enables replay.
-agent = build_from_environment(
-    working_directory=workdir,
-    replay_config=None,
-)
-
-# Bare construction: pass the ones you need; the rest stay None
-from agentao.agents.bg_store import BackgroundTaskStore
-agent = Agentao(
-    working_directory=workdir,
-    llm_client=...,
-    bg_store=BackgroundTaskStore(persistence_dir=workdir),
-)
-```
-
----
+Moved to [English](https://agentao.cn/en/part-2/2-constructor-reference#tier-3-%C2%B7-advanced-injections) · [中文](https://agentao.cn/zh/part-2/2-constructor-reference#%E7%AC%AC-3-%E6%A1%A3-%C2%B7-%E9%AB%98%E7%BA%A7%E6%B3%A8%E5%85%A5)
 
 ## 6. Built-in sub-agents
 
-Project-level agents in `<wd>/.agentao/agents/*.md` are discovered by
-default. Built-in agents (`codebase-investigator` and `generalist`) are
-disabled by default so the model does not always receive extra
-delegation tools.
-
-Enable built-ins for a project through `<wd>/.agentao/settings.json`:
-
-```json
-{
-  "agents": {
-    "enable_builtin": true
-  }
-}
-```
-
-Embedded hosts can override the setting directly:
-
-```python
-agent = build_from_environment(
-    working_directory=workdir,
-    enable_builtin_agents=True,
-)
-
-agent = Agentao(
-    working_directory=workdir,
-    llm_client=...,
-    enable_builtin_agents=True,
-)
-```
-
----
+Moved to [English](https://agentao.cn/en/part-2/2-constructor-reference#tier-3-%C2%B7-advanced-injections) · [中文](https://agentao.cn/zh/part-2/2-constructor-reference#%E7%AC%AC-3-%E6%A1%A3-%C2%B7-%E9%AB%98%E7%BA%A7%E6%B3%A8%E5%85%A5)
 
 ## 7. Host-facing harness contract
 
-`Agentao(...)` and the embedding factory cover *constructing* an agent.
-The **harness contract** covers everything a host needs to *observe* a
-running agent without reaching into internals: the active permission
-policy, what the agent is doing, what sub-agents it spawned, and why
-each capability was allowed or denied.
-
-The stable surface lives in `agentao.host`. Internal runtime types
-(`AgentEvent`, `ToolExecutionResult`, `PermissionEngine`) are deliberately
-**not** part of this contract — they may change in any release.
-
-```python
-from agentao.host import (
-    ActivePermissions,
-    HostEvent,
-    PermissionDecisionEvent,
-    SubagentLifecycleEvent,
-    ToolLifecycleEvent,
-)
-```
-
-`agentao.host` exports more names than a common integration meets.
-All of them are stable; the tiers say where you need each one,
-not how stable it is. The full list is in
-[`host-api.md` → Public exports](../reference/host-api.md#public-exports).
-
-| You are… | Names |
-|---|---|
-| Observing a running agent | `HostEvent`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `ActivePermissions` (above); `SubagentUsage`, the type of a terminal sub-agent event's `usage` |
-| Streaming text or reading how a turn ended | `TextDelta`, `TurnOutcome` ([§4](#streaming-text-astream)) |
-| Cancelling a turn from elsewhere | `CancellationToken` ([§4](#4-async-usage)) |
-| Writing a host tool | `Tool` for a sync tool, `AsyncToolBase` for an async one (subclass one of them); `RegistrableTool` only to annotate, e.g. a list passed as `extra_tools=`. See [developer guide 5.1](../../developer-guide/en/part-5/1-custom-tools.md). |
-| Attaching a second `events()` iterator | `StreamSubscribeError`; when it is raised: [Event subscription semantics](../reference/host-api.md#event-subscription-semantics) |
-| Reference only | `EventStream` (the runtime builds it and keeps it private; `agent.events()` and `agent.add_host_event_observer()` reach it), `RFC3339UTCString`, `export_host_event_json_schema`, `export_host_acp_json_schema` ([Schema snapshots](#schema-snapshots)) |
+Moved to [English](https://agentao.cn/en/part-4/7-host-contract#which-names-you-need) · [中文](https://agentao.cn/zh/part-4/7-host-contract#%E4%BD%A0%E9%9C%80%E8%A6%81%E5%93%AA%E4%BA%9B%E5%90%8D%E5%AD%97)
 
 ### `agent.active_permissions()`
 
-Returns a JSON-safe `ActivePermissions` snapshot of the policy used by
-the next tool decision:
-
-```python
-snap = agent.active_permissions()
-# snap.mode            -> "workspace-write"
-# snap.rules           -> [...]
-# snap.loaded_sources  -> ["preset:workspace-write",
-#                          "user:/Users/me/.agentao/permissions.json",
-#                          "injected:host"]
-```
-
-Hosts that layer policy on top of the engine call
-`agent.permission_engine.add_loaded_source("injected:<name>")` so the
-snapshot reflects their provenance. The snapshot is cached; the cache
-is invalidated on `set_mode()` and `add_loaded_source()`.
+Moved to [English](https://agentao.cn/en/part-4/7-host-contract#_4-7-6-agent-active-permissions-%E2%80%94-policy-snapshots) · [中文](https://agentao.cn/zh/part-4/7-host-contract#_4-7-6-agent-active-permissions-%E2%80%94%E2%80%94-%E7%AD%96%E7%95%A5%E5%BF%AB%E7%85%A7)
 
 ### `agent.events(session_id=None)` — async iterator
 
-Returns an async iterator over `HostEvent` (a discriminated union of
-`ToolLifecycleEvent`, `SubagentLifecycleEvent`, and
-`PermissionDecisionEvent`). Pass `session_id=` to filter; pass `None`
-to subscribe to all sessions on this `Agentao` instance.
-
-```python
-async def watch(agent):
-    async for ev in agent.events():
-        if isinstance(ev, ToolLifecycleEvent):
-            print(ev.tool_name, ev.phase, ev.outcome)
-        elif isinstance(ev, PermissionDecisionEvent):
-            print("perm", ev.tool_name, ev.outcome, ev.matched_rule)
-        elif isinstance(ev, SubagentLifecycleEvent):
-            print("subagent", ev.child_session_id, ev.phase)
-```
-
-Delivery semantics (the full contract is in
-[`docs/reference/host-api.md`](../reference/host-api.md)):
-
-- Same-session ordering is guaranteed.
-- Within one `tool_call_id`, `PermissionDecisionEvent` is emitted before
-  `ToolLifecycleEvent(phase="started")`.
-- Cross-session global ordering is not guaranteed.
-- **No replay.** Events emitted before the first subscription are
-  dropped; a subscriber that starts mid-turn receives only future
-  events.
-- Backpressure is host-pulled. When the bounded subscription queue is
-  full, the producer blocks for matching events — Agentao does not grow
-  an unbounded queue.
-- Cancelling the iterator releases queue/subscription resources.
-- MVP supports one async-iterator consumer per `session_id` filter; a
-  second one on the same filter raises `StreamSubscribeError` (exact
-  rule: [Event subscription semantics](../reference/host-api.md#event-subscription-semantics)).
-  For several consumers, use `agent.add_host_event_observer()`.
+Moved to [English](https://agentao.cn/en/part-4/7-host-contract#_4-7-5-end-to-end-tenant-scoped-audit-pipeline) · [中文](https://agentao.cn/zh/part-4/7-host-contract#_4-7-5-%E7%AB%AF%E5%88%B0%E7%AB%AF-%E7%A7%9F%E6%88%B7%E7%BA%A7%E5%AE%A1%E8%AE%A1%E6%B5%81%E6%B0%B4%E7%BA%BF)
 
 ### What is *not* on the harness surface
 
-These are deliberately deferred (see
-[`docs/design/embedded-host-contract.md`](../design/embedded-host-contract.md)):
-
-- Public agent graph / descendants store API.
-- Host-facing hooks list/disable API.
-- Host-facing MCP reload / lifecycle events.
-- Local plugin export/import; remote plugin share.
-- External session import.
-- Generated client SDKs.
-
-The CLI may build on the same events for its own UI, but its stores and
-commands are not promoted to the harness API.
+Moved to [English](https://agentao.cn/en/part-4/7-host-contract#_4-7-8-what-s-not-in-the-contract) · [中文](https://agentao.cn/zh/part-4/7-host-contract#_4-7-8-%E4%B8%8D%E5%9C%A8%E5%90%88%E7%BA%A6%E9%87%8C%E7%9A%84%E4%B8%9C%E8%A5%BF)
 
 ### Schema snapshots
 
-Each release ships checked-in JSON schema snapshots:
-
-- `docs/schema/host.events.v1.json` — events + permissions surface
-- `docs/schema/host.acp.v1.json` — host-facing ACP payloads
-
-`tests/test_host_schema.py` regenerates the schemas from the
-Pydantic models and asserts byte-equality. A model change that shifts
-the wire form must update both the model and the snapshot in the same
-PR. Adding an optional field is backwards-compatible; removing or
-renaming requires a schema version bump.
-
----
+Moved to [English](https://agentao.cn/en/part-4/7-host-contract#_4-7-7-forward-compatibility-guarantees) · [中文](https://agentao.cn/zh/part-4/7-host-contract#_4-7-7-%E5%89%8D%E5%90%91%E5%85%BC%E5%AE%B9%E6%89%BF%E8%AF%BA)
 
 ## 8. Migration guide: 0.2.15 → 0.2.16 → 0.3.0 → 0.3.1 → 0.3.3
 
-The embedded-harness epic shipped over four releases (0.2.15 →
-0.3.1); 0.3.3 is the first patch in the Path A roadmap and is
-additive only. Code that worked on 0.2.15 should land on 0.3.3 with
-two mechanical changes; every 0.3.x → 0.3.x step requires no host
-code changes.
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md)
 
 ### From 0.2.15
 
-```python
-# 0.2.15 — implicit env / cwd / .agentao reads inside Agentao()
-agent = Agentao()
-```
-
-This still emits a `DeprecationWarning` on 0.2.16 and raises
-`TypeError` on 0.3.0. Replace with one of:
-
-```python
-# Option A: factory (matches the old behaviour)
-agent = build_from_environment(working_directory=Path.cwd())
-
-# Option B: pure injection (deterministic; preferred for embedded)
-agent = Agentao(
-    working_directory=Path.cwd(),
-    llm_client=LLMClient(api_key=..., base_url=..., model=...),
-)
-```
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md#from-0215) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md#from-0215)
 
 ### From 0.2.16
 
-The 0.2.16 soft-deprecation cycle warned but did not break:
-
-```python
-# 0.2.16 emitted a DeprecationWarning here.
-agent = Agentao()                            # working_directory missing
-```
-
-On 0.3.0 the same call raises `TypeError` from Python signature
-dispatch. Add `working_directory=` and you are done.
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md#from-0216) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md#from-0216)
 
 ### Other 0.3.0 BREAKING signals to watch for
 
-- `MemoryManager(project_root=, global_root=)` is gone — pass
-  pre-built stores (`project_store=`, `user_store=`). The factory
-  absorbs this internally; only direct callers need the migration.
-- `MemoryManager._project_root` / `_global_root` private attributes
-  are gone. Read `manager.project_store.db_path` if you previously
-  introspected the path.
-- `Agentao()` no longer falls back to `Path.cwd()` for the working
-  directory. The deprecation warning is gone with the fallback.
-
-The full 0.3.0 changelog block lives in [`CHANGELOG.md`](../../CHANGELOG.md).
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md#other-030-breaking-changes) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md#other-030-breaking-changes)
 
 ### From 0.3.0
 
-`0.3.1` is an Added-only patch in the 0.3.x series — strictly
-backwards-compatible. **No required code change** to upgrade. Existing
-calls into `Agentao(...)`, `build_from_environment(...)`, capability
-protocols, and the transport layer keep working unchanged.
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md#from-030) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md#from-030)
 
 ### From 0.3.1
 
-`0.3.3` is also an Added-only patch — strictly backwards-compatible.
-The only user-visible additions are the PEP 561 `py.typed` marker
-(downstream `mypy` / `pyright` now picks up Agentao's type hints) and
-the README's new `## Embed in 30 lines` lead section. No host code
-change required.
-
-What's available to opt into:
-
-- `agent.events(session_id=None)` — async iterator over `HostEvent`
-  (`ToolLifecycleEvent` / `SubagentLifecycleEvent` /
-  `PermissionDecisionEvent`). Stable host-facing observation surface;
-  see [section 7](#7-host-facing-harness-contract) above.
-- `agent.active_permissions()` — JSON-safe `ActivePermissions` snapshot
-  (`mode`, `rules`, `loaded_sources`).
-- `agentao.host` — public package with `ActivePermissions`,
-  `ToolLifecycleEvent`, `SubagentLifecycleEvent`,
-  `PermissionDecisionEvent`, `EventStream`, `HostEvent`,
-  `RFC3339UTCString`, and the schema export helpers.
-- New direct dependency: `pydantic>=2`. If your environment already
-  pins Pydantic v1, lift the pin before upgrading.
-
-What stays internal (do **not** depend on for forward compatibility):
-
-- `agentao.transport.AgentEvent` and `Transport.emit(...)` — richer but
-  may change between releases.
-- `agentao.runtime.identity.*` — id helpers; private to the runtime.
-- `agentao.host.projection.*` — internal redaction layer.
-
----
+Moved to [English](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md#from-031) · [中文](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md#from-031)
 
 ## Reference
 
-| Area | Location |
-|---|---|
-| `Agentao(...)` signature | [`agentao/agent.py`](../../agentao/agent.py) |
-| `build_from_environment(...)` | [`agentao/embedding/factory.py`](../../agentao/embedding/factory.py) |
-| Capability protocols (public surface) | [`agentao/host/protocols.py`](../../agentao/host/protocols.py) — re-exports `FileSystem`, `ShellExecutor`, `MCPRegistry`, `MemoryStore` and their value shapes |
-| Capability defaults / reference impls | [`agentao/capabilities/`](../../agentao/capabilities/) — `LocalFileSystem`, `LocalShellExecutor`, etc. (not part of the public surface) |
-| Default IO impls | `LocalFileSystem`, `LocalShellExecutor`, `SQLiteMemoryStore`, `FileBackedMCPRegistry` |
-| Host-facing harness contract | [`agentao/host/`](../../agentao/host/) — public types; full reference at [`docs/reference/host-api.md`](../reference/host-api.md) |
-| Schema snapshots | [`docs/schema/host.events.v1.json`](../schema/host.events.v1.json), [`docs/schema/host.acp.v1.json`](../schema/host.acp.v1.json) |
-| Working examples | [`examples/`](../../examples/) — `data-workbench`, `batch-scheduler`, `ticket-automation`, `saas-assistant`, `headless_worker.py` |
-| Transport API | [developer guide 3.2](../../developer-guide/en/part-3/2-agentao-as-server.md) (ACP server) · [3.4](../../developer-guide/en/part-3/4-reverse-acp-call.md) (headless ACP client) |
-| Permission rules | [`docs/guides/tool-confirmation.md`](tool-confirmation.md) |
-| Logging | [`docs/guides/logging.md`](logging.md) |
-| Skills | [`docs/guides/skills.md`](skills.md) |
+Removed: each row now appears as a source link in the developer-guide pages above.

@@ -1,394 +1,143 @@
 # Model Switching Guide
 
+This guide moved into the developer guide: **[CLI 2 · Models & Providers](https://agentao.cn/en/cli/2-models-providers)** ([中文](https://agentao.cn/zh/cli/2-models-providers)) for `/model` and `/provider`, and **[2.5 · Runtime LLM Switching](https://agentao.cn/en/part-2/5-runtime-llm-switch)** ([中文](https://agentao.cn/zh/part-2/5-runtime-llm-switch)) for hosts. The headings below are kept so that old links still land on the right section.
+
 ## Overview
 
-Agentao supports switching between different LLM models during a conversation using the `/model` command.
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#model-%E2%80%94-list-or-switch-model-on-the-current-provider) · [中文](https://agentao.cn/zh/cli/2-models-providers#model-%E2%80%94-%E5%9C%A8%E5%BD%93%E5%89%8D-provider-%E9%87%8C%E5%88%97-%E5%88%87%E6%A8%A1%E5%9E%8B)
 
 ## Usage
 
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#model-%E2%80%94-list-or-switch-model-on-the-current-provider) · [中文](https://agentao.cn/zh/cli/2-models-providers#model-%E2%80%94-%E5%9C%A8%E5%BD%93%E5%89%8D-provider-%E9%87%8C%E5%88%97-%E5%88%87%E6%A8%A1%E5%9E%8B)
+
 ### Show Current Model and Available Models
 
-```bash
-You: /model
-```
-
-Output:
-```
-Current Model: claude-sonnet-4-6
-
-Available Models:
-
-  Claude:
-    • claude-opus-4
-    • claude-sonnet-4-6 ✓
-    • claude-sonnet-4
-    • claude-haiku-4
-
-  OpenAI GPT:
-    • gpt-5.4
-    • gpt-5.4
-    • gpt-4.1
-
-  Other:
-    • deepseek-chat
-    • deepseek-coder
-
-Usage: /model <model_name>
-Example: /model claude-sonnet-4-6
-```
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#model-%E2%80%94-list-or-switch-model-on-the-current-provider) · [中文](https://agentao.cn/zh/cli/2-models-providers#model-%E2%80%94-%E5%9C%A8%E5%BD%93%E5%89%8D-provider-%E9%87%8C%E5%88%97-%E5%88%87%E6%A8%A1%E5%9E%8B)
 
 ### Switch to a Specific Model
 
-```bash
-You: /model gpt-5.4
-```
-
-Output:
-```
-Model changed from claude-sonnet-4-6 to gpt-5.4
-```
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#model-%E2%80%94-list-or-switch-model-on-the-current-provider) · [中文](https://agentao.cn/zh/cli/2-models-providers#model-%E2%80%94-%E5%9C%A8%E5%BD%93%E5%89%8D-provider-%E9%87%8C%E5%88%97-%E5%88%87%E6%A8%A1%E5%9E%8B)
 
 ### Check Current Model in Status
 
-```bash
-You: /status
-```
-
-Output includes current model:
-```
-Total messages: 10
-Current model: gpt-5.4
-Active skills: 0
-```
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#model-%E2%80%94-list-or-switch-model-on-the-current-provider) · [中文](https://agentao.cn/zh/cli/2-models-providers#model-%E2%80%94-%E5%9C%A8%E5%BD%93%E5%89%8D-provider-%E9%87%8C%E5%88%97-%E5%88%87%E6%A8%A1%E5%9E%8B)
 
 ## Available Models
 
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#model-%E2%80%94-list-or-switch-model-on-the-current-provider) · [中文](https://agentao.cn/zh/cli/2-models-providers#model-%E2%80%94-%E5%9C%A8%E5%BD%93%E5%89%8D-provider-%E9%87%8C%E5%88%97-%E5%88%87%E6%A8%A1%E5%9E%8B)
+
 ### Claude Models
 
-| Model | Description |
-|-------|-------------|
-| `claude-opus-4` | Most capable Claude model |
-| `claude-sonnet-4-6` | Balanced performance and speed |
-| `claude-sonnet-4` | Previous Sonnet version |
-| `claude-haiku-4` | Fastest Claude model |
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#model-%E2%80%94-list-or-switch-model-on-the-current-provider) · [中文](https://agentao.cn/zh/cli/2-models-providers#model-%E2%80%94-%E5%9C%A8%E5%BD%93%E5%89%8D-provider-%E9%87%8C%E5%88%97-%E5%88%87%E6%A8%A1%E5%9E%8B)
 
 ### OpenAI GPT Models
 
-| Model | Description |
-|-------|-------------|
-| `gpt-5.4` | Current flagship OpenAI model |
-| `gpt-5.4` | Fast multimodal general-purpose model |
-| `gpt-4.1` | Strong coding and instruction-following model |
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#model-%E2%80%94-list-or-switch-model-on-the-current-provider) · [中文](https://agentao.cn/zh/cli/2-models-providers#model-%E2%80%94-%E5%9C%A8%E5%BD%93%E5%89%8D-provider-%E9%87%8C%E5%88%97-%E5%88%87%E6%A8%A1%E5%9E%8B)
 
 ### Other Models
 
-| Model | Description |
-|-------|-------------|
-| `deepseek-chat` | DeepSeek chat model |
-| `deepseek-coder` | DeepSeek code-focused model |
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#model-%E2%80%94-list-or-switch-model-on-the-current-provider) · [中文](https://agentao.cn/zh/cli/2-models-providers#model-%E2%80%94-%E5%9C%A8%E5%BD%93%E5%89%8D-provider-%E9%87%8C%E5%88%97-%E5%88%87%E6%A8%A1%E5%9E%8B)
 
 ## Use Cases
 
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#when-to-switch-what) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E8%AF%A5%E5%88%87%E4%BB%80%E4%B9%88)
+
 ### Compare Model Responses
 
-Switch between models to compare their responses to the same question:
-
-```bash
-You: /model gpt-5.4
-You: Explain quantum computing in simple terms
-[GPT-4 response]
-
-You: /model claude-sonnet-4-6
-You: Explain quantum computing in simple terms
-[Claude response]
-```
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#when-to-switch-what) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E8%AF%A5%E5%88%87%E4%BB%80%E4%B9%88)
 
 ### Use Appropriate Model for Task
 
-Switch to the most suitable model for your task:
-
-```bash
-# Use a powerful model for complex reasoning
-You: /model claude-opus-4
-You: Analyze this complex algorithm...
-
-# Use a faster model for simple tasks
-You: /model claude-haiku-4
-You: Format this text...
-
-# Use GPT-4o for fast general-purpose tasks
-You: /model gpt-5.4
-You: Generate creative content...
-```
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#when-to-switch-what) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E8%AF%A5%E5%88%87%E4%BB%80%E4%B9%88)
 
 ### Cost Optimization
 
-Use cheaper models when appropriate:
-
-```bash
-# Use a faster model for simple queries
-You: /model gpt-5.4
-You: What's the weather?
-
-# Switch to more capable model for complex tasks
-You: /model gpt-5.4
-You: Help me debug this complex issue...
-```
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#when-to-switch-what) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E8%AF%A5%E5%88%87%E4%BB%80%E4%B9%88)
 
 ## Features
 
+Moved to [English](https://agentao.cn/en/part-2/5-runtime-llm-switch#_2-5-2-what-changes-%E2%80%94-and-what-doesn-t) · [中文](https://agentao.cn/zh/part-2/5-runtime-llm-switch#_2-5-2-%E5%88%87%E6%8D%A2%E4%BC%9A%E5%8F%98%E4%BB%80%E4%B9%88-%E4%B8%8D%E4%BC%9A%E5%8F%98%E4%BB%80%E4%B9%88)
+
 ### Session Persistence
 
-The model setting persists throughout your session:
-- All subsequent messages use the selected model
-- Model choice is maintained until you switch again
-- Shown in welcome message and status
+Moved to [English](https://agentao.cn/en/part-2/5-runtime-llm-switch#_2-5-2-what-changes-%E2%80%94-and-what-doesn-t) · [中文](https://agentao.cn/zh/part-2/5-runtime-llm-switch#_2-5-2-%E5%88%87%E6%8D%A2%E4%BC%9A%E5%8F%98%E4%BB%80%E4%B9%88-%E4%B8%8D%E4%BC%9A%E5%8F%98%E4%BB%80%E4%B9%88)
 
 ### Logging
 
-All model switches are logged to `agentao.log`:
-```
-2026-02-09 14:30:45 - agentao.llm - INFO - Model changed from claude-sonnet-4-6 to gpt-5.4
-```
+Moved to [English](https://agentao.cn/en/part-2/5-runtime-llm-switch#_2-5-2-what-changes-%E2%80%94-and-what-doesn-t) · [中文](https://agentao.cn/zh/part-2/5-runtime-llm-switch#_2-5-2-%E5%88%87%E6%8D%A2%E4%BC%9A%E5%8F%98%E4%BB%80%E4%B9%88-%E4%B8%8D%E4%BC%9A%E5%8F%98%E4%BB%80%E4%B9%88)
 
 ### Context Preservation
 
-Switching models does NOT clear conversation history:
-- Previous messages remain in context
-- The new model sees the full conversation
-- Continue seamlessly with different models
+Moved to [English](https://agentao.cn/en/part-2/5-runtime-llm-switch#_2-5-2-what-changes-%E2%80%94-and-what-doesn-t) · [中文](https://agentao.cn/zh/part-2/5-runtime-llm-switch#_2-5-2-%E5%88%87%E6%8D%A2%E4%BC%9A%E5%8F%98%E4%BB%80%E4%B9%88-%E4%B8%8D%E4%BC%9A%E5%8F%98%E4%BB%80%E4%B9%88)
 
 ### Request passthrough (`extra_body`) on switch
 
-If the host configured `extra_body` (see [the embedding guide](embedding.md#optional-provider-specific-request-params-extra_body)), switching models **preserves it** — it is instance-level host config, not a model-detected quirk.
-
-⚠️ **No auto-recovery.** Unlike `temperature` (which the client auto-drops when a model rejects it), a stale `extra_body` key has **no latch**. If you set `extra_body={"reasoning_effort": "high"}` and then `set_model(...)` to a model that does not support it, **every** subsequent call fails with a provider `400` until the key is cleared. Dropping model-specific `extra_body` keys when you switch is the host's responsibility — Agentao will not silently strip them. (Capability latches that *are* reset on switch: `omit_temperature`, `max_completion_tokens`.)
+Moved to [English](https://agentao.cn/en/part-2/5-runtime-llm-switch#_2-5-2-what-changes-%E2%80%94-and-what-doesn-t) · [中文](https://agentao.cn/zh/part-2/5-runtime-llm-switch#_2-5-2-%E5%88%87%E6%8D%A2%E4%BC%9A%E5%8F%98%E4%BB%80%E4%B9%88-%E4%B8%8D%E4%BC%9A%E5%8F%98%E4%BB%80%E4%B9%88)
 
 ## Configuration
 
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#the-provider-concept) · [中文](https://agentao.cn/zh/cli/2-models-providers#provider-%E6%98%AF%E4%BB%80%E4%B9%88)
+
 ### Default Model
 
-Set the default model via environment variable:
-
-```bash
-# In .env file
-OPENAI_MODEL=gpt-5.4
-```
-
-Or when initializing:
-
-```python
-from pathlib import Path
-from agentao.embedding import build_from_environment
-
-# Factory reads .env / LLM_PROVIDER + the matching *_API_KEY / *_BASE_URL,
-# then `model=` overrides whatever *_MODEL the env resolves to.
-agent = build_from_environment(working_directory=Path.cwd(), model="gpt-5.4")
-```
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#the-provider-concept) · [中文](https://agentao.cn/zh/cli/2-models-providers#provider-%E6%98%AF%E4%BB%80%E4%B9%88)
 
 ### API Configuration
 
-Ensure your API key and base URL support the models you want to use:
-
-```bash
-# For OpenAI models
-OPENAI_API_KEY=sk-...
-OPENAI_BASE_URL=https://api.openai.com/v1
-
-# For Claude via OpenRouter or similar
-OPENAI_API_KEY=your-key
-OPENAI_BASE_URL=https://openrouter.ai/api/v1
-
-# For custom endpoints
-OPENAI_API_KEY=your-key
-OPENAI_BASE_URL=https://your-endpoint.com/v1
-
-# For Claude on Anthropic's own API, natively (0.5.0). The protocol is named,
-# never inferred; the base URL is the API root, no /v1.
-LLM_PROVIDER=CLAUDE
-CLAUDE_API_KEY=sk-ant-...
-CLAUDE_BASE_URL=https://api.anthropic.com
-CLAUDE_MODEL=claude-sonnet-5
-CLAUDE_API_FORMAT=anthropic-messages
-```
-
-`/model` stays on the current wire protocol. `/provider <NAME>` carries the
-target block's `_API_FORMAT`, so it is how a session moves between Chat
-Completions and the Messages API. On the native wire the model's output cap and
-input window come from the provider's Models API when the endpoint has one, and
-`/thinking <level>` writes `output_config.effort` rather than `reasoning_effort`.
-`{PROVIDER}_API_FORMAT=openai-responses` (0.5.3) selects OpenAI's Responses API
-the same way; there `/thinking` writes `reasoning.effort`, and a session that
-called tools on it can move to Chat Completions and back.
-See [configuration reference §2](../reference/configuration.md).
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#the-provider-concept) · [中文](https://agentao.cn/zh/cli/2-models-providers#provider-%E6%98%AF%E4%BB%80%E4%B9%88)
 
 ## Examples
 
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#model-%E2%80%94-list-or-switch-model-on-the-current-provider) · [中文](https://agentao.cn/zh/cli/2-models-providers#model-%E2%80%94-%E5%9C%A8%E5%BD%93%E5%89%8D-provider-%E9%87%8C%E5%88%97-%E5%88%87%E6%A8%A1%E5%9E%8B)
+
 ### Basic Model Switching
 
-```bash
-# Start with default model
-$ uv run python main.py
-
-You: /model
-> Current Model: claude-sonnet-4-6
-
-You: Hello
-> [Response from Claude Sonnet]
-
-You: /model gpt-5.4
-> Model changed from claude-sonnet-4-6 to gpt-5.4
-
-You: Hello again
-> [Response from GPT-4]
-```
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#model-%E2%80%94-list-or-switch-model-on-the-current-provider) · [中文](https://agentao.cn/zh/cli/2-models-providers#model-%E2%80%94-%E5%9C%A8%E5%BD%93%E5%89%8D-provider-%E9%87%8C%E5%88%97-%E5%88%87%E6%A8%A1%E5%9E%8B)
 
 ### Comparing Models
 
-```bash
-You: /model claude-opus-4
-You: Write a poem about AI
-
-You: /model gpt-5.4
-You: Write a poem about AI
-
-You: /model claude-haiku-4
-You: Write a poem about AI
-```
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#when-to-switch-what) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E8%AF%A5%E5%88%87%E4%BB%80%E4%B9%88)
 
 ### Task-Specific Models
 
-```bash
-# Use DeepSeek for coding tasks
-You: /model deepseek-coder
-You: Optimize this Python function...
-
-# Switch to Claude for analysis
-You: /model claude-sonnet-4-6
-You: Explain what this code does...
-```
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#when-to-switch-what) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E8%AF%A5%E5%88%87%E4%BB%80%E4%B9%88)
 
 ## Best Practices
 
-1. **Choose Wisely**: Select models based on task complexity
-   - Simple tasks → Faster/cheaper models
-   - Complex tasks → More capable models
-
-2. **Check Availability**: Ensure your API supports the model
-   - Not all endpoints support all models
-   - Check documentation for your provider
-
-3. **Monitor Costs**: Different models have different pricing
-   - GPT-4 is more expensive than GPT-3.5
-   - Claude Opus is more expensive than Haiku
-
-4. **Test Responses**: Compare model outputs for important tasks
-   - Different models have different strengths
-   - Use `/model` to switch and compare easily
-
-5. **Use Status**: Check current model regularly
-   - Use `/status` to see which model is active
-   - Avoid confusion about which model is responding
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#when-to-switch-what) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E8%AF%A5%E5%88%87%E4%BB%80%E4%B9%88)
 
 ## Troubleshooting
 
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#pitfalls) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E5%AE%B9%E6%98%93%E8%B8%A9%E7%9A%84%E5%9D%91)
+
 ### Model Not Available
 
-If you switch to a model that's not supported by your API:
-
-```bash
-You: /model some-unavailable-model
-> Model changed from claude-sonnet-4-6 to some-unavailable-model
-[Next API call will fail with error]
-```
-
-**Solution**: Only use models supported by your API endpoint.
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#pitfalls) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E5%AE%B9%E6%98%93%E8%B8%A9%E7%9A%84%E5%9D%91)
 
 ### API Key Issues
 
-If your API key doesn't support the model:
-- Check your API provider's documentation
-- Verify your subscription/plan includes the model
-- Use a different endpoint if needed
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#pitfalls) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E5%AE%B9%E6%98%93%E8%B8%A9%E7%9A%84%E5%9D%91)
 
 ### Model List Outdated
 
-The built-in model list may not include all available models.
-
-**Solution**: You can still use any model name:
-```bash
-You: /model your-custom-model-name
-```
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#pitfalls) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E5%AE%B9%E6%98%93%E8%B8%A9%E7%9A%84%E5%9D%91)
 
 ## Advanced Usage
 
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#pitfalls) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E5%AE%B9%E6%98%93%E8%B8%A9%E7%9A%84%E5%9D%91)
+
 ### Custom Models
 
-You can switch to any model name, even if not in the list:
-
-```bash
-You: /model my-custom-model
-> Model changed from claude-sonnet-4-6 to my-custom-model
-```
-
-This is useful for:
-- Custom fine-tuned models
-- New models not yet in the list
-- Provider-specific model names
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#pitfalls) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E5%AE%B9%E6%98%93%E8%B8%A9%E7%9A%84%E5%9D%91)
 
 ### Programmatic Access
 
-```python
-from pathlib import Path
-from agentao.embedding import build_from_environment
-
-agent = build_from_environment(working_directory=Path.cwd())
-
-# Get current model
-current = agent.get_current_model()
-print(f"Current: {current}")
-
-# List available models
-models = agent.list_available_models()
-print(f"Available: {models}")
-
-# Switch model
-result = agent.set_model("gpt-5.4")
-print(result)
-```
+Moved to [English](https://agentao.cn/en/part-2/5-runtime-llm-switch#_2-5-1-the-three-methods) · [中文](https://agentao.cn/zh/part-2/5-runtime-llm-switch#_2-5-1-%E4%B8%89%E4%B8%AA%E6%96%B9%E6%B3%95)
 
 ## Model Comparison Table
 
-| Feature | Claude Opus | Claude Sonnet | Claude Haiku | GPT-4 | GPT-3.5 |
-|---------|-------------|---------------|--------------|-------|---------|
-| Speed | Medium | Fast | Very Fast | Medium | Very Fast |
-| Capability | Highest | High | Medium | Highest | Medium |
-| Cost | Highest | Medium | Lowest | High | Low |
-| Context | Large | Large | Medium | Large | Medium |
-| Best For | Complex reasoning | Balanced tasks | Simple queries | Creative tasks | Quick responses |
+Removed: the hard-coded model table was outdated. `/model` lists what your provider's `/models` endpoint reports.
 
 ## FAQ
 
-**Q: Does switching models clear my conversation history?**
-A: No, conversation history is preserved when switching models.
-
-**Q: Can I use models not in the list?**
-A: Yes, you can specify any model name. It will be used if your API supports it.
-
-**Q: Which model is best?**
-A: It depends on your task. Use powerful models for complex tasks, faster models for simple ones.
-
-**Q: How do I know which model I'm using?**
-A: Use `/model` (no arguments) or `/status` to see the current model.
-
-**Q: Can I set a default model?**
-A: Yes, set `OPENAI_MODEL` in your `.env` file.
-
-**Q: Are all models available with all API providers?**
-A: No, availability depends on your API provider. Check their documentation.
-
----
-
-**Last Updated**: 2026-02-09
-**Feature Status**: ✅ Available
-**Command**: `/model [model_name]`
+Moved to [English](https://agentao.cn/en/cli/2-models-providers#pitfalls) · [中文](https://agentao.cn/zh/cli/2-models-providers#%E5%AE%B9%E6%98%93%E8%B8%A9%E7%9A%84%E5%9D%91)

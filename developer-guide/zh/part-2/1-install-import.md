@@ -111,6 +111,7 @@ if Version(agentao.__version__) < MIN:
 """你的产品里嵌入 Agentao 的最小代码量。"""
 from pathlib import Path
 from agentao import Agentao
+from agentao.embedding import build_from_environment
 from agentao.transport import SdkTransport
 
 def make_agent(workdir: Path, on_token=None) -> Agentao:
@@ -118,7 +119,9 @@ def make_agent(workdir: Path, on_token=None) -> Agentao:
         on_event=lambda ev: on_token(ev.data.get("chunk", ""))
                              if on_event_is_text(ev) else None,
     )
-    return Agentao(transport=transport, working_directory=workdir)
+    # 凭据来自环境变量 / .env。要自己传，就调用
+    # Agentao(api_key=..., base_url=..., model=..., working_directory=workdir, transport=transport)。
+    return build_from_environment(working_directory=workdir, transport=transport)
 
 def on_event_is_text(ev) -> bool:
     return ev.type.name == "LLM_TEXT"

@@ -160,6 +160,8 @@ Week 3 之前的裸字符串形式不再接受。`AcpClientConfig.from_dict` / `
 
 `working_directory=` 现在是必填关键字参数。0.2.16 在省略该参数时发出的 `DeprecationWarning` 已被替换为构造时直接抛出的 `TypeError`——不再有 `Path.cwd()` 懒惰回退。
 
+从 0.2.15 一路升级到 0.3.3 的完整说明（含 `MemoryManager` 改为传入存储，以及 0.3.1 的宿主契约）见 [`docs/migration/0.2.15-to-0.3.3.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md)。
+
 ### 方案一——传入显式 `Path`（最简单）
 
 ```python

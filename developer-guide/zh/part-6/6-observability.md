@@ -88,8 +88,34 @@ agent = Agentao(..., logger=quiet)
 要么自己构造 `LLMClient` 时传 `log_file=None`。
 :::
 
-完整说明（开关矩阵、代码锚点、直接走 `LLMClient` 的写法）见
-[`docs/guides/embedding.md` §2 → "Optional: silencing or redirecting agentao.log"](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md#optional-silencing-or-redirecting-agentaolog)。
+两个开关都在 `LLMClient.__init__` 上（[`llm/client.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/client.py)）：
+
+| 你想要 | 传什么 |
+|--------|--------|
+| 不生成 `agentao.log` 文件 | 自己构造 `LLMClient` 时传 `log_file=None` |
+| 完全不动 `logging.getLogger("agentao")`：不设 level、不挂 handler、不清理 | 在 `Agentao` 或 `LLMClient` 上传 `logger=` |
+| 两者都要 | 只传 `logger=` 就够了，它会一并跳过文件 handler |
+
+只传 `log_file=None` 时，`"agentao"` logger 仍被设成 `DEBUG`，所有 `agentao.*` 模块都会以 DEBUG 级别写进上游已挂的 handler。自己构造 client 的宿主可以两项都设：
+
+```python
+from agentao.llm import LLMClient
+
+llm = LLMClient(
+    api_key=..., base_url=..., model=...,
+    log_file=None,     # 不写 agentao.log
+    logger=quiet,      # 不动 "agentao" logger
+)
+agent = Agentao(llm_client=llm, working_directory=workdir)
+```
+
+包里其他 logger（`agentao.mcp`、`agentao.tools.web`、`agentao.acp_client` 等）从不自己挂 handler。传了 `logger=` 后，它们跟随宿主已有的传播和 handler 配置。
+
+### 同一进程里的多个 agent
+
+文件 handler 挂在共享的 `"agentao"` logger 上，每个新的 `LLMClient` 都会替换上一个的 handler。所以同一进程里有多个 agent 时，记录写进**最近构造、且仍未关闭的那个 agent** 的 `agentao.log`。关掉这个 agent，logger 会交还给次新的未关闭 agent，其他 agent 照常记日志。没有 `close()` 就被丢弃的 client 不会再拿回日志。
+
+`agent.close()`（或 `with` / `async with` / `aclose()`）会摘下并关闭它自己的 client 挂上的 handler，之后宿主就能删除工作目录，Windows 也一样。你自己构造并以 `llm_client=` 传入的 client 归你管：调用 `llm.close()`。
 
 ### 关键字段
 

@@ -166,7 +166,7 @@ LLM_EXTRA_BODY='{"reasoning_effort":"high"}'
 
 - **工具调用进行中切换**：agent 还在迭代工具时切了模型或 provider，下一次迭代就用新客户端。多数场景没事，但不同厂商之间 tool-call 格式有差异，可能让中间一轮乱掉 — 看到这种情况切完后直接 `/clear`。
 - **历史会跨切换保留**：通常你就要这个，但意味着新模型会看到上一个模型留下的 tool-use 痕迹。有些模型对消息格式要求严，会报错。
-- **"列得出来" 不等于 "调得通"**：`/model` 列的是 provider `/models` 上报的全部内容，里面有 embedding 模型、你没权限的 fine-tune 之类，下一轮会失败。看到错误换一个就行。
+- **"列得出来" 不等于 "调得通"**：`/model` 列的是 provider `/models` 上报的全部内容，里面有 embedding 模型、你没权限的 fine-tune 之类，下一轮会失败。`/model <name>` 也接受列表之外的名字，并且不做检查：拼错了要等下一轮失败才会发现。看到错误换一个就行。
 
 ## 接下来读什么
 
@@ -183,5 +183,5 @@ CLI 用的是 `cli.agent.set_provider(api_key, base_url, model)` 和 `cli.agent.
 :::
 
 ::: tip 真相源头
-命令语法：`/help` 与 [`agentao/cli/help_text.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/help_text.py)。Provider 发现逻辑：[`agentao/cli/commands.py:_list_providers_from_env`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands.py)。
+命令语法：`/help` 与 [`agentao/cli/help_text.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/help_text.py)。Provider 发现逻辑：[`agentao/cli/commands/provider.py:_list_providers_from_env`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/provider.py)。
 :::

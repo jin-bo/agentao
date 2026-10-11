@@ -22,18 +22,18 @@ docs/
 
 > **Not sure which surface to use?** Read [design/embedding-vs-acp.md](design/embedding-vs-acp.md) first — it disambiguates in-process embedding, ACP server, ACP client, and the ACP schema surface (all of which can combine).
 
-> **Are you a coding agent** (Claude Code, Codex, …) tasked with embedding Agentao into another project? Start with the distilled playbook [guides/embed-for-agents.md](guides/embed-for-agents.md), then follow its links into [guides/embedding.md](guides/embedding.md) and [reference/host-api.md](reference/host-api.md).
+> **Are you a coding agent** (Claude Code, Codex, …) tasked with embedding Agentao into another project? Start with the distilled playbook [guides/embed-for-agents.md](guides/embed-for-agents.md), then follow its links into [developer guide Part 2](../developer-guide/en/part-2/2-constructor-reference.md) and [reference/host-api.md](reference/host-api.md).
 
 Pick the path that matches your goal:
 
 - **Coding agent embedding Agentao into another project:** [guides/embed-for-agents.md](guides/embed-for-agents.md) (distilled, copy-paste playbook)
-- Embed in your Python project (primary use case): [guides/embedding.md](guides/embedding.md) → [reference/host-api.md](reference/host-api.md)
+- Embed in your Python project (primary use case): [developer guide 2.2 · Constructor Reference](../developer-guide/en/part-2/2-constructor-reference.md) → [reference/host-api.md](reference/host-api.md)
 - First-time CLI setup: [start/quickstart.md](start/quickstart.md)
 - Daily command lookup: [start/quick-reference.md](start/quick-reference.md)
 - Cross-language protocol entrypoints: [developer guide 3.2 · Agentao as an ACP server](../developer-guide/en/part-3/2-agentao-as-server.md)
 - Configuration reference (every file, env var, public API): [reference/configuration.md](reference/configuration.md)
 - Logging and debugging: [guides/logging.md](guides/logging.md)
-- Model and provider switching: [guides/model-switching.md](guides/model-switching.md)
+- Model and provider switching: [developer guide CLI 2](../developer-guide/en/cli/2-models-providers.md) · [2.5](../developer-guide/en/part-2/5-runtime-llm-switch.md)
 - Skills and runtime extension: [guides/skills.md](guides/skills.md)
 - Adding a built-in tool or skill to this repo: [guides/adding-components.md](guides/adding-components.md)
 
@@ -52,12 +52,12 @@ Task-oriented how-to guides and per-feature documentation.
 | Document | When to use it |
 |----------|----------------|
 | [guides/embed-for-agents.md](guides/embed-for-agents.md) | You are a coding agent embedding Agentao into another project — distilled, copy-paste playbook |
-| [guides/embedding.md](guides/embedding.md) | You are a developer embedding Agentao in a Python host — full reference |
+| [developer guide Part 2](../developer-guide/en/part-2/2-constructor-reference.md) | You are a developer embedding Agentao in a Python host — full reference |
 | [developer guide 3.2](../developer-guide/en/part-3/2-agentao-as-server.md) | You are running Agentao as an ACP server |
 | [developer guide CLI 8 · `/acp`](../developer-guide/en/cli/8-mcp-acp-plugins.md) | You manage project-local ACP client/servers |
 | [developer guide 3.4](../developer-guide/en/part-3/4-reverse-acp-call.md) | You embed the ACP surface specifically |
 | [guides/logging.md](guides/logging.md) | You are debugging sessions, tool calls, or model behavior |
-| [guides/model-switching.md](guides/model-switching.md) | You want to switch providers or models cleanly |
+| [developer guide CLI 2](../developer-guide/en/cli/2-models-providers.md) · [2.5](../developer-guide/en/part-2/5-runtime-llm-switch.md) | You want to switch providers or models cleanly |
 | [guides/skills.md](guides/skills.md) | You are creating, installing, or managing skills |
 | [guides/adding-components.md](guides/adding-components.md) | You are adding a built-in tool or skill to the Agentao codebase |
 | [guides/memory-quickstart.md](guides/memory-quickstart.md) | Memory usage from a user perspective |
@@ -118,7 +118,7 @@ Superseded plans, archived dev-notes, and old change logs. Useful for archaeolog
 1. [../README.md](../README.md)
 2. [start/quickstart.md](start/quickstart.md)
 3. [start/quick-reference.md](start/quick-reference.md)
-4. One deeper guide that matches the runtime surface you need: [developer guide 3.2](../developer-guide/en/part-3/2-agentao-as-server.md), [guides/model-switching.md](guides/model-switching.md), [guides/skills.md](guides/skills.md), or another file under [guides/](guides)
+4. One deeper guide that matches the runtime surface you need: [developer guide 3.2](../developer-guide/en/part-3/2-agentao-as-server.md), [developer guide 2.5](../developer-guide/en/part-2/5-runtime-llm-switch.md), [guides/skills.md](guides/skills.md), or another file under [guides/](guides)
 
 ### For Contributors
 

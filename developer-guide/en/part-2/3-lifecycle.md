@@ -45,7 +45,7 @@ def chat(
 
 `chat()` does **not** raise on these — it returns gracefully. Your caller must recognize the prefixes.
 
-**Blocking**: `chat()` is synchronous. During streaming it calls `transport.emit(...)` repeatedly. For async hosts, wrap it with a thread executor (see 2.6).
+**Blocking**: `chat()` is synchronous. During streaming it calls `transport.emit(...)` repeatedly. Async hosts call `await agent.arun(...)` instead ([below](#async-hosts-arun-and-the-turn-pool)).
 
 ## `add_message()`
 
@@ -112,6 +112,24 @@ async def main() -> None:
 
 End the agent's turns before closing: neither form waits for or cancels a turn in progress. Wrapping `await agent.arun(...)` in `async with` meets this even when the task is cancelled (a client disconnect, a timeout): the cancelled `arun()` cancels its turn and waits up to 5 seconds for it to stop before the block exits. A turn still running after that, such as a blocking tool that does not check the cancellation token, is closed while it runs; so is one whose wait a second cancel cuts short. Calling `close()` again is safe, so an explicit `close()` inside the block does no harm. A `try/finally` that calls `close()` still works when the agent outlives one block, such as a per-session cache.
 
+With several agents in one process, `agentao.log` records go to the most recently built agent that is still open. Closing it hands the log back to the next one. See [6.6](/en/part-6/6-observability#several-agents-in-one-process).
+
+## Async hosts: `arun()` and the turn pool
+
+`arun()` takes the same arguments as `chat()` (`user_message`, `max_iterations`, `cancellation_token`, `images`) and runs the same turn without blocking the event loop:
+
+```python
+async def handle_request(req):
+    async with build_from_environment(working_directory=Path(req.workdir)) as agent:
+        return await agent.arun(req.prompt)
+```
+
+- **The turn runs on Agentao's own thread pool**, not on the loop's default executor. The threads are named `agentao-arun-*`. The pool has `min(32, os.cpu_count() + 4)` workers, the size asyncio would pick. It is shared by all agents in the process and built on the first `arun()`, so a sync-only host never pays for it.
+- **Why not the default executor.** A turn holds its worker for the whole turn. Partway through, it can wait on an async tool that runs back on your loop. If turns filled the default executor, anything else on the loop that needs a worker would starve. That includes `loop.getaddrinfo`, which every `httpx.AsyncClient` connect to a hostname uses. The turns would then wait on work that can never start ([`_get_arun_pool`](https://github.com/jin-bo/agentao/blob/main/agentao/agent.py)).
+- **Sizing.** `loop.set_default_executor(...)` does not change how many turns run at once. To bound concurrent turns, use your own semaphore around `arun()`.
+- **Cancellation.** Cancelling the awaiting task (a timeout, a client disconnect) cancels the turn through its token, and `arun()` waits up to 5 seconds for the turn to clean up. You can also pass a `CancellationToken` and cancel it from elsewhere ([2.6](./6-cancellation-timeouts)).
+- **Don't wrap `chat()` in `asyncio.to_thread`.** That puts the turn on the default executor, which is the problem above.
+
 ## Switching LLMs at runtime
 
 Two methods swap models or credentials mid-session:
@@ -163,17 +181,18 @@ Right approach: **one agent per session**.
 | Host type | Pattern |
 |-----------|---------|
 | Sync web (Flask / WSGI) | Request → construct or pull from pool → `chat()` → return / close |
-| Async web (FastAPI / asyncio) | Wrap `chat()` in `asyncio.to_thread(agent.chat, msg)` |
+| Async web (FastAPI / asyncio) | `await agent.arun(msg)` |
 | Background batch | One agent per job, sequential |
 | Multi-tenant SaaS | Cache by tenant, TTL-evict and `close()` |
 
 ## Full example: FastAPI + async + session pool
 
 ```python
-from asyncio import to_thread, Lock
+from asyncio import Lock
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from agentao import Agentao
+from agentao.embedding import build_from_environment
 from agentao.transport import SdkTransport
 
 app = FastAPI()
@@ -183,7 +202,7 @@ _sessions: dict = {}
 
 async def get_or_create(session_id: str, workdir: Path) -> tuple[Agentao, Lock]:
     if session_id not in _sessions:
-        agent = Agentao(
+        agent = build_from_environment(   # credentials from the env / .env
             working_directory=workdir,
             transport=SdkTransport(),  # no event subscribe for simplicity
         )
@@ -198,7 +217,7 @@ async def chat_endpoint(session_id: str, message: str):
         raise HTTPException(500, str(e))
 
     async with lock:               # serialize same-session turns
-        reply = await to_thread(agent.chat, message)
+        reply = await agent.arun(message)
     return {"reply": reply}
 
 @app.delete("/session/{session_id}")
@@ -208,7 +227,7 @@ async def end_session(session_id: str):
         agent, lock = entry
         try:
             async with lock:       # wait for the request holding it (a cancelled
-                pass               # request releases it while its chat() still runs)
+                pass               # request releases it while its turn still runs)
         finally:                   # close even if this request is cancelled while
             await agent.aclose()   # waiting: the entry is already popped
     return {"ok": True}
@@ -217,7 +236,7 @@ async def end_session(session_id: str):
 Key points:
 
 - The `Lock` **serializes** turns of the same session (never two concurrent `chat()` on one agent)
-- `asyncio.to_thread` keeps the blocking `chat()` from stalling the event loop
+- `arun()` keeps the turn off the event loop, on Agentao's own pool
 - The explicit `DELETE` endpoint triggers `close()` for proper MCP cleanup
 
 For production you still need TTL eviction, memory caps, crash recovery — covered in [Part 7](/en/part-7/).
@@ -225,7 +244,7 @@ For production you still need TTL eviction, memory caps, crash recovery — cove
 ## TL;DR
 
 - **One agent = one stateful session.** Don't rebuild per turn — you'll lose context.
-- `chat()` is **blocking and not thread-safe**. Per-session lock + `asyncio.to_thread` for async hosts.
+- `chat()` is **blocking and not thread-safe**. Async hosts use a per-session lock + `await agent.arun(...)`, which runs on Agentao's own pool, not the loop's default executor.
 - Always close the agent: `with` / `async with`, or `close()` / `await aclose()` — leaks MCP subprocesses + DB handles otherwise.
 - `clear_history()` resets `messages` only; **memory DB persists** by design.
 - Swap models at runtime via `set_provider()` / `set_model()`; history continues unchanged.

@@ -22,7 +22,7 @@ docs/
 
 > **不确定该用哪一面？** 先看 [design/embedding-vs-acp.zh.md](design/embedding-vs-acp.zh.md)——它把 in-process embedding、ACP server、ACP client 以及 ACP schema surface 区分清楚（这四者可以任意组合）。
 
-> **你是一个编码 agent**（Claude Code、Codex…）要把 Agentao 嵌入到另一个项目？先看精炼版手册 [guides/embed-for-agents.md](guides/embed-for-agents.md)，再顺着它进入 [guides/embedding.md](guides/embedding.md) 和 [reference/host-api.md](reference/host-api.md)。
+> **你是一个编码 agent**（Claude Code、Codex…）要把 Agentao 嵌入到另一个项目？先看精炼版手册 [guides/embed-for-agents.md](guides/embed-for-agents.md)，再顺着它进入[开发者指南第 2 部分](../developer-guide/zh/part-2/2-constructor-reference.md)和 [reference/host-api.md](reference/host-api.md)。
 
 按目标选择阅读路径：
 
@@ -31,7 +31,7 @@ docs/
 - ACP 服务端模式：[开发者指南 3.2 · Agentao 作为 ACP 服务端](../developer-guide/zh/part-3/2-agentao-as-server.md)
 - 配置参考（每个文件、环境变量、公开 API）：[reference/configuration.md](reference/configuration.md)
 - 日志与调试：[guides/logging.md](guides/logging.md)
-- 模型和 provider 切换：[guides/model-switching.md](guides/model-switching.md)
+- 模型和 provider 切换：[开发者指南 CLI 2](../developer-guide/zh/cli/2-models-providers.md) · [2.5](../developer-guide/zh/part-2/5-runtime-llm-switch.md)
 - 技能系统使用：[guides/skills.md](guides/skills.md)
 
 ## start —— 入门
@@ -49,12 +49,12 @@ docs/
 | 文档 | 适用场景 |
 |------|----------|
 | [guides/embed-for-agents.md](guides/embed-for-agents.md) | 你是编码 agent，要把 Agentao 嵌入另一个项目——精炼可复制手册 |
-| [guides/embedding.md](guides/embedding.md) | 你是开发者，在 Python 宿主中嵌入 Agentao——完整参考 |
+| [开发者指南第 2 部分](../developer-guide/zh/part-2/2-constructor-reference.md) | 你是开发者，在 Python 宿主中嵌入 Agentao——完整参考 |
 | [开发者指南 3.2](../developer-guide/zh/part-3/2-agentao-as-server.md) | 你要把 Agentao 作为 ACP 服务端运行 |
 | [开发者指南 CLI 8 · `/acp`](../developer-guide/zh/cli/8-mcp-acp-plugins.md) | 项目级 ACP 客户端/服务管理 |
 | [开发者指南 3.4](../developer-guide/zh/part-3/4-reverse-acp-call.md) | 专门嵌入 ACP 面 |
 | [guides/logging.md](guides/logging.md) | 你在排查会话、工具调用或模型行为 |
-| [guides/model-switching.md](guides/model-switching.md) | 你要切换 provider 或模型 |
+| [开发者指南 CLI 2](../developer-guide/zh/cli/2-models-providers.md) · [2.5](../developer-guide/zh/part-2/5-runtime-llm-switch.md) | 你要切换 provider 或模型 |
 | [guides/skills.md](guides/skills.md) | 你要创建、安装或管理技能 |
 | [guides/memory-quickstart.md](guides/memory-quickstart.md) | 从用户视角快速理解记忆系统 |
 | [guides/memory-management.md](guides/memory-management.md) | 记忆系统行为与实现细节 |
@@ -113,7 +113,7 @@ Schema 快照已 check-in。任何改变 wire form 的 model 变更必须在同�
 1. [../README.zh.md](../README.zh.md)
 2. [start/quickstart.md](start/quickstart.md)
 3. [start/quick-reference.md](start/quick-reference.md)
-4. 再根据任务进入一篇更深的文档：[开发者指南 3.2](../developer-guide/zh/part-3/2-agentao-as-server.md)、[guides/model-switching.md](guides/model-switching.md)、[guides/skills.md](guides/skills.md) 或 [guides/](guides) 下其他文件
+4. 再根据任务进入一篇更深的文档：[开发者指南 3.2](../developer-guide/zh/part-3/2-agentao-as-server.md)、[开发者指南 2.5](../developer-guide/zh/part-2/5-runtime-llm-switch.md)、[guides/skills.md](guides/skills.md) 或 [guides/](guides) 下其他文件
 
 ### 面向贡献者
 

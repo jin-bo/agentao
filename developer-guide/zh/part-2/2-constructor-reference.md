@@ -14,7 +14,15 @@
 | **直接 `Agentao(...)`** | 想完全显式——构造时不要任何 env / 磁盘副作用。本节主体讲这条 |
 | **`agentao.embedding.build_from_environment(...)`** | 宿主沿用 CLI 的项目目录约定。会读 `.env`、`permissions.json`、`mcp.json`、内存目录后帮你把 `Agentao` 拼好。详见 [§ 工厂路径](#工厂路径-build-from-environment) |
 
-两条路径最终都是产出一个 `Agentao` 实例。**选一条**——不要混用。
+| 场景 | 用哪条 |
+|------|--------|
+| 笔记本或脚本，希望和 CLI 一样读本机配置 | `build_from_environment` |
+| 多租户 Web 应用，每个请求或租户一个 agent | `Agentao(...)` |
+| 不带 `.env` 的容器或沙箱 | `Agentao(...)` |
+| 宿主已自行管理状态的 IDE 插件 | `Agentao(...)` |
+| 需要可复现运行的测试框架 | `Agentao(...)` |
+
+两条路径最终都是产出一个 `Agentao` 实例。它们只有一种组合方式：`Agentao` 的每个关键字参数也都是工厂的覆盖项，覆盖项优先于工厂自动发现的值。所以 `build_from_environment(working_directory=wd, permission_engine=my_engine)` 保留其余发现结果，只换掉权限引擎。行不通的是半路混搭：直接调 `Agentao(...)`，再手工复刻工厂的发现逻辑，下个版本就会和工厂对不上。
 
 ---
 
@@ -117,7 +125,7 @@ agent = Agentao(
 | `project_instructions` | `str` | （从 `<wd>/AGENTAO.md` 读） | 直接传 AGENTAO.md 内容，跳过磁盘读 |
 
 ::: tip 异步宿主走 `arun()`
-`agent.chat(...)` 是同步的。异步宿主用 `await agent.arun(user_message)`，它在 Agentao 自己的工作线程池里跑这一轮，不占用事件循环的默认执行器。取消、replay、`max_iterations` 在两条接口上语义完全一致。
+`agent.chat(...)` 是同步的。异步宿主用 `await agent.arun(user_message)`，它在 Agentao 自己的工作线程池里跑这一轮，不占用事件循环的默认执行器。取消、replay、`max_iterations` 在两条接口上语义完全一致。线程池为什么独立、对容量规划意味着什么，见 [2.3 异步宿主](./3-lifecycle#异步宿主-arun-与轮次线程池)。
 :::
 
 ---
@@ -133,7 +141,7 @@ agent = Agentao(
 |------|------|----------|----------|
 | `filesystem` | `FileSystem` | `LocalFileSystem` | 工具注册时拷到每个文件/搜索 tool 的 `tool.filesystem` |
 | `shell` | `ShellExecutor` | `LocalShellExecutor` | 工具注册时拷到 shell tool 的 `tool.shell` |
-| `mcp_registry` | `MCPRegistry` | `FileBackedMCPRegistry` | `Agentao.__init__` 期间 MCP 初始化读一次 `list_servers()` |
+| `mcp_registry` | `MCPRegistry` | `None`：读 `<wd>/.agentao/mcp.json` 和 `~/.agentao/mcp.json`，与工厂的 `FileBackedMCPRegistry` 读同样的文件 | `Agentao.__init__` 期间 MCP 初始化读一次 `list_servers()` |
 | `memory_manager`（包裹 `MemoryStore`） | `MemoryStore` | `<wd>/.agentao/memory.db` 上的 `SQLiteMemoryStore` | 落到 `agent._memory_manager`；`save_memory` 工具委派给它 |
 
 ```python
@@ -152,7 +160,9 @@ agent = Agentao(
 )
 ```
 
-**协议**始终从 `agentao.host.protocols` 导入（公共表面）。默认实现住在 `agentao.capabilities` 和 `agentao.memory`。任何槽位传 `None` 表示*回退到本地默认*，**不是** *禁用*；要真正禁用某个能力，请注入一个调用即抛错的实现。
+**协议**始终从 `agentao.host.protocols` 导入（公共表面）。默认实现住在 `agentao.capabilities` 和 `agentao.memory`。任何槽位传 `None` 表示*回退到本地默认*，**不是** *禁用*；要真正禁用某个能力，请注入一个调用即抛错的实现。MCP 的话，`mcp_registry=InMemoryMCPRegistry()`（来自 `agentao.mcp`）不加载任何服务器。
+
+方法签名对上还不是契约的全部。`FileSystem.write_text` 替换已有文件时必须是**原子的**，这样进程在写到一半被杀时，用户的文件不会被截断。委托给 `LocalFileSystem` 的包装器自动满足这一点。从零写的实现必须先把内容写到别处，再用一次操作换进去，就像 `LocalFileSystem` 用同目录临时文件加 `os.replace` 那样（[`host-api.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/host-api.md#filesystemwrite_text-must-replace-atomically)）。
 
 ::: tip 端到端可运行示例 — [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection)
 用四个小适配器（内存 FS、审计日志 shell、dict 记忆存储、程序化 MCP registry）替换全部四个槽位，再通过 6 条 smoke 测试断言每个槽位都被实际调用。无需 `OPENAI_API_KEY`，运行 `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/`。
@@ -178,9 +188,14 @@ agent = Agentao(
 | 参数 | `None` 时 |
 |------|----------|
 | `bg_store` | 后台任务工具（`check_background_agent` / `cancel_background_agent`）不注册；子 agent 的工具 schema 抠掉 `run_in_background` 字段；`/agent bg\|dashboard\|cancel\|delete\|logs\|result` 等 CLI 子命令 no-op + 警告 |
-| `sandbox_policy` | Shell 不套 macOS `sandbox-exec` |
+| `sandbox_policy` | Shell 不套 macOS `sandbox-exec`。这个策略只包 `run_shell_command`，只在 macOS 上生效，而且只有 `sandbox.json`（先 `~/.agentao/`，再 `<wd>/.agentao/`）设了 `enabled: true` 才启用；它不限制文件工具（[`sandbox/policy.py`](https://github.com/jin-bo/agentao/blob/main/agentao/sandbox/policy.py)） |
 | `enable_builtin_agents`（`False`） | 内置子代理（`codebase-investigator`、`generalist`）不注册为委派工具。工厂会读 `settings.json` 里的 `agents.enable_builtin` |
 | `replay_config` | 构造时不读 `<wd>/.agentao/settings.json` 里的 `replay` 块；在 `start_replay()` / `reload_replay_config()` 创建 `ReplayManager` 之前不挂它。单独调 `start_replay()` 创建的是关闭 replay 的管理器（返回 `None`）；`reload_replay_config()` 才读这个块，但它本身不开始记录：之后再调 `start_replay()`，且只有其中 `enabled` 为真时才记录 |
+
+传了值时：
+
+- **`bg_store`** 启用后台子代理。`BackgroundTaskStore(persistence_dir=wd)` 把记录存在 `<wd>/.agentao/background_tasks.json`。重启后，仍在运行的任务会被标成 `failed`：记录还在，工作没了。同时最多跑 `max_concurrent` 个（默认 6，`None` 表示不设上限），超出的启动请求直接拒绝，不排队。一次性进程里保持 `None`，`agentao run` 就是这么做的，因为工作线程是守护线程，进程退出时会被切断。细节见 [附录 A.1](/zh/appendix/a-api-reference#构造器)。
+- **`replay_config`** 只有在宿主调用 `agent.start_replay()` 之后才往 `<wd>/.agentao/replays/*.jsonl` 写记录。CLI 和 ACP 每个会话都会调一次，工厂和 `Agentao(...)` 都不会。replay 只记录会话，不会重跑会话（[6.6](/zh/part-6/6-observability#维度三-session-replay)）。
 :::
 
 ::: details Logger 注入 — `logger`
@@ -269,15 +284,32 @@ agent = build_from_environment(
 )
 ```
 
-它做的事：
+按顺序，它做这些事（[`embedding/factory.py`](https://github.com/jin-bo/agentao/blob/main/agentao/embedding/factory.py)）：
 
-1. 解析 `working_directory`（默认 `Path.cwd()`）并冻结
-2. `<wd>/.env` 存在则按它 `load_dotenv`，否则全局回落
-3. 读 `LLM_PROVIDER` 与对应的 `*_API_KEY` / `*_BASE_URL` / `*_MODEL`
-4. 在 `wd` 上构造 `PermissionEngine`、`MemoryManager`、`FileBackedMCPRegistry`
-5. 全部显式传给 `Agentao(...)` —— **调用方的 `**overrides` 优先**
+| # | 步骤 | 出错时 |
+|---|------|--------|
+| 1 | 把 `working_directory` 解析成绝对路径并冻结。不传就是 `Path.cwd()`，嵌入宿主不应依赖它 | — |
+| 2 | 读 `<wd>/.agentao/settings.json` 里的工厂开关，例如 `agents.enable_builtin` | 文件格式不对时记日志并忽略 |
+| 3 | 把 `<wd>/.env` 载入 `os.environ`。没有这个文件时，从进程 cwd 往上找最近的 `.env`。环境里已有的非空变量优先 | — |
+| 4 | 读 LLM 设置：`LLM_PROVIDER`（默认 `OPENAI`）与 `{PROVIDER}_API_KEY` / `_BASE_URL` / `_MODEL` / `_API_FORMAT`，以及 `LLM_TEMPERATURE`、`LLM_MAX_TOKENS`、`LLM_EXTRA_BODY`、`LLM_PROMPT_CACHE`、`LLM_PROMPT_CACHE_TTL`。传了 `llm_client=` 就跳过 | `LLM_TEMPERATURE` / `LLM_MAX_TOKENS` 不是数字时抛错。`LLM_EXTRA_BODY` 有问题时警告并跳过 |
+| 5 | 读 `~/.agentao/permissions.json`，用其中规则构造 `PermissionEngine(project_root=wd, user_root=~/.agentao)`。文件里的 `shell` 块决定 shell 执行器 | **失败即关闭**：文件存在但读不了或不合法时抛 `PermissionConfigError`。若悄悄丢掉它，`deny` 规则会变成询问，对 `mcp_*` 工具甚至变成不提示。`<wd>/.agentao/permissions.json` 从不加载，只会警告 |
+| 6 | 接上可选子系统：`BackgroundTaskStore(persistence_dir=wd)`、`SandboxPolicy(project_root=wd)`、从 `settings.json` 的 `replay` 块读出的 `replay_config`，以及来自第 2 步的 `enable_builtin_agents` | replay 块格式不对时不启用 replay |
+| 7 | 除非你传了 `mcp_registry=` 或 `mcp_manager=`，否则用 `FileBackedMCPRegistry(project_root=wd, user_root=~/.agentao)` | — |
+| 8 | 打开记忆库：项目库 `<wd>/.agentao/memory.db`，用户库 `~/.agentao/memory.db` | 项目库回落到内存数据库。用户库被禁用并给出警告。用户记忆绝不会被改写到项目库 |
+| 9 | 把以上全部作为显式关键字参数传给 `Agentao(...)`。**你的覆盖项优先**于一切自动发现的值 | 构造抛错时，工厂会关掉它打开的记忆库 |
 
-整个代码库**只有这一处**会在启动时读 env / dotenv / `.agentao/*.json`。不希望发生这些副作用的宿主直接构造 `Agentao` 即可。
+`bg_store`、`sandbox_policy`、`replay_config` 显式传 `None` 即禁用该子系统。`permission_mode=` 作用在第 5 步的引擎上，所以用户的规则保留。CLI 和 ACP `session/new` 都通过这个工厂构造 agent。
+
+**谁读环境。** 只有工厂会读环境变量和 `.env`，也只有它读 `permissions.json`、`settings.json` 和 `sandbox.json`。直接 `Agentao(...)` 在默认值下仍会读一些文件：
+
+| 默认值 | 读什么 | 想避免就传 |
+|--------|--------|-----------|
+| `project_instructions=None` | `<wd>/AGENTAO.md` | `project_instructions=` |
+| `skill_manager=None` | `~/.agentao/skills/`、`<wd>/.agentao/skills/`、`<wd>/skills/`、`<wd>/.agentao/skills_config.json`。首次运行时还会把内置技能复制到 `~/.agentao/skills/` | `skill_manager=` |
+| `memory_manager=None` | 打开 `<wd>/.agentao/memory.db`（只有项目作用域） | `memory_manager=` |
+| `mcp_registry=None` | `<wd>/.agentao/mcp.json` 和 `~/.agentao/mcp.json` | `mcp_registry=` 或 `mcp_manager=` |
+
+构造时一点磁盘都不能碰的宿主，要把这四项全部注入。
 
 ---
 
@@ -347,7 +379,7 @@ agent = build_from_environment(
 - **0.2.16** — 显式注入面（`memory_manager` / `skill_manager` / `mcp_manager` / `filesystem` / `shell` …）落地；`replay_config` / `sandbox_policy` / `bg_store` 默认改为 `None`。
 - **0.2.10** — 核心运行时与 CLI 解耦；8 个 legacy 回调通过 `build_compat_transport()` 仍可用。
 
-完整的嵌入接入实践见 [`docs/guides/embedding.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md)。
+从 0.2.15 升级：[`docs/migration/0.2.15-to-0.3.3.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md)。
 :::
 
 ## TL;DR
@@ -356,6 +388,6 @@ agent = build_from_environment(
 - **能跑起来的最小调用**：`api_key` + `base_url` + `model` + `working_directory`，或 `llm_client` + `working_directory`。直接调用 `Agentao(...)` 不读环境变量。
 - **生产环境常加的**：`transport`、`permission_mode`（或 `permission_engine`）、`max_context_tokens`、`extra_mcp_servers`、`project_instructions`、`temperature`。
 - **其他全部是可选 / 高级** —— 能力协议、自定义管理器、提示缓存、压缩控制、沙箱 / replay / 后台 / 子代理子系统。
-- **两条工厂**：`build_from_environment()` 走 CLI 约定；直接 `Agentao(...)` 走显式控制。**不要混用。**
+- **两条工厂**：`build_from_environment()` 走 CLI 约定；直接 `Agentao(...)` 走显式控制。只想改工厂结果的某一部分，就把那个关键字作为覆盖项传给工厂。
 
 → 下一节：[2.3 生命周期管理](./3-lifecycle)
