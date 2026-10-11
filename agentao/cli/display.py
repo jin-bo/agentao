@@ -249,9 +249,11 @@ def _render_replace_diff(console: Console, path: str, old: str, new: str) -> Non
     ))
     if not diff:
         return
-    # Color each line manually (no Syntax block needed — diff is plain text)
+    # Color each line manually (no Syntax block needed — diff is plain text).
+    # Escaped: the lines are file content, and ``x[i]`` would lose ``[i]`` as a
+    # tag while a stray ``[/b]`` raises and drops the rest of the diff.
     for line in diff:
-        line_s = line.rstrip("\n")
+        line_s = markup_escape(line.rstrip("\n"))
         if line_s.startswith("+++") or line_s.startswith("---"):
             console.print(f"  [bold]{line_s}[/bold]")
         elif line_s.startswith("+"):
@@ -278,7 +280,7 @@ def _render_write_preview(console: Console, path: str, content: str) -> None:
         console.print(Padding(syn, (0, 0, 0, 2)))
     except Exception:
         for line in lines[:_WRITE_PREVIEW_LINES]:
-            console.print(f"  [dim]{line}[/dim]")
+            console.print(f"  [dim]{markup_escape(line)}[/dim]")
     if hidden > 0:
         console.print(f"  [dim]… +{hidden} lines[/dim]")
 
@@ -543,7 +545,12 @@ class DisplayController:
     # ── Tool lifecycle ────────────────────────────────────────────────────────
 
     def _on_tool_start(self, tool: str, args: dict, call_id: str) -> None:
-        header = _build_header(tool, args)
+        # Escaped once, here, because every use below is Rich markup: the
+        # header carries the model's arguments (a path, a command) and a
+        # sub-agent's ``[name n/max]`` label, either of which Rich would
+        # otherwise read as tags — dropping text, or raising on a stray
+        # closing tag and losing the line.
+        header = markup_escape(_build_header(tool, args))
         show_output = tool in _OUTPUT_TOOLS
 
         # Collect diff context for write/edit tools
@@ -648,14 +655,17 @@ class DisplayController:
         if show_footer:
             dur_str = f"  [dim]{_fmt_duration(duration_ms)}[/dim]" if duration_ms > 0 else ""
             summary = _build_output_summary(state, status, visible, hidden)
-            summary_str = f"  [dim]{summary}[/dim]" if summary else ""
+            summary_str = f"  [dim]{markup_escape(summary)}[/dim]" if summary else ""
             if status == "ok":
                 self._console.print(f"[green]✓[/green] [dim]{state.header}[/dim]{dur_str}{summary_str}")
             elif status == "cancelled":
-                reason = f"  [dim]{error}[/dim]" if error else ""
+                reason = f"  [dim]{markup_escape(error)}[/dim]" if error else ""
                 self._console.print(f"[yellow]✗[/yellow] [dim]{state.header}[/dim]{dur_str}{reason}")
             else:  # error
-                err_str = f"  [dim red]{_shorten(error or '', 80)}[/dim red]" if error else ""
+                err_str = (
+                    f"  [dim red]{markup_escape(_shorten(error or '', 80))}[/dim red]"
+                    if error else ""
+                )
                 self._console.print(f"[red]✗[/red] [dim]{state.header}[/dim]{dur_str}{err_str}{summary_str}")
             self._console.print()
 
