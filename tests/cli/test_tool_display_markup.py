@@ -80,3 +80,20 @@ def test_the_replace_diff_shows_code_with_brackets():
     )
     assert "+return x[i] + y[/b]" in out
     assert "-return x" in out
+
+
+def test_control_bytes_in_an_argument_do_not_reach_the_terminal():
+    out = _render(_start("run_shell_command", {"command": "echo hi\x1b[2K\x1b]0;x\x07"}))
+    assert "\x1b" not in out and "\x07" not in out
+    assert "echo hi" in out
+
+
+def test_a_trailing_run_of_backslashes_keeps_the_closing_tag():
+    out = _render(
+        _start("run_shell_command", {"command": "echo a\\\\\\"}),
+        _complete(status="error", error="bad \\\\\\"),
+    )
+    (footer,) = [line for line in out.splitlines() if line.startswith("✗")]
+    assert "[/dim" not in footer
+    assert "echo a\\\\\\" in footer
+    assert "bad \\\\\\" in footer

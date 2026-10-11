@@ -36,7 +36,24 @@ from rich.markup import escape as markup_escape
 from rich.padding import Padding
 from rich.syntax import Syntax
 
+from ..security.terminal_text import sanitize_terminal_text
 from .transport import AgentEvent, EventType
+
+
+def _inert(text: object) -> str:
+    """Text from the model or a file, made inert for one Rich markup string.
+
+    Control bytes first (an ``ESC`` in an argument or in file content would
+    otherwise drive the terminal), then markup. A trailing run of backslashes
+    is doubled here rather than by ``rich.markup.escape``, which evens only a
+    single one: an odd run of three or more escapes the closing tag the
+    caller appends, so ``[/dim]`` is shown and the style runs on. Every
+    caller puts a tag right after the value, where Rich halves the run.
+    """
+    s = sanitize_terminal_text(str(text))
+    body = s.rstrip("\\")
+    return markup_escape(body) + "\\" * (2 * (len(s) - len(body)))
+
 
 # ── Tool semantics table ──────────────────────────────────────────────────────
 # (icon, verb, primary_arg_key, secondary_arg_key | None)
@@ -253,7 +270,7 @@ def _render_replace_diff(console: Console, path: str, old: str, new: str) -> Non
     # Escaped: the lines are file content, and ``x[i]`` would lose ``[i]`` as a
     # tag while a stray ``[/b]`` raises and drops the rest of the diff.
     for line in diff:
-        line_s = markup_escape(line.rstrip("\n"))
+        line_s = _inert(line.rstrip("\n"))
         if line_s.startswith("+++") or line_s.startswith("---"):
             console.print(f"  [bold]{line_s}[/bold]")
         elif line_s.startswith("+"):
@@ -270,7 +287,9 @@ def _render_write_preview(console: Console, path: str, content: str) -> None:
     """Print a syntax-highlighted preview of written content."""
     if not content:
         return
-    lines = content.splitlines()
+    # File content, often model-written: no control byte reaches the terminal
+    # through the Syntax renderer either.
+    lines = sanitize_terminal_text(content).splitlines()
     preview = "\n".join(lines[:_WRITE_PREVIEW_LINES])
     hidden = max(0, len(lines) - _WRITE_PREVIEW_LINES)
     lexer = _lexer_for(path)
@@ -280,7 +299,7 @@ def _render_write_preview(console: Console, path: str, content: str) -> None:
         console.print(Padding(syn, (0, 0, 0, 2)))
     except Exception:
         for line in lines[:_WRITE_PREVIEW_LINES]:
-            console.print(f"  [dim]{markup_escape(line)}[/dim]")
+            console.print(f"  [dim]{_inert(line)}[/dim]")
     if hidden > 0:
         console.print(f"  [dim]… +{hidden} lines[/dim]")
 
@@ -550,7 +569,7 @@ class DisplayController:
         # sub-agent's ``[name n/max]`` label, either of which Rich would
         # otherwise read as tags — dropping text, or raising on a stray
         # closing tag and losing the line.
-        header = markup_escape(_build_header(tool, args))
+        header = _inert(_build_header(tool, args))
         show_output = tool in _OUTPUT_TOOLS
 
         # Collect diff context for write/edit tools
@@ -655,15 +674,15 @@ class DisplayController:
         if show_footer:
             dur_str = f"  [dim]{_fmt_duration(duration_ms)}[/dim]" if duration_ms > 0 else ""
             summary = _build_output_summary(state, status, visible, hidden)
-            summary_str = f"  [dim]{markup_escape(summary)}[/dim]" if summary else ""
+            summary_str = f"  [dim]{_inert(summary)}[/dim]" if summary else ""
             if status == "ok":
                 self._console.print(f"[green]✓[/green] [dim]{state.header}[/dim]{dur_str}{summary_str}")
             elif status == "cancelled":
-                reason = f"  [dim]{markup_escape(error)}[/dim]" if error else ""
+                reason = f"  [dim]{_inert(error)}[/dim]" if error else ""
                 self._console.print(f"[yellow]✗[/yellow] [dim]{state.header}[/dim]{dur_str}{reason}")
             else:  # error
                 err_str = (
-                    f"  [dim red]{markup_escape(_shorten(error or '', 80))}[/dim red]"
+                    f"  [dim red]{_inert(_shorten(error or '', 80))}[/dim red]"
                     if error else ""
                 )
                 self._console.print(f"[red]✗[/red] [dim]{state.header}[/dim]{dur_str}{err_str}{summary_str}")
@@ -680,16 +699,16 @@ class DisplayController:
     # the model's text — could restyle or hide the line.
 
     def _on_agent_start(self, d: dict) -> None:
-        label = markup_escape(f"[{d.get('agent', 'agent')}]")
+        label = _inert(f"[{d.get('agent', 'agent')}]")
         task = d.get("task", "")
         _t = (task[:_TASK_TEXT_MAX - 1] + "…") if len(task) > _TASK_TEXT_MAX else task
-        task_preview = f": [dim]{markup_escape(_t)}[/dim]" if _t else ""
+        task_preview = f": [dim]{_inert(_t)}[/dim]" if _t else ""
         self._stop_spinner()
         self._console.rule(f"[bold cyan]▶ {label}{task_preview}[/bold cyan]", style="cyan")
         self._start_spinner(f"[bold cyan]{label} Running…[/bold cyan]")
 
     def _on_agent_end(self, d: dict) -> None:
-        label = markup_escape(f"[{d.get('agent', 'agent')}]")
+        label = _inert(f"[{d.get('agent', 'agent')}]")
         state = d.get("state", "completed")
         error = d.get("error")
 
@@ -705,7 +724,7 @@ class DisplayController:
         if d.get("duration_ms") is not None:
             parts.append(_fmt_duration(d["duration_ms"]))
         if error:
-            parts.append(markup_escape(_shorten(error, 50)))
+            parts.append(_inert(_shorten(error, 50)))
         stats = " · ".join(parts)
 
         if state == "completed":
