@@ -26,9 +26,11 @@ macOS ships with `sandbox-exec`, a kernel-level isolator for file writes and net
 
 | Profile | File writes | Network | Use case |
 |---------|-------------|---------|----------|
-| `readonly` | ❌ | ❌ | Pure read analysis, audits |
-| `workspace-write-no-network` | `_RW1` only | ❌ | Code editing without net |
-| `workspace-write` | `_RW1` only | ✅ | Default for dev |
+| `readonly` | temp dirs only | ❌ | Pure read analysis, audits |
+| `workspace-write-no-network` | `_RW1` + temp dirs | ❌ | Code editing without net (the built-in default) |
+| `workspace-write` | `_RW1` + temp dirs | ✅ | Dev work that needs the network |
+
+"Temp dirs" are `/tmp`, `/var/tmp` and their `/private/...` paths: every profile allows them, because many tools write scratch files there.
 
 `_RW1` is a sandbox-profile variable for "the writable path"; Agentao passes `workspace_root` (defaults to the project root).
 

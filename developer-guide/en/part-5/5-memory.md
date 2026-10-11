@@ -117,22 +117,23 @@ It is deliberately *not* in the system message: it is query-specific, so putting
 
 `MemoryGuard` validates memories before they're persisted. The default (`agentao/memory/guards.py`) rejects obvious sensitive patterns:
 
-- API keys, tokens, password literals
-- Credit card numbers, national-ID-style PII
+- API keys and tokens (the shared patterns in `agentao/security/secret_scan.py`), private-key headers, and `password=` / `secret=` style assignments
 
-Customize:
+It does not detect PII such as card or ID numbers. Every write calls `validate_title`, `validate_content` and then `detect_sensitive(content)`; the last one raises `SensitiveMemoryError` to refuse the write.
+
+Customize by overriding `detect_sensitive`:
 
 ```python
-from agentao.memory.guards import MemoryGuard
+from agentao.memory.guards import MemoryGuard, SensitiveMemoryError
 
 class StrictGuard(MemoryGuard):
-    def validate(self, content: str, key: str) -> None:
-        super().validate(content, key)
+    def detect_sensitive(self, content: str) -> None:
+        super().detect_sensitive(content)
         if "internal-only" in content.lower():
             raise SensitiveMemoryError("Cannot store 'internal-only' content")
 
 agent = Agentao(working_directory=Path("/tmp"))
-agent._memory_manager.guard = StrictGuard()
+agent.memory_manager.guard = StrictGuard()
 ```
 
 ## What the LLM can do — and can't

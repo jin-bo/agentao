@@ -19,7 +19,7 @@ description: 用 marker_single 把 PDF 转成 markdown。命中"convert PDF to m
 2. ...
 ```
 
-YAML frontmatter 是 agent 决定要不要激活时读的。激活后，整份 SKILL.md body 注入系统提示，body 里引用的 `references/*.md` 也按需加载。
+YAML frontmatter 是 agent 决定要不要激活时读的。激活后，整份 SKILL.md body 进入每次请求的 `<system-reminder>`（易变尾部，不在缓存的系统提示里）。`references/`、`assets/`、`scripts/` 下的文件不会内联：激活时只按绝对路径列出，agent 需要时用 `read_file` 读取。
 
 你不需要知道有哪些 skill — `/help` 列得出，agent 自己识别。只在你想强制 / 抑制 / 新建一个 skill 时才介入。
 
@@ -141,9 +141,9 @@ agentao skill install myorg/internal-skills:billing      --scope project
 | Scope | 装到哪 | 什么时候用 |
 |---|---|---|
 | `global` | `~/.agentao/skills/` | 个人、跨项目 |
-| `project` | `<cwd>/skills/` | 团队共享、签入 repo |
+| `project` | `<项目根>/.agentao/skills/` | 团队共享、签入 repo |
 
-省略 `--scope` 时 CLI 自动判断（cwd 下存在 `skills/` 就是 project，否则 global）。
+省略 `--scope` 时 CLI 自动判断：从 cwd 向上能找到项目根（有 `.agentao`、`.git`、`pyproject.toml` 或 `package.json` 标记）就是 `project`，否则 `global`。
 
 `--force` 覆盖同名已存在的 skill（默认拒绝覆盖）。
 
@@ -219,7 +219,8 @@ pip install -r examples/skills/zootopia-ppt/requirements.txt
 | `skills/<name>/SKILL.md` | skill 本体（frontmatter + body） |
 | `skills/<name>/references/*.md` | body 引用的按需加载文档 |
 | `~/.agentao/skills/<name>/` | 同样的目录结构，global 作用域（受管安装） |
-| `~/.agentao/skills/registry.json` · `<cwd>/skills/registry.json` | 跟踪受管安装（source ref、版本、scope） |
+| `<项目根>/.agentao/skills/<name>/` | 同样的目录结构，project 作用域（受管安装） |
+| `~/.agentao/skills_registry.json` · `<项目根>/.agentao/skills_registry.json` | 跟踪受管安装（source ref、版本、scope） |
 | `.agentao/skills_config.json`（项目） | 持久化的 enable/disable 状态 — 见 [10. 配置文件参考](./10-config-reference) |
 | [`examples/skills/`](https://github.com/jin-bo/agentao/tree/main/examples/skills) | 仓库自带 gallery（拷进上面任一位置使用） |
 

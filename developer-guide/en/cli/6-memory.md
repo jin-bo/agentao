@@ -28,12 +28,12 @@ Recall candidates (the "this might be relevant right now" matches injected into 
 
 ## How memory enters the prompt
 
-Two blocks are added to the system prompt every turn:
+Two blocks reach the model every turn:
 
-- **`<memory-stable>`** — the core, slow-changing memories (your role, project anchors). Renders top-down, budget-limited.
-- **`<memory-context>`** — top-K recall candidates scored against the current user message. Volatile; rebuilt every turn.
+- **`<memory-stable>`** — the core, slow-changing memories (your role, project anchors), at the end of the cached system prompt. Renders top-down, budget-limited.
+- **`<memory-context>`** — top-K recall candidates scored against the current user message. Volatile: it is rebuilt every turn and sent in the per-request `<system-reminder>`, not in the system prompt.
 
-Session summaries are *not* in `<memory-stable>` — they live in the conversation history as `[Conversation Summary]` blocks added at compaction time.
+`<memory-stable>` also carries up to 3 summaries from *previous* sessions in this project. The current session's own summaries are not repeated there: they are already in the conversation history as `[Conversation Summary]` blocks added at compaction time.
 
 ## `/memory` — list everything
 
@@ -68,7 +68,7 @@ Found 2 memory(ies) matching 'oauth':
   • Auth token storage [project]: Tokens go through SealedStorage...
 ```
 
-Searches across title, content, and tags. Case-insensitive substring match.
+Searches across title, content, the normalized key, tags and extracted keywords. Case-insensitive substring match.
 
 ## `/memory tag <tag>` — filter by tag
 
@@ -96,7 +96,7 @@ Useful when you suspect cross-project pollution ("the agent thinks I'm working o
 Successfully deleted memory: OAuth integration plan
 ```
 
-The argument is the entry **title**, not its tags or ID. Match is exact (case sensitive); a normalized-key fallback catches obvious variants.
+The argument is the entry **title**, not its tags or ID. The whole title must match, ignoring case. Every entry with that title is deleted, in both scopes.
 
 Soft-delete: the row stays in the DB with a `deleted_at` timestamp; it's filtered out everywhere it would otherwise appear. The agent will not see it on the next turn.
 

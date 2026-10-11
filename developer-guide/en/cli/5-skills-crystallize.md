@@ -19,7 +19,7 @@ When the user asks for a PDF → markdown conversion:
 2. ...
 ```
 
-The YAML frontmatter is what the agent reads when deciding whether to activate. Once active, the full SKILL.md body is injected into the system prompt, plus any `references/*.md` files that the skill references.
+The YAML frontmatter is what the agent reads when deciding whether to activate. Once active, the full SKILL.md body goes into the per-request `<system-reminder>` (the volatile tail, not the cached system prompt). Files under `references/`, `assets/` and `scripts/` are not inlined: activation lists them by absolute path, and the agent reads them with `read_file` when it needs them.
 
 You don't have to know the skill exists — `/help` lists them, the agent picks them up. You only step in when you want to force, suppress, or build a new one.
 
@@ -141,9 +141,9 @@ agentao skill install myorg/internal-skills:billing      --scope project
 | Scope | Installs to | When to use |
 |-------|-------------|-------------|
 | `global` | `~/.agentao/skills/` | Personal, cross-project |
-| `project` | `<cwd>/skills/` | Team-shared, checked into the repo |
+| `project` | `<project-root>/.agentao/skills/` | Team-shared, checked into the repo |
 
-If `--scope` is omitted, the CLI auto-detects (project if a `skills/` directory exists in cwd, else global).
+If `--scope` is omitted, the CLI auto-detects: `project` if a project root is found walking up from cwd (a `.agentao`, `.git`, `pyproject.toml` or `package.json` marker), else `global`.
 
 `--force` overwrites an existing skill of the same name (otherwise the install refuses).
 
@@ -219,7 +219,8 @@ The full gallery README — including the embedded-harness perspective on host-c
 | `skills/<name>/SKILL.md` | The skill itself (frontmatter + body) |
 | `skills/<name>/references/*.md` | On-demand references the skill body links to |
 | `~/.agentao/skills/<name>/` | Same layout, global scope (managed installs) |
-| `~/.agentao/skills/registry.json` · `<cwd>/skills/registry.json` | Tracks managed installs (source ref, version, install scope) |
+| `<project-root>/.agentao/skills/<name>/` | Same layout, project scope (managed installs) |
+| `~/.agentao/skills_registry.json` · `<project-root>/.agentao/skills_registry.json` | Tracks managed installs (source ref, version, install scope) |
 | `.agentao/skills_config.json` (project) | Persistent enable/disable state — see [10. Configuration Reference](./10-config-reference) |
 | [`examples/skills/`](https://github.com/jin-bo/agentao/tree/main/examples/skills) | Repo-shipped gallery (copy into one of the locations above) |
 

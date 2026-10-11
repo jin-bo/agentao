@@ -35,7 +35,8 @@ request and never written into the transcript.
 │ …conversation history…                        │
 │ this turn's user message (persisted):        │
 │   <system-reminder>                          │  ← per turn
-│   Current Date/Time: 2026-04-16 15:30        │
+│   Current Date/Time: 2026-04-16 15:30:00     │
+│   (Thursday)                                 │
 │   </system-reminder>                         │
 │   <the text you passed to chat()>            │
 └──────────────────────────────────────────────┘

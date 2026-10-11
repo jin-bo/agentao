@@ -1744,11 +1744,12 @@ class Agentao:
 
         Runtime internals stay sync (the chat loop, tool execution,
         permission, and replay surfaces are all sequential I/O). This
-        method bridges through ``run_in_executor`` so async hosts can
-        ``await agent.arun(...)`` without their own thread bridge while
-        the same turn lifecycle from :meth:`chat` runs unchanged. The
-        executor is agentao's own, never the loop's default — see
-        :func:`_get_arun_pool` for the deadlock that choice avoids.
+        method submits :meth:`chat` to agentao's own worker pool, so async
+        hosts can ``await agent.arun(...)`` without their own thread bridge
+        while the same turn lifecycle from :meth:`chat` runs unchanged.
+        It does not go through ``run_in_executor`` and never uses the
+        loop's default executor — see :func:`_get_arun_pool` for the
+        deadlock that choice avoids.
 
         Cancellation, replay, and ``max_iterations`` behave identically
         across both surfaces; the executor thread reads the same

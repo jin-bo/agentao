@@ -32,7 +32,8 @@ Agent 的指令是**每轮 chat() 动态重建**的，不是一个静态字符�
 │ ……对话历史……                                  │
 │ 本轮的 user 消息（会落盘）：                    │
 │   <system-reminder>                          │  ← 每轮变
-│   Current Date/Time: 2026-04-16 15:30        │
+│   Current Date/Time: 2026-04-16 15:30:00     │
+│   (Thursday)                                 │
 │   </system-reminder>                         │
 │   <你传给 chat() 的文本>                       │
 └──────────────────────────────────────────────┘

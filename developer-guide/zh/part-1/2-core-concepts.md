@@ -98,14 +98,12 @@ Agentao 内置 3 个 Transport：
 
 ## 6. System Prompt（动态系统提示）
 
-不是静态字符串，而是**每次 `chat()` 重新拼装**的：
+不是静态字符串。模型分两部分拿到指令：
 
-1. `AGENTAO.md`（项目说明，从 working_directory 读）
-2. Agent 基础能力描述
-3. 当前日期、可用技能清单
-4. 激活的技能全文
-5. 记忆召回块 `<memory-context>`
-6. 任务列表（todos）
+1. **系统提示**：稳定前缀，同一会话的各轮之间逐字节不变（便于服务商缓存）。包括 `AGENTAO.md`（项目说明，从 working_directory 读）、Agent 基础能力描述、可用技能清单，以及稳定记忆 `<memory-stable>`。
+2. **易变尾部**：每次请求重新拼装，作为末尾的一条 `<system-reminder>` 消息发送，不写入历史。包括激活的技能全文、任务列表（todos）和记忆召回块 `<memory-context>`。
+
+当前日期时间不在这两部分里：它放在每条用户消息开头的 `<system-reminder>` 中。
 
 宿主可以通过写 `AGENTAO.md` 或自定义技能在这里注入业务知识（第 5.6 节）。
 

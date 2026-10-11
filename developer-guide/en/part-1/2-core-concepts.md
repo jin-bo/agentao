@@ -98,14 +98,12 @@ A **session** is the lifetime from `Agentao()` to `close()`, matching one conver
 
 ## 6. System Prompt (dynamic)
 
-Not a static string — **rebuilt on every `chat()` call** from:
+Not a static string. The model gets its instructions in two parts:
 
-1. `AGENTAO.md` (project instructions, read from working_directory)
-2. Base agent capability description
-3. Current date + available skill catalog
-4. Active skills' full text
-5. Memory recall block `<memory-context>`
-6. Task list (todos)
+1. **The system prompt**, a stable prefix that stays byte-identical across the turns of a session (so providers can cache it): `AGENTAO.md` (project instructions, read from working_directory), the base agent capability description, the available skill catalog, and the stable memories `<memory-stable>`.
+2. **A volatile tail**, rebuilt for every request and sent as one trailing `<system-reminder>` message that history never stores: active skills' full text, the task list (todos), and the memory recall block `<memory-context>`.
+
+The current date and time are in neither part: they go in a `<system-reminder>` at the start of each user message.
 
 Hosts inject business knowledge here by writing `AGENTAO.md` or custom skills (Part 5.6).
 

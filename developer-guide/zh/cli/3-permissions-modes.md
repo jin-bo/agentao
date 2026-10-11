@@ -130,9 +130,9 @@ Linux 和 Windows 没有这玩意，那两个平台 `/sandbox` 是 no-op。
 ```text
 > /sandbox
 Sandbox: enabled
-  Default profile: workspace-only
+  Default profile: workspace-write-no-network
   Workspace root:  /Users/you/projects/my-app
-  Available:       workspace-only, network-allowed, strict-readonly
+  Available:       readonly, workspace-write, workspace-write-no-network
 ```
 
 子命令：
@@ -143,6 +143,7 @@ Sandbox: enabled
 | `/sandbox on` | 本会话启用 |
 | `/sandbox off` | 本会话停用 |
 | `/sandbox profile <name>` | 切 profile（仅会话） |
+| `/sandbox profiles` | 列出可用 profile |
 | `/sandbox profiles` | 列出可用 profile 名 |
 
 ::: danger 配置坏掉时 fail-closed

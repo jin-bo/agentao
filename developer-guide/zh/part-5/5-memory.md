@@ -116,23 +116,24 @@ Agentao 注入两种记忆块，而且**它们挂在不同的消息上** —— 
 
 `MemoryGuard` 在记忆写入前做验证。默认配置（`agentao/memory/guards.py`）拒绝明显的敏感信息：
 
-- API keys、token、password 字面量
-- 信用卡号、身份证号等 PII 模式
+- API keys 和 token（共用 `agentao/security/secret_scan.py` 的模式）、私钥头，以及 `password=` / `secret=` 这类赋值
 
-自定义：
+它不检测信用卡号、身份证号这类 PII。每次写入依次调用 `validate_title`、`validate_content`、`detect_sensitive(content)`；最后一个抛 `SensitiveMemoryError` 即拒绝写入。
+
+自定义时重写 `detect_sensitive`：
 
 ```python
-from agentao.memory.guards import MemoryGuard
+from agentao.memory.guards import MemoryGuard, SensitiveMemoryError
 
 class StrictGuard(MemoryGuard):
-    def validate(self, content: str, key: str) -> None:
-        super().validate(content, key)   # 复用默认检查
+    def detect_sensitive(self, content: str) -> None:
+        super().detect_sensitive(content)   # 复用默认检查
         # 再加你的规则
         if "internal-only" in content.lower():
             raise SensitiveMemoryError("Cannot store 'internal-only' content")
 
 agent = Agentao(working_directory=Path("/tmp"))
-agent._memory_manager.guard = StrictGuard()
+agent.memory_manager.guard = StrictGuard()
 ```
 
 ## LLM 能做什么、不能做什么

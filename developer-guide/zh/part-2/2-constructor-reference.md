@@ -117,7 +117,7 @@ agent = Agentao(
 | `project_instructions` | `str` | （从 `<wd>/AGENTAO.md` 读） | 直接传 AGENTAO.md 内容，跳过磁盘读 |
 
 ::: tip 异步宿主走 `arun()`
-`agent.chat(...)` 是同步的。异步宿主用 `await agent.arun(user_message)`，内部通过 `loop.run_in_executor` 桥接。取消、replay、`max_iterations` 在两条接口上语义完全一致。
+`agent.chat(...)` 是同步的。异步宿主用 `await agent.arun(user_message)`，它在 Agentao 自己的工作线程池里跑这一轮，不占用事件循环的默认执行器。取消、replay、`max_iterations` 在两条接口上语义完全一致。
 :::
 
 ---

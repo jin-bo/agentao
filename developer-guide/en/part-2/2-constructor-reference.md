@@ -117,7 +117,7 @@ agent = Agentao(
 | `project_instructions` | `str` | (read from `<wd>/AGENTAO.md`) | Pass AGENTAO.md content directly — skips the disk read |
 
 ::: tip Async hosts use `arun()`
-`agent.chat(...)` is synchronous. Async hosts call `await agent.arun(user_message)`, which bridges through `loop.run_in_executor`. Cancellation, replay, and `max_iterations` semantics are identical across both surfaces.
+`agent.chat(...)` is synchronous. Async hosts call `await agent.arun(user_message)`, which runs the turn on Agentao's own worker pool, not on the event loop's default executor. Cancellation, replay, and `max_iterations` semantics are identical across both surfaces.
 :::
 
 ---

@@ -3,7 +3,7 @@
 Field-level lookup for every message Agentao's ACP server and client emit. For the end-to-end story (handshake → prompt → streaming → cancel) see [Part 3](/en/part-3/). This appendix is the speed-lookup you open when you're in the middle of debugging a malformed message.
 
 **Conventions**:
-- `→` = request; `←` = response; `⇠` = server-to-client notification
+- `→` = request; `←` = response; `⇠` = sent by the server to the client (a notification, or a request the client must answer)
 - All messages are JSON-RPC 2.0 over NDJSON on stdio
 - `{…}` = object; `[…]` = array; `T|U` = union; `?` = optional
 
@@ -94,8 +94,10 @@ Run one user turn. Returns when the agent stops.
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `type` | `"text"` | Only text supported in v1 baseline |
-| `text` | `string` | The user message |
+| `type` | `"text"` \| `"resource_link"` \| `"image"` | Any other type is rejected with `-32602` |
+| `text` | `string` | For `text`: the user message |
+| `uri`, `name`? | `string` | For `resource_link`: written into the prompt as a reference |
+| `data`, `mimeType` | `string` | For `image`: base64 bytes and the image type |
 
 ### ← Response
 
@@ -119,8 +121,8 @@ Server-to-client streaming updates during a prompt turn.
 | Value | Agentao event | Extra fields |
 |-------|---------------|--------------|
 | `user_message_chunk` | (replay) | `content: {type:"text", text}` |
-| `agent_message_chunk` | `LLM_TEXT` | `content: {type:"text", text}` |
-| `agent_thought_chunk` | `THINKING` / `ERROR` | `content: {type:"text", text}` |
+| `agent_message_chunk` | `LLM_TEXT` / `ERROR` | `content: {type:"text", text}`. For `ERROR` the text starts with `Error: ` |
+| `agent_thought_chunk` | `THINKING` | `content: {type:"text", text}` |
 | `tool_call` | `TOOL_START` | `toolCallId`, `title`, `kind`, `status:"pending"`, `rawInput`, and for a file edit a `content[]` holding one `diff` entry |
 | `tool_call_update` | `TOOL_OUTPUT` / `TOOL_COMPLETE` | `toolCallId`, `status`, optional `content[]` — **replaces** the collection, so each update restates it whole |
 
@@ -145,7 +147,7 @@ ACP v1 has a third variant, `terminal`. Agentao never emits it: it does not call
 | `completed` | Tool succeeded |
 | `failed` | Tool raised / returned error |
 
-## C.5 `session/request_permission` ⇠ notification
+## C.5 `session/request_permission` ⇠ request
 
 Server asks client to confirm a tool call.
 
@@ -155,7 +157,7 @@ Server asks client to confirm a tool call.
 |-------|------|-------|
 | `sessionId` | `string` | |
 | `toolCall` | `object` | Same shape as `session/update.tool_call` |
-| `options` | `[{optionId, name, kind}]` | Typically `["allow", "allow_always", "reject"]` |
+| `options` | `[{optionId, name, kind}]` | `allow_once`, `allow_always`, `reject_once`, `reject_always` (`optionId` equals `kind`). A call the MCP Skills gate asks gets only the two `*_once` options |
 
 ### Expected response (client → server)
 
@@ -178,7 +180,7 @@ Abort the current turn and all pending permission requests.
 
 ### ← Response
 
-Empty object `{}`. The ongoing `session/prompt` eventually resolves with `stopReason: "cancelled"`.
+ACP defines `session/cancel` as a notification (no `id`), so the server sends no response. A client that sends it as a request (with an `id`) gets `"result": null`. The ongoing `session/prompt` eventually resolves with `stopReason: "cancelled"`.
 
 ## C.7 `session/load`
 
@@ -278,7 +280,7 @@ Set the session's ACP `modeId`. The field is the ACP-standard **`modeId`** (not 
 - A recognized preset **requires** the session to have a `PermissionEngine`, else `-32600` Invalid Request. Unknown modeIds need no engine — they are pure UI state.
 - Per-session: each session owns its own engine, so a preset change on session A never affects session B.
 
-## C.11 `_agentao.cn/ask_user` ⇠ notification (extension)
+## C.11 `_agentao.cn/ask_user` ⇠ request (extension)
 
 Agentao-specific. Server asks the user a free-form question.
 
@@ -293,9 +295,10 @@ Agentao-specific. Server asks the user a free-form question.
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `answer` | `string` | Free-form user reply |
+| `outcome` | `"answered"` \| `"cancelled"` | `"answered"` when the user replied, `"cancelled"` when they dismissed the prompt |
+| `text` | `string` | With `"answered"`: the user's reply as one string |
 
-If the user is unavailable, clients may return the sentinel `"(user unavailable)"` (constant `ASK_USER_UNAVAILABLE_SENTINEL`).
+Any other shape is refused (`extra="forbid"`). A cancelled prompt, an empty `text`, an error response or a malformed result all reach the model as the sentinel `"(user unavailable)"` (constant `ASK_USER_UNAVAILABLE_SENTINEL`).
 
 ## C.12 JSON-RPC error codes (quick reference)
 
