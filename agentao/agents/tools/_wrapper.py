@@ -23,12 +23,13 @@ import time
 import uuid
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...llm._usage import positive_int
 from ...tools.base import SHELL_TOOL_NAME, RegistrableTool, Tool
 from ...transport.events import AgentEvent, EventType
+from ...transport.sdk import SdkTransport
 from ..bg_store import BackgroundTaskStore
 from ._complete import CompleteTaskTool, TaskComplete
 from ._inherit import (
@@ -44,9 +45,6 @@ from ._outcome import (
     _is_harness_notice,
     _terminal_state,
 )
-
-if TYPE_CHECKING:
-    from ...transport import SdkTransport
 
 logger = logging.getLogger(__name__)
 
@@ -1298,7 +1296,7 @@ class AgentToolWrapper(Tool):
             f"check_background_agent(agent_id='{agent_id}', wait_seconds=N) once."
         )
 
-    def _child_transport(self, suppress_output: bool, max_turns: int) -> "SdkTransport":
+    def _child_transport(self, suppress_output: bool, max_turns: int) -> SdkTransport:
         """The transport a sub-agent is built with.
 
         A foreground sub-agent reports to the parent through
@@ -1317,8 +1315,6 @@ class AgentToolWrapper(Tool):
         default for a host with no callbacks. Nothing it emits reaches the
         parent.
         """
-        from ...transport import SdkTransport
-
         if suppress_output:
             return SdkTransport(confirm_tool=lambda *_: False)
         agent_name = self._definition["name"]
