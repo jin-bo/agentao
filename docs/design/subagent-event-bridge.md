@@ -1,9 +1,9 @@
 # Sub-agent event bridge: callbacks out, events back in
 
-**Status:** A **implemented** (#514, #515, 2026-10-10); B a proposal, **not authorized**. Decision (rev 2): implement both options in two steps — A first, then B. rev 3 closed the review of rev 2; rev 4 records how A landed (§5).
+**Status:** **implemented.** A in #514 and #515, B in the PR that adds rev 5 (2026-10-10). Decision (rev 2): implement both options in two steps — A first, then B. rev 3 closed the review of rev 2; rev 4 records how A landed (§5), rev 5 how B landed (§6.4).
 **Anchors:** agentao `main@60fcca9` (2026-10-11). Line numbers below are at that commit, before A landed.
 **Related:** `0-5-0-removal-checklist.md` §C (why the sub-agent factory uses `build_compat_transport` today); `host-tool-injection.md`; `embedded-host-contract.md` (the public `SubagentLifecycleEvent`, which this doc does not change).
-**Revision history:** rev 1 (`af7b014`) deferred B and proposed namespacing child ids. rev 2 adopts A and B in sequence, drops the id namespacing, keeps every line of the public `build_compat_transport` (rev 1 wrongly counted parts of it as removable), and pins the field defaults, the exception scope and the event order. rev 3 makes the parent entry points read `agent.transport` on every call (rev 2 passed bound methods, which replay's transport swap would bypass) and adds `tests/test_subagent_cancelled_terminal_state.py` to the test migration. rev 4 marks A implemented: #514 sends the end event, and #515 replaced its zero counters (below, struck through in §5) with real or omitted ones.
+**Revision history:** rev 1 (`af7b014`) deferred B and proposed namespacing child ids. rev 2 adopts A and B in sequence, drops the id namespacing, keeps every line of the public `build_compat_transport` (rev 1 wrongly counted parts of it as removable), and pins the field defaults, the exception scope and the event order. rev 3 makes the parent entry points read `agent.transport` on every call (rev 2 passed bound methods, which replay's transport swap would bypass) and adds `tests/test_subagent_cancelled_terminal_state.py` to the test migration. rev 4 marks A implemented: #514 sends the end event, and #515 replaced its zero counters (below, struck through in §5) with real or omitted ones. rev 5 marks B implemented and names the tests that now pin invariants 4–7, 9 and 11.
 
 ## 1. Summary
 
@@ -172,6 +172,8 @@ Removed from the **internal** path:
 
 Tests: `tests/test_subagent_tool_call_id.py` builds its fixtures from `build_compat_transport` and `_make_prefixed_step_callback`, and fakes `create_agent_tools` by keyword name. Its fixtures move to the real production forwarder (§8). `tests/test_subagent_cancelled_terminal_state.py` also depends on the old entry point: its `_watch()` sets `wrapper._step_callback` directly and `_agent_end()` reads ends by the `__agent_end__` sentinel. Its fixture moves to capturing `AgentEvent`s, with the same cancel-state and end-count assertions. Three other tests construct `AgentToolWrapper` without callbacks, and `tests/test_async_tool.py` reads the `create_agent_tools` type hints.
 
+**As landed (B):** `AgentToolWrapper._child_transport` builds the child's transport and `_make_forwarder` is the whitelist forwarder; `AGENT_START` / `AGENT_END` go through `event_sink` (`_send_agent_end` keeps #515's rule). `tooling/agent_tools.py` passes the three per-call lambdas; `SubagentProgress` is now built only by `build_compat_transport`. `tests/test_subagent_tool_call_id.py` drives the production `_child_transport` from the entry points `register_agent_tools` really passes.
+
 ## 7. Invariants
 
 | # | Invariant | Pinned by |
@@ -179,14 +181,14 @@ Tests: `tests/test_subagent_tool_call_id.py` builds its fixtures from `build_com
 | 1 | Each child tool row keeps its own `call_id` across start, confirmation, output and completion, including a same-named parallel batch. | `test_same_name_parallel_completions_keep_distinct_call_ids`, `test_tool_output_carries_call_id`, `test_confirmation_event_keeps_subagent_call_id` |
 | 2 | `TOOL_COMPLETE` forwards the real `status`, `duration_ms` and `error`; missing fields take the defaults in §6.3. | `test_completion_forwards_real_status_and_error`, `test_completion_without_call_id_falls_back_to_name` |
 | 3 | A confirmation opening carries the same `[name n/max]` label as the `TOOL_START` that follows; a rejected confirmation (`display_reset`) does not advance the counter. | `test_confirmation_opening_carries_the_subagent_label`, `test_a_rejected_confirmation_does_not_advance_the_turn_label` |
-| 4 | `TOOL_CONFIRMATION` is forwarded only when start events are, or ACP opens a call nothing closes. In B both are forwarded for a foreground child and neither for a background one. | `test_confirmation_is_not_forwarded_without_a_step_callback` (rewritten for B) |
-| 5 | `confirm_tool` reaches the parent's transport with the name prefixed `[name]`, so the MCP Skills gate note and the CLI prompt see the same path as today. | not pinned today; added by B |
-| 6 | Nothing else the child emits reaches the parent: no `THINKING` or `LLM_TEXT` (sub-agent reasoning is not shown), no `TURN_BEGIN` / `TURN_END` / `LLM_CALL_*` / `TOOL_RESULT` (replay would record the child's turns as the parent's), no permission or memory events. | not pinned today; added by B |
-| 7 | A background sub-agent refuses every confirmation and its child transport sends no progress events to the parent. Its public `SubagentLifecycleEvent`s are unaffected. | refusal: `test_background_subagent_approval.py::test_a_call_that_needs_confirmation_runs_only_where_someone_can_approve_it`; "no progress events": added by B |
+| 4 | `TOOL_CONFIRMATION` is forwarded only when start events are, or ACP opens a call nothing closes. In B both are forwarded for a foreground child and neither for a background one. | `tests/test_subagent_tool_call_id.py`: `test_a_foreground_child_without_a_sink_forwards_nothing`, `test_a_background_child_sends_the_parent_nothing_and_refuses` |
+| 5 | `confirm_tool` reaches the parent's transport with the name prefixed `[name]`, so the MCP Skills gate note and the CLI prompt see the same path as today. | `test_confirmation_and_questions_reach_the_parent_transport`, `test_a_rejected_confirmation_does_not_advance_the_turn_label` |
+| 6 | Nothing else the child emits reaches the parent: no `THINKING` or `LLM_TEXT` (sub-agent reasoning is not shown), no `TURN_BEGIN` / `TURN_END` / `LLM_CALL_*` / `TOOL_RESULT` (replay would record the child's turns as the parent's), no permission or memory events. | `test_events_outside_the_whitelist_stay_with_the_child` |
+| 7 | A background sub-agent refuses every confirmation and its child transport sends no progress events to the parent. Its public `SubagentLifecycleEvent`s are unaffected. | refusal: `test_background_subagent_approval.py::test_a_call_that_needs_confirmation_runs_only_where_someone_can_approve_it`; "no progress events": `test_a_background_child_sends_the_parent_nothing_and_refuses` |
 | 8 | Exactly one `AGENT_END` follows every `AGENT_START` for a normal return, an `Exception` and `AgentCancelledError`; it comes before the public terminal event; a failing send masks nothing. | `tests/test_subagent_agent_end_on_raise.py` (#514) |
-| 9 | A sub-agent that runs out of turns stops. | not pinned today; added by B |
+| 9 | A sub-agent that runs out of turns stops. | `test_running_out_of_turns_stops` |
 | 10 | The public `build_compat_transport` keeps its contract for external callers. | `tests/test_transport.py` |
-| 11 | A parent transport replaced after the agent tools are registered (replay starting or ending) receives the sub-agent's events and confirmations. | not pinned today; added by B |
+| 11 | A parent transport replaced after the agent tools are registered (replay starting or ending) receives the sub-agent's events and confirmations. | `test_a_transport_replaced_after_registration_gets_the_events` |
 
 ## 8. Acceptance and tests
 

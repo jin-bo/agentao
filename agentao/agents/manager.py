@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 from agentao.frontmatter import parse_frontmatter
 
 from ..tools.base import RegistrableTool, Tool
+from ..transport.events import AgentEvent
 from .tools import AgentToolWrapper, CheckBackgroundAgentTool
 
 if TYPE_CHECKING:
@@ -139,11 +140,9 @@ class AgentManager:
         all_tools: Dict[str, RegistrableTool],
         llm_config_getter: Callable[[], Dict[str, Any]],
         bg_store: Optional["BackgroundTaskStore"] = None,
-        confirmation_callback: Optional[Callable] = None,
-        step_callback: Optional[Callable] = None,
-        output_callback: Optional[Callable] = None,
-        tool_complete_callback: Optional[Callable] = None,
-        ask_user_callback: Optional[Callable] = None,
+        event_sink: Optional[Callable[[AgentEvent], None]] = None,
+        confirm_tool: Optional[Callable[[str, str, Dict[str, Any]], bool]] = None,
+        ask_user: Optional[Callable[..., str]] = None,
         max_context_tokens: Optional[int] = None,
         parent_messages_getter: Optional[Callable] = None,
         cancellation_token_getter: Optional[Callable] = None,
@@ -156,7 +155,6 @@ class AgentManager:
         tool_origin_getter: Optional[Callable[[str], str]] = None,
         skill_manager_getter: Optional[Callable[[], Any]] = None,
         usage_sink: Optional[Callable[..., None]] = None,
-        confirmation_event_callback: Optional[Callable] = None,
     ) -> List[RegistrableTool]:
         """Create an :class:`AgentToolWrapper` per agent definition.
 
@@ -179,6 +177,11 @@ class AgentManager:
         ``usage_sink(prompt_tokens, completion_tokens, *, cache_read_tokens,
         cache_creation_tokens)`` receives each finished sub-agent's token usage. Without it a sub-agent's requests
         are counted nowhere: it has its own LLM client.
+
+        ``event_sink`` receives a foreground sub-agent's lifecycle and tool
+        events; ``confirm_tool`` and ``ask_user`` answer for it. Pass
+        functions that read the parent's transport on every call, not its
+        bound methods: replay replaces that transport after registration.
         """
         _readonly_getter = readonly_mode_getter or (lambda: False)
         wrappers = [
@@ -188,12 +191,9 @@ class AgentManager:
                 llm_config_getter=llm_config_getter,
                 working_directory=self.project_root,
                 bg_store=bg_store,
-                confirmation_callback=confirmation_callback,
-                confirmation_event_callback=confirmation_event_callback,
-                step_callback=step_callback,
-                output_callback=output_callback,
-                tool_complete_callback=tool_complete_callback,
-                ask_user_callback=ask_user_callback,
+                event_sink=event_sink,
+                confirm_tool=confirm_tool,
+                ask_user=ask_user,
                 max_context_tokens=max_context_tokens,
                 parent_messages_getter=parent_messages_getter,
                 cancellation_token_getter=cancellation_token_getter,

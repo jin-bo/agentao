@@ -34,6 +34,7 @@ from agentao.cancellation import CancellationToken
 from agentao.host.projection import HostSubagentEmitter
 from agentao.permissions import PermissionEngine
 from agentao.runtime.outcome import TurnOutcome
+from agentao.transport import EventType
 
 
 @pytest.fixture(autouse=True)
@@ -65,19 +66,19 @@ def _parent(tmp_path, bg_store=None):
 
 
 def _watch(wrapper):
-    """Record the wrapper's public events and its CLI progress callbacks."""
+    """Record the wrapper's public events and the events it sends the parent."""
     stream = _FakeStream()
     wrapper._subagent_emitter = HostSubagentEmitter(
         stream, parent_session_id_provider=lambda: "parent-s",
     )
     progress: List[Any] = []
-    wrapper._step_callback = lambda name, payload: progress.append((name, payload))
+    wrapper._event_sink = progress.append
     return stream, progress
 
 
 def _agent_end(progress):
-    ends = [payload for name, payload in progress if name == "__agent_end__"]
-    assert len(ends) == 1, f"expected one __agent_end__, got {len(ends)}"
+    ends = [event.data for event in progress if event.type is EventType.AGENT_END]
+    assert len(ends) == 1, f"expected one AGENT_END, got {len(ends)}"
     return ends[0]
 
 
@@ -158,9 +159,9 @@ def test_a_cancelled_foreground_sub_agent_is_cancelled_not_failed(tmp_path):
     assert stream.events[-1].error_type is None
 
     end = _agent_end(progress)
-    assert end.state == "cancelled"
+    assert end["state"] == "cancelled"
     # ``error`` is the failure detail; the state says this was a cancel.
-    assert end.error is None
+    assert end["error"] is None
 
     # The parent LLM is still told the sub-agent did not finish...
     assert "did not finish: it was cancelled" in out
