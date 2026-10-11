@@ -336,3 +336,25 @@ def test_the_task_cannot_restyle_the_start_rule():
         {"agent": "generalist", "task": "[/dim][red]x[/red] [bold]y", "max_turns": 15},
     )
     assert "[/dim][red]x[/red] [bold]y" in out
+
+
+def test_an_unreadable_history_keeps_the_measured_duration(parent, monkeypatch):
+    """Counting the history after a raise is best effort: when it fails, the
+    counts are not known, but the run was still timed."""
+    from agentao.agents.tools._wrapper import AgentToolWrapper
+
+    wrapper = parent.tools.tools["agent_generalist"]
+    log = _watch(wrapper)
+    _chat_raising(monkeypatch, RuntimeError("boom"))
+
+    def broken(sub_agent):
+        raise ValueError("unreadable")
+
+    monkeypatch.setattr(AgentToolWrapper, "_count_history", staticmethod(broken))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        wrapper.execute(task="x")
+
+    end = _end(log)
+    assert (end.turns, end.tool_calls, end.tokens) == (None, None, None)
+    assert isinstance(end.duration_ms, int) and end.duration_ms >= 0

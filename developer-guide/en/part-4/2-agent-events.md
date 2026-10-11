@@ -258,7 +258,7 @@ if event.type == EventType.ERROR:
 | Field | Description |
 |-------|-------------|
 | Trigger | Sub-agent finishes |
-| `data` | `{"agent": "...", "state": "completed"\|"...", "turns": 3, "tool_calls": 5, "tokens": 1200, "duration_ms": 8000, "error": None}` |
+| `data` | `{"agent": "...", "state": "completed"\|"...", "turns": 3, "tool_calls": 5, "tokens": 1200, "duration_ms": 8000, "error": None}`. A counter that is not known is left out: a sub-agent that raised before it ran sends none of `turns` / `tool_calls` / `tokens` / `duration_ms`, so read them with `.get()` |
 | Typical use | Collapse sub-task, show summary (3 turns / 5 tool calls / 8s) |
 
 ### Replay observability events

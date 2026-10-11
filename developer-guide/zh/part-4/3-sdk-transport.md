@@ -281,7 +281,7 @@ class AgentBridge:
     def _tool_done(self, d): print(f" ✓ ({d['duration_ms']}ms)")
     def _error(self, d): print(f"\n[❌ {d['message']}]")
     def _sub_start(self, d): print(f"\n[🧭 sub: {d['agent']}]")
-    def _sub_end(self, d): print(f" ✓ {d['turns']} turns")
+    def _sub_end(self, d): print(f" ✓ {d.get('turns', '?')} turns")
 
     def confirm_tool(self, name, desc, args):
         return input(f"Allow {name}? [y/N] ").lower() == "y"

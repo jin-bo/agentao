@@ -569,9 +569,9 @@ class AgentToolWrapper(Tool):
             )
         except Exception:
             if settled is not None and "started" in settled:
-                counts = self._history_counts(sub_agent, settled["started"])
-                if counts is not None:
-                    settled["counts"] = counts
+                settled["counts"] = self._history_counts(
+                    sub_agent, settled["started"],
+                )
             raise
         finally:
             usage = self._roll_up_usage(sub_agent)
@@ -886,10 +886,12 @@ class AgentToolWrapper(Tool):
 
     def _history_counts(
         self, sub_agent: Any, started: float,
-    ) -> Optional[Dict[str, int]]:
-        """The end event's counters for a run that raised, or ``None``.
+    ) -> Dict[str, Optional[int]]:
+        """The end event's counters for a run that raised.
 
-        Best effort, so the run's own exception is the one that propagates.
+        Best effort, so the run's own exception is the one that propagates:
+        when the history cannot be read, its counters are ``None`` ("not
+        known") and only the measured duration is kept.
         """
         duration_ms = int((time.monotonic() - started) * 1000)
         try:
@@ -899,7 +901,7 @@ class AgentToolWrapper(Tool):
                 "Reading a sub-agent's history after it raised failed (%s)",
                 self._definition["name"], exc_info=True,
             )
-            return None
+            return {**_UNKNOWN_COUNTS, "duration_ms": duration_ms}
         return {
             "turns": turns, "tool_calls": tool_calls,
             "tokens": tokens, "duration_ms": duration_ms,

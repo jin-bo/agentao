@@ -70,8 +70,9 @@ def register_agent_tools(agent: "Agentao") -> None:
             }))
         elif name == "__agent_end__":
             data = {"agent": args.agent_name, "state": args.state}
-            # A counter that is not known is left out, not sent as ``None``:
-            # every reader already treats a missing counter as absent.
+            # A counter that is not known is left out, not sent as ``None``.
+            # The CLI and ACP leave a missing counter out of their lines; the
+            # compat ``step_callback`` reads it as 0; replay records ``None``.
             for key in ("turns", "tool_calls", "tokens", "duration_ms"):
                 value = getattr(args, key)
                 if value is not None:

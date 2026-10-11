@@ -258,7 +258,7 @@ if event.type == EventType.ERROR:
 | 字段 | 说明 |
 |------|------|
 | 触发时机 | sub-agent 完成 |
-| `data` | `{"agent": "...", "state": "completed"\|"...", "turns": 3, "tool_calls": 5, "tokens": 1200, "duration_ms": 8000, "error": None}` |
+| `data` | `{"agent": "...", "state": "completed"\|"...", "turns": 3, "tool_calls": 5, "tokens": 1200, "duration_ms": 8000, "error": None}`。未知的计数不发送：在运行前就抛出异常的 sub-agent 不带 `turns` / `tool_calls` / `tokens` / `duration_ms`，请用 `.get()` 读取 |
 | 典型用法 | 折叠子任务面板、显示汇总 (3 轮/5 次工具/8s) |
 
 ### Replay 可观测性事件
