@@ -32,6 +32,7 @@ from time import monotonic
 from typing import Callable, Optional
 
 from rich.console import Console
+from rich.markup import escape as markup_escape
 from rich.padding import Padding
 from rich.syntax import Syntax
 
@@ -664,17 +665,21 @@ class DisplayController:
 
     # ── Sub-agent lifecycle ───────────────────────────────────────────────────
 
+    # The rules below are Rich markup, so every value is escaped: unescaped,
+    # the ``[name]`` label is read as a tag and disappears, and the task —
+    # the model's text — could restyle or hide the line.
+
     def _on_agent_start(self, d: dict) -> None:
-        agent = d.get("agent", "agent")
+        label = markup_escape(f"[{d.get('agent', 'agent')}]")
         task = d.get("task", "")
         _t = (task[:_TASK_TEXT_MAX - 1] + "…") if len(task) > _TASK_TEXT_MAX else task
-        task_preview = f": [dim]{_t}[/dim]" if _t else ""
+        task_preview = f": [dim]{markup_escape(_t)}[/dim]" if _t else ""
         self._stop_spinner()
-        self._console.rule(f"[bold cyan]▶ [{agent}]{task_preview}[/bold cyan]", style="cyan")
-        self._start_spinner(f"[bold cyan][{agent}] Running…[/bold cyan]")
+        self._console.rule(f"[bold cyan]▶ {label}{task_preview}[/bold cyan]", style="cyan")
+        self._start_spinner(f"[bold cyan]{label} Running…[/bold cyan]")
 
     def _on_agent_end(self, d: dict) -> None:
-        agent = d.get("agent", "agent")
+        label = markup_escape(f"[{d.get('agent', 'agent')}]")
         state = d.get("state", "completed")
         error = d.get("error")
 
@@ -690,7 +695,7 @@ class DisplayController:
         if d.get("duration_ms") is not None:
             parts.append(_fmt_duration(d["duration_ms"]))
         if error:
-            parts.append(_shorten(error, 50))
+            parts.append(markup_escape(_shorten(error, 50)))
         stats = " · ".join(parts)
 
         if state == "completed":
@@ -704,5 +709,5 @@ class DisplayController:
         else:
             style = "red"
         self._stop_spinner()
-        self._console.rule(f"[bold {style}]◀ [{agent}]  {stats}[/bold {style}]", style=style)
+        self._console.rule(f"[bold {style}]◀ {label}  {stats}[/bold {style}]", style=style)
         self._start_spinner("[bold yellow]Thinking…[/bold yellow]")

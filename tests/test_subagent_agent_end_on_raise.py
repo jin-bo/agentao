@@ -268,15 +268,9 @@ def _render_end(data):
     return console.export_text()
 
 
-def _after_arrow(out):
-    """The first word of the end rule's text after the ``◀``. (The agent's
-    ``[name]`` does not survive: Rich reads it as a markup tag.)"""
-    return out.split("◀", 1)[1].split()[0]
-
-
 def test_the_cli_leaves_out_what_is_not_known():
     out = _render_end({"agent": "generalist", "state": "failed", "error": "KeyError"})
-    assert _after_arrow(out) == "KeyError"
+    assert "◀ [generalist]  KeyError" in out
     assert "turns" not in out and "tokens" not in out
 
 
@@ -291,7 +285,7 @@ def test_the_cli_shows_what_is_known():
 
 def test_the_cli_labels_an_unknown_cancel():
     out = _render_end({"agent": "generalist", "state": "cancelled", "error": None})
-    assert _after_arrow(out) == "cancelled"
+    assert "◀ [generalist]  cancelled" in out
     assert "turns" not in out
 
 
@@ -311,3 +305,34 @@ def test_the_compat_step_callback_still_reads_zero():
     assert (progress.turns, progress.tool_calls, progress.tokens, progress.duration_ms) == (
         0, 0, 0, 0,
     )
+
+
+def _render_start(data):
+    from rich.console import Console
+
+    from agentao.cli.display import DisplayController
+    from agentao.transport import AgentEvent, EventType
+
+    console = Console(record=True, width=200, color_system=None)
+    DisplayController(console, lambda: None).on_event(
+        AgentEvent(EventType.AGENT_START, data),
+    )
+    return console.export_text()
+
+
+def test_the_cli_rules_keep_the_agent_name():
+    """Rich read ``[generalist]`` as a markup tag and dropped it."""
+    assert "▶ [generalist]: look" in _render_start(
+        {"agent": "generalist", "task": "look", "max_turns": 15},
+    )
+    assert "◀ [generalist]  1 turns" in _render_end(
+        {"agent": "generalist", "state": "completed", "turns": 1},
+    )
+
+
+def test_the_task_cannot_restyle_the_start_rule():
+    """The task is the model's text; markup in it is shown, not applied."""
+    out = _render_start(
+        {"agent": "generalist", "task": "[/dim][red]x[/red] [bold]y", "max_turns": 15},
+    )
+    assert "[/dim][red]x[/red] [bold]y" in out
