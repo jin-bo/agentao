@@ -86,6 +86,17 @@ _PROGRESS_INTERVAL = 0.3   # seconds between updates
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mKHJABCDEF]")
 
+# The label a sub-agent's tool row arrives with, ``[name n/max] tool``
+# (``AgentToolWrapper._make_forwarder``). Anchored on both ends: a tool name
+# never starts with ``[`` and has no spaces, so nothing else matches.
+_SUBAGENT_LABEL_RE = re.compile(r"^(\[[^\[\]]+ \d+/\d+\]) (\S+)$")
+
+
+def _split_subagent_label(tool: str) -> tuple[str, str]:
+    """``("[name n/max]", "tool")`` for a sub-agent's row, else ``("", tool)``."""
+    m = _SUBAGENT_LABEL_RE.match(tool)
+    return (m.group(1), m.group(2)) if m else ("", tool)
+
 # Argument display budgets
 _ARG_TEXT_MAX  = 100   # regular tool argument text
 _TASK_TEXT_MAX = 150   # sub-agent task description
@@ -564,12 +575,17 @@ class DisplayController:
     # ── Tool lifecycle ────────────────────────────────────────────────────────
 
     def _on_tool_start(self, tool: str, args: dict, call_id: str) -> None:
+        # A sub-agent's row carries its ``[name n/max]`` label in front of the
+        # tool name. Everything keyed on the name — the header's icon and
+        # verb, shell output, the diff — reads the bare name; the label goes
+        # back in front of the header.
+        label, tool = _split_subagent_label(tool)
         # Escaped once, here, because every use below is Rich markup: the
-        # header carries the model's arguments (a path, a command) and a
-        # sub-agent's ``[name n/max]`` label, either of which Rich would
-        # otherwise read as tags — dropping text, or raising on a stray
-        # closing tag and losing the line.
-        header = _inert(_build_header(tool, args))
+        # header carries the model's arguments (a path, a command) and the
+        # label, either of which Rich would otherwise read as tags — dropping
+        # text, or raising on a stray closing tag and losing the line.
+        header = _build_header(tool, args)
+        header = _inert(f"{label} {header}" if label else header)
         show_output = tool in _OUTPUT_TOOLS
 
         # Collect diff context for write/edit tools
