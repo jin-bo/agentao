@@ -1359,6 +1359,8 @@ class AgentToolWrapper(Tool):
         turn = [0]
 
         def label(tool: Any) -> str:
+            # ``cli/display.py::_SUBAGENT_LABEL_RE`` splits this format back
+            # into label and tool name; change the two together.
             return f"[{agent_name} {turn[0]}/{max_turns}] {tool}"
 
         def forward(event: AgentEvent) -> None:

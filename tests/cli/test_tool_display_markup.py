@@ -35,7 +35,7 @@ def _complete(call_id="c1", status="ok", duration_ms=3000, error=None):
 
 def test_a_sub_agent_tool_keeps_its_label():
     out = _render(_start("[generalist 2/15] read_file", {"file_path": "a.py"}))
-    assert "[generalist 2/15] read_file" in out
+    assert "[generalist 2/15] → read a.py" in out
 
 
 def test_markup_in_an_argument_is_shown_as_typed():
@@ -66,7 +66,7 @@ def test_a_parallel_tool_keeps_its_label():
         _start("[r 1/15] read_file", {"file_path": "a.py"}, "c1"),
         _start("[r 1/15] read_file", {"file_path": "b.py"}, "c2"),
     )
-    assert "+ ⚙ [r 1/15] read_file" in out
+    assert "+ [r 1/15] → read b.py" in out
 
 
 def test_the_replace_diff_shows_code_with_brackets():
@@ -97,3 +97,68 @@ def test_a_trailing_run_of_backslashes_keeps_the_closing_tag():
     assert "[/dim" not in footer
     assert "echo a\\\\\\" in footer
     assert "bad \\\\\\" in footer
+
+
+# ── a sub-agent's tool row is the same tool as the parent's ────────────────
+
+
+def _output(chunk, call_id="c1"):
+    return AgentEvent(EventType.TOOL_OUTPUT, {"chunk": chunk, "call_id": call_id})
+
+
+def test_a_sub_agent_replace_shows_its_diff():
+    out = _render(
+        _start("[r 1/15] replace", {
+            "file_path": "m.py", "old_text": "a = 1\n", "new_text": "a = 2\n",
+        }),
+        _complete(),
+    )
+    assert "[r 1/15] ← edit m.py" in out
+    assert "-a = 1" in out and "+a = 2" in out
+    assert "+1 −1" in out
+
+
+def test_a_sub_agent_shell_command_shows_its_output():
+    out = _render(
+        _start("[r 1/15] run_shell_command", {"command": "ls"}),
+        _output("file-one\n"),
+        _complete(),
+    )
+    assert "[r 1/15] $ ls" in out
+    assert "file-one" in out
+
+
+def test_only_the_forwarders_label_is_split_off():
+    """A name that merely starts with brackets is not a sub-agent row."""
+    from agentao.cli.display import _split_subagent_label
+
+    assert _split_subagent_label("[r 1/15] read_file") == ("[r 1/15]", "read_file")
+    assert _split_subagent_label("[code-reviewer 12/100] mcp_gh_search") == (
+        "[code-reviewer 12/100]", "mcp_gh_search",
+    )
+    for name in ("read_file", "[r] read_file", "[r 1/15] two words", "[r 1/15]read_file"):
+        assert _split_subagent_label(name) == ("", name)
+
+
+def test_the_display_splits_the_label_the_forwarder_writes():
+    """The two halves of the label format, joined: the real forwarder's
+    ``TOOL_START`` into the real display."""
+    from pathlib import Path
+
+    from rich.console import Console
+
+    from agentao.agents.tools import AgentToolWrapper
+
+    console = Console(record=True, width=200, color_system=None)
+    display = DisplayController(console, lambda: None)
+    wrapper = AgentToolWrapper(
+        definition={"name": "code-reviewer", "description": "d"},
+        all_tools={}, llm_config_getter=lambda: {}, working_directory=Path("."),
+        event_sink=display.on_event,
+    )
+    child = wrapper._child_transport(False, 15)
+    child.emit(AgentEvent(EventType.TURN_START))
+    child.emit(AgentEvent(EventType.TOOL_START, {
+        "tool": "read_file", "args": {"file_path": "a.py"}, "call_id": "c1",
+    }))
+    assert "[code-reviewer 1/15] → read a.py" in console.export_text()
