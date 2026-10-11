@@ -1,17 +1,20 @@
 # Sub-agent event bridge: callbacks out, events back in
 
-**Status:** proposal, **not authorized**. §5 (option A) is a small defect fix that does not depend on the rest. §6 (option B) is a refactor with no user-visible change; do it only when this code is next opened for another reason.
+**Status:** proposal, **not authorized**. Decision (rev 2, 2026-10-11): implement both options in two steps — A first, then B. Neither is implemented yet.
 **Anchors:** agentao `main@60fcca9` (2026-10-11). Line numbers below are at that commit.
 **Related:** `0-5-0-removal-checklist.md` §C (why the sub-agent factory uses `build_compat_transport` today); `host-tool-injection.md`; `embedded-host-contract.md` (the public `SubagentLifecycleEvent`, which this doc does not change).
+**Revision history:** rev 1 (`af7b014`) deferred B and proposed namespacing child ids. rev 2 adopts A and B in sequence, drops the id namespacing, keeps every line of the public `build_compat_transport` (rev 1 wrongly counted parts of it as removable), and pins the field defaults, the exception scope and the event order.
 
 ## 1. Summary
 
 A foreground sub-agent reports its progress to the parent through six legacy callbacks. Inside the child, `build_compat_transport` turns the child's `AgentEvent`s *into* those callbacks. In the parent, `tooling/agent_tools.py` turns the callbacks back *into* `AgentEvent`s on the parent transport. Two private conventions ride the callback layer to survive the trip: the `__agent_start__` / `__agent_end__` sentinel names and an `__call_id__` key smuggled into the tool arguments.
 
-An external review (2026-10-10) proposed removing the round trip. Reading the code shows the round trip is narrower than that review said (§3), and it turned up one confirmed defect (§4.1). This doc records the facts, the invariants a change must keep (§7), and two options:
+An external review (2026-10-10) proposed removing the round trip. Reading the code shows the round trip is narrower than that review said (§3), and it turned up one confirmed defect (§4.1). Both steps are adopted:
 
-- **A — fix the lifecycle gap (recommended now).** A sub-agent that raises sends `AGENT_START` and never `AGENT_END`. A few lines in `_wrapper.py`, independent of any refactor.
-- **B — replace the callback bridge with an event sink (deferred).** The wrapper hands the parent one forwarding function instead of six callbacks. It removes the sentinels, the `__call_id__` smuggling and about 85 lines of translation, with no behaviour change. Worth doing only together with other work in this area.
+- **A — close the lifecycle gap.** A sub-agent that raises sends `AGENT_START` and never `AGENT_END`. The fix is in `AgentToolWrapper.execute()` alone (§5).
+- **B — forward events directly.** The internal sub-agent path stops going through the callback bridge. The wrapper gives the child an existing `SdkTransport` whose `on_event` is a local forwarding function, and the parent passes its `emit` in (§6). The aim is fewer conversions and explicit rules for which fields pass and which events are dropped. Line counts are not the reason to do it.
+
+A lands and is verified before B starts, so a regression can be traced to one of them.
 
 ## 2. The path today
 
@@ -35,7 +38,7 @@ parent transport ──▶ CLI display (cli/display.py) · ACP (acp/transport.py
 
 The wrapper's own lifecycle does **not** go through the child transport. `execute()` calls the parent's `step_callback` directly with `"__agent_start__"` / `"__agent_end__"` and a `SubagentProgress` (`_wrapper.py:300-304`, `347-365`). The parent maps those back to `AGENT_START` / `AGENT_END` (`agent_tools.py:65-81`).
 
-A background sub-agent uses `SdkTransport(confirm_tool=lambda *_: False)` with no event handler, so none of its events reach the parent (`_wrapper.py:613-616`).
+A background sub-agent uses `SdkTransport(confirm_tool=lambda *_: False)` with no event handler, so none of its *progress* events reach the parent (`_wrapper.py:613-616`). It still sends the public `SubagentLifecycleEvent` through its own path (`_wrapper.py:1122` onward).
 
 The public host event `SubagentLifecycleEvent` is a separate path (`subagent_emitter`, `_wrapper.py:390-430`) and is out of scope.
 
@@ -45,12 +48,14 @@ The review said `__agent_start__`, `__agent_end__` and `__call_id__` all flow th
 
 | Item | Path | Round trip? |
 |---|---|---|
-| `__agent_start__` / `__agent_end__` | wrapper → parent `step_callback` → `AgentEvent` | **No.** A one-way sentinel on the callback API. The `AGENT_START` → `"__agent_start__"` mapping in `build_compat_transport` (`sdk.py:251-277`) is **dead for sub-agents**: a child never gets agent tools (CLAUDE.md, *Sub-agents execute from one registry*), so it never emits `AGENT_START`. That branch serves only external users of `build_compat_transport`. |
+| `__agent_start__` / `__agent_end__` | wrapper → parent `step_callback` → `AgentEvent` | **No.** A one-way sentinel on the callback API. The `AGENT_START` → `"__agent_start__"` mapping in `build_compat_transport` (`sdk.py:251-277`) never runs for sub-agents: a child never gets agent tools (CLAUDE.md, *Sub-agents execute from one registry*), so it never emits `AGENT_START`. That branch serves external users of `build_compat_transport`. |
 | `__call_id__` | child `TOOL_START` → `step_callback` args → popped in `agent_tools.py:84` | **Yes.** Event → callback → event. |
-| step / confirmation labels, `confirm_tool` prefix | child event → wrapper transform → parent | Not a round trip, but a real transform that any design must keep (§7). |
+| step / confirmation labels, `confirm_tool` prefix | child event → wrapper transform → parent | Not a round trip, but a real transform that B must keep (§7). |
 | `TOOL_OUTPUT` / `TOOL_COMPLETE` `call_id`, `status`, `error` | `_accepted_meta_keywords` signature check (`sdk.py:142-181`) → keywords → parent `AgentEvent` | **Yes.** Event → callback → event. Correct today, kept so by signature introspection. |
 
-So removing the round trip means changing the callback interface between `AgentManager.create_agent_tools` and the parent (`agents/manager.py:137-160`). That is **internal**: `AgentManager`, `AgentToolWrapper` and `SubagentProgress` appear in no reference doc or guide, and `Agentao` builds its own `AgentManager` (`agent.py:885`). `build_compat_transport` itself is public (the 0.5.0 migration surface) and stays.
+So removing the round trip means changing the callback interface between `AgentManager.create_agent_tools` and the parent (`agents/manager.py:137-160`). That is **internal**: `AgentManager`, `AgentToolWrapper` and `SubagentProgress` appear in no reference doc or guide, and `Agentao` builds its own `AgentManager` (`agent.py:885`).
+
+`build_compat_transport` is **public** (the 0.5.0 migration surface), and so is the behaviour its callers observe: the `__call_id__` key in `step_callback` args, the callback signature check, the lifecycle mapping and the `SubagentProgress` it builds. All of it stays.
 
 ## 4. Findings while reading
 
@@ -67,28 +72,36 @@ Effects, by consumer:
 
 Reachable causes include a sub-agent that cannot be built (bad model config) and a cancellation raised outside the turn (the comment at `_wrapper.py:327-331`).
 
-### 4.2 A child's `call_id` is forwarded into the parent's id scope (hypothesis, not reproduced)
+### 4.2 A child's `call_id` is forwarded into the parent's id scope (watched risk, not reproduced)
 
-`runtime/identity.py` states the uniqueness scope of `tool_call_id` as `(session_id, turn_id, tool_call_id)` and does not assume provider ids are globally unique. The bridge forwards a child's provider id unchanged into the parent's turn, where the CLI and ACP key tool rows by `call_id`. If a provider issued the same id to a parent call and a child call (for example sequential `call_0` ids), a child `TOOL_COMPLETE` could close the parent's `agent_*` row. I have not found a provider that does this, so this is a design risk, not a defect. Option B is where a fix would go (§6.3).
+`runtime/identity.py` states the uniqueness scope of `tool_call_id` as `(session_id, turn_id, tool_call_id)` and does not assume provider ids are globally unique. The bridge forwards a child's provider id unchanged into the parent's turn, where the CLI and ACP key tool rows by `call_id`. A provider that reused ids could make a child `TOOL_COMPLETE` close another row: the parent's `agent_*` row, or a row from an earlier turn of the same child, since the parent sees all the child's turns inside one turn of its own.
+
+No such provider has been found. Neither A nor B changes ids: no new `ToolRunner` parameter, no id map, no change to the ids ACP clients see. If a collision is ever reproduced, its fix is a separate decision. (A `parent_call_id/child_call_id` prefix, proposed in rev 1, would not cover the same-child case, so it is dropped.)
 
 ### 4.3 The tool name differs between start and completion (note only)
 
-`TOOL_START` carries the label `[name n/max] tool`; `TOOL_OUTPUT` and `TOOL_COMPLETE` carry the bare `tool`. All three consumers key on `call_id` first (`cli/display.py:460-471`), so this is harmless today. It matters only to a new consumer that keys on the name.
+`TOOL_START` carries the label `[name n/max] tool`; `TOOL_OUTPUT` and `TOOL_COMPLETE` carry the bare `tool`. All three consumers key on `call_id` first (`cli/display.py:460-471`), so this is harmless today. B keeps it as is.
 
-## 5. Option A — close the lifecycle gap
+## 5. A — close the lifecycle gap
 
-Send `AGENT_END` on the two raising paths in `execute()`, with `state="cancelled"` or `"failed"` and `error=type(exc).__name__` for a failure. The cleanest form is a `try/finally` that sends exactly one end, so a future raising path cannot reopen the gap.
+Scope: `AgentToolWrapper.execute()` only. No change to any public host event.
 
-- **Tests:** the probe in §4.1 as a regression test (a raising `_run_sync` sends exactly one start and one end, in that order), plus a cancel variant.
-- **Size:** one function; no interface change; CHANGELOG entry under *Fixed*.
+- **Every foreground run that sent `AGENT_START` sends exactly one `AGENT_END`.** That covers a normal return, an ordinary exception and `AgentCancelledError`.
+- **Normal return:** unchanged. The existing `_terminal_state()` classification and statistics, including a cancel that returns normally.
+- **`AgentCancelledError`:** `state="cancelled"`, no `error` (the same rule as a cancel that returns normally: the state carries the fact).
+- **Any other `Exception`:** `state="failed"`, `error=type(exc).__name__`.
+- **`BaseException` that is not an `Exception`** (`KeyboardInterrupt`, `SystemExit`): no `AGENT_END`. This matches the existing `except` coverage exactly, and the public terminal event, which is not sent on those either. The end event and the public event stay in step.
+- **No `stats` on a raising path.** When construction or the run raises, `_run_sync` returned nothing, so `turns`, `tool_calls`, `tokens` and `duration_ms` take the `SubagentProgress` defaults (0). Never read `stats` there.
+- **Order: `AGENT_END` first, then the public terminal event, on every path.** That is today's order on the normal path (`_wrapper.py:347` before `367`). On the raising paths, send `AGENT_END` in the `except` branch before `_terminal_subagent_event`.
+- **The end event must not mask anything.** Sending `AGENT_END` must not replace the original exception, and must not stop the public terminal event. The CLI and ACP transports already swallow exceptions in `emit` (`cli/transport.py:181`, `acp/transport.py:246`), but an embedding host's transport may not. So wrap the send in `try/except Exception` and log.
 
-This does not depend on option B, and B should keep the same guarantee.
+Put the send in the existing `except` branches, or a small local helper they call. No lifecycle manager, state machine or global pairing mechanism.
 
-## 6. Option B — an event-sink bridge
+## 6. B — forward events directly
 
-### 6.1 Shape
+### 6.1 The seam
 
-`create_agent_tools` takes three things from the parent instead of six callbacks plus `confirmation_event_callback`:
+The internal factory (`AgentManager.create_agent_tools`, `AgentToolWrapper.__init__`) takes three entry points instead of the progress callback group (`step_callback`, `output_callback`, `tool_complete_callback`, `confirmation_event_callback`, `confirmation_callback`, `ask_user_callback`):
 
 ```python
 event_sink: Callable[[AgentEvent], None]        # agent.transport.emit
@@ -96,51 +109,93 @@ confirm_tool: Callable[[str, str, dict], bool]  # agent.transport.confirm_tool
 ask_user: Callable[..., str]                    # transport_ask_user(agent), unchanged
 ```
 
-The foreground child gets `SdkTransport(on_event=forward, confirm_tool=prefixed_confirm, ask_user=ask_user, …)`, where `forward` is a **whitelist**:
+These are still callbacks. `event_sink` receives whole events, and `confirm_tool` / `ask_user` return the user's answer. "Remove the callback bridge" means removing the conversion of events into the legacy callback shapes and back, not removing every callback.
+
+The internal factory and the wrapper switch to the new entry points in one change. There is no period with the old and new internal interfaces side by side, and no adapter between them. Deprecating the public compat interface is out of scope.
+
+### 6.2 The foreground forwarder
+
+The foreground child gets the existing `SdkTransport(on_event=forward, confirm_tool=prefixed_confirm, ask_user=ask_user)`. `forward` is a local function in the wrapper and handles only these events:
 
 | Child event | Forwarded as |
 |---|---|
-| `TURN_START` | unchanged; advances the turn counter unless `display_reset` |
-| `TOOL_START`, `TOOL_CONFIRMATION` | `data["tool"]` replaced by the `[name n/max] tool` label |
-| `TOOL_OUTPUT`, `TOOL_COMPLETE` | unchanged (`call_id`, `status`, `duration_ms`, `error` intact) |
-| anything else | **dropped** (§7, invariant 6) |
+| `TURN_START` | Today's display-reset semantics: forward `{"display_reset": True}` or `{}`; only an event without `display_reset` advances the turn counter. |
+| `TOOL_START` | `tool` replaced by the `[name n/max] tool` label; `args` and `call_id` kept. |
+| `TOOL_CONFIRMATION` | The same label as the `TOOL_START` that follows; the rest of the data and `call_id` kept. |
+| `TOOL_OUTPUT` | `tool`, `chunk` and `call_id` kept. |
+| `TOOL_COMPLETE` | `tool`, `call_id`, `status`, `duration_ms` and `error` kept. |
+| any other event | **Dropped** (§7, invariant 6). |
 
-The wrapper emits `AgentEvent(AGENT_START | AGENT_END)` itself through `event_sink`, so the sentinels and `SubagentProgress` leave the internal path.
+When `forward` rewrites a label or fills a default, it builds a new event with a copied `data` dict. `AgentEvent` is a mutable dataclass (`transport/events.py:67`), and the child's own transport hands the same object to its subscribers, so it must not be changed in place.
 
-### 6.2 What it removes
+`prefixed_confirm` prefixes the tool name with `[name]` and calls the parent's `confirm_tool`, as `_wrapper.py:621-624` does today. `SdkTransport` defaults to `{"action": "stop"}` on max iterations, the same as `build_compat_transport`, so a sub-agent that runs out of turns still stops.
 
-- `tooling/agent_tools.py:59-112`: the three parent callbacks that rebuild events (54 lines), replaced by passing `agent.transport.emit`.
-- The `__call_id__` injection (`sdk.py:217-226`) and its pop (`agent_tools.py:84`).
+The wrapper sends `AGENT_START` and `AGENT_END` itself, as `AgentEvent`s through `event_sink`, with the payloads `agent_tools.py:65-81` builds today. The sentinels and `SubagentProgress` leave the internal path. The public `SubagentLifecycleEvent` keeps its own path.
+
+The background child keeps `SdkTransport(confirm_tool=lambda *_: False)` with no event handler. "Sends no events" means progress events from the child transport. The background run's public `SubagentLifecycleEvent` notifications are unchanged.
+
+### 6.3 Field defaults: keep today's, exactly
+
+`forward` keeps the defaults the parent bridge applies today. B does not take the chance to make the edge cases consistent.
+
+| Event | Field | Today's rule | Where |
+|---|---|---|---|
+| `TOOL_START` | `call_id` | A missing **or empty** id falls back to the **label** `[name n/max] tool`. (`build_compat_transport` injects only a truthy id, and the parent uses `or name`, where `name` is the label.) | `sdk.py:224`, `agent_tools.py:84` |
+| `TOOL_OUTPUT` | `call_id` | Only `None` falls back, to the **bare** tool name; an empty string is kept. | `agent_tools.py:97-101` |
+| `TOOL_COMPLETE` | `call_id` | As `TOOL_OUTPUT`. | `agent_tools.py:103-112` |
+| `TOOL_COMPLETE` | `status` | `None` → `"ok"`. | same |
+| `TOOL_COMPLETE` | `duration_ms` | `None` → `0`. | same |
+| `TOOL_COMPLETE` | `error` | kept; `None` when absent. | same |
+
+None of these fallbacks fires on the real path. `normalize_tool_call_id` (`runtime/identity.py:51`) gives every planned call a non-empty id, and the executor always sends `status`, `duration_ms` and `error` (`runtime/tool_executor.py:296-304`, `683-688`). The rules matter only for synthetic events, so the tests keep the existing cases and need no new ones.
+
+### 6.4 What B changes, and what stays
+
+Removed from the **internal** path:
+- `tooling/agent_tools.py:59-112`: the three parent callbacks that rebuild events, replaced by passing `agent.transport.emit`.
 - The sentinel constants and calls in `_wrapper.py` (`261-262`, `300-304`, `347-365`).
-- The sub-agent's dependence on `_accepted_meta_keywords` signature introspection.
+- The sub-agent's dependence on `build_compat_transport`, the `__call_id__` key and `_accepted_meta_keywords`.
 
-What it does **not** remove: `build_compat_transport`, its `AGENT_START` mapping and `SubagentProgress` stay for external callers. Whether to deprecate them is a separate decision.
+**Unchanged:** all of `build_compat_transport` in `sdk.py`, including the `__call_id__` injection, the signature check, the `AGENT_START` / `AGENT_END` mapping and the `SubagentProgress` it builds. External callers depend on that code, so none of it counts as removed by B.
 
-### 6.3 Optional: namespace child ids
+Tests: `tests/test_subagent_tool_call_id.py` builds its fixtures from `build_compat_transport` and `_make_prefixed_step_callback`, and fakes `create_agent_tools` by keyword name. Its fixtures move to the real production forwarder (§8). Three other tests construct `AgentToolWrapper` without callbacks, and `tests/test_async_tool.py` reads the `create_agent_tools` type hints.
 
-With the forwarder in one place, §4.2 has an obvious fix: forward `call_id` as `f"{parent_call_id}/{child_call_id}"`. It needs the wrapper to know its own parent call id, which `ToolRunner` does not pass today (it injects only the cancellation token). Do it only if §4.2 is ever reproduced; it changes the ids ACP clients see.
-
-### 6.4 Cost
-
-- About 85 lines of production code removed (54 in `agent_tools.py`, about 25 of sentinel code in `_wrapper.py`, 5 in `sdk.py`); the forwarder adds about 30.
-- `tests/test_subagent_tool_call_id.py` (310 lines) builds its fixtures from `build_compat_transport` and `_make_prefixed_step_callback`, and fakes `create_agent_tools` by keyword name. Most of it must be rewritten against the new seam, which is where the risk is: a rewritten test must still fail on the bugs the old one pinned. It is the only test that passes callbacks to `AgentToolWrapper`; three others construct one without callbacks, and `tests/test_async_tool.py` reads the `create_agent_tools` type hints.
-- No user-visible change, so no CHANGELOG entry is required; no doc twins name this API.
-
-## 7. Invariants any change must keep
+## 7. Invariants
 
 | # | Invariant | Pinned by |
 |---|---|---|
 | 1 | Each child tool row keeps its own `call_id` across start, confirmation, output and completion, including a same-named parallel batch. | `test_same_name_parallel_completions_keep_distinct_call_ids`, `test_tool_output_carries_call_id`, `test_confirmation_event_keeps_subagent_call_id` |
-| 2 | `TOOL_COMPLETE` forwards the real `status` and `error`; a missing id falls back to the tool name. | `test_completion_forwards_real_status_and_error`, `test_completion_without_call_id_falls_back_to_name` |
+| 2 | `TOOL_COMPLETE` forwards the real `status`, `duration_ms` and `error`; missing fields take the defaults in §6.3. | `test_completion_forwards_real_status_and_error`, `test_completion_without_call_id_falls_back_to_name` |
 | 3 | A confirmation opening carries the same `[name n/max]` label as the `TOOL_START` that follows; a rejected confirmation (`display_reset`) does not advance the counter. | `test_confirmation_opening_carries_the_subagent_label`, `test_a_rejected_confirmation_does_not_advance_the_turn_label` |
-| 4 | `TOOL_CONFIRMATION` is forwarded only when start events are, or ACP opens a call nothing closes. | `test_confirmation_is_not_forwarded_without_a_step_callback` |
-| 5 | `confirm_tool` reaches the parent's transport with the name prefixed `[name]`, so the MCP Skills gate note and the CLI prompt see the same path as today. | not pinned — the prefix is untested today; add a test with B |
-| 6 | Nothing else the child emits reaches the parent: no `THINKING` or `LLM_TEXT` (sub-agent reasoning is not shown), no `TURN_BEGIN` / `TURN_END` / `LLM_CALL_*` / `TOOL_RESULT` (replay would record the child's turns as the parent's), no permission or memory events. Today this holds because `build_compat_transport` ignores unlisted types; B must make it an explicit whitelist. | not pinned — add a test with B |
-| 7 | A background sub-agent refuses every confirmation and sends no events. | refusal: `test_background_subagent_approval.py::test_a_call_that_needs_confirmation_runs_only_where_someone_can_approve_it`; "no events": not pinned |
-| 8 | Exactly one `AGENT_END` follows every `AGENT_START` (after option A). | added by option A |
+| 4 | `TOOL_CONFIRMATION` is forwarded only when start events are, or ACP opens a call nothing closes. In B both are forwarded for a foreground child and neither for a background one. | `test_confirmation_is_not_forwarded_without_a_step_callback` (rewritten for B) |
+| 5 | `confirm_tool` reaches the parent's transport with the name prefixed `[name]`, so the MCP Skills gate note and the CLI prompt see the same path as today. | not pinned today; added by B |
+| 6 | Nothing else the child emits reaches the parent: no `THINKING` or `LLM_TEXT` (sub-agent reasoning is not shown), no `TURN_BEGIN` / `TURN_END` / `LLM_CALL_*` / `TOOL_RESULT` (replay would record the child's turns as the parent's), no permission or memory events. | not pinned today; added by B |
+| 7 | A background sub-agent refuses every confirmation and its child transport sends no progress events to the parent. Its public `SubagentLifecycleEvent`s are unaffected. | refusal: `test_background_subagent_approval.py::test_a_call_that_needs_confirmation_runs_only_where_someone_can_approve_it`; "no progress events": added by B |
+| 8 | Exactly one `AGENT_END` follows every `AGENT_START` for a normal return, an `Exception` and `AgentCancelledError`; it comes before the public terminal event; a failing send masks nothing. | added by A |
+| 9 | A sub-agent that runs out of turns stops. | not pinned today; added by B |
+| 10 | The public `build_compat_transport` keeps its contract for external callers. | `tests/test_transport.py` |
 
-## 8. Recommendation
+## 8. Acceptance and tests
 
-1. **Do option A now.** It is a confirmed defect with three visible symptoms and a one-function fix.
-2. **Defer option B** until this code is opened for another reason (for example a change to how sub-agent progress is displayed, or a second consumer of child events). On its own it trades about 55 net lines for a test rewrite with real regression risk.
-3. **Leave §4.2 as a watched risk.** Act only on a reproduction.
+**A:**
+- Regression tests for an ordinary exception, a construction failure (the §4.1 probe) and a raised `AgentCancelledError`. Each checks the number, order and state of the start and end events, that `AGENT_END` precedes the public terminal event, and that the original exception still propagates.
+- A test where sending `AGENT_END` raises: the original exception still propagates and the public terminal event is still sent.
+- Keep the existing test for a cancel that returns normally.
+- CHANGELOG entry under *Fixed*.
+
+**B:**
+- Move the fixtures in `tests/test_subagent_tool_call_id.py` onto the real production forwarder, and keep every behaviour assertion:
+  - same-named parallel tools keep separate `call_id`s through start, confirmation, output and completion;
+  - real status, error and duration, and the §6.3 defaults, are unchanged;
+  - the confirmation and start labels match, and a rejected confirmation does not advance the turn;
+  - `confirm_tool` still reaches the parent transport with the `[name]` prefix;
+  - an event outside the whitelist does not reach the parent transport;
+  - a background child always refuses confirmation, and its child transport sends nothing to the parent;
+  - a sub-agent that runs out of turns stops;
+  - the public `build_compat_transport` keeps its old contract.
+- Keep the existing ACP output assertions and the real-`ToolRunner` rejected-confirmation test. Do not replace them with tests that only inspect the forwarder.
+- No CHANGELOG entry is needed for B (no behaviour change).
+
+**Order of verification:** the related regression tests first, then the default suite and `ruff check .`.
+
+Implementation reuses the existing transport, event types and state classification. No bridge class, event bus, routing configuration or general field-normalization framework.

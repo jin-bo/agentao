@@ -1,17 +1,20 @@
 # 子 Agent 事件桥：回调出去，事件回来
 
-**状态：** 提案，**未授权**。§5（方案 A）是一个小的缺陷修复，不依赖其余部分。§6（方案 B）是重构，用户看不到任何变化；只在下次因别的原因打开这块代码时再做。
+**状态：** 提案，**未授权**。决策（rev 2，2026-10-11）：两个方案都实施，分两步走——先 A，后 B。目前都还没有实施。
 **锚点：** agentao `main@60fcca9`（2026-10-11）。下文行号均以该提交为准。
 **相关：** `0-5-0-removal-checklist.zh.md` §C（子 Agent 工厂今天为什么用 `build_compat_transport`）；`host-tool-injection.zh.md`；`embedded-host-contract.md`（公共事件 `SubagentLifecycleEvent`，本文不改它）。
+**修订记录：** rev 1（`af7b014`）把 B 暂缓，并提出给子 Agent 的 id 加命名空间。rev 2 采纳先 A 后 B，删掉 id 命名空间，公开的 `build_compat_transport` 一行不删（rev 1 错把其中一部分算作可删），并把字段默认值、异常范围和事件顺序写死。
 
 ## 1. 概要
 
 前台子 Agent 通过六个旧式回调向父 Agent 报告进度。在子 Agent 一侧，`build_compat_transport` 把子 Agent 的 `AgentEvent` *转成*这些回调；在父 Agent 一侧，`tooling/agent_tools.py` 再把回调*转回* `AgentEvent`，发到父 transport 上。为了让信息熬过这一来一回，回调层上搭了两个私有约定：哨兵名 `__agent_start__` / `__agent_end__`，以及塞进工具参数里的 `__call_id__` 键。
 
-一份外部评审（2026-10-10）建议去掉这段往返。读代码后发现，真正的往返比评审说的窄（§3），并且找到一个已确认的缺陷（§4.1）。本文记录事实、任何改动都必须守住的不变量（§7），以及两个方案：
+一份外部评审（2026-10-10）建议去掉这段往返。读代码后发现，真正的往返比评审说的窄（§3），并且找到一个已确认的缺陷（§4.1）。两步都采纳：
 
-- **A —— 补上生命周期缺口（建议现在做）。** 子 Agent 抛异常时发了 `AGENT_START`，却永远不发 `AGENT_END`。改动只在 `_wrapper.py` 几行，与任何重构无关。
-- **B —— 用事件汇（event sink）替换回调桥（暂缓）。** 包装器交给父 Agent 一个转发函数，而不是六个回调。它去掉哨兵、`__call_id__` 夹带和约 85 行转换代码，行为不变。只值得和这一块的其他工作一起做。
+- **A —— 补上生命周期缺口。** 子 Agent 抛异常时发了 `AGENT_START`，却永远不发 `AGENT_END`。修复只在 `AgentToolWrapper.execute()` 内（§5）。
+- **B —— 直接转发事件。** 内部子 Agent 路径不再经过回调桥。包装器给子 Agent 一个现有的 `SdkTransport`，其 `on_event` 是一个局部转发函数，父 Agent 把自己的 `emit` 传进来（§6）。目的是减少转换环节，并把哪些字段传递、哪些事件丢弃写成明确规则。做它的理由不是行数。
+
+A 落地并验证之后再开始 B，这样出了回归能定位到是哪一步。
 
 ## 2. 今天的路径
 
@@ -35,7 +38,7 @@
 
 包装器自己的生命周期**不**经过子 transport。`execute()` 直接用 `"__agent_start__"` / `"__agent_end__"` 和一个 `SubagentProgress` 调父 Agent 的 `step_callback`（`_wrapper.py:300-304`、`347-365`），父 Agent 再把它们映射回 `AGENT_START` / `AGENT_END`（`agent_tools.py:65-81`）。
 
-后台子 Agent 用的是没有事件处理器的 `SdkTransport(confirm_tool=lambda *_: False)`，所以它的事件一个也到不了父 Agent（`_wrapper.py:613-616`）。
+后台子 Agent 用的是没有事件处理器的 `SdkTransport(confirm_tool=lambda *_: False)`，所以它的*进度*事件一个也到不了父 Agent（`_wrapper.py:613-616`）。它仍然通过自己的路径发公共的 `SubagentLifecycleEvent`（`_wrapper.py:1122` 起）。
 
 公共宿主事件 `SubagentLifecycleEvent` 走的是另一条路（`subagent_emitter`，`_wrapper.py:390-430`），不在本文范围内。
 
@@ -45,12 +48,14 @@
 
 | 项 | 路径 | 是否往返？ |
 |---|---|---|
-| `__agent_start__` / `__agent_end__` | 包装器 → 父 `step_callback` → `AgentEvent` | **否。** 是回调 API 上的单向哨兵。`build_compat_transport` 里 `AGENT_START` → `"__agent_start__"` 的映射（`sdk.py:251-277`）**对子 Agent 是死代码**：子 Agent 从不拿到 agent 工具（CLAUDE.md，*Sub-agents execute from one registry*），所以从不发 `AGENT_START`。那个分支只服务 `build_compat_transport` 的外部使用者。 |
+| `__agent_start__` / `__agent_end__` | 包装器 → 父 `step_callback` → `AgentEvent` | **否。** 是回调 API 上的单向哨兵。`build_compat_transport` 里 `AGENT_START` → `"__agent_start__"` 的映射（`sdk.py:251-277`）对子 Agent 永远不会执行：子 Agent 从不拿到 agent 工具（CLAUDE.md，*Sub-agents execute from one registry*），所以从不发 `AGENT_START`。那个分支服务的是 `build_compat_transport` 的外部使用者。 |
 | `__call_id__` | 子 `TOOL_START` → `step_callback` 的 args → 在 `agent_tools.py:84` 被弹出 | **是。** 事件 → 回调 → 事件。 |
-| 步骤 / 确认标签、`confirm_tool` 前缀 | 子事件 → 包装器变换 → 父 | 不是往返，但是任何设计都必须保留的真实变换（§7）。 |
+| 步骤 / 确认标签、`confirm_tool` 前缀 | 子事件 → 包装器变换 → 父 | 不是往返，但是 B 必须保留的真实变换（§7）。 |
 | `TOOL_OUTPUT` / `TOOL_COMPLETE` 的 `call_id`、`status`、`error` | `_accepted_meta_keywords` 签名检查（`sdk.py:142-181`）→ 关键字参数 → 父 `AgentEvent` | **是。** 事件 → 回调 → 事件。今天是对的，靠签名内省维持。 |
 
-所以去掉往返，意味着改 `AgentManager.create_agent_tools` 与父 Agent 之间的回调接口（`agents/manager.py:137-160`）。这是**内部**接口：`AgentManager`、`AgentToolWrapper`、`SubagentProgress` 没有出现在任何参考文档或指南里，`Agentao` 也是自己构造 `AgentManager`（`agent.py:885`）。`build_compat_transport` 本身是公开的（0.5.0 的迁移入口），保留不动。
+所以去掉往返，意味着改 `AgentManager.create_agent_tools` 与父 Agent 之间的回调接口（`agents/manager.py:137-160`）。这是**内部**接口：`AgentManager`、`AgentToolWrapper`、`SubagentProgress` 没有出现在任何参考文档或指南里，`Agentao` 也是自己构造 `AgentManager`（`agent.py:885`）。
+
+`build_compat_transport` 是**公开的**（0.5.0 的迁移入口），它的调用者能观察到的行为也是公开的：`step_callback` 参数里的 `__call_id__` 键、回调签名检查、生命周期映射，以及它构造的 `SubagentProgress`。这些全部保留。
 
 ## 4. 阅读中的发现
 
@@ -67,28 +72,36 @@
 
 可触发的原因包括：子 Agent 构造失败（模型配置错误），以及在 turn 之外抛出的取消（`_wrapper.py:327-331` 的注释）。
 
-### 4.2 子 Agent 的 `call_id` 被转发进父 Agent 的 id 作用域（假设，未复现）
+### 4.2 子 Agent 的 `call_id` 被转发进父 Agent 的 id 作用域（观察中的风险，未复现）
 
-`runtime/identity.py` 规定 `tool_call_id` 的唯一性作用域是 `(session_id, turn_id, tool_call_id)`，并且不假设 provider 的 id 全局唯一。桥把子 Agent 的 provider id 原样转发进父 Agent 的 turn，而 CLI 和 ACP 按 `call_id` 来定位工具行。如果某个 provider 给父调用和子调用发了同一个 id（例如顺序编号的 `call_0`），子 Agent 的 `TOOL_COMPLETE` 就可能关掉父 Agent 的 `agent_*` 那一行。我没有找到会这样做的 provider，所以这是设计风险，不是缺陷。要修就放在方案 B 里（§6.3）。
+`runtime/identity.py` 规定 `tool_call_id` 的唯一性作用域是 `(session_id, turn_id, tool_call_id)`，并且不假设 provider 的 id 全局唯一。桥把子 Agent 的 provider id 原样转发进父 Agent 的 turn，而 CLI 和 ACP 按 `call_id` 来定位工具行。如果某个 provider 重复使用 id，子 Agent 的 `TOOL_COMPLETE` 可能关掉别的行：父 Agent 的 `agent_*` 那一行，或者同一个子 Agent 前一个 turn 里的某一行——因为父 Agent 在自己的一个 turn 里会看到子 Agent 所有 turn 的事件。
+
+目前没有找到会这样做的 provider。A 和 B 都不改 id：不给 `ToolRunner` 加参数、不引入 id 映射表、不改变 ACP 客户端看到的 id。如果哪天复现了冲突，怎么修另行决定。（rev 1 提出的 `parent_call_id/child_call_id` 前缀覆盖不了同一个子 Agent 内的情况，所以删掉。）
 
 ### 4.3 工具名在开始与完成时不一致（仅记录）
 
-`TOOL_START` 带的是标签 `[name n/max] tool`；`TOOL_OUTPUT` 和 `TOOL_COMPLETE` 带的是裸的 `tool`。三个消费方都优先按 `call_id` 定位（`cli/display.py:460-471`），所以今天无害。只有将来按名称定位的新消费方才会受影响。
+`TOOL_START` 带的是标签 `[name n/max] tool`；`TOOL_OUTPUT` 和 `TOOL_COMPLETE` 带的是裸的 `tool`。三个消费方都优先按 `call_id` 定位（`cli/display.py:460-471`），所以今天无害。B 保持原样。
 
-## 5. 方案 A —— 补上生命周期缺口
+## 5. A —— 补上生命周期缺口
 
-在 `execute()` 的两条抛异常路径上发 `AGENT_END`：`state="cancelled"` 或 `"failed"`，失败时 `error=type(exc).__name__`。最干净的写法是用 `try/finally` 保证恰好发一次结束，这样以后新增的抛异常路径也不会重新打开这个缺口。
+范围：只改 `AgentToolWrapper.execute()`，不改任何公共宿主事件。
 
-- **测试：** 把 §4.1 的探测写成回归测试（`_run_sync` 抛异常时，恰好一次开始、一次结束，顺序正确），再加一个取消的变体。
-- **规模：** 一个函数；不改接口；CHANGELOG 在 *Fixed* 下加一条。
+- **每个已发出 `AGENT_START` 的前台运行，都恰好发一次 `AGENT_END`。** 覆盖正常返回、普通异常和 `AgentCancelledError`。
+- **正常返回：** 不变。沿用现有的 `_terminal_state()` 分类和统计字段，包括正常返回的取消结果。
+- **`AgentCancelledError`：** `state="cancelled"`，不填 `error`（与正常返回的取消同一规则：状态本身已说明情况）。
+- **其他 `Exception`：** `state="failed"`，`error=type(exc).__name__`。
+- **不属于 `Exception` 的 `BaseException`**（`KeyboardInterrupt`、`SystemExit`）：不发 `AGENT_END`。这与现有 `except` 的覆盖范围完全一致，也与公共终态事件一致——后者在这些情况下同样不发。结束事件和公共事件保持同步。
+- **抛异常路径上没有 `stats`。** 构造或运行抛异常时，`_run_sync` 没有返回值，所以 `turns`、`tool_calls`、`tokens`、`duration_ms` 取 `SubagentProgress` 的默认值（0）。这些路径上绝不能读 `stats`。
+- **顺序：每条路径上都是先 `AGENT_END`，后公共终态事件。** 这就是今天正常路径的顺序（`_wrapper.py:347` 在 `367` 之前）。抛异常路径上，在 `except` 分支里先发 `AGENT_END`，再调 `_terminal_subagent_event`。
+- **结束事件不能掩盖任何东西。** 发送 `AGENT_END` 不能替换原始异常，也不能让公共终态事件被跳过。CLI 和 ACP 的 transport 在 `emit` 里已经吞掉异常（`cli/transport.py:181`、`acp/transport.py:246`），但嵌入宿主的 transport 未必如此。所以发送时要包一层 `try/except Exception` 并记日志。
 
-它不依赖方案 B，B 也应当保留同样的保证。
+发送放在现有的 `except` 分支里，或放进它们共同调用的一个小的局部函数。不新增生命周期管理器、状态机或全局配对机制。
 
-## 6. 方案 B —— 事件汇桥
+## 6. B —— 直接转发事件
 
-### 6.1 形状
+### 6.1 接缝
 
-`create_agent_tools` 从父 Agent 拿三样东西，而不是六个回调加 `confirmation_event_callback`：
+内部工厂（`AgentManager.create_agent_tools`、`AgentToolWrapper.__init__`）用三个入口替代现有的进度回调组（`step_callback`、`output_callback`、`tool_complete_callback`、`confirmation_event_callback`、`confirmation_callback`、`ask_user_callback`）：
 
 ```python
 event_sink: Callable[[AgentEvent], None]        # agent.transport.emit
@@ -96,51 +109,93 @@ confirm_tool: Callable[[str, str, dict], bool]  # agent.transport.confirm_tool
 ask_user: Callable[..., str]                    # transport_ask_user(agent)，不变
 ```
 
-前台子 Agent 拿到 `SdkTransport(on_event=forward, confirm_tool=prefixed_confirm, ask_user=ask_user, …)`，其中 `forward` 是一个**白名单**：
+这些仍然是回调：`event_sink` 接收完整事件，`confirm_tool` / `ask_user` 返回用户的回答。"去掉回调桥"指的是去掉"事件转成旧式回调再转回事件"这层转换，不是去掉所有回调。
+
+内部工厂和包装器一次切换到新入口。不会有新旧内部接口并存的阶段，也不在两者之间加适配层。公开兼容接口的弃用不在本次范围内。
+
+### 6.2 前台转发函数
+
+前台子 Agent 使用现有的 `SdkTransport(on_event=forward, confirm_tool=prefixed_confirm, ask_user=ask_user)`。`forward` 是包装器里的局部函数，只处理以下事件：
 
 | 子事件 | 转发为 |
 |---|---|
-| `TURN_START` | 原样；除非带 `display_reset`，否则推进 turn 计数器 |
-| `TOOL_START`、`TOOL_CONFIRMATION` | `data["tool"]` 替换为 `[name n/max] tool` 标签 |
-| `TOOL_OUTPUT`、`TOOL_COMPLETE` | 原样（`call_id`、`status`、`duration_ms`、`error` 不动） |
-| 其他一切 | **丢弃**（§7，不变量 6） |
+| `TURN_START` | 沿用今天的显示重置语义：转发 `{"display_reset": True}` 或 `{}`；只有不带 `display_reset` 的事件推进轮次计数。 |
+| `TOOL_START` | `tool` 换成 `[name n/max] tool` 标签；`args` 和 `call_id` 保留。 |
+| `TOOL_CONFIRMATION` | 使用与随后 `TOOL_START` 相同的标签；其余数据和 `call_id` 保留。 |
+| `TOOL_OUTPUT` | `tool`、`chunk`、`call_id` 保留。 |
+| `TOOL_COMPLETE` | `tool`、`call_id`、`status`、`duration_ms`、`error` 保留。 |
+| 其他事件 | **丢弃**（§7，不变量 6）。 |
 
-包装器自己通过 `event_sink` 发 `AgentEvent(AGENT_START | AGENT_END)`，哨兵和 `SubagentProgress` 就退出了内部路径。
+`forward` 改写标签或补默认值时，用复制出来的 `data` 字典构造新事件。`AgentEvent` 是可变的 dataclass（`transport/events.py:67`），而子 Agent 自己的 transport 会把同一个对象交给它的订阅者，所以不能原地修改。
 
-### 6.2 能去掉什么
+`prefixed_confirm` 给工具名加上 `[name]` 前缀再调父 Agent 的 `confirm_tool`，与今天 `_wrapper.py:621-624` 的做法相同。`SdkTransport` 在跑满迭代上限时默认返回 `{"action": "stop"}`，与 `build_compat_transport` 相同，所以子 Agent 跑满上限后仍会停止。
 
-- `tooling/agent_tools.py:59-112`：重建事件的三个父侧回调（54 行），改为直接传 `agent.transport.emit`。
-- `__call_id__` 的注入（`sdk.py:217-226`）和弹出（`agent_tools.py:84`）。
+包装器自己通过 `event_sink` 发 `AGENT_START` 和 `AGENT_END` 两个 `AgentEvent`，载荷与今天 `agent_tools.py:65-81` 构造的相同。哨兵和 `SubagentProgress` 退出内部路径。公共 `SubagentLifecycleEvent` 继续走自己的路径。
+
+后台子 Agent 继续使用没有事件处理器、拒绝所有确认的 `SdkTransport(confirm_tool=lambda *_: False)`。"不发事件"指的是子 transport 的进度事件；后台运行的公共 `SubagentLifecycleEvent` 通知不变。
+
+### 6.3 字段默认值：完全沿用今天的规则
+
+`forward` 保留父侧桥今天施加的默认值。B 不借机统一这些边界行为。
+
+| 事件 | 字段 | 今天的规则 | 位置 |
+|---|---|---|---|
+| `TOOL_START` | `call_id` | 缺失**或为空**时回退到**标签** `[name n/max] tool`。（`build_compat_transport` 只注入为真的 id，父侧用 `or name`，而 `name` 就是标签。） | `sdk.py:224`、`agent_tools.py:84` |
+| `TOOL_OUTPUT` | `call_id` | 只有 `None` 才回退，回退到**裸**工具名；空字符串保留。 | `agent_tools.py:97-101` |
+| `TOOL_COMPLETE` | `call_id` | 同 `TOOL_OUTPUT`。 | `agent_tools.py:103-112` |
+| `TOOL_COMPLETE` | `status` | `None` → `"ok"`。 | 同上 |
+| `TOOL_COMPLETE` | `duration_ms` | `None` → `0`。 | 同上 |
+| `TOOL_COMPLETE` | `error` | 保留；缺失时为 `None`。 | 同上 |
+
+这些回退在真实路径上都不会触发。`normalize_tool_call_id`（`runtime/identity.py:51`）保证每个规划出的调用都有非空 id，执行器也总会发 `status`、`duration_ms` 和 `error`（`runtime/tool_executor.py:296-304`、`683-688`）。这些规则只对构造出来的事件有意义，所以测试保留现有用例即可，不需要新增。
+
+### 6.4 B 改什么、保留什么
+
+从**内部**路径上去掉：
+- `tooling/agent_tools.py:59-112`：重建事件的三个父侧回调，改为直接传 `agent.transport.emit`。
 - `_wrapper.py` 里的哨兵常量与调用（`261-262`、`300-304`、`347-365`）。
-- 子 Agent 对 `_accepted_meta_keywords` 签名内省的依赖。
+- 子 Agent 对 `build_compat_transport`、`__call_id__` 键和 `_accepted_meta_keywords` 的依赖。
 
-**不**去掉的：`build_compat_transport`、它的 `AGENT_START` 映射和 `SubagentProgress` 为外部调用者保留。要不要弃用它们是另一个决定。
+**不变：** `sdk.py` 里的整个 `build_compat_transport`，包括 `__call_id__` 注入、签名检查、`AGENT_START` / `AGENT_END` 映射，以及它构造的 `SubagentProgress`。外部调用者依赖这些代码，所以都不算 B 的删除收益。
 
-### 6.3 可选：给子 Agent 的 id 加命名空间
+测试：`tests/test_subagent_tool_call_id.py` 用 `build_compat_transport` 和 `_make_prefixed_step_callback` 搭夹具，并按关键字名伪造 `create_agent_tools`。它的夹具改为经过实际的生产转发函数（§8）。另外三个测试构造 `AgentToolWrapper` 时不传回调，`tests/test_async_tool.py` 读取 `create_agent_tools` 的类型注解。
 
-转发集中到一处之后，§4.2 有个现成的修法：把 `call_id` 转发成 `f"{parent_call_id}/{child_call_id}"`。这需要包装器知道自己所在的父调用 id，而 `ToolRunner` 今天并不传（它只注入取消令牌）。只有 §4.2 真被复现时才做；它会改变 ACP 客户端看到的 id。
-
-### 6.4 成本
-
-- 去掉约 85 行生产代码（`agent_tools.py` 54 行，`_wrapper.py` 约 25 行哨兵代码，`sdk.py` 5 行）；转发函数新增约 30 行。
-- `tests/test_subagent_tool_call_id.py`（310 行）用 `build_compat_transport` 和 `_make_prefixed_step_callback` 搭夹具，并按关键字名伪造 `create_agent_tools`。它大部分要针对新接缝重写，风险就在这里：重写后的测试必须仍能在旧测试钉住的那些 bug 上失败。它是唯一给 `AgentToolWrapper` 传回调的测试；另外三个测试构造包装器时不传回调，`tests/test_async_tool.py` 读取 `create_agent_tools` 的类型注解。
-- 用户看不到变化，所以不需要 CHANGELOG 条目；没有双语文档提到这个 API。
-
-## 7. 任何改动都必须守住的不变量
+## 7. 不变量
 
 | # | 不变量 | 由谁钉住 |
 |---|---|---|
 | 1 | 每个子工具行在开始、确认、输出、完成之间保持自己的 `call_id`，包括同名的并行批次。 | `test_same_name_parallel_completions_keep_distinct_call_ids`、`test_tool_output_carries_call_id`、`test_confirmation_event_keeps_subagent_call_id` |
-| 2 | `TOOL_COMPLETE` 转发真实的 `status` 和 `error`；缺 id 时退回用工具名。 | `test_completion_forwards_real_status_and_error`、`test_completion_without_call_id_falls_back_to_name` |
+| 2 | `TOOL_COMPLETE` 转发真实的 `status`、`duration_ms` 和 `error`；缺失字段取 §6.3 的默认值。 | `test_completion_forwards_real_status_and_error`、`test_completion_without_call_id_falls_back_to_name` |
 | 3 | 确认开启时带的 `[name n/max]` 标签与随后的 `TOOL_START` 相同；被拒绝的确认（`display_reset`）不推进计数器。 | `test_confirmation_opening_carries_the_subagent_label`、`test_a_rejected_confirmation_does_not_advance_the_turn_label` |
-| 4 | 只有在转发开始事件时才转发 `TOOL_CONFIRMATION`，否则 ACP 会打开一个没人关闭的调用。 | `test_confirmation_is_not_forwarded_without_a_step_callback` |
-| 5 | `confirm_tool` 以带 `[name]` 前缀的名称到达父 transport，MCP Skills 门禁的说明和 CLI 提示走的路径与今天相同。 | 未钉住 —— 前缀目前没有测试；随 B 补上 |
-| 6 | 子 Agent 发出的其他事件都不到达父 Agent：没有 `THINKING` 或 `LLM_TEXT`（不显示子 Agent 的推理），没有 `TURN_BEGIN` / `TURN_END` / `LLM_CALL_*` / `TOOL_RESULT`（否则回放会把子 Agent 的 turn 记成父 Agent 的），没有权限或记忆事件。今天成立，是因为 `build_compat_transport` 忽略未列出的类型；B 必须把它写成显式白名单。 | 未钉住 —— 随 B 补测试 |
-| 7 | 后台子 Agent 拒绝所有确认，且不发任何事件。 | 拒绝：`test_background_subagent_approval.py::test_a_call_that_needs_confirmation_runs_only_where_someone_can_approve_it`；"不发事件"：未钉住 |
-| 8 | 每个 `AGENT_START` 之后恰好跟一个 `AGENT_END`（方案 A 之后）。 | 由方案 A 补上 |
+| 4 | 只有在转发开始事件时才转发 `TOOL_CONFIRMATION`，否则 ACP 会打开一个没人关闭的调用。B 里前台子 Agent 两者都转发，后台都不转发。 | `test_confirmation_is_not_forwarded_without_a_step_callback`（随 B 改写） |
+| 5 | `confirm_tool` 以带 `[name]` 前缀的名称到达父 transport，MCP Skills 门禁的说明和 CLI 提示走的路径与今天相同。 | 目前未钉住；随 B 补上 |
+| 6 | 子 Agent 发出的其他事件都不到达父 Agent：没有 `THINKING` 或 `LLM_TEXT`（不显示子 Agent 的推理），没有 `TURN_BEGIN` / `TURN_END` / `LLM_CALL_*` / `TOOL_RESULT`（否则回放会把子 Agent 的 turn 记成父 Agent 的），没有权限或记忆事件。 | 目前未钉住；随 B 补上 |
+| 7 | 后台子 Agent 拒绝所有确认，其子 transport 不向父 Agent 发任何进度事件。它的公共 `SubagentLifecycleEvent` 不受影响。 | 拒绝：`test_background_subagent_approval.py::test_a_call_that_needs_confirmation_runs_only_where_someone_can_approve_it`；"不发进度事件"：随 B 补上 |
+| 8 | 正常返回、`Exception` 和 `AgentCancelledError` 时，每个 `AGENT_START` 之后恰好跟一个 `AGENT_END`；它在公共终态事件之前；发送失败不掩盖任何东西。 | 由 A 补上 |
+| 9 | 子 Agent 跑满迭代上限后停止。 | 目前未钉住；随 B 补上 |
+| 10 | 公开的 `build_compat_transport` 对外部调用者保持原有契约。 | `tests/test_transport.py` |
 
-## 8. 建议
+## 8. 验收与测试
 
-1. **现在做方案 A。** 这是已确认的缺陷，有三处可见症状，修复只涉及一个函数。
-2. **方案 B 暂缓**，等下次因别的原因打开这块代码时再做（例如改子 Agent 进度的显示方式，或出现第二个子事件消费方）。单独做的话，是用约 55 行的净减少换一次有真实回归风险的测试重写。
-3. **§4.2 作为观察中的风险保留。** 只有复现了才动手。
+**A：**
+- 为普通异常、构造失败（§4.1 的探测）和抛出的 `AgentCancelledError` 各加回归测试。每个都检查开始与结束事件的次数、顺序和状态，检查 `AGENT_END` 在公共终态事件之前，并检查原始异常继续传播。
+- 加一个发送 `AGENT_END` 时抛异常的测试：原始异常仍然传播，公共终态事件仍然发出。
+- 保留现有的"正常返回的取消"测试。
+- CHANGELOG 在 *Fixed* 下加一条。
+
+**B：**
+- 把 `tests/test_subagent_tool_call_id.py` 的夹具改为经过实际的生产转发函数，并保留所有行为断言：
+  - 同名并行工具在开始、确认、输出、完成之间保持各自的 `call_id`；
+  - 真实的状态、错误、耗时，以及 §6.3 的默认值不变；
+  - 确认和开始的标签一致，拒绝确认不推进轮次；
+  - `confirm_tool` 仍以 `[name]` 前缀到达父 transport；
+  - 白名单以外的事件不进入父 transport；
+  - 后台子 Agent 始终拒绝确认，其子 transport 不向父 Agent 发任何东西；
+  - 子 Agent 跑满迭代上限后停止；
+  - 公开的 `build_compat_transport` 保持旧契约。
+- 保留现有的 ACP 输出断言和真实 `ToolRunner` 的拒绝确认测试，不要换成只检查转发函数内部的测试。
+- B 不需要 CHANGELOG 条目（没有行为变化）。
+
+**验证顺序：** 先跑相关回归测试，再跑默认测试集和 `ruff check .`。
+
+实现只复用现有的 transport、事件类型和状态分类。不新增桥接类、事件总线、路由配置或通用字段规范化框架。
