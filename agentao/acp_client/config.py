@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 from .models import AcpClientConfig, AcpConfigError, AcpServerConfig
 from .. import json_parse
+from ..config_file import read_config_text
 
 
 def load_acp_client_config(
@@ -38,11 +39,10 @@ def load_acp_client_config(
     root = project_root if project_root is not None else Path.cwd()
     config_path = root / ".agentao" / "acp.json"
 
-    if not config_path.is_file():
-        return AcpClientConfig()
-
     try:
-        text = config_path.read_text(encoding="utf-8-sig")
+        # Not ``is_file()`` first: a directory or a pipe here is an
+        # ``OSError`` below, not a missing file, so ``/acp add`` refuses it.
+        text = read_config_text(config_path)
     except UnicodeDecodeError as exc:
         # Subclasses ValueError, not OSError — without this clause a
         # UTF-16 acp.json bypassed AcpConfigError and surfaced as a raw
@@ -53,6 +53,8 @@ def load_acp_client_config(
         ) from exc
     except OSError as exc:
         raise AcpConfigError(f"cannot read {config_path}: {exc}") from exc
+    if text is None:
+        return AcpClientConfig()
 
     try:
         parsed = json_parse.loads(text)

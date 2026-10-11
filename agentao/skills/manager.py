@@ -14,6 +14,7 @@ from agentao.frontmatter import parse_frontmatter
 
 from ..paths import user_root
 from .. import json_parse
+from ..config_file import read_config_text
 
 logger = logging.getLogger(__name__)
 
@@ -272,8 +273,12 @@ class SkillManager:
         """Load disabled skills list from config file."""
         if self._config_file.exists():
             try:
-                with open(self._config_file, "r", encoding="utf-8-sig") as f:
-                    config = json_parse.load(f)
+                # Not ``open``: a FIFO here blocked ``SkillManager.__init__``,
+                # so startup hung. It is an ``OSError`` below, and warns.
+                text = read_config_text(self._config_file)
+                if text is None:
+                    return
+                config = json_parse.loads(text)
                 if not isinstance(config, dict):
                     # ``config.get`` below is an AttributeError on a top-level
                     # list — the same uncaught-shape crash the decode branch
@@ -356,9 +361,7 @@ class SkillManager:
         file. The message names the path, so the remedy is to open it.
         """
         try:
-            raw = self._config_file.read_text(encoding="utf-8-sig")
-        except FileNotFoundError:
-            return {}
+            raw = read_config_text(self._config_file)
         except UnicodeDecodeError as exc:
             raise _SkillConfigWriteError(
                 f"Error: not updating {self._config_file}: not valid UTF-8 "
@@ -370,6 +373,8 @@ class SkillManager:
                 f"Error: not updating {self._config_file}: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
+        if raw is None:
+            return {}
 
         try:
             data = json_parse.loads(raw)

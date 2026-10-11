@@ -223,9 +223,14 @@ class TestPermissionsJson:
         assert not (user_root / "permissions.json").exists()
         assert self._load(tmp_path, user_root) == ([], [])
 
-    def test_directory_at_the_path_is_treated_as_absent(self, tmp_path, user_root):
-        (user_root / "permissions.json").mkdir()
-        assert self._load(tmp_path, user_root) == ([], [])
+    def test_directory_at_the_path_fails_closed(self, tmp_path, user_root):
+        # It used to read as absent, which dropped every rule without a word:
+        # the fail-open this loader exists to prevent.
+        path = user_root / "permissions.json"
+        path.mkdir()
+        with pytest.raises(PermissionConfigError) as excinfo:
+            self._load(tmp_path, user_root)
+        assert str(path) in str(excinfo.value)
 
     def test_stray_project_file_is_never_a_rule_source(self, tmp_path, caplog):
         """Project scope is deliberately unhonored — including when broken.
