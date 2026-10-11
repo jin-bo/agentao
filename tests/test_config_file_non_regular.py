@@ -93,6 +93,15 @@ def test_regular_file_strips_a_bom(tmp_path):
     assert read_config_bytes(p) == b"\xef\xbb\xbf{}"
 
 
+def test_bytes_come_back_exactly(tmp_path):
+    # Without ``O_BINARY`` a Windows descriptor is text mode: CRLF reads as LF
+    # and the read stops at ``0x1A``. Only the Windows CI job can catch that.
+    raw = b'{"a": 1}\r\n\x1a{"b": 2}\r\n'
+    p = tmp_path / "c.json"
+    p.write_bytes(raw)
+    assert read_config_bytes(p) == raw
+
+
 def test_directory_is_not_a_regular_file(tmp_path):
     (tmp_path / "c.json").mkdir()
     # Windows refuses to open a directory with ``PermissionError``.

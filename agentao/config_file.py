@@ -24,6 +24,9 @@ from typing import Optional, Union
 # Windows has no ``O_NONBLOCK`` and no FIFOs a path can name; ``os.open`` on a
 # directory there raises ``PermissionError``, which is still an ``OSError``.
 _O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+# ``os.open`` (unlike ``open``) does not add ``O_BINARY`` on Windows, and a
+# text-mode descriptor turns CRLF into LF and stops at the first ``0x1A``.
+_O_BINARY = getattr(os, "O_BINARY", 0)
 
 
 class NotARegularFileError(OSError):
@@ -37,7 +40,7 @@ def read_config_bytes(path: Union[str, Path]) -> Optional[bytes]:
     any other ``OSError`` the open or read raises (``PermissionError``, …).
     """
     try:
-        fd = os.open(path, os.O_RDONLY | _O_NONBLOCK)
+        fd = os.open(path, os.O_RDONLY | _O_NONBLOCK | _O_BINARY)
     except (FileNotFoundError, NotADirectoryError):
         return None
     try:

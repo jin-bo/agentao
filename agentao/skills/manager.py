@@ -271,70 +271,69 @@ class SkillManager:
 
     def _load_config(self):
         """Load disabled skills list from config file."""
-        if self._config_file.exists():
-            try:
-                # Not ``open``: a FIFO here blocked ``SkillManager.__init__``,
-                # so startup hung. It is an ``OSError`` below, and warns.
-                text = read_config_text(self._config_file)
-                if text is None:
-                    return
-                config = json_parse.loads(text)
-                if not isinstance(config, dict):
-                    # ``config.get`` below is an AttributeError on a top-level
-                    # list — the same uncaught-shape crash the decode branch
-                    # was added to close, one line further down.
-                    logger.warning(
-                        "Ignoring %s: top-level value must be a JSON object, "
-                        "got %s.",
-                        self._config_file, type(config).__name__,
-                    )
-                    self.disabled_skills = set()
-                    return
-                raw_disabled = config.get("disabled_skills", [])
-                if not isinstance(raw_disabled, (list, tuple)):
-                    # ``set(...)`` on the wrong shape is the same uncaught-shape
-                    # crash the check above closes, one level down: ``null`` or
-                    # a number raises ``TypeError`` straight out of
-                    # ``SkillManager.__init__`` (and so out of ``Agentao``'s),
-                    # and a bare string silently expands to its *characters*,
-                    # hiding — and, since #266, refusing to activate — every
-                    # one-character skill name.
-                    logger.warning(
-                        "Ignoring 'disabled_skills' in %s: must be a JSON "
-                        "array of skill names, got %s.",
-                        self._config_file, type(raw_disabled).__name__,
-                    )
-                    self.disabled_skills = set()
-                    return
-                self.disabled_skills = {
-                    name for name in raw_disabled if isinstance(name, str)
-                }
-                # Counted over the entries, not as a length delta: duplicate
-                # names collapse in the set and would report as drops.
-                dropped = sum(
-                    1 for name in raw_disabled if not isinstance(name, str)
-                )
-                if dropped:
-                    logger.warning(
-                        "Ignoring %d non-string entr%s in 'disabled_skills' "
-                        "in %s.",
-                        dropped, "y" if dropped == 1 else "ies",
-                        self._config_file,
-                    )
-            except UnicodeDecodeError as exc:
+        try:
+            # Not ``open``: a FIFO here blocked ``SkillManager.__init__``,
+            # so startup hung. It is an ``OSError`` below, and warns.
+            text = read_config_text(self._config_file)
+            if text is None:
+                return
+            config = json_parse.loads(text)
+            if not isinstance(config, dict):
+                # ``config.get`` below is an AttributeError on a top-level
+                # list — the same uncaught-shape crash the decode branch
+                # was added to close, one line further down.
                 logger.warning(
-                    "Ignoring %s: not valid UTF-8 (%s at byte %d). Re-save it "
-                    "as UTF-8 — PowerShell 5.1 writes UTF-16LE from `>` and "
-                    "`Out-File`.",
-                    self._config_file, exc.reason, exc.start,
+                    "Ignoring %s: top-level value must be a JSON object, "
+                    "got %s.",
+                    self._config_file, type(config).__name__,
                 )
                 self.disabled_skills = set()
-            except (IOError, json.JSONDecodeError) as exc:
+                return
+            raw_disabled = config.get("disabled_skills", [])
+            if not isinstance(raw_disabled, (list, tuple)):
+                # ``set(...)`` on the wrong shape is the same uncaught-shape
+                # crash the check above closes, one level down: ``null`` or
+                # a number raises ``TypeError`` straight out of
+                # ``SkillManager.__init__`` (and so out of ``Agentao``'s),
+                # and a bare string silently expands to its *characters*,
+                # hiding — and, since #266, refusing to activate — every
+                # one-character skill name.
                 logger.warning(
-                    "Ignoring %s: %s: %s",
-                    self._config_file, type(exc).__name__, exc,
+                    "Ignoring 'disabled_skills' in %s: must be a JSON "
+                    "array of skill names, got %s.",
+                    self._config_file, type(raw_disabled).__name__,
                 )
                 self.disabled_skills = set()
+                return
+            self.disabled_skills = {
+                name for name in raw_disabled if isinstance(name, str)
+            }
+            # Counted over the entries, not as a length delta: duplicate
+            # names collapse in the set and would report as drops.
+            dropped = sum(
+                1 for name in raw_disabled if not isinstance(name, str)
+            )
+            if dropped:
+                logger.warning(
+                    "Ignoring %d non-string entr%s in 'disabled_skills' "
+                    "in %s.",
+                    dropped, "y" if dropped == 1 else "ies",
+                    self._config_file,
+                )
+        except UnicodeDecodeError as exc:
+            logger.warning(
+                "Ignoring %s: not valid UTF-8 (%s at byte %d). Re-save it "
+                "as UTF-8 — PowerShell 5.1 writes UTF-16LE from `>` and "
+                "`Out-File`.",
+                self._config_file, exc.reason, exc.start,
+            )
+            self.disabled_skills = set()
+        except (IOError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "Ignoring %s: %s: %s",
+                self._config_file, type(exc).__name__, exc,
+            )
+            self.disabled_skills = set()
 
     # ------------------------------------------------------------------
     # Config writes — one name at a time, under a cross-process lock (#275)

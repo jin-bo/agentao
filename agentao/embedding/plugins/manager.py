@@ -423,8 +423,6 @@ class PluginManager:
 
     @staticmethod
     def _read_config(path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
         try:
             # ``utf-8-sig`` + an explicit ``UnicodeDecodeError`` clause for the
             # same reason as ``_resolve_mcp_servers`` below: that exception
@@ -501,18 +499,16 @@ def _resolve_mcp_servers(
     if isinstance(ref, str):
         # Path reference — read the JSON file.
         mcp_path = (root / ref).resolve()
-        if not mcp_path.exists():
-            if warnings is not None:
-                warnings.append(PluginWarning(
-                    plugin_name=root.name,
-                    message=f"mcpServers file not found: {ref}",
-                    field="mcpServers",
-                ))
-            return {}
         try:
             text = read_config_text(mcp_path)
             if text is None:
-                raise FileNotFoundError(f"mcpServers file not found: {ref}")
+                if warnings is not None:
+                    warnings.append(PluginWarning(
+                        plugin_name=root.name,
+                        message=f"mcpServers file not found: {ref}",
+                        field="mcpServers",
+                    ))
+                return {}
             data = json_parse.loads(text)
             servers = data.get("mcpServers", data) if isinstance(data, dict) else data
             if not isinstance(servers, dict):

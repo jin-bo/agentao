@@ -130,12 +130,14 @@ _CONFIG_LOCK_TIMEOUT_S = 10.0
 
 def _add_locked(config_path: Path, root: Path, name: str, server: Dict[str, Any]) -> None:
     """``add_server_entry`` body — caller holds the config lock."""
-    if config_path.exists():
-        # Same reader and validation the manager uses; raises AcpConfigError.
-        load_acp_client_config(project_root=root)
-        raw = json.loads(config_path.read_text(encoding="utf-8-sig"))
-    else:
-        raw = {}
+    # Same reader and validation the manager uses; raises AcpConfigError,
+    # including for a directory or a pipe at the path.
+    load_acp_client_config(project_root=root)
+    try:
+        text = read_config_text(config_path)
+    except OSError as exc:
+        raise AcpConfigError(f"cannot read {config_path}: {exc}") from exc
+    raw = {} if text is None else json.loads(text)
     servers = raw.setdefault("servers", {})
     if name in servers:
         raise AcpConfigError(
