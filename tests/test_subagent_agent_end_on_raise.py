@@ -194,7 +194,7 @@ def test_a_base_exception_sends_no_end_and_no_public_terminal(parent, monkeypatc
     ]
 
 
-def test_a_raising_end_callback_does_not_mask_the_run_exception(parent, monkeypatch):
+def test_a_raising_end_sink_does_not_mask_the_run_exception(parent, monkeypatch):
     wrapper = parent.tools.tools["agent_generalist"]
     log = _watch(wrapper, end_raises=True)
     _chat_raising(monkeypatch, ValueError("the real one"))
@@ -206,7 +206,7 @@ def test_a_raising_end_callback_does_not_mask_the_run_exception(parent, monkeypa
     assert _shape(log)[-2:] == [("agent_end", "failed"), ("public", "failed")]
 
 
-def test_a_raising_end_callback_does_not_lose_a_finished_run(parent):
+def test_a_raising_end_sink_does_not_lose_a_finished_run(parent):
     """On the ordinary path too: the run's result comes back and the public
     terminal event is sent. The cancelled token stops the real ``chat()``
     before its first request, so nothing is sent to a model."""
