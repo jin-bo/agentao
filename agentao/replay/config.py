@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, NamedTuple, Optional, Tuple
@@ -173,8 +174,18 @@ class ReplaySettingsError(ValueError):
 
 def _read_settings(path: Path) -> Tuple[Dict[str, Any], Optional[str]]:
     """``(data, problem)``: the parsed object, or ``({}, why it is unusable)``."""
-    if not path.exists():
+    try:
+        mode = path.stat().st_mode
+    except (FileNotFoundError, NotADirectoryError):
         return {}, None
+    except OSError as exc:
+        # ``Path.exists`` / ``is_file`` raise this too (``.agentao`` without
+        # search permission). A problem, not ``{}``: the writers must refuse.
+        return {}, f"{type(exc).__name__}: {exc}"
+    if not stat.S_ISREG(mode):
+        # A FIFO here would block ``read_text`` forever, at startup of every
+        # entry path. Still a problem, not ``{}``: the writers must refuse.
+        return {}, "not a regular file"
     try:
         data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
     except UnicodeDecodeError as exc:

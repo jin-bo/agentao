@@ -238,10 +238,11 @@ You: Activate the pdf skill to help me work with PDFs
 
 The agent will use the `activate_skill` tool automatically.
 
-Or explicitly:
+Or explicitly, then ask for the task in your next message:
 
 ```
-You: /skill pdf "I need to merge multiple PDF files"
+You: /skills activate pdf
+You: I need to merge multiple PDF files
 ```
 
 ### Check Active Skills
@@ -467,7 +468,8 @@ All commands start with `/`:
 |---------|-------------|
 | `/skills` | List all available and active skills |
 | `/status` | Show conversation and skill status |
-| `/skill <name> "<task>"` | Activate a skill explicitly |
+| `/skills activate <name>` | Activate a skill for this session |
+| `/skills deactivate <name>` | Deactivate a skill for this session |
 | `/help` | Show general help including skills info |
 | `/memory` | Show saved memories |
 | `/clear` | Clear conversation history and all memories (active skills are deactivated) |

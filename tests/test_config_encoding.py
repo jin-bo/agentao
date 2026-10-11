@@ -282,6 +282,117 @@ class TestWarnAndDegrade:
             assert _load_settings(tmp_path) == {}
         assert str(path) in caplog.text
 
+    def test_settings_json_factory_warns_on_a_non_object(self, tmp_path, caplog):
+        # The factory used to drop this silently, so ``agentao run`` and ACP
+        # ignored the file without a word while the CLI warned.
+        from agentao.embedding.factory import _load_settings
+
+        cfg = tmp_path / ".agentao"
+        cfg.mkdir()
+        path = cfg / "settings.json"
+        path.write_text('["mode", "full-access"]', encoding="utf-8")
+        with caplog.at_level(logging.WARNING):
+            assert _load_settings(tmp_path) == {}
+        assert str(path) in caplog.text
+        assert "top-level value must be a JSON object, got list" in caplog.text
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            (utf16le_bom({"mode": "full-access"}), "not valid UTF-8"),
+            (b'{"mode": ', "JSONDecodeError"),
+            (b"[1]", "top-level value must be a JSON object, got list"),
+        ],
+        ids=["utf16", "invalid-json", "not-an-object"],
+    )
+    def test_settings_json_cli_reader(self, tmp_path, monkeypatch, raw, expected):
+        from types import SimpleNamespace
+
+        from agentao.cli import app as cli_app
+
+        cfg = tmp_path / ".agentao"
+        cfg.mkdir()
+        (cfg / "settings.json").write_bytes(raw)
+        printed = []
+        monkeypatch.setattr(cli_app.console, "print", lambda *a, **k: printed.append(a))
+        cli = SimpleNamespace(_project_root=tmp_path)
+        assert cli_app.AgentaoCLI._load_settings(cli) == {}
+        assert len(printed) == 1
+        assert expected in str(printed[0][0])
+
+    def test_settings_json_cli_reader_escapes_markup(self, tmp_path, monkeypatch):
+        # An unbalanced ``[/...]`` in the path must not reach Rich as markup.
+        from types import SimpleNamespace
+
+        from rich.console import Console
+
+        from agentao.cli import app as cli_app
+        from agentao.cli._globals import custom_theme
+
+        root = tmp_path / "[/oops]"
+        (root / ".agentao").mkdir(parents=True)
+        (root / ".agentao" / "settings.json").write_text("[1]", encoding="utf-8")
+        console = Console(file=open(os.devnull, "w"), theme=custom_theme)
+        monkeypatch.setattr(cli_app, "console", console)
+        try:
+            assert cli_app.AgentaoCLI._load_settings(SimpleNamespace(_project_root=root)) == {}
+        finally:
+            console.file.close()
+
+    def test_settings_json_cli_reader_escapes_the_problem(self, tmp_path, monkeypatch):
+        # The path test above is a no-op on Windows (``\\`` separators, and
+        # ``\\[`` is a Rich escape), so pin the escape of the problem text too.
+        from types import SimpleNamespace
+
+        from rich.console import Console
+
+        from agentao.cli import app as cli_app
+        from agentao.cli._globals import custom_theme
+        from agentao.replay import config as replay_config
+
+        monkeypatch.setattr(
+            replay_config, "_read_settings", lambda path: ({}, "bad [/oops] value")
+        )
+        console = Console(file=open(os.devnull, "w"), theme=custom_theme)
+        monkeypatch.setattr(cli_app, "console", console)
+        try:
+            assert cli_app.AgentaoCLI._load_settings(SimpleNamespace(_project_root=tmp_path)) == {}
+        finally:
+            console.file.close()
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs a FIFO")
+    def test_settings_json_fifo_is_refused_not_read(self, tmp_path, caplog):
+        # ``read_text`` on a FIFO blocks until a writer appears: startup hung.
+        from agentao.embedding.factory import _load_settings
+
+        cfg = tmp_path / ".agentao"
+        cfg.mkdir()
+        os.mkfifo(cfg / "settings.json")
+        with caplog.at_level(logging.WARNING):
+            assert _load_settings(tmp_path) == {}
+        assert "not a regular file" in caplog.text
+
+    @pytest.mark.skipif(
+        os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+        reason="needs POSIX permissions and a non-root user",
+    )
+    def test_settings_json_unsearchable_dir_warns_not_raises(self, tmp_path, caplog):
+        # ``Path.exists`` raises ``PermissionError`` when ``.agentao`` has no
+        # search permission. The reader must report it as a problem, so the
+        # writers refuse; startup itself still stops at ``permissions.json``.
+        from agentao.embedding.factory import _load_settings
+
+        cfg = tmp_path / ".agentao"
+        cfg.mkdir()
+        (cfg / "settings.json").write_text("{}", encoding="utf-8")
+        cfg.chmod(0)
+        try:
+            with caplog.at_level(logging.WARNING):
+                assert _load_settings(tmp_path) == {}
+        finally:
+            cfg.chmod(0o755)
+        assert "PermissionError" in caplog.text
+
     def test_mcp_json(self, tmp_path, caplog):
         from agentao.mcp.config import load_mcp_config
 
