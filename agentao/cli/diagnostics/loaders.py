@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from .models import FileStatus, Finding
 from ... import json_parse
+from ...config_file import read_config_text
 
 
 def _load_dotenv(wd: Path) -> None:
@@ -47,15 +48,15 @@ def _load_json_object(
     scopes (``"user-scope mcp.json"``) read sensibly. Defaults to ``path.name``.
     """
     display = label or path.name
-    if not path.is_file():
-        return None, "absent", None
     try:
         # ``utf-8-sig`` so a BOM'd file reads instead of being reported
         # malformed. ``UnicodeDecodeError`` is caught explicitly because it
         # subclasses ``ValueError`` — neither ``OSError`` nor
         # ``json.JSONDecodeError`` covers it, and this reader is the one a
-        # user reaches for *because* their config is broken.
-        text = path.read_text(encoding="utf-8-sig")
+        # user reaches for *because* their config is broken. Not
+        # ``is_file()`` first: that reported a directory or a pipe as absent
+        # while startup warned about it; it is ``"unreadable"`` below.
+        text = read_config_text(path)
     except UnicodeDecodeError as exc:
         return None, "malformed", Finding(
             level="error",
@@ -74,6 +75,8 @@ def _load_json_object(
             message=f"Cannot read {display}: {type(exc).__name__}: {exc}",
             source=str(path),
         )
+    if text is None:
+        return None, "absent", None
     try:
         data = json_parse.loads(text)
     except json.JSONDecodeError as exc:

@@ -14,12 +14,12 @@ from __future__ import annotations
 import json
 import logging
 import math
-import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, NamedTuple, Optional, Tuple
 
 from .. import json_parse
+from ..config_file import read_config_text
 
 _logger = logging.getLogger(__name__)
 
@@ -175,19 +175,13 @@ class ReplaySettingsError(ValueError):
 def _read_settings(path: Path) -> Tuple[Dict[str, Any], Optional[str]]:
     """``(data, problem)``: the parsed object, or ``({}, why it is unusable)``."""
     try:
-        mode = path.stat().st_mode
-    except (FileNotFoundError, NotADirectoryError):
-        return {}, None
-    except OSError as exc:
-        # ``Path.exists`` / ``is_file`` raise this too (``.agentao`` without
-        # search permission). A problem, not ``{}``: the writers must refuse.
-        return {}, f"{type(exc).__name__}: {exc}"
-    if not stat.S_ISREG(mode):
-        # A FIFO here would block ``read_text`` forever, at startup of every
-        # entry path. Still a problem, not ``{}``: the writers must refuse.
-        return {}, "not a regular file"
-    try:
-        data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
+        # Not ``path.read_text``: a FIFO there blocked startup forever, and
+        # ``exists()`` raises on a ``.agentao`` without search permission.
+        # Both come back as an ``OSError`` problem, so the writers refuse.
+        text = read_config_text(path)
+        if text is None:
+            return {}, None
+        data = json_parse.loads(text)
     except UnicodeDecodeError as exc:
         return {}, (
             f"not valid UTF-8 ({exc.reason} at byte {exc.start}). Re-save it "

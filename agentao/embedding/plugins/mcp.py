@@ -10,6 +10,7 @@ from typing import Any
 
 from agentao.plugins.models import LoadedPlugin, PluginLoadError, PluginWarning
 from ... import json_parse
+from ...config_file import read_config_text
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,10 @@ def _read_mcp_json(
 ) -> dict[str, dict[str, Any]]:
     """Read a ``.mcp.json`` file and return the ``mcpServers`` dict."""
     try:
-        data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
+        text = read_config_text(path)
+        if text is None:
+            raise FileNotFoundError(f"{path} not found")
+        data = json_parse.loads(text)
     except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
         warnings.append(
             PluginWarning(

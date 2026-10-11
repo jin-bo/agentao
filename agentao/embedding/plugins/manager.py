@@ -17,6 +17,7 @@ from agentao.plugins.models import (
 
 from .manifest import PluginManifestParser
 from ... import json_parse
+from ...config_file import read_config_text
 
 logger = logging.getLogger(__name__)
 
@@ -422,15 +423,17 @@ class PluginManager:
 
     @staticmethod
     def _read_config(path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
         try:
             # ``utf-8-sig`` + an explicit ``UnicodeDecodeError`` clause for the
             # same reason as ``_resolve_mcp_servers`` below: that exception
             # subclasses ``ValueError``, so neither name in the original pair
             # caught it and a UTF-16LE ``plugins_config.json`` (PowerShell
             # 5.1's ``>`` default) escaped straight out of plugin discovery.
-            data = json_parse.loads(path.read_text(encoding="utf-8-sig"))
+            # ``read_config_text``: a FIFO here blocked plugin discovery.
+            text = read_config_text(path)
+            if text is None:
+                return {}
+            data = json_parse.loads(text)
             return data if isinstance(data, dict) else {}
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             return {}
@@ -496,21 +499,20 @@ def _resolve_mcp_servers(
     if isinstance(ref, str):
         # Path reference — read the JSON file.
         mcp_path = (root / ref).resolve()
-        if not mcp_path.exists():
-            if warnings is not None:
-                from .models import PluginWarning
-                warnings.append(PluginWarning(
-                    plugin_name=root.name,
-                    message=f"mcpServers file not found: {ref}",
-                    field="mcpServers",
-                ))
-            return {}
         try:
-            data = json_parse.loads(mcp_path.read_text(encoding="utf-8-sig"))
-            servers = data.get("mcpServers", data)
+            text = read_config_text(mcp_path)
+            if text is None:
+                if warnings is not None:
+                    warnings.append(PluginWarning(
+                        plugin_name=root.name,
+                        message=f"mcpServers file not found: {ref}",
+                        field="mcpServers",
+                    ))
+                return {}
+            data = json_parse.loads(text)
+            servers = data.get("mcpServers", data) if isinstance(data, dict) else data
             if not isinstance(servers, dict):
                 if warnings is not None:
-                    from .models import PluginWarning
                     warnings.append(PluginWarning(
                         plugin_name=root.name,
                         message=f"mcpServers file {ref} does not contain a valid server dict",
@@ -520,7 +522,6 @@ def _resolve_mcp_servers(
             return servers
         except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
             if warnings is not None:
-                from .models import PluginWarning
                 warnings.append(PluginWarning(
                     plugin_name=root.name,
                     message=f"Failed to parse mcpServers file {ref}: {exc}",

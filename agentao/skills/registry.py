@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
+from ..config_file import read_config_bytes
 from ..paths import user_home, user_root
 
 # `filelock` is deferred (P0.5): the registry is only touched when an
@@ -196,19 +197,23 @@ class SkillRegistry:
 
     def _read_skills(self) -> Dict[str, Any]:
         try:
-            raw = self._path.read_bytes()
+            # Not ``read_bytes``: a FIFO here blocked startup.
+            raw = read_config_bytes(self._path)
         except OSError as exc:
             raise _UnreadableRegistry(
                 f"skill registry {self._path} is unreadable "
                 f"({type(exc).__name__}: {exc})"
             ) from exc
+        if raw is None:
+            return {}
         return self._parse(raw)[1]
 
     def _read_for_write(self):
         """Return ``(data, skills)`` to merge into; a missing file is empty."""
         try:
-            return self._parse(self._path.read_bytes())
-        except FileNotFoundError:
+            raw = read_config_bytes(self._path)
+            if raw is not None:
+                return self._parse(raw)
             data: Dict[str, Any] = {"skills": {}}
             return data, data["skills"]
         except (OSError, _UnreadableRegistry) as exc:

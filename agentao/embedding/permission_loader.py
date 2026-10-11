@@ -21,10 +21,13 @@ with no prompt. A log line does not close that; refusing to start does.
 The convention already exists in the tree: ``acp_client/config.py``
 raises ``AcpConfigError`` for a malformed ``acp.json``.
 
-The ``is_file()`` pre-check is load-bearing rather than cosmetic. Without
-it a *missing* file reaches the ``OSError`` branch, which now raises —
-i.e. agentao would refuse to start for every user who has never written
-a permissions file, which is the common case.
+Telling *missing* apart from every other failure is load-bearing rather
+than cosmetic. If a missing file reached the ``OSError`` branch, which
+raises, agentao would refuse to start for every user who has never written
+a permissions file, which is the common case. ``config_file.read_config_text``
+returns ``None`` for exactly that case. It used to be an ``is_file()``
+pre-check, which also read a directory or a pipe at the path as missing
+and so dropped the rules silently; those now fail closed.
 
 This module owns everything **document**-shaped: that the top level is an
 object, the ``rules`` key, and the path in the error message.
@@ -48,6 +51,7 @@ from ..permissions import (
     validate_permission_rules,
 )
 from .. import json_parse
+from ..config_file import read_config_text
 
 _logger = logging.getLogger(__name__)
 
@@ -293,14 +297,13 @@ def _read_rule_file(path: Path) -> Tuple[List[Dict[str, Any]], bool, Optional[Di
             rules that fail validation. See the module docstring for why
             this path does not degrade quietly.
     """
-    if not path.is_file():
-        return [], False, None
     try:
         # ``utf-8-sig`` strips a leading BOM and is a byte-for-byte no-op
         # without one, so a BOM'd-but-otherwise-valid file loads instead
-        # of being rejected. Reads only — on a *write* this codec emits
-        # a BOM.
-        text = path.read_text(encoding="utf-8-sig")
+        # of being rejected. Not ``is_file()`` first: that read a directory
+        # or a pipe here as a missing file, so its rules were dropped
+        # without a word. It is an ``OSError`` below, and fails closed.
+        text = read_config_text(path)
     except UnicodeDecodeError as exc:
         # Ordered before OSError only for readability; the two are
         # disjoint. UnicodeDecodeError subclasses ValueError, which is
@@ -315,6 +318,8 @@ def _read_rule_file(path: Path) -> Tuple[List[Dict[str, Any]], bool, Optional[Di
         raise PermissionConfigError(
             path, f"cannot read the file: {type(exc).__name__}: {exc}",
         ) from exc
+    if text is None:
+        return [], False, None
 
     try:
         data = json_parse.loads(text)
