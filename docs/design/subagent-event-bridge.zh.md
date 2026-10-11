@@ -1,9 +1,9 @@
 # 子 Agent 事件桥：回调出去，事件回来
 
-**状态：** 提案，**未授权**。决策（rev 2，2026-10-11）：两个方案都实施，分两步走——先 A，后 B。目前都还没有实施。rev 3（2026-10-11）完成对 rev 2 的复审，设计到此齐备。
-**锚点：** agentao `main@60fcca9`（2026-10-11）。下文行号均以该提交为准。
+**状态：** A **已实施**（#514、#515，2026-10-10）；B 为提案，**未授权**。决策（rev 2）：两个方案都实施，分两步走——先 A，后 B。rev 3 完成对 rev 2 的复审；rev 4 记录 A 的落地情况（§5）。
+**锚点：** agentao `main@60fcca9`（2026-10-11）。下文行号均以该提交为准，即 A 落地之前。
 **相关：** `0-5-0-removal-checklist.zh.md` §C（子 Agent 工厂今天为什么用 `build_compat_transport`）；`host-tool-injection.zh.md`；`embedded-host-contract.md`（公共事件 `SubagentLifecycleEvent`，本文不改它）。
-**修订记录：** rev 1（`af7b014`）把 B 暂缓，并提出给子 Agent 的 id 加命名空间。rev 2 采纳先 A 后 B，删掉 id 命名空间，公开的 `build_compat_transport` 一行不删（rev 1 错把其中一部分算作可删），并把字段默认值、异常范围和事件顺序写死。rev 3 要求父侧入口在每次调用时读取 `agent.transport`（rev 2 传的是绑定方法，会绕过回放对 transport 的替换），并把 `tests/test_subagent_cancelled_terminal_state.py` 加入测试迁移范围。
+**修订记录：** rev 1（`af7b014`）把 B 暂缓，并提出给子 Agent 的 id 加命名空间。rev 2 采纳先 A 后 B，删掉 id 命名空间，公开的 `build_compat_transport` 一行不删（rev 1 错把其中一部分算作可删），并把字段默认值、异常范围和事件顺序写死。rev 3 要求父侧入口在每次调用时读取 `agent.transport`（rev 2 传的是绑定方法，会绕过回放对 transport 的替换），并把 `tests/test_subagent_cancelled_terminal_state.py` 加入测试迁移范围。rev 4 标记 A 已实施：#514 发出结束事件，#515 把其中为 0 的计数（§5 中划掉的一句）换成真实值或省略。
 
 ## 1. 概要
 
@@ -91,11 +91,13 @@ A 落地并验证之后再开始 B，这样出了回归能定位到是哪一步�
 - **`AgentCancelledError`：** `state="cancelled"`，不填 `error`（与正常返回的取消同一规则：状态本身已说明情况）。
 - **其他 `Exception`：** `state="failed"`，`error=type(exc).__name__`。
 - **不属于 `Exception` 的 `BaseException`**（`KeyboardInterrupt`、`SystemExit`）：不发 `AGENT_END`。这与现有 `except` 的覆盖范围完全一致，也与公共终态事件一致——后者在这些情况下同样不发。结束事件和公共事件保持同步。
-- **抛异常路径上没有 `stats`。** 构造或运行抛异常时，`_run_sync` 没有返回值，所以 `turns`、`tool_calls`、`tokens`、`duration_ms` 取 `SubagentProgress` 的默认值（0）。这些路径上绝不能读 `stats`。
+- **抛异常路径上没有 `stats`。** 构造或运行抛异常时，`_run_sync` 没有返回值。这些路径上绝不能读 `stats`。~~计数取 `SubagentProgress` 的默认值（0）。~~ 实际落地（#515）：0 会被当成真实计数显示，所以子 Agent 开始运行后才抛异常时，`turns`、`tool_calls`、`tokens`（历史估算）和 `duration_ms` 从子 Agent 的历史和计时读出，口径与 `stats` 相同。子 Agent 没有运行时它们为 `None`，`AGENT_END` 省略这些键。`build_compat_transport` 的 step 回调仍读到 0。
 - **顺序：每条路径上都是先 `AGENT_END`，后公共终态事件。** 这就是今天正常路径的顺序（`_wrapper.py:347` 在 `367` 之前）。抛异常路径上，在 `except` 分支里先发 `AGENT_END`，再调 `_terminal_subagent_event`。
 - **结束事件不能掩盖任何东西。** 发送 `AGENT_END` 不能替换原始异常，也不能让公共终态事件被跳过。CLI 和 ACP 的 transport 在 `emit` 里已经吞掉异常（`cli/transport.py:181`、`acp/transport.py:246`），但嵌入宿主的 transport 未必如此。所以发送时要包一层 `try/except Exception` 并记日志。
 
 发送放在现有的 `except` 分支里，或放进它们共同调用的一个小的局部函数。不新增生命周期管理器、状态机或全局配对机制。
+
+**实际落地：** `AgentToolWrapper._send_agent_end` 在三条路径上做受保护的发送。测试：`tests/test_subagent_agent_end_on_raise.py`。公共宿主事件不变，但 `AGENT_END` 的载荷变了：计数可能缺失（开发者指南第 4.2 节）。
 
 ## 6. B —— 直接转发事件
 
@@ -140,7 +142,7 @@ ask_user=transport_ask_user(agent),
 
 `prefixed_confirm` 给工具名加上 `[name]` 前缀再调父 Agent 的 `confirm_tool`，与今天 `_wrapper.py:621-624` 的做法相同。`SdkTransport` 在跑满迭代上限时默认返回 `{"action": "stop"}`，与 `build_compat_transport` 相同，所以子 Agent 跑满上限后仍会停止。
 
-包装器自己通过 `event_sink` 发 `AGENT_START` 和 `AGENT_END` 两个 `AgentEvent`，载荷与今天 `agent_tools.py:65-81` 构造的相同。哨兵和 `SubagentProgress` 退出内部路径。公共 `SubagentLifecycleEvent` 继续走自己的路径。
+包装器自己通过 `event_sink` 发 `AGENT_START` 和 `AGENT_END` 两个 `AgentEvent`，载荷与今天 `agent_tools.py:65-81` 构造的相同，包括 #515 的规则：未知的计数省略。哨兵和 `SubagentProgress` 退出内部路径。公共 `SubagentLifecycleEvent` 继续走自己的路径。
 
 后台子 Agent 继续使用没有事件处理器、拒绝所有确认的 `SdkTransport(confirm_tool=lambda *_: False)`。"不发事件"指的是子 transport 的进度事件；后台运行的公共 `SubagentLifecycleEvent` 通知不变。
 
@@ -181,7 +183,7 @@ ask_user=transport_ask_user(agent),
 | 5 | `confirm_tool` 以带 `[name]` 前缀的名称到达父 transport，MCP Skills 门禁的说明和 CLI 提示走的路径与今天相同。 | 目前未钉住；随 B 补上 |
 | 6 | 子 Agent 发出的其他事件都不到达父 Agent：没有 `THINKING` 或 `LLM_TEXT`（不显示子 Agent 的推理），没有 `TURN_BEGIN` / `TURN_END` / `LLM_CALL_*` / `TOOL_RESULT`（否则回放会把子 Agent 的 turn 记成父 Agent 的），没有权限或记忆事件。 | 目前未钉住；随 B 补上 |
 | 7 | 后台子 Agent 拒绝所有确认，其子 transport 不向父 Agent 发任何进度事件。它的公共 `SubagentLifecycleEvent` 不受影响。 | 拒绝：`test_background_subagent_approval.py::test_a_call_that_needs_confirmation_runs_only_where_someone_can_approve_it`；"不发进度事件"：随 B 补上 |
-| 8 | 正常返回、`Exception` 和 `AgentCancelledError` 时，每个 `AGENT_START` 之后恰好跟一个 `AGENT_END`；它在公共终态事件之前；发送失败不掩盖任何东西。 | 由 A 补上 |
+| 8 | 正常返回、`Exception` 和 `AgentCancelledError` 时，每个 `AGENT_START` 之后恰好跟一个 `AGENT_END`；它在公共终态事件之前；发送失败不掩盖任何东西。 | `tests/test_subagent_agent_end_on_raise.py`（#514） |
 | 9 | 子 Agent 跑满迭代上限后停止。 | 目前未钉住；随 B 补上 |
 | 10 | 公开的 `build_compat_transport` 对外部调用者保持原有契约。 | `tests/test_transport.py` |
 | 11 | 在 agent 工具注册之后替换父 transport（启动或结束回放），子 Agent 的事件和确认仍到达新的 transport。 | 目前未钉住；随 B 补上 |
