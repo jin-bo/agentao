@@ -224,11 +224,11 @@ The store is keyed by the client-supplied `cwd`, so the lookup runs at request t
 
 | Entry | `mcpCapabilities` | Notes |
 |-------|-------------------|-------|
-| stdio `{name, command, args, env}` (no `type`) | always | `env` is a list of `{name, value}` |
+| stdio `{name, command, args, env}` (`type` omitted or `"stdio"`) | always | `env` is a list of `{name, value}` |
 | `{type:"http", name, url, headers}` | `http: true` | Streamable HTTP. `headers` is a list of `{name, value}` |
 | `{type:"sse", name, url, headers}` | `sse: true` | Legacy SSE |
 
-- An entry without `type` is **stdio** and needs `command`. Unlike `mcp.json`, a bare `url` does not mean HTTP here. Any other `type` is rejected with `-32602`
+- An entry without `type`, or with `"type": "stdio"`, is **stdio** and needs `command`. Unlike `mcp.json`, a bare `url` does not mean HTTP here. Any `type` other than `"stdio"`, `"http"` or `"sse"` is rejected with `-32602`
 - Every client-supplied server gets `trust: false`, so its tools still go through confirmation. It also gets `oauth: false`: Agentao never starts a browser login for it
 - A client-supplied server **replaces** a same-named entry in the project's `.agentao/mcp.json`
 - The servers are **session-scoped**. Sibling sessions never see them, and they disconnect when the session closes

@@ -123,7 +123,7 @@ Hook type 'prompt' is not supported for event 'Stop' — skipped.
 { "matcher": { "tool_name": "Bash" } }
 ```
 
-Note that `Bash` is Claude Code's tool name; Agentao internally calls it `run_shell_command`. The runtime's [`ToolAliasResolver`](https://github.com/jin-bo/agentao/blob/main/agentao/plugins/hooks.py) bridges the two **bidirectionally** — writing either `Bash` or `run_shell_command` matches the same tool.
+Note that `Bash` is Claude Code's tool name; Agentao internally calls it `run_shell_command`. The runtime's [`ToolAliasResolver`](https://github.com/jin-bo/agentao/blob/main/agentao/plugins/hooks/_alias.py) bridges the two **bidirectionally** — writing either `Bash` or `run_shell_command` matches the same tool.
 
 Matcher string values support glob (`*`, `?`) and **full-string regex** (patterns of the form `^...$` are interpreted as regex). A `null` matcher matches every invocation of that event.
 

@@ -295,12 +295,12 @@ What it does, in order ([`embedding/factory.py`](https://github.com/jin-bo/agent
 | 5 | Reads `~/.agentao/permissions.json` and builds `PermissionEngine(project_root=wd, user_root=~/.agentao)` with its rules. Its `shell` block picks the shell executor | **Fails closed**: a file that exists but is unreadable or invalid raises `PermissionConfigError`. Dropping it would turn a `deny` rule into an ask, or into no prompt at all for an `mcp_*` tool. `<wd>/.agentao/permissions.json` is never loaded, only warned about |
 | 6 | Wires the opt-in subsystems: `BackgroundTaskStore(persistence_dir=wd)`, `SandboxPolicy(project_root=wd)`, `replay_config` from the `replay` block of `settings.json`, and `enable_builtin_agents` from step 2 | A malformed replay block means no replay |
 | 7 | Uses `FileBackedMCPRegistry(project_root=wd, user_root=~/.agentao)` unless you pass `mcp_registry=` or `mcp_manager=` | — |
-| 8 | Opens memory: the project store at `<wd>/.agentao/memory.db` and the user store at `~/.agentao/memory.db` | The project store falls back to an in-memory database. The user store is disabled with a warning. User memories are never rerouted to the project |
+| 8 | Opens memory: the project store at `<wd>/.agentao/memory.db` and the user store at `~/.agentao/memory.db` | The project store falls back to an in-memory database. If the user store cannot be opened, the session has none: existing user memories are not read, and a new user-scope write is saved to the project store, with a log entry ([5.5](/en/part-5/5-memory#graceful-degradation)) |
 | 9 | Calls `Agentao(...)` with all of the above as explicit keywords. **Your overrides win** over everything discovered | If construction raises, the factory closes the memory stores it opened |
 
 An explicit `None` for `bg_store`, `sandbox_policy` or `replay_config` disables that subsystem. `permission_mode=` is applied to the engine from step 5, so the user's rules stay. The CLI and ACP `session/new` build their agents through this factory.
 
-**What reads the environment.** The factory is the only code that reads environment variables or `.env`. It is also the only reader of `permissions.json`, `settings.json` and `sandbox.json`. A direct `Agentao(...)` still reads some files under its defaults:
+**What reads the environment.** The factory does the CLI-style discovery at construction in one place: environment variables, `.env`, `permissions.json`, `settings.json` and `sandbox.json`. A direct `Agentao(...)` skips that discovery, but it still touches some files under its defaults:
 
 | Default | Reads | To avoid it, pass |
 |---------|-------|-------------------|
@@ -308,8 +308,9 @@ An explicit `None` for `bg_store`, `sandbox_policy` or `replay_config` disables 
 | `skill_manager=None` | `~/.agentao/skills/`, `<wd>/.agentao/skills/`, `<wd>/skills/`, `<wd>/.agentao/skills_config.json`. It also copies the bundled skills into `~/.agentao/skills/` on first run | `skill_manager=` |
 | `memory_manager=None` | Opens `<wd>/.agentao/memory.db` (project scope only) | `memory_manager=` |
 | `mcp_registry=None` | `<wd>/.agentao/mcp.json` and `~/.agentao/mcp.json` | `mcp_registry=` or `mcp_manager=` |
+| `logger=None` (with `llm_client=None`) | Creates and writes `<wd>/agentao.log` | `logger=` or `llm_client=` ([6.6](/en/part-6/6-observability#take-over-agentao-s-logger)) |
 
-A host that must not touch the disk at construction injects all four.
+With all five passed, constructing the agent creates no file. That covers construction only: a turn can still write, for example a replay, a tool output spilled to `.agentao/tool-outputs/`, or what the tools themselves do.
 
 ---
 

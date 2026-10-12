@@ -295,12 +295,12 @@ agent = build_from_environment(
 | 5 | 读 `~/.agentao/permissions.json`，用其中规则构造 `PermissionEngine(project_root=wd, user_root=~/.agentao)`。文件里的 `shell` 块决定 shell 执行器 | **失败即关闭**：文件存在但读不了或不合法时抛 `PermissionConfigError`。若悄悄丢掉它，`deny` 规则会变成询问，对 `mcp_*` 工具甚至变成不提示。`<wd>/.agentao/permissions.json` 从不加载，只会警告 |
 | 6 | 接上可选子系统：`BackgroundTaskStore(persistence_dir=wd)`、`SandboxPolicy(project_root=wd)`、从 `settings.json` 的 `replay` 块读出的 `replay_config`，以及来自第 2 步的 `enable_builtin_agents` | replay 块格式不对时不启用 replay |
 | 7 | 除非你传了 `mcp_registry=` 或 `mcp_manager=`，否则用 `FileBackedMCPRegistry(project_root=wd, user_root=~/.agentao)` | — |
-| 8 | 打开记忆库：项目库 `<wd>/.agentao/memory.db`，用户库 `~/.agentao/memory.db` | 项目库回落到内存数据库。用户库被禁用并给出警告。用户记忆绝不会被改写到项目库 |
+| 8 | 打开记忆库：项目库 `<wd>/.agentao/memory.db`，用户库 `~/.agentao/memory.db` | 项目库回落到内存数据库。用户库打不开时，这次会话就没有用户库：已有的用户记忆读不到，新的用户作用域写入存进项目库，并记一条日志（[5.5](/zh/part-5/5-memory#降级-文件系统不可写怎么办)） |
 | 9 | 把以上全部作为显式关键字参数传给 `Agentao(...)`。**你的覆盖项优先**于一切自动发现的值 | 构造抛错时，工厂会关掉它打开的记忆库 |
 
 `bg_store`、`sandbox_policy`、`replay_config` 显式传 `None` 即禁用该子系统。`permission_mode=` 作用在第 5 步的引擎上，所以用户的规则保留。CLI 和 ACP `session/new` 都通过这个工厂构造 agent。
 
-**谁读环境。** 只有工厂会读环境变量和 `.env`，也只有它读 `permissions.json`、`settings.json` 和 `sandbox.json`。直接 `Agentao(...)` 在默认值下仍会读一些文件：
+**谁读环境。** 工厂把构造时 CLI 风格的发现集中在一处：环境变量、`.env`、`permissions.json`、`settings.json` 和 `sandbox.json`。直接 `Agentao(...)` 不做这些发现，但在默认值下仍会碰一些文件：
 
 | 默认值 | 读什么 | 想避免就传 |
 |--------|--------|-----------|
@@ -308,8 +308,9 @@ agent = build_from_environment(
 | `skill_manager=None` | `~/.agentao/skills/`、`<wd>/.agentao/skills/`、`<wd>/skills/`、`<wd>/.agentao/skills_config.json`。首次运行时还会把内置技能复制到 `~/.agentao/skills/` | `skill_manager=` |
 | `memory_manager=None` | 打开 `<wd>/.agentao/memory.db`（只有项目作用域） | `memory_manager=` |
 | `mcp_registry=None` | `<wd>/.agentao/mcp.json` 和 `~/.agentao/mcp.json` | `mcp_registry=` 或 `mcp_manager=` |
+| `logger=None`（且 `llm_client=None`） | 创建并写入 `<wd>/agentao.log` | `logger=` 或 `llm_client=`（[6.6](/zh/part-6/6-observability#接管-agentao-的-logger)） |
 
-构造时一点磁盘都不能碰的宿主，要把这四项全部注入。
+五项都传了，构造 agent 时就不会创建任何文件。这只管构造：轮次里仍可能写盘，比如 replay、溢出到 `.agentao/tool-outputs/` 的工具输出，以及工具本身做的事。
 
 ---
 

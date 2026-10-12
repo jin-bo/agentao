@@ -53,7 +53,7 @@ handler 跑在 `ThreadPoolExecutor(max_workers=8)`（`thread_name_prefix="acp-ha
 
 1. **取消挂起的 server → client 请求。** 卡在 `confirm_tool` 里的 worker 收到 `PendingRequestCancelled`，拒绝该工具。
 2. **触发每个活动轮次的取消令牌**（`AcpSessionManager.cancel_all_active_turns`）。正在调模型或跑工具的 worker 没有别的停止信号。这一步不断开 MCP，因为 worker 可能还在用。
-3. **用 `shutdown(wait=True)` 排空线程池。** 第 1、2 步保证每个 worker 都有停止信号，所以排空有界。`run()` 返回即成为所有 handler 写入的 happens-before 屏障。
+3. **用 `shutdown(wait=True)` 排空线程池。** 第 1、2 步让每个 worker 都收到停止信号，但这个信号是协作式的，排空也没有超时：worker 若卡在不检查令牌的阻塞调用里（比如同步工具的 `execute()`），关闭仍要等这次调用返回。`run()` 返回即成为所有 handler 写入的 happens-before 屏障。
 4. **关闭全部会话**（`AcpSessionManager.close_all`）。MCP 最后断开，此时每个 worker 都已退出。
 
 在第 1 或第 2 步之前排空会让进程挂住。`tests/test_acp_request_permission.py` 覆盖这个顺序。

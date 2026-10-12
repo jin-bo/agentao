@@ -89,5 +89,5 @@ Use this when debugging “why didn't the agent call that tool”: first confirm
 ---
 
 ::: tip Authoritative help
-Command syntax: `/help`. Session restore: [`agentao/cli/commands.py:handle_sessions_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands.py). Sub-agents: [`agentao/cli/commands_ext/agents.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands_ext/agents.py). Tool listing: [`agentao/cli/commands.py:handle_tools_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands.py).
+Command syntax: `/help`. Session restore: [`agentao/cli/commands/sessions.py:handle_sessions_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/sessions.py). Sub-agents: [`agentao/cli/commands_ext/agents.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands_ext/agents.py). Tool listing: [`agentao/cli/commands/tools_intro.py:handle_tools_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/tools_intro.py).
 :::

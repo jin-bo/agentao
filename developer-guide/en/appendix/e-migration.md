@@ -48,7 +48,7 @@ If you've already built agents with another framework, the mental model of Agent
 ### What's different
 
 - **No `GroupChat`** — AutoGen's strength is multi-agent orchestration. Agentao supports sub-agents (one `Agentao` spawning another, or ACP reverse-calling a different server), but there's no built-in "group chat manager". For multi-role conversations, model them as skills + one agent, or wire your own coordinator.
-- **Tool calling is OpenAI-style only** — AutoGen supports multiple LLM providers with varying tool-call formats; Agentao standardizes on the OpenAI-compatible tool-call schema. Non-OpenAI providers must speak the OpenAI format.
+- **One internal message format** — Agentao keeps history and tool calls as OpenAI-style messages on every provider. On the wire it speaks `openai-completions` (the default), `anthropic-messages` or `openai-responses`, chosen by `api_format`, so a provider needs one of those three, not the OpenAI format specifically ([2.2](/en/part-2/2-constructor-reference)).
 - **Human-in-the-loop** — AutoGen's `human_input_mode` parameter ≈ `Transport.confirm_tool` + `Transport.ask_user`.
 - **No `UserProxyAgent`** — the user sits outside the loop, communicating through `chat()` calls. Host code is the "user proxy".
 

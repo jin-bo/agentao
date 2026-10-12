@@ -48,7 +48,7 @@
 ### 不同的部分
 
 - **没有 `GroupChat`** —— AG 的强项是多 agent 编排。Agentao 支持子 agent（一个 `Agentao` 启另一个，或 ACP 反向调不同服务器），但没有内置的"群聊管理"。多角色场景请模型化为"技能 + 单 agent"，或自建协调器
-- **工具调用仅 OpenAI 风格** —— AG 支持多家 LLM，格式各异；Agentao 统一到 OpenAI 兼容的 tool-call schema。非 OpenAI 家也得说这个格式
+- **内部只有一种消息格式** —— Agentao 在所有 provider 上都把历史和工具调用存成 OpenAI 风格的消息。线路上按 `api_format` 说 `openai-completions`（默认）、`anthropic-messages` 或 `openai-responses`，所以 provider 只要支持这三者之一，不必非说 OpenAI 格式（[2.2](/zh/part-2/2-constructor-reference)）
 - **人类介入** —— AG 的 `human_input_mode` ≈ `Transport.confirm_tool` + `Transport.ask_user`
 - **没有 `UserProxyAgent`** —— 用户在循环之外，通过 `chat()` 调用与 agent 通信。宿主代码就是"用户代理"
 

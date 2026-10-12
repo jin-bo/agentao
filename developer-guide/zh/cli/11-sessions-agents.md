@@ -89,5 +89,5 @@ Task List (2/4 completed):
 ---
 
 ::: tip 真相源头
-命令语法：`/help`。会话恢复：[`agentao/cli/commands.py:handle_sessions_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands.py)。子 agent：[`agentao/cli/commands_ext/agents.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands_ext/agents.py)。工具列表：[`agentao/cli/commands.py:handle_tools_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands.py)。
+命令语法：`/help`。会话恢复：[`agentao/cli/commands/sessions.py:handle_sessions_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/sessions.py)。子 agent：[`agentao/cli/commands_ext/agents.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands_ext/agents.py)。工具列表：[`agentao/cli/commands/tools_intro.py:handle_tools_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/tools_intro.py)。
 :::

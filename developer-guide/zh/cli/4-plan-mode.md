@@ -152,5 +152,5 @@ Plan 模式实现在 [`agentao/plan/controller.py`](https://github.com/jin-bo/ag
 :::
 
 ::: tip 真相源头
-命令语法：`/help`。行为：[`agentao/cli/commands.py:handle_plan_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands.py)。计划文件默认路径 `.agentao/plan.md`（[`agentao/plan/session.py`](https://github.com/jin-bo/agentao/blob/main/agentao/plan/session.py)）。
+命令语法：`/help`。行为：[`agentao/cli/commands/planning.py:handle_plan_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/planning.py)。计划文件默认路径 `.agentao/plan.md`（[`agentao/plan/session.py`](https://github.com/jin-bo/agentao/blob/main/agentao/plan/session.py)）。
 :::
