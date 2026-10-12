@@ -4,7 +4,7 @@
 
 ## Skill 长什么样（30 秒）
 
-每个 skill 是 `skills/` 下的一个目录，里面有 `SKILL.md`：
+每个 skill 是一个带 `SKILL.md` 的目录，放在三个位置之一（见 [Skill 文件去哪儿了](#skill-文件去哪儿了)）。`SKILL.md` 长这样：
 
 ```markdown
 ---
@@ -21,32 +21,55 @@ description: 用 marker_single 把 PDF 转成 markdown。命中"convert PDF to m
 
 YAML frontmatter 是 agent 决定要不要激活时读的。激活后，整份 SKILL.md body 进入每次请求的 `<system-reminder>`（易变尾部，不在缓存的系统提示里）。`references/`、`assets/`、`scripts/` 下的文件不会内联：激活时只按绝对路径列出，agent 需要时用 `read_file` 读取。
 
-你不需要知道有哪些 skill — `/help` 列得出，agent 自己识别。只在你想强制 / 抑制 / 新建一个 skill 时才介入。
+你不需要知道有哪些 skill — `/skills` 列得出，agent 自己识别。只在你想强制 / 抑制 / 新建一个 skill 时才介入。
 
 ## `/skills` — 列、激活、停用、reload
 
 ```text
 > /skills
-Available skills (12):
-  ✓ pdf-to-markdown   — 把 PDF 转成 markdown
-    canvas-design     — 创作视觉海报和设计
-  ✓ webapp-testing    — Playwright 网页测试
+
+Available Skills (3):
+
+  • pdf-to-markdown - PDF to Markdown
+    用 marker_single 把 PDF 转成 markdown。命中"convert PDF to markdown"等触发词。...
+  • skill-creator - Skill Creator
     ...
+
+Active Skills:
+  • pdf-to-markdown: 转换 report.pdf
 ```
 
-- ✓ = 本会话已激活
-- 无标记 = 可用但未激活
+列表给出每个已启用 skill 的名字、标题和描述。**Active Skills** 列出本会话已激活的 skill，以及激活时对应的任务。已禁用的 skill 单独成段。
 
 | 子命令 | 作用 |
 |---|---|
-| `/skills` | 列出所有 skill，标记激活状态 |
-| `/skills activate <name>` | 强制激活，把文档塞进系统提示 |
-| `/skills deactivate <name>` | 从激活集移除，文档撤掉 |
+| `/skills` | 列出所有 skill，再列出已激活的 |
+| `/skills activate <name>` | 强制激活，从此每次请求都带上正文 |
+| `/skills deactivate <name>` | 从激活集移除，正文撤掉 |
 | `/skills disable <name>` | **持久** — 写到 `skills_config.json`，重启后也不加载 |
 | `/skills enable <name>` | 撤销 disable，让 skill 可加载 |
-| `/skills reload` | 重扫 `skills/` 目录。改了某个 `SKILL.md` 或加了新 skill 文件夹后用 |
+| `/skills reload` | 重扫全部三个 skill 目录。改了某个 `SKILL.md` 或加了新 skill 文件夹后用 |
 
-开启了 `"skills": true` 的 MCP server 会在 `/skills` 里多出一个 **MCP Skills** 分组：按 server 列出它的 skill，名字是完整的 `mcp:<server>:<SKILL.md URI>`，并给出每个无法加载的 skill 的原因。`/skills activate mcp:<server>:<uri>` 本身就算你的同意，不会再问一次；由模型激活时，每个会话会问你一次。见 [5.3 节 MCP skills](/zh/part-5/3-mcp#mcp-skills)。
+`/clear` 和 `/new` 会取消所有已激活的 skill。`/status` 显示当前激活了几个。
+
+`skills_config.json` 可以放心手改，两个 Agentao 进程也能共用。每次 `disable` / `enable` 在锁内只改一个名字，文件里其他内容原样保留。文件写坏了，命令会拒绝写入并报出路径——先修好文件再重跑命令。细节见 [5.2 节《`skills_config.json` 怎样写入》](/zh/part-5/2-skills#skills-config-json-怎样写入)。
+
+### 来自 MCP server 的 Skill
+
+MCP server 也能提供 skill，在 `.agentao/mcp.json` 里按 server 打开：
+
+```json
+{ "mcpServers": { "docs": { "url": "https://docs.example/mcp", "skills": true } } }
+```
+
+之后 `/skills` 里会多出一个 **MCP Skills** 分组：按 server 列出它的 skill，名字是完整的 `mcp:<server>:<SKILL.md URI>`，比如 `mcp:docs:skill://pdf-processing/SKILL.md`，并给出每个无法加载的 skill 的原因。和本地 skill 相比：
+
+- **要你批准。** 模型激活时，每次对话问你一次，提示里有 server、描述、文件数和总大小。批准绑定的是 server 列出的那批文件；server 改了文件，会再问一次。`/skills activate mcp:<server>:<uri>` 本身就算你的同意，不会再问。
+- **要校验。** `SKILL.md` 以及之后读取的每个文件，都必须和 server 公布的大小、SHA-256 摘要、frontmatter 一致，对不上就不用。
+- **文件留在 server 上。** 模型用 `read_skill_file` 读取，从不读磁盘。
+- **会收紧权限。** 从加载第一个 MCP skill 起直到 `/clear`，shell 命令、能跑 shell 的子代理、读取其他 server 的资源都会先问你，`full-access` 下也一样。取消激活并不会解除。
+
+限制：需要 mcp 2.x、协议版本 2026-07-28 及以上的 server；每个 skill 最多 512 个文件、16 MiB；`SKILL.md` 最大 100,000 字节。超限的 skill 和 `"dynamic"` skill 在 `/skills` 里显示为不可用。宿主侧细节见 [5.3 节 MCP skills](/zh/part-5/3-mcp#mcp-skills)。
 
 ::: tip activate vs. enable
 - **activate / deactivate** 是会话级 — 临时，只对*当前*这次对话生效
@@ -63,7 +86,7 @@ Available skills (12):
 - 你自己想看 skill 的文档（你接下来会让 agent 跟着做）
 - 在测试一个新写的 skill 能不能正常加载
 
-激活成本很低 — 只是把 SKILL.md body 塞进系统提示多花点 token。
+激活成本低，但不是零：skill 处于激活状态时，SKILL.md body 每次请求都会不走缓存地重发。用完就 `/skills deactivate <name>`。skill 列表本身在缓存的系统提示里，激活不会改动它。
 
 ## `/crystallize` — 把这次会话做成 skill
 
@@ -79,7 +102,7 @@ Available skills (12):
        ├── /crystallize refine           ──→  交给 skill-creator 做结构性改进
        ├── /crystallize status           ──→  显示当前草稿
        ├── /crystallize clear            ──→  丢弃草稿
-       └── /crystallize create [name]    ──→  存到 skills/<name>/SKILL.md
+       └── /crystallize create [name]    ──→  存到 <作用域>/.agentao/skills/<name>/SKILL.md
 ```
 
 ### 子命令
@@ -93,9 +116,9 @@ Available skills (12):
 | `/crystallize status` | 显示当前待保存的草稿和进行中的状态。 |
 | `/crystallize clear` | 丢弃草稿（不保存）。 |
 | `/crystallize create` | 保存草稿。默认名取自草稿 frontmatter 的 `name:`。 |
-| `/crystallize create my-name` | 保存到 `skills/my-name/SKILL.md`。名字必须 slug-friendly。 |
+| `/crystallize create my-name` | 以 `my-name` 为名保存，名字会被规整成 slug。 |
 
-`create` 后新 skill 自动加载，立刻可用 — `/skills` 看得到，agent 下一轮就能自激活。
+`create` 会问你作用域：按 `g` 存到 `~/.agentao/skills/<name>/SKILL.md`，按 `p` 存到 `<项目>/.agentao/skills/<name>/SKILL.md`。`create` 后新 skill 自动加载，立刻可用 — `/skills` 看得到，agent 下一轮就能自激活。
 
 ### 什么时候值得 crystallize
 
@@ -112,7 +135,7 @@ Available skills (12):
 - **空会话上跑首次 `/crystallize` 没用** — 没素材。先做完事再 crystallize。
 - **`feedback` 是累积的** — 每次 `/crystallize feedback` 都在带上以前所有反馈的基础上重写。一份草稿里没有 undo；要从头来就 `/crystallize` 重新生成。
 - **`refine` 会盖掉你手编的部分** — 如果你已经手动改过草稿，再跑 `refine` 会让 LLM 走一遍 skill-creator pass，可能把你的改动磨平。`refine` 在手编**之前**用。
-- **重名冲突** — `/crystallize create existing-name` 会拒绝而不是覆盖。换名或者先 `/skills disable` 旧的。
+- **重名冲突** — `/crystallize create existing-name` 会直接覆盖该作用域里已有的 `SKILL.md`，不会提示。先跑 `/skills`，挑一个没用过的名字。
 
 ## 从 GitHub 安装 Skill
 
@@ -126,15 +149,17 @@ ref 格式：
 
 | 形式 | 示例 | 意思 |
 |---|---|---|
-| `owner/repo` | `anthropics/skills` | 整个 repo 的 `SKILL.md`（或顶层 `skills/`） |
-| `owner/repo:path` | `anthropics/skills:document-skills/pdf` | 仓库内特定子目录 |
+| `owner/repo` | `myorg/my-skill` | repo 根目录的 `SKILL.md`，或唯一一个含 `SKILL.md` 的子目录。有多个这样的子目录时视为有歧义，拒绝安装 |
+| `owner/repo:path` | `anthropics/skills:skills/pdf` | 仓库内特定子目录 |
 | `owner/repo@ref` | `myorg/myskills@v1.2.0` | 钉到 tag、分支或 commit SHA |
-| `owner/repo:path@ref` | `anthropics/skills:document-skills/pdf@main` | 两个都要 |
+| `owner/repo:path@ref` | `anthropics/skills:skills/pdf@main` | 两个都要 |
+
+包里的 `SKILL.md` 必须有 `name` 和 `description` frontmatter，否则拒绝安装。Anthropic 官方 skill 在 [`anthropics/skills`](https://github.com/anthropics/skills) 里，比如 `skills/pptx`、`skills/docx`、`skills/xlsx`、`skills/pdf`、`skills/doc-coauthoring`。
 
 作用域（scope）：
 
 ```bash
-agentao skill install anthropics/skills:document-skills/pdf --scope global
+agentao skill install anthropics/skills:skills/pdf --scope global
 agentao skill install myorg/internal-skills:billing      --scope project
 ```
 
@@ -178,6 +203,8 @@ agentao skill update --all          # 跨作用域检查所有受管 skill
 - **`@ref` 钉版本是你的朋友** — 不写的话每次 `update` 都重解析默认分支最新 commit，可能把意料之外的改动拉进环境
 - **`skill install` 不激活** — 只把文件落盘，`/skills activate`（或自激活）仍是独立一步
 - **两个作用域可能互相遮蔽** — 同名的 `pdf`，global 和 project 都装了 — 项目级胜出。用 `agentao skill list` 看哪个生效
+- **运行时依赖不会自动装** — skill 可能需要 LibreOffice、Poppler、Node 或 Python 包，它的 `SKILL.md` 会写明。`skill install` 只复制 skill 本身的文件。
+- **损坏的 `skills_registry.json` 绝不会被覆盖** — skill 命令会告警并把它当空文件读，但 `install`、`update`、`remove` 拒绝写入，记录因此不会丢。修好文件或把它挪开后再继续。单条不可用的记录会被跳过并告警，但仍留在文件里。
 
 ## 本仓自带的 Skill Gallery
 
@@ -216,8 +243,8 @@ pip install -r examples/skills/zootopia-ppt/requirements.txt
 
 | 路径 | 用途 |
 |---|---|
-| `skills/<name>/SKILL.md` | skill 本体（frontmatter + body） |
-| `skills/<name>/references/*.md` | body 引用的按需加载文档 |
+| `<项目>/skills/<name>/SKILL.md` | skill 本体（frontmatter + body）。这一层优先于下面两层 |
+| `skills/<name>/references/`、`assets/`、`scripts/` | 按需读取的文件，激活时按绝对路径列出 |
 | `~/.agentao/skills/<name>/` | 同样的目录结构，global 作用域（受管安装） |
 | `<项目根>/.agentao/skills/<name>/` | 同样的目录结构，project 作用域（受管安装） |
 | `~/.agentao/skills_registry.json` · `<项目根>/.agentao/skills_registry.json` | 跟踪受管安装（source ref、版本、scope） |
@@ -239,5 +266,5 @@ Skill manager 是 `agentao.skills.manager.SkillManager`，挂在 agent 上是 `a
 :::
 
 ::: tip 真相源头
-命令语法：`/help`。Skill 列表：[`agentao/cli/ui.py:list_skills`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/ui.py)。Crystallize 逻辑：[`agentao/cli/commands_ext/crystallize.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands_ext/crystallize.py)。Skill manager：[`agentao/skills/manager.py`](https://github.com/jin-bo/agentao/blob/main/agentao/skills/manager.py)。
+命令语法：`/help`。Skill 列表：[`agentao/cli/ui.py:list_skills`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/ui.py)。Crystallize 逻辑：[`agentao/cli/commands_ext/crystallize/`](https://github.com/jin-bo/agentao/tree/main/agentao/cli/commands_ext/crystallize)。Skill manager：[`agentao/skills/manager.py`](https://github.com/jin-bo/agentao/blob/main/agentao/skills/manager.py)。
 :::

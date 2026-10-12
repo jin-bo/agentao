@@ -59,4 +59,4 @@ also caps how much of that work can pile up.
    always-resident cost stays at just the name and description.
 3. Restart the agent or run `/skills reload`.
 
-For discovery, activation, and the full frontmatter schema, see [skills.md](skills.md).
+For discovery, activation, and the full frontmatter schema, see [developer guide 5.2 · Skills](../../developer-guide/en/part-5/2-skills.md).

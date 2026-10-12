@@ -4,7 +4,7 @@ A **skill** is a markdown file that teaches the agent how to handle a specific k
 
 ## Skills, in 30 seconds
 
-Each skill is a directory under `skills/` with a `SKILL.md` like:
+Each skill is a directory with a `SKILL.md`, in one of three places (see [Where skills live](#where-skills-live)). A `SKILL.md` looks like:
 
 ```markdown
 ---
@@ -21,32 +21,55 @@ When the user asks for a PDF → markdown conversion:
 
 The YAML frontmatter is what the agent reads when deciding whether to activate. Once active, the full SKILL.md body goes into the per-request `<system-reminder>` (the volatile tail, not the cached system prompt). Files under `references/`, `assets/` and `scripts/` are not inlined: activation lists them by absolute path, and the agent reads them with `read_file` when it needs them.
 
-You don't have to know the skill exists — `/help` lists them, the agent picks them up. You only step in when you want to force, suppress, or build a new one.
+You don't have to know the skill exists — `/skills` lists them, the agent picks them up. You only step in when you want to force, suppress, or build a new one.
 
 ## `/skills` — list, activate, deactivate, reload
 
 ```text
 > /skills
-Available skills (12):
-  ✓ pdf-to-markdown   — Convert PDF files to markdown
-    canvas-design     — Create visual posters and designs
-  ✓ webapp-testing    — Playwright-based web testing
+
+Available Skills (3):
+
+  • pdf-to-markdown - PDF to Markdown
+    Convert PDF files to Markdown using marker_single. Trigger on requests...
+  • skill-creator - Skill Creator
     ...
+
+Active Skills:
+  • pdf-to-markdown: Convert report.pdf
 ```
 
-- ✓ = currently active in this session
-- (no mark) = available but not active
+The list shows each enabled skill's name, title and description. **Active Skills** names the skills active in this session, with the task each was activated for. Disabled skills get their own section.
 
 | Subcommand | Effect |
 |-----------|--------|
-| `/skills` | List all skills with active markers |
-| `/skills activate <name>` | Force-activate. Documentation is added to the system prompt. |
-| `/skills deactivate <name>` | Remove from active set. Documentation is dropped. |
+| `/skills` | List all skills, then the active ones |
+| `/skills activate <name>` | Force-activate. The body is added to every request from now on. |
+| `/skills deactivate <name>` | Remove from active set. The body is dropped. |
 | `/skills disable <name>` | **Persistent** — saved to `skills_config.json`. Skill won't load even after restart. |
 | `/skills enable <name>` | Reverse `/skills disable`. Skill is loadable again. |
-| `/skills reload` | Re-scan the `skills/` directory. Use after editing a `SKILL.md` or adding a new skill folder. |
+| `/skills reload` | Re-scan all three skill directories. Use after editing a `SKILL.md` or adding a new skill folder. |
 
-An MCP server with `"skills": true` adds an **MCP Skills** group to `/skills`. It lists the skills of each server by full name, `mcp:<server>:<SKILL.md URI>`, and gives the reason for each skill that cannot be loaded. `/skills activate mcp:<server>:<uri>` counts as your consent, so it does not ask again. When the model activates one, you are asked once per session. See [Part 5.3, MCP skills](/en/part-5/3-mcp#mcp-skills).
+`/clear` and `/new` deactivate every active skill. `/status` shows how many are active.
+
+`skills_config.json` is safe to hand-edit, and two Agentao processes can share it. Each `disable` / `enable` changes one name under a lock and keeps everything else in the file. If the file is malformed, the command refuses to write and names the path. Fix the file, then run the command again. Details: [Part 5.2, How `skills_config.json` is written](/en/part-5/2-skills#how-skills-config-json-is-written).
+
+### Skills from MCP servers
+
+An MCP server can serve skills too. Turn it on per server in `.agentao/mcp.json`:
+
+```json
+{ "mcpServers": { "docs": { "url": "https://docs.example/mcp", "skills": true } } }
+```
+
+`/skills` then shows an **MCP Skills** group. It lists the skills of each server by full name, `mcp:<server>:<SKILL.md URI>`, for example `mcp:docs:skill://pdf-processing/SKILL.md`. It also gives the reason for each skill that cannot be loaded. Compared with a local skill:
+
+- **You approve it.** When the model activates one, you are asked once per conversation. The prompt shows the server, the description, and the file count and size. The approval binds to the files the server listed. If the server changes them, you are asked again. `/skills activate mcp:<server>:<uri>` counts as your consent, so it does not ask.
+- **It is verified.** `SKILL.md` and every file read later must match the size, SHA-256 digest and frontmatter the server published. A file that does not match is not used.
+- **Its files stay on the server.** The model reads them with `read_skill_file`, never from disk.
+- **It tightens permissions.** From the first MCP skill loaded until `/clear`, shell commands, sub-agents that can run shell commands, and resource reads from other servers ask first, even in `full-access`. Deactivating the skill does not lift this.
+
+Limits: mcp 2.x, a server on protocol 2026-07-28 or later, at most 512 files and 16 MiB per skill, and a `SKILL.md` of at most 100,000 bytes. `/skills` shows a skill over a limit, or a `"dynamic"` one, as unavailable. Depth for hosts: [Part 5.3, MCP skills](/en/part-5/3-mcp#mcp-skills).
 
 ::: tip activate vs. enable
 - **activate / deactivate** is per-session — temporary, for *this* conversation
@@ -63,7 +86,7 @@ Most of the time you don't. The agent reads skill descriptions and self-activate
 - You want a skill's docs in the prompt for *your* benefit (you'll ask the agent to follow it)
 - You're testing whether a new skill loads correctly
 
-Activation is cheap — the cost is just system-prompt tokens for the SKILL.md body.
+Activation is cheap, but not free. The SKILL.md body is re-sent, uncached, with every request while the skill is active. `/skills deactivate <name>` when you are done with it. The skill list itself sits in the cached system prompt and does not change when you activate a skill.
 
 ## `/crystallize` — turn this session into a skill
 
@@ -79,7 +102,7 @@ Run `/crystallize` after a session where you and the agent figured out a non-obv
        ├── /crystallize refine           ──→  improves with skill-creator guidance
        ├── /crystallize status           ──→  shows current draft
        ├── /crystallize clear            ──→  discards the draft
-       └── /crystallize create [name]    ──→  saves to skills/<name>/SKILL.md
+       └── /crystallize create [name]    ──→  saves to <scope>/.agentao/skills/<name>/SKILL.md
 ```
 
 ### Subcommands
@@ -93,9 +116,9 @@ Run `/crystallize` after a session where you and the agent figured out a non-obv
 | `/crystallize status` | Show the current pending draft, plus what's still in flight. |
 | `/crystallize clear` | Discard the current draft (no save). |
 | `/crystallize create` | Save the draft. Default name is inferred from the draft's `name:` frontmatter. |
-| `/crystallize create my-name` | Save under `skills/my-name/SKILL.md`. Name must be slug-friendly. |
+| `/crystallize create my-name` | Save under the name `my-name`. The name is sanitized to a slug. |
 
-After `create`, the new skill is auto-loaded and immediately available — `/skills` shows it, the agent can self-activate it from the next turn.
+`create` asks for a scope: press `g` for `~/.agentao/skills/<name>/SKILL.md` or `p` for `<project>/.agentao/skills/<name>/SKILL.md`. After `create`, the new skill is auto-loaded and immediately available — `/skills` shows it, the agent can self-activate it from the next turn.
 
 ### When to crystallize
 
@@ -112,7 +135,7 @@ After `create`, the new skill is auto-loaded and immediately available — `/ski
 - **First `/crystallize` on a clean session does nothing useful** — needs conversation evidence. Run it after the work, not before.
 - **`feedback` accumulates** — each `/crystallize feedback` rewrites with all prior feedback applied. There's no undo within a draft; use `/crystallize` to start fresh from the session.
 - **`refine` may overwrite your edits** — if you've manually edited the draft file, `refine` runs the LLM-driven skill-creator pass over the result and may smooth out your changes. Use `refine` *before* hand-editing.
-- **Skill name conflicts** — `/crystallize create existing-name` will refuse rather than overwrite. Pick a unique name or `/skills disable` the old one first.
+- **Skill name conflicts** — `/crystallize create existing-name` overwrites the `SKILL.md` already in that scope, without asking. Run `/skills` first and pick a unique name.
 
 ## Installing skills from GitHub
 
@@ -126,15 +149,17 @@ The ref format:
 
 | Form | Example | Meaning |
 |------|---------|---------|
-| `owner/repo` | `anthropics/skills` | Whole repo's `SKILL.md` (or its top-level `skills/`) |
-| `owner/repo:path` | `anthropics/skills:document-skills/pdf` | Specific subdirectory |
+| `owner/repo` | `myorg/my-skill` | The `SKILL.md` at the repo root, or the one subdirectory that holds a `SKILL.md`. Several such subdirectories are refused as ambiguous. |
+| `owner/repo:path` | `anthropics/skills:skills/pdf` | Specific subdirectory |
 | `owner/repo@ref` | `myorg/myskills@v1.2.0` | Pin to a tag, branch, or commit SHA |
-| `owner/repo:path@ref` | `anthropics/skills:document-skills/pdf@main` | Both |
+| `owner/repo:path@ref` | `anthropics/skills:skills/pdf@main` | Both |
+
+The package's `SKILL.md` must have `name` and `description` frontmatter, or the install is refused. Anthropic's official skills live in [`anthropics/skills`](https://github.com/anthropics/skills), for example `skills/pptx`, `skills/docx`, `skills/xlsx`, `skills/pdf` and `skills/doc-coauthoring`.
 
 Scope:
 
 ```bash
-agentao skill install anthropics/skills:document-skills/pdf --scope global
+agentao skill install anthropics/skills:skills/pdf --scope global
 agentao skill install myorg/internal-skills:billing      --scope project
 ```
 
@@ -178,6 +203,8 @@ Once visible, the skill behaves exactly like a hand-written one: `/skills activa
 - **`@ref` pinning is your friend** — without it, you re-resolve the latest default branch on every `update`, which can yank changes into your environment unannounced
 - **`skill install` doesn't activate** — it only puts files on disk. `/skills activate` (or self-activation) is still a separate step
 - **Two scopes can shadow** — a `global` skill named `pdf` and a `project` skill named `pdf` both exist; project wins. Use `agentao skill list` to see what's authoritative
+- **Runtime dependencies are not installed** — a skill may need LibreOffice, Poppler, Node or Python packages. Its `SKILL.md` says which. `skill install` copies only the skill's files.
+- **A damaged `skills_registry.json` is never overwritten** — skill commands warn and treat the file as empty, but `install`, `update` and `remove` refuse to write it, so its records are not lost. Fix the file or move it aside to continue. A single unusable entry is skipped with a warning and kept in the file.
 
 ## Skill gallery in this repo
 
@@ -216,8 +243,8 @@ The full gallery README — including the embedded-harness perspective on host-c
 
 | Path | Purpose |
 |------|---------|
-| `skills/<name>/SKILL.md` | The skill itself (frontmatter + body) |
-| `skills/<name>/references/*.md` | On-demand references the skill body links to |
+| `<project>/skills/<name>/SKILL.md` | The skill itself (frontmatter + body). This layer wins over the two below. |
+| `skills/<name>/references/`, `assets/`, `scripts/` | On-demand files. Activation lists them by absolute path. |
 | `~/.agentao/skills/<name>/` | Same layout, global scope (managed installs) |
 | `<project-root>/.agentao/skills/<name>/` | Same layout, project scope (managed installs) |
 | `~/.agentao/skills_registry.json` · `<project-root>/.agentao/skills_registry.json` | Tracks managed installs (source ref, version, install scope) |
@@ -239,5 +266,5 @@ The skill manager is `agentao.skills.manager.SkillManager`, exposed on the agent
 :::
 
 ::: tip Authoritative help
-Command syntax: `/help`. Skill listing: [`agentao/cli/ui.py:list_skills`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/ui.py). Crystallize logic: [`agentao/cli/commands_ext/crystallize.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands_ext/crystallize.py). Skill manager: [`agentao/skills/manager.py`](https://github.com/jin-bo/agentao/blob/main/agentao/skills/manager.py).
+Command syntax: `/help`. Skill listing: [`agentao/cli/ui.py:list_skills`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/ui.py). Crystallize logic: [`agentao/cli/commands_ext/crystallize/`](https://github.com/jin-bo/agentao/tree/main/agentao/cli/commands_ext/crystallize). Skill manager: [`agentao/skills/manager.py`](https://github.com/jin-bo/agentao/blob/main/agentao/skills/manager.py).
 :::

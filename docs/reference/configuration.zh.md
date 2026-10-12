@@ -21,9 +21,9 @@
 | 3 | 工具权限规则 | — *（仅用户级；项目级文件被忽略）* | `~/.agentao/permissions.json` | `permissions.py::PermissionEngine` | [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) |
 | 4 | MCP 服务器 | `.agentao/mcp.json` *（仅可新增名字，不能覆盖用户级同名服务器）* | `~/.agentao/mcp.json` | `mcp/FileBackedMCPRegistry`（见 `mcp/config.py`） | `CLAUDE.md` § MCP |
 | 5 | ACP 子代理 | `.agentao/acp.json` | — *（仅项目级）* | `acp_client/config.py` | [CLI 8 · `/acp`](../../developer-guide/zh/cli/8-mcp-acp-plugins.md) / [开发者指南 3.4](../../developer-guide/zh/part-3/4-reverse-acp-call.md) |
-| 6 | 禁用 skill 列表 | `.agentao/skills_config.json` | — | `skills/manager.py` | [SKILLS_GUIDE.md](../guides/skills.md) |
-| 7 | 项目说明 | `AGENTAO.md`（cwd），不存在时读 `AGENTS.md` | — | `prompts/helpers.py::load_project_instructions` | [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) |
-| 8 | 记忆库 | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](../guides/memory-management.md) |
+| 6 | 禁用 skill 列表 | `.agentao/skills_config.json` | — | `skills/manager.py` | [开发者指南 5.2](../../developer-guide/zh/part-5/2-skills.md) |
+| 7 | 项目说明 | `AGENTAO.md`（cwd），不存在时读 `AGENTS.md` | — | `prompts/helpers.py::load_project_instructions` | [开发者指南 5.6](../../developer-guide/zh/part-5/6-system-prompt.md) |
+| 8 | 记忆库 | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [开发者指南 5.5](../../developer-guide/zh/part-5/5-memory.md) |
 | 9 | Run spec（`agentao run`） | `--spec` 传入的任意路径（或 stdin） | — | `cli/run_models.py::RunSpec`、`cli/run_template.py::render_spec` | [run-spec-parameters.zh.md](../design/run-spec-parameters.zh.md) |
 | 10 | 插件 hooks | `<plugin>/hooks/hooks.json`，或经插件 manifest 的 `hooks` 声明/内联 | — *（随插件走）* | `embedding/plugins/manager.py`（发现）→ `plugins/hooks/_parser.py`（解析） | 见下文 §11；Developer Guide §5.7 |
 | 11 | LLM 登录配置（ACP session） | — | `~/.agentao/llm.json` *（由 `agentao --login` 写入）* | `embedding/llm_config.py::resolve_session_llm_config` | 见下文 §2a；[开发者指南 3.2 · 提供方配置与登录](../../developer-guide/zh/part-3/2-agentao-as-server.md) |
@@ -33,7 +33,7 @@
 | 配置面 | 路径 | 维护者 | 备注 |
 |---|---|---|---|
 | 后台子代理任务状态 | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | 锚定到 `working_directory`；未传 `persistence_dir` 时只在内存中。手改会与运行中的线程脱钩。来自之前对话和之前运行的已结束记录最多保留 50 条（按 `finished_at` 保留最新的），在启动时和每次启动后台子代理时清理；本次对话的记录和仍在运行的记录永远不会被清掉。这个 store 自己 pending 或 running 的任务同时最多 `max_concurrent` 个（构造参数，默认 6，`None` 表示不设上限；0.5.7）——超出时拒绝启动；这个文件里其他进程的记录不计入。`status: "failed"` 的记录在"跑完未抛异常但没答出来"时会带 `incomplete_reason`——它的有无用来区分"崩溃"（无 `result`）与"没跑完"（`result` 仍在且值得读）。0.4.15 之前写入的记录没有该字段。自 0.4.24 起，`status: "cancelled"` 的记录在**运行中**被取消时会保留这次跑出来的 `result` 与计数，在**开跑前**被取消时两者都没有；两种情况下 `incomplete_reason` 都是 `None`——status 本身已经说明了原因。**不做密钥扫描**——见下方注记。 |
-| 回放事件 | `.agentao/replay/*.jsonl` | `replay/` | 见 [session-replay.md](../guides/session-replay.md)。 |
+| 回放事件 | `.agentao/replays/*.jsonl` | `replay/` | 见 [开发者指南 6.6](../../developer-guide/zh/part-6/6-observability.md)。 |
 | 会话 / 计划 | `.agentao/sessions/`、`.agentao/plan-history/` | 多模块 | 单次会话产物。**不做密钥扫描**——见下方注记。 |
 | 工具产物 | `.agentao/tool-outputs/` | `runtime/tool_result_formatter.py::_save_and_truncate` | 超长工具输出溢写到磁盘，由上下文中的摘录引用其路径。锚定到 `working_directory`（自 0.5.7；此前是进程 cwd——ACP 服务器或嵌入式宿主的会话并不与它共享这个目录）。按 mtime 超过 7 天的文件在会话第一次溢写时清理。**落盘前会做密钥扫描。** |
 | `/goal` 续跑状态 | `.agentao/goal.json` | `cli/goal_state.py::GoalState` | 一个长任务目标（目标描述、状态、时间/轮次上限、已用量）。跨重启存活；损坏或缺失一律按「没有目标」处理。见 [goal.md](../guides/goal.md)。 |
@@ -396,7 +396,7 @@ URL 类 server（`http` 或 `sse`）默认使用 **OAuth**，不需要任何键�
 |---|---|---|
 | `disabled_skills` | string[] | 要从自动发现中**排除**的 skill 名。CLI 里用 `/skills disable <name>` 管理。被禁用的 skill **激活时也会被拒绝** —— `activate_skill` 工具、`/skills activate`、以及继承该集合的子代理都一样（子代理继承的是它启动那一刻的集合：运行中的子代理收不到之后的禁用，要到下一个子代理才生效）。工具侧回答「Unknown skill」（对想激活它的调用方而言，被禁用的 skill 就是不存在）；`/skills activate` 则直接说明状态与补救办法。要激活须先 `/skills enable <name>` 重新启用。这份名单**从不与扫描结果对账**：一次扫不到该 skill 的 reload（共享盘未挂载、目录运行中被改名）会原样保留名字、也不写盘，于是 skill 回来时仍是禁用状态 —— 扫描分不清「已删除」和「此刻发现不到」，而禁用本身是激活门禁，猜错就等于静默把这个 skill 重新放行给模型。只有 `/skills disable` / `/skills enable` 会改动名单；代价是名字可能比它禁用的 skill 活得更久 —— 这类名字会在 `/skills` 里单列为 **Disabled, not found by the last scan**，而 `/skills enable <name>` 不论该 skill 当前是否存在都能清掉它。 |
 
-skill 的发现与激活规则见 [SKILLS_GUIDE.md](../guides/skills.md)。
+skill 的发现与激活规则见 [开发者指南 5.2](../../developer-guide/zh/part-5/2-skills.md)。
 
 ---
 
@@ -407,7 +407,7 @@ skill 的发现与激活规则见 [SKILLS_GUIDE.md](../guides/skills.md)。
 - **信任。** 两个文件都按原样从工作目录读取。因此克隆来的仓库、或存放租户上传文件的工作目录，都能把指令放进 system prompt —— 而 `AGENTS.md` 远比 `AGENTAO.md` 常见。不希望读取任何文件的宿主可传 `Agentao(project_instructions="")`，两个文件都会跳过。
 - **Schema。** 自由 Markdown，无强制结构。
 
-prompt 组成规则与约定见 [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md)。
+prompt 组成规则与约定见 [开发者指南 5.6](../../developer-guide/zh/part-5/6-system-prompt.md)。
 
 ---
 
@@ -422,7 +422,7 @@ prompt 组成规则与约定见 [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md
 - **没有配置 user store 时。** user scope 的写入会改存为 `project` —— 裸构造的 `Agentao(...)` 一直是这个行为，因为它的 manager 只带 project store。但不再无声：显式的 `scope="user"` 记 warning，推断出来的（`user_` 前缀的 key、`preference` / `profile` 标签）以 debug 记进 `agentao.log`。两条都不写 key 和 value。想要 user scope，就给 manager 传 `user_store=` —— `agentao.embedding.build_from_environment()` 就是这么做的。（#260）
 - **子代理也写这里 —— 但一个字也不从这里读。** 子代理的 `save_memory` 走**父级**的 manager，所以它存下的记忆落在同一批库、同一个 scope 里；宿主注入过 manager 的话也会经过它（#260）。它记忆的其余部分都归自己：自 #234 起它建在 transient（`:memory:`）库上，**会话摘要**与结晶器的审阅提案都留在那里，随它一起丢弃 —— 在此之前这两样都落进上面那个项目库，因为子代理的默认值打开的正是同一个文件。那个库同时也是空的，这是同一个决定的读侧：**子代理没有 `<memory-stable>` 块，也没有召回**，只靠父级最近的**对话消息**（`parent_context`）交代背景，而那里面不含任何记忆 —— 所以它能存下一条自己读不回来的长期记忆。#234 之前子代理写进项目库的行没有任何来源标记；`/clear` 与 `/memory clear` 会清掉全部会话摘要和全部长期记忆，但都碰不到审阅队列。（#234）
 
-完整 schema、表结构、生命周期 → [memory-management.md](../guides/memory-management.md)。
+完整 schema、表结构、生命周期 → [开发者指南 5.5](../../developer-guide/zh/part-5/5-memory.md)。
 
 ---
 

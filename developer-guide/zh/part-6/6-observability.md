@@ -198,7 +198,9 @@ Agentao 可以把每个 session 的运行时间线记录成 `.agentao/replays/` 
 }
 ```
 
-记录从下一个 session 开始生效。执行 `/replay off` 后，已有 replay 文件仍可读取。
+录制默认关闭。开关从下一个 session 起生效，不会动正在写的那个文件。执行 `/replay off` 后，已有 replay 文件仍可读取。`settings.json` 坏了会退回默认值，不会挡住启动。
+
+`replay.max_instances` 限制 `.agentao/replays/` 下的文件数（默认 20），不影响 `.agentao/sessions/`。每个 instance 开始和结束时都会清掉最旧的文件。不是计数的值（`true`、`"abc"`、`0`）会被忽略、改用 20，`agentao doctor` 报 error；写成字符串的数字（`"50"`）或带小数的数字（`2.9` 取 2）照样生效，doctor 报 warning。规则见 [`check_max_instances`](https://github.com/jin-bo/agentao/blob/main/agentao/replay/config.py)。
 
 Replay 能支持：
 
@@ -214,13 +216,56 @@ Replay 能支持：
 /replay show <id>       # 分组渲染
 /replay show <id> --raw
 /replay show <id> --turn <turn_id>
-/replay show <id> --kind tool_
+/replay show <id> --kind tool_    # 按 kind 前缀过滤
 /replay show <id> --errors
 /replay tail <id> 50
 /replay prune
+/replay delete <id> | /replay delete all
 ```
 
-Replay 文件和保存的 session 是两套东西：`save_session` / `load_session` 恢复可继续对话的 conversation state；replay 记录 runtime 做过什么。
+所有命令都只读到文件当前的末尾，没有 follow / 实时 tail 模式；实时观察请看正常输出和 `agentao.log`。命令细节见 [CLI · 回放与输出](/zh/cli/9-replay-output)。
+
+Replay 文件和保存的 session 是两套东西：`save_session` / `load_session` 恢复可继续对话的 conversation state；replay 记录 runtime 做过什么。ACP `session/load` 沿用逻辑上的 `session_id`，但会新开一个 replay 文件，不会接着旧文件写。
+
+### Replay 文件布局
+
+- **路径：** `.agentao/replays/<session_id>.<instance_id>.jsonl`。session id 里字母、数字、`_`、`-` 以外的字符会换成 `_`。
+- **一行一个事件。** 每个事件都有 `event_id`、`session_id`、`instance_id`、`seq`、`ts`、`kind`、`turn_id`、`parent_turn_id` 和 `payload`。
+- **第一行**是 `replay_header`：`schema_version`（当前为 `1.4`）、`session_id`、`instance_id`、`created_at`，设置了 capture flag 时还有 `capture_flags`。
+- **最后一行**是正常关闭时写的 `replay_footer`：`event_count`，以及按类别累计的 `redaction_hits`、`dropped_field_hits`、`truncated_field_hits`。
+- **每次 session 诞生都开新 instance。** `/clear`、`/new`、`/sessions resume`、ACP `session/new` 和 ACP `session/load` 都会新开一个文件，一个文件不会跨越这些边界。
+
+JSON Schema 在 [`schemas/`](https://github.com/jin-bo/agentao/tree/main/schemas) 下，每个 schema 版本一个文件。版本策略见 [`docs/reference/replay-schema-policy.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/replay-schema-policy.md)。
+
+### Replay 记录了什么
+
+一个 turn 对应一次 `Agentao.chat()` 调用。事件类别分组如下（完整列表见 [`agentao/replay/events.py`](https://github.com/jin-bo/agentao/blob/main/agentao/replay/events.py)）：
+
+| 分组 | 类别 | 说明 |
+|------|------|------|
+| 文件与 session | `replay_header`、`replay_footer`、`session_started`、`session_ended` | `session_started` 带 `cwd` 和 `model` |
+| Turn | `turn_started`、`user_message`、`turn_completed` | `turn_completed` 带 `final_text`、`status`（`ok` / `cancelled` / `error`），可能还有 `incomplete_reason` |
+| 模型输出 | `assistant_text_chunk`、`assistant_thought_chunk` | 流式正文与推理 |
+| LLM 调用 | `llm_call_started`、`llm_call_completed`、`llm_call_delta`、`llm_call_io` | `llm_call_completed` 带 token 数和耗时；`llm_call_delta` 需要 `capture_llm_delta`，`llm_call_io` 需要 `capture_full_llm_io` |
+| 工具 | `tool_confirmation_requested`、`tool_confirmation_resolved`、`tool_started`、`tool_output_chunk`、`tool_completed`、`tool_result` | `tool_started.tool_source`：`mcp_*` 工具为 `mcp`，其余为 `builtin` |
+| 宿主投影 | `tool_lifecycle`、`subagent_lifecycle`、`permission_decision` | 结构与 [`agentao.host`](/zh/part-4/7-host-contract) 的模型一致 |
+| 子 agent | `subagent_started`、`subagent_completed` | 子 agent 的事件有自己的 `turn_id`，用 `parent_turn_id` 指回父 turn |
+| 交互 | `ask_user_requested`、`ask_user_answered`、`background_notification_injected` | |
+| 状态变化 | `model_changed`、`permission_mode_changed`、`readonly_mode_changed`、`skill_activated`、`skill_deactivated`、`memory_write`、`memory_delete`、`memory_cleared`、`session_summary_written`、`plugin_hook_fired` | |
+| 上下文 | `context_compressed`、`compaction_settled`、`images_removed` | 每次压缩尝试看 `compaction_settled`，成功的看 `context_compressed` |
+| 错误 | `error` | |
+
+有三个类别只声明、不发出：`session_saved`、`session_loaded`、`session_forked`。`session_saved` 留给将来显式的保存入口；`/clear`、`/new` 或退出时的自动保存都不会发它。
+
+### 隐私与截断
+
+每个 payload 落盘前都要过一遍 sanitizer（[`agentao/replay/sanitize.py`](https://github.com/jin-bo/agentao/blob/main/agentao/replay/sanitize.py)）：
+
+- **JSON 化。** 值被转成 JSON 原生类型。转不了的字段单独丢掉，事件上会带 `redacted: "filter_error"`，字段名列在 `redacted_fields` 里。
+- **凭据扫描。** 每个字符串都会按"长得像凭据"的模式扫描，命中改写成 `[REDACTED:<kind>]`。每个事件在 `redaction_hits` 里记自己的命中数，footer 汇总。这只是模式匹配，不是完整的 secret 扫描：长得不像凭据的凭据会原样通过。扫描器是 [`agentao/security/secret_scan.py`](https://github.com/jin-bo/agentao/blob/main/agentao/security/secret_scan.py)，`agentao.log` 和 `.agentao/tool-outputs/` 也用它。
+- **头尾截断。** 过长的字段保留头和尾，并带 `truncated`、`original_chars`、`omitted_chars`。上限：`tool_output_chunk` 4,000 字符，`tool_result` 8,000（头部只占 20%，因为报错多在末尾），`memory_write` 2,000，`ask_user_answered` 500，`plugin_hook_fired` 的输出 500。`assistant_text_chunk` 不截断。
+
+下面的 deep capture 开关可以取消其中部分上限，凭据扫描照常进行。
 
 ### 捕获深度
 
@@ -234,6 +279,12 @@ Deep capture 开关位于 `.agentao/settings.json` 的 `replay.capture_flags` �
 | `capture_full_llm_io` | `false` | 完整 provider payload；敏感 |
 | `capture_tool_result_full` | `false` | 完整工具输出；可能很大或敏感 |
 | `capture_plugin_hook_output_full` | `false` | 完整 plugin hook 输出 |
+
+### 故障模型与读取
+
+- Replay 绝不会弄坏一个 turn。sanitizer 或写入失败只记一条 warning，然后吞掉。
+- 进程崩溃可能留下半行。读取时会跳过它，前面的事件照常返回。
+- 在代码里读 replay，用 `agentao.replay.ReplayReader`（以及 `list_replays`）。基于 replay 做的工具都应该经由它读取，而不是从 `agent.messages` 重建时间线。ACP 没有提供 replay 的方法。
 
 ### 自定义归档 hook
 
@@ -349,7 +400,7 @@ agent = Agentao(working_directory=".", transport=SdkTransport(on_event=on_event)
 | 用户批准危险工具 | confirm_tool = True | 180-365 天 |
 | 权限规则拒绝 | decide = DENY | 90 天 |
 | Agent 修改用户数据 | 业务工具执行 | 业务规定（常 1-7 年） |
-| 用户请求"遗忘" | memory.clear_all | 永久（合规证据） |
+| 用户请求"遗忘" | `MemoryManager.wipe_all()` | 永久（合规证据） |
 
 ### 脱敏与留档
 

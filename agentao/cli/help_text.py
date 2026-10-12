@@ -60,7 +60,7 @@ All commands start with `/`:
   - `/crystallize refine` - Improve the current draft with skill-creator guidance
   - `/crystallize status` - Show current pending draft status
   - `/crystallize clear` - Clear the current pending draft
-  - `/crystallize create [name]` - Save the draft into skills/ and reload
+  - `/crystallize create [name]` - Save the draft to .agentao/skills/<name>/ (asks: global or project; overwrites a skill of that name) and reload
   - Recommended flow: `suggest` -> `feedback <text>` (repeatable) -> `refine` -> `create [name]`
 - `/memory [subcommand] [arg]` - Manage saved memories
   - `/memory` or `/memory list` - Show all saved memories (with tag summary)

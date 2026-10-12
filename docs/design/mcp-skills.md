@@ -575,7 +575,7 @@ the origin wrapper in the tool result and the tail; `read_skill_file` and its re
 the §6.2 gate in `tool_planning.py`, after the DENY paths; load-by-URI (D2); and, if
 `mcp-resources.md` has landed, both §6.1 rules for `read_mcp_resource` — same-origin verification
 and the cross-origin ASK — in the same seams, with their tests. Docs: activation, the gates, and
-`docs/guides/skills.md`.
+the developer guide's skills pages (`developer-guide/en/part-5/2-skills.md`, `cli/5-skills-crystallize.md`).
 
 PR 1 → PR 2, each against `main` after the previous merged, one release.
 

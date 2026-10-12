@@ -21,9 +21,9 @@ User-facing configuration files (the surfaces you may hand-edit):
 | 3 | Tool permissions | — *(user-only; project file is ignored)* | `~/.agentao/permissions.json` | `permissions.py::PermissionEngine` | [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) |
 | 4 | MCP servers | `.agentao/mcp.json` *(add-only — cannot override user-scope names)* | `~/.agentao/mcp.json` | `mcp/FileBackedMCPRegistry` (see `mcp/config.py`) | `CLAUDE.md` § MCP |
 | 5 | ACP subagents | `.agentao/acp.json` | — *(project-only)* | `acp_client/config.py` | [CLI 8 · `/acp`](../../developer-guide/en/cli/8-mcp-acp-plugins.md) / [developer guide 3.4](../../developer-guide/en/part-3/4-reverse-acp-call.md) |
-| 6 | Skills disable list | `.agentao/skills_config.json` | — | `skills/manager.py` | [SKILLS_GUIDE.md](../guides/skills.md) |
-| 7 | Project instructions | `AGENTAO.md` (cwd), else `AGENTS.md` | — | `prompts/helpers.py::load_project_instructions` | [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) |
-| 8 | Memory store | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [memory-management.md](../guides/memory-management.md) |
+| 6 | Skills disable list | `.agentao/skills_config.json` | — | `skills/manager.py` | [developer guide 5.2](../../developer-guide/en/part-5/2-skills.md) |
+| 7 | Project instructions | `AGENTAO.md` (cwd), else `AGENTS.md` | — | `prompts/helpers.py::load_project_instructions` | [developer guide 5.6](../../developer-guide/en/part-5/6-system-prompt.md) |
+| 8 | Memory store | `.agentao/memory.db` | `~/.agentao/memory.db` | `memory/manager.py::MemoryManager` | [developer guide 5.5](../../developer-guide/en/part-5/5-memory.md) |
 | 9 | Run spec (`agentao run`) | any path passed to `--spec` (or stdin) | — | `cli/run_models.py::RunSpec`, `cli/run_template.py::render_spec` | [run-spec-parameters.md](../design/run-spec-parameters.md) |
 | 10 | Plugin hooks | `<plugin>/hooks/hooks.json`, or inline/declared via the plugin manifest's `hooks` | — *(travels with the plugin)* | `embedding/plugins/manager.py` (discovery) → `plugins/hooks/_parser.py` (parse) | §11 below; Developer Guide §5.7 |
 | 11 | LLM login (ACP sessions) | — | `~/.agentao/llm.json` *(written by `agentao --login`)* | `embedding/llm_config.py::resolve_session_llm_config` | §2a below; [developer guide 3.2 · Provider configuration and login](../../developer-guide/en/part-3/2-agentao-as-server.md) |
@@ -33,7 +33,7 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 | Surface | Path | Owner | Notes |
 |---|---|---|---|
 | Background sub-agent task state | `.agentao/background_tasks.json` | `agents/bg_store.py::BackgroundTaskStore` | Anchored to `working_directory`; in-memory only when no `persistence_dir`. Hand-edits will desync running threads. Keeps at most 50 finished records from earlier conversations and runs (the newest by `finished_at`), pruned at startup and at each launch; this conversation's records and running ones are never pruned. At most `max_concurrent` of the store's own tasks are pending or running at once (constructor keyword, default 6, `None` for no cap; 0.5.7) — a launch past it is refused, and another process's records in this file do not count toward it. A record with `status: "failed"` carries `incomplete_reason` when the run finished without raising but never answered — its presence is what separates "crashed" (no `result`) from "stopped short" (`result` still present and worth reading). Absent on records written before 0.4.15. Since 0.4.24 a record with `status: "cancelled"` keeps the `result` and the counters the run produced when it was cancelled *while running*, and carries neither when it was cancelled before it started; `incomplete_reason` is `None` on both — the status already names the cause. **Not secret-scanned** — see the note below. |
-| Replay events | `.agentao/replay/*.jsonl` | `replay/` | See [session-replay.md](../guides/session-replay.md). |
+| Replay events | `.agentao/replays/*.jsonl` | `replay/` | See [developer guide 6.6](../../developer-guide/en/part-6/6-observability.md). |
 | Sessions / plans | `.agentao/sessions/`, `.agentao/plan-history/` | various | Per-session artifacts. **Not secret-scanned** — see the note below. |
 | Tool outputs | `.agentao/tool-outputs/` | `runtime/tool_result_formatter.py::_save_and_truncate` | Oversized tool output spilled to disk, referenced from the in-context excerpt. Anchored to `working_directory` (since 0.5.7; before, the process cwd — which an ACP server or embedded host does not share with its sessions). Files older than 7 days, by mtime, are pruned on a session's first spill. **Secret-scanned before write.** |
 | `/goal` continuation state | `.agentao/goal.json` | `cli/goal_state.py::GoalState` | One long-task goal (objective, status, time/turn caps, usage). Survives restarts; corrupt/missing → treated as no goal. See [goal.md](../guides/goal.md). |
@@ -456,7 +456,7 @@ Full ACP semantics → [CLI 8 · `/acp`](../../developer-guide/en/cli/8-mcp-acp-
 |---|---|---|
 | `disabled_skills` | string[] | Skill names to **exclude** from auto-discovery. Use `/skills disable <name>` from the CLI to manage. A disabled skill is also **refused at activation** — by the `activate_skill` tool, by `/skills activate`, and in any sub-agent, which inherits the set as it stands when the sub-agent starts (a disable made while one is running reaches the next sub-agent, not that one). The tool answers "Unknown skill" (to a caller trying to activate it, a disabled skill is not there); `/skills activate` names the state and the remedy. Re-enable it (`/skills enable <name>`) before activating. The list is **never reconciled against what a scan found**: a reload that cannot see the skill (unmounted share, directory renamed mid-session) leaves the name in place and writes nothing, so the skill comes back still disabled — a scan cannot tell "deleted" from "not discoverable right now", and since a disable is an activation gate, guessing wrong would silently re-arm the skill. Only `/skills disable` / `/skills enable` change the list; the cost is that a name can outlive the skill it disabled — `/skills` lists such a name under **Disabled, not found by the last scan**, and `/skills enable <name>` clears it whether or not the skill is present. |
 
-See [SKILLS_GUIDE.md](../guides/skills.md) for skill discovery and activation rules.
+See [developer guide 5.2](../../developer-guide/en/part-5/2-skills.md) for skill discovery and activation rules.
 
 ---
 
@@ -467,7 +467,7 @@ See [SKILLS_GUIDE.md](../guides/skills.md) for skill discovery and activation ru
 - **Trust.** Either file is taken from the working directory as-is. A cloned repository, or a workdir holding files a tenant uploaded, can therefore put instructions into the system prompt — and `AGENTS.md` is far more common than `AGENTAO.md`. A host that does not want any file read passes `Agentao(project_instructions="")`, which skips both.
 - **Schema.** Free-form Markdown; no required structure.
 
-See [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) for prompt-composition rules and conventions.
+See [developer guide 5.6](../../developer-guide/en/part-5/6-system-prompt.md) for prompt-composition rules and conventions.
 
 ---
 
@@ -482,7 +482,7 @@ See [CHATAGENT_MD_FEATURE.md](../guides/chatagent-md.md) for prompt-composition 
 - **No user store configured.** A `user`-scope write is stored as `project` instead — the behaviour a bare `Agentao(...)` has always had, since its manager is built with a project store only. It is no longer silent: an explicit `scope="user"` logs a warning, an inferred one (`user_` key prefix, `preference` / `profile` tag) logs at debug into `agentao.log`. Neither line carries the key or the value. To get user scope, construct the manager with a `user_store=` — `agentao.embedding.build_from_environment()` does. (#260)
 - **Sub-agents write here too — and read nothing from here.** A sub-agent's `save_memory` writes through the **parent's** manager, so a memory it saves lands in the same stores, at the same scope, and through a host-injected manager if there is one (#260). Everything else about its memory is its own: since #234 it is built on a transient (`:memory:`) store, so its *session summaries* and its crystallized review proposals stay there and are discarded with it — they used to land in the project DB above, because the child's default opened the very same file. That store is also empty, which is the read side of the same decision: **a sub-agent gets no `<memory-stable>` block and no recall.** It is briefed by the parent's recent *messages* (`parent_context`), which carry no memories, so it can save a long-term memory it cannot read back. Rows a sub-agent wrote into the project DB before #234 carry no marker; `/clear` and `/memory clear` remove every session summary and every memory but reach no review item. (#234)
 
-Full schema, tables, and lifecycle → [memory-management.md](../guides/memory-management.md).
+Full schema, tables, and lifecycle → [developer guide 5.5](../../developer-guide/en/part-5/5-memory.md).
 
 ---
 

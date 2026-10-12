@@ -62,7 +62,7 @@ Usage: /replay show <id>  or  /replay tail <id> [n]  or  /replay prune
 |---|---|
 | `--raw` | 扁平按时间序展示，不分组 |
 | `--turn <tid>` | 只看某一轮 |
-| `--kind <kind>` | 按事件类型过滤（`tool_started` `permission_decision` `memory_write` ...） |
+| `--kind <kind>` | 按事件类型前缀过滤（`tool_` 能匹配 `tool_started`、`tool_result` ...） |
 | `--errors` | 只看标为 error 的事件 |
 
 `<id>` 可以是 short ID、完整的 `session.instance` id、会话 id 或 instance id 的**前缀**。`/replay show 3f9c` 在唯一时就能定位；多个都匹配时 CLI 把候选列出来让你确认。与任一 id 完全相等的匹配总是优先。
@@ -102,16 +102,16 @@ Deleted 18 replays. (Skipped: 1 active)
 | 情况 | replay 给你什么 |
 |---|---|
 | Bug 报告 — "agent 干了件怪事" | 完整事件日志，含工具参数和结果 |
-| 成本分析 — "token 都花在哪了" | `--raw` 视图里逐轮 token 计数 |
+| 成本分析 — "token 都花在哪了" | 每个 `llm_call_completed` 事件上的 token 计数（`--kind llm_call`） |
 | 调试自定义插件 | 插件 hook 决策也作为事件被记录 |
-| 审计 / 合规 | 每次会话一份 JSONL 轨迹 |
-| 重现某次会话做测试 | Replay 文件是嵌入式 `Replay` API 的合法输入 |
+| 审计 / 合规 | 每次会话一份 JSONL 轨迹，像凭据的字符串已脱敏 |
+| 在测试里检查一次运行 | 用 `agentao.replay.ReplayReader` 读文件。replay 记录一次运行，不会重新执行它 |
 
 ## 容易踩的坑
 
 - **录制默认关是为了性能** — 需要时再开；长会话 JSONL 文件会很大
-- **`max_instances` 在写入时就 FIFO 淘汰** — 超过上限旧的自动消失；只有看到延迟才用 `/replay prune`
-- **Short ID 来自完整 ID** — 重命名不会变，但写脚本的话用完整文件名更稳
+- **`max_instances` 会自动淘汰最旧的文件** — 在一次录制开始和结束时进行。`/replay prune` 可以随时手动执行同样的淘汰
+- **Short ID 只是完整 ID 的前缀** — 两个 replay 可能撞上同一个，写脚本请用完整的 `session.instance` id 或文件名
 - **`delete all` 是真的会删干净** — 没有"replay 的 replay"。要留就先备份
 
 ## `/copy` — 复制最近一条助理消息
@@ -171,7 +171,7 @@ Markdown rendering: OFF
 ---
 
 ::: info 这一章在体系里的位置
-Replay 实现在 `agentao.replay`。嵌入式宿主可以用 `agentao.replay.ReplayReader` 读取相同的 JSONL 文件。事件 schema 在 CLI 和嵌入两条路径上一致。CI 里可以用 replay 验证行为改动不破坏过去的会话。
+Replay 实现在 `agentao.replay`。嵌入式宿主可以用 `agentao.replay.ReplayReader` 读取相同的 JSONL 文件。事件 schema 在 CLI 和嵌入两条路径上一致。CI 里可以用 `ReplayReader` 读 replay，断言一次运行做了什么。文件布局、事件类别和脱敏见 [6.6 · 维度三：Session Replay](/zh/part-6/6-observability#维度三-session-replay)。
 :::
 
 ::: tip 真相源头

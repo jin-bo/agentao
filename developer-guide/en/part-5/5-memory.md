@@ -14,7 +14,42 @@ Memory lets the agent **remember across sessions** — user preferences, project
 | **Persistent memory** (MemoryRecord) | SQLite `memories` table | Preferences, facts, rules — soft-deleted, never physically removed |
 | **Session summary** (SessionSummaryRecord) | SQLite `session_summaries` table | LLM-generated summaries from context compression |
 | **Recall candidate** (RecallCandidate) | In-memory only | Top-k scored against the current user message |
-| **Review item** (MemoryReviewItem) | SQLite `memory_review_queue` table | Crystallizer candidates awaiting `/memory review approve`. No bulk clear reaches this table — see the wipe warning below |
+| **Review item** (MemoryReviewItem) | SQLite `memory_review_queue` table | Crystallizer candidates awaiting `/memory review approve`. The crystallizer reads only `role: "user"` messages. No bulk clear reaches this table — see the wipe warning below |
+
+### Persistent memory records
+
+Each `save_memory` call goes through `MemoryManager.upsert()` ([`manager.py`](https://github.com/jin-bo/agentao/blob/main/agentao/memory/manager.py)). The guard ([`guards.py`](https://github.com/jin-bo/agentao/blob/main/agentao/memory/guards.py)) fills in what the call leaves out:
+
+| Field | Values | How it is set |
+|-------|--------|---------------|
+| `scope` | `user` / `project` | An explicit `scope` wins. Otherwise a `user_` key prefix or a `user`, `preference`, `profile` or `personal` tag gives `user`. Everything else is `project`. |
+| `type` | `preference` / `profile` / `project_fact` / `workflow` / `decision` / `constraint` / `note` | An explicit `type` wins. Otherwise the first matching tag decides. With no matching tag the type is `note`. |
+| `source` | `explicit` / `auto` / `crystallized` | `explicit` for `save_memory`. `crystallized` for an approved review item. |
+| `confidence` | `explicit_user` / `inferred` / `auto_summary` | `explicit_user` when `source` is `explicit`. |
+
+- **Upsert:** the identity is `(scope, key_normalized)`. Saving the same key again updates the row in place and keeps its `created_at`.
+- **Limits:** the normalized key keeps 80 characters and the title 120. Content over 4,000 characters is refused, not truncated.
+
+### Session summaries
+
+The context compactor writes a summary row only when a full compaction **succeeds** (`ContextManager.commit_compaction`). A skipped, cancelled or failed compaction writes nothing. Microcompaction writes no summary. A summary whose window held MCP-skill content is not saved either.
+
+A summary reaches the model through exactly one channel:
+
+| Summary from | Channel |
+|--------------|---------|
+| The current session | `agent.messages`, as a `[Conversation Summary]` block |
+| An earlier session | The `<session>` part of `<memory-stable>` |
+
+`get_cross_session_tail()` takes the 3 newest summaries whose `session_id` is not the current one. It keeps the newest 800 characters of them (`SESSION_TAIL_CHARS`).
+
+The current session id is set by `archive_session(session_id)`. The CLI and ACP pass the conversation id, so a resumed conversation keeps its own summaries out of the tail. **A host that resumes its own conversations must do the same:**
+
+```python
+agent.memory_manager.archive_session(conversation_id)
+```
+
+Without an argument, `archive_session()` picks a fresh random id. The resumed conversation's own summaries then come back as an "earlier session", and the model sees them twice.
 
 ## Two SQLite databases
 
@@ -24,6 +59,22 @@ Memory lets the agent **remember across sessions** — user preferences, project
 ```
 
 Project-level = "facts specific to this project" (project codename, team conventions, deploy paths). User-level = "this user's own preferences" (tabs vs spaces, timezone).
+
+### Tables and change tracking
+
+Each database has these tables ([`storage.py`](https://github.com/jin-bo/agentao/blob/main/agentao/memory/storage.py)):
+
+| Table | Holds |
+|-------|-------|
+| `memories` | Persistent records, soft-deleted with `deleted_at` |
+| `session_summaries` | Compaction summaries (project database only) |
+| `memory_review_queue` | Crystallizer candidates (project database only) |
+| `memory_events` | Internal write audit log |
+| `schema_meta` | Schema version and the `memories_change` counter |
+
+Three triggers on `memories` add 1 to `memories_change` on every insert, update and delete. The triggers live in the database file, so every writer moves the counter: another session, another process, or an older Agentao. The recall index is keyed on this counter, so the next recall sees a memory that another session wrote.
+
+`<memory-stable>` ignores this counter. It is rebuilt only when this session writes, so the cached prompt prefix stays byte-identical.
 
 ## Graceful degradation
 
@@ -72,6 +123,11 @@ agent = Agentao(
 )
 ```
 
+Without a user store, a user-scope write goes to the project database. The downgrade is logged, and the log never contains the key or the value:
+
+- An explicit `scope="user"` logs a warning.
+- An inferred user scope (a `user_` key, a `preference` tag) logs at debug. On a project-only manager this is the ordinary case.
+
 ### Disable memory entirely
 
 Simplest way: point both stores at `:memory:` (or just project; user is `None` by default on the bare constructor):
@@ -100,11 +156,36 @@ Agentao injects two memory blocks, and **they ride different messages** — whic
 
 ### `<memory-stable>` — stable block
 
-In the **system message**, as its last section (`agentao/prompts/builder.py::SystemPromptBuilder.build()`, reached via the `agent._build_system_prompt()` facade). Holds **long-term, structural** memories (types `profile` / `constraint` / `decision`). Identical every turn → benefits from **prompt caching** (most LLM vendors cache stable prefixes, reducing cost and latency).
+In the **system message**, as its last section (`agentao/prompts/builder.py::SystemPromptBuilder.build()`, reached via the `agent._build_system_prompt()` facade). Holds **long-term, structural** memories. Identical every turn → benefits from **prompt caching** (most LLM vendors cache stable prefixes, reducing cost and latency).
+
+`MemoryManager.get_stable_entries()` selects the entries:
+
+| Entries | Rule |
+|---------|------|
+| Every `user`-scope entry | Always included |
+| `project` entries of type `decision`, `constraint`, `workflow`, `profile`, `preference` | Always included |
+| `project` entries of type `project_fact`, `note` | Only the 3 most recently updated |
+| All other entries | Dynamic recall only |
+
+The block has a budget of 2,000 characters (`STABLE_BLOCK_MAX_CHARS`). Each fact shows at most 240 characters of its value. The renderer ([`render.py`](https://github.com/jin-bo/agentao/blob/main/agentao/memory/render.py)) first reserves room for the earlier-session summaries. It then fills the rest greedily, **newest entry first**, and skips any entry that does not fit. The kept entries are written in `created_at` order. A skipped entry can still surface through dynamic recall.
 
 ### `<memory-context>` — dynamic recall
 
-In the **request-only volatile tail** (`SystemPromptBuilder.build_volatile_tail()`), a trailing `user` message that is never persisted. Top-k recall scored against the current user message each turn, selected from all saved memories using keyword / Jaccard / tag / recency scoring.
+In the **request-only volatile tail** (`SystemPromptBuilder.build_volatile_tail()`), a trailing `user` message that is never persisted. Each turn, `MemoryRetriever` scores the saved memories against the current user message and keeps the top 5. Entries already in `<memory-stable>` are left out. The block has a budget of about 1,200 characters.
+
+The score has these terms ([`retriever.py`](https://github.com/jin-bo/agentao/blob/main/agentao/memory/retriever.py), `score()`):
+
+| Term | Weight |
+|------|--------|
+| Exact tag match | ×4 (×2.5 for a 2-token query, ×1.5 for a 1-token query) |
+| Title Jaccard similarity | ×3 |
+| Keyword match (keywords are tokenized, so `agent.py` matches `agent`) | ×2 |
+| Content match (first 500 characters) | ×1 |
+| File-path hint (paths in the last 10 messages match a keyword) | ×2 |
+| Recency, `1 / (1 + days/30)` | ×1 |
+| Stale (not updated for over 90 days) | −2 |
+
+An entry that matches on none of the first five terms is never recalled, however recent it is. The `reason` attribute of each fact names the terms that matched.
 
 It is deliberately *not* in the system message: it is query-specific, so putting it there changed `messages[0]` every turn and invalidated the provider's cached prefix over the entire history. See `developer-guide/en/part-5/6-system-prompt.md`.
 
@@ -152,14 +233,27 @@ save_memory(key="preference", value="user prefers TypeScript strict mode")
 - Clear memory
 - Search memories (though `<memory-context>` is already a recall result)
 
-This is **intentional** — a prompt-injected LLM must not be able to read, write, or erase the user's entire memory library. List/delete/clear are CLI commands (`/memory search`, `/memory delete`, `/memory clear`) or direct `MemoryManager` API for your host.
+This is **intentional** — a prompt-injected LLM must not be able to read, write, or erase the user's entire memory library. List/delete/clear are CLI commands (`/memory search`, `/memory delete`, `/memory clear`) or direct `MemoryManager` API for your host. Older versions had `search_memory` and `delete_memory` tools. They were removed.
+
+## Sub-agent memory boundary
+
+A sub-agent gets its own `MemoryManager` on a transient `:memory:` store. The store is discarded when the sub-agent closes (`agents/tools/_inherit.py::_child_memory_manager`).
+
+| What | Where it goes | Why |
+|------|---------------|-----|
+| `save_memory` writes | The **parent's** manager, including its user store and a host-injected manager | Long-term memory belongs where the parent's memory lives |
+| Session summaries from the sub-agent's compaction | The sub-agent's transient store | In the parent's database they would come back as an "earlier session" in `<memory-stable>` |
+| Crystallizer candidates | The sub-agent's transient store | The sub-agent's `user` messages are prompts the parent model wrote. Approved, they would become memories the user never stated. |
+| Reads (`<memory-stable>`, recall) | None | The transient store is empty. The sub-agent's briefing comes from `parent_context`, which holds recent conversation messages and no memories. |
+
+The last row is a deliberate trade-off. A sub-agent can write a memory that it cannot read back. If the `save_memory` rebind fails, the sub-agent gets no `save_memory` at all.
 
 ## Memory management UI in your host
 
 Your host can call `MemoryManager` directly to build a user-facing "view / delete memories" panel:
 
 ```python
-mm = agent._memory_manager
+mm = agent.memory_manager
 
 # List all project-scope memories (helper returns project + user when scope=None)
 for record in mm.get_all_entries(scope="project"):
@@ -205,6 +299,8 @@ of the messages they were extracted from, survive a wipe, and stay visible to
 What it *does* clear: persistent memories in both scopes (soft), and session
 summaries from every session (hard `DELETE`).
 :::
+
+To back up, inspect or move a memory database, see [CLI 6 · Back up and inspect the database](/en/cli/6-memory#back-up-and-inspect-the-database).
 
 ## Memory vs conversation history vs AGENTAO.md
 

@@ -25,7 +25,7 @@ _logger = logging.getLogger(__name__)
 
 
 # v1.1 capture-flag defaults. The design decision (step 2 of
-# SESSION_REPLAY_PLAN): ``capture_llm_delta`` is on by default so each
+# session-replay plan): ``capture_llm_delta`` is on by default so each
 # turn carries its newly-added messages; the other two knobs stay off by
 # default because they can dramatically grow file size and/or leak
 # secrets even after regex-based redaction.

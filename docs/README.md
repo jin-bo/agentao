@@ -34,7 +34,7 @@ Pick the path that matches your goal:
 - Configuration reference (every file, env var, public API): [reference/configuration.md](reference/configuration.md)
 - Logging and debugging: [guides/logging.md](guides/logging.md)
 - Model and provider switching: [developer guide CLI 2](../developer-guide/en/cli/2-models-providers.md) · [2.5](../developer-guide/en/part-2/5-runtime-llm-switch.md)
-- Skills and runtime extension: [guides/skills.md](guides/skills.md)
+- Skills and runtime extension: [developer guide 5.2](../developer-guide/en/part-5/2-skills.md) · [CLI 5](../developer-guide/en/cli/5-skills-crystallize.md)
 - Adding a built-in tool or skill to this repo: [guides/adding-components.md](guides/adding-components.md)
 
 ## Start
@@ -58,15 +58,15 @@ Task-oriented how-to guides and per-feature documentation.
 | [developer guide 3.4](../developer-guide/en/part-3/4-reverse-acp-call.md) | You embed the ACP surface specifically |
 | [guides/logging.md](guides/logging.md) | You are debugging sessions, tool calls, or model behavior |
 | [developer guide CLI 2](../developer-guide/en/cli/2-models-providers.md) · [2.5](../developer-guide/en/part-2/5-runtime-llm-switch.md) | You want to switch providers or models cleanly |
-| [guides/skills.md](guides/skills.md) | You are creating, installing, or managing skills |
+| [developer guide 5.2](../developer-guide/en/part-5/2-skills.md) · [CLI 5](../developer-guide/en/cli/5-skills-crystallize.md) | You are creating, installing, or managing skills |
 | [guides/adding-components.md](guides/adding-components.md) | You are adding a built-in tool or skill to the Agentao codebase |
-| [guides/memory-quickstart.md](guides/memory-quickstart.md) | Memory usage from a user perspective |
-| [guides/memory-management.md](guides/memory-management.md) | Memory behavior and implementation details |
-| [guides/session-replay.md](guides/session-replay.md) | Structured JSONL replay of runtime events |
+| [developer guide CLI 6](../developer-guide/en/cli/6-memory.md) | Memory usage from a user perspective |
+| [developer guide 5.5](../developer-guide/en/part-5/5-memory.md) | Memory behavior and implementation details |
+| [developer guide 6.6](../developer-guide/en/part-6/6-observability.md) · [CLI 9](../developer-guide/en/cli/9-replay-output.md) | Structured JSONL replay of runtime events |
 | [guides/macos-sandbox-exec.md](guides/macos-sandbox-exec.md) | macOS `sandbox-exec` shell isolation |
 | [guides/tool-confirmation.md](guides/tool-confirmation.md) | Tool confirmation behavior and safety model |
 | [guides/date-context.md](guides/date-context.md) | Date/time context injection |
-| [guides/chatagent-md.md](guides/chatagent-md.md) | Project instruction auto-loading (`AGENTAO.md`) |
+| [developer guide 5.6](../developer-guide/en/part-5/6-system-prompt.md) | Project instruction auto-loading (`AGENTAO.md`) |
 | [developer guide 3.4](../developer-guide/en/part-3/4-reverse-acp-call.md) | Non-interactive / headless runtime behavior |
 | [guides/funds-data-cleaning-parallelism.md](guides/funds-data-cleaning-parallelism.md) | A feature-specific workflow note |
 
@@ -118,7 +118,7 @@ Superseded plans, archived dev-notes, and old change logs. Useful for archaeolog
 1. [../README.md](../README.md)
 2. [start/quickstart.md](start/quickstart.md)
 3. [start/quick-reference.md](start/quick-reference.md)
-4. One deeper guide that matches the runtime surface you need: [developer guide 3.2](../developer-guide/en/part-3/2-agentao-as-server.md), [developer guide 2.5](../developer-guide/en/part-2/5-runtime-llm-switch.md), [guides/skills.md](guides/skills.md), or another file under [guides/](guides)
+4. One deeper guide that matches the runtime surface you need: [developer guide 3.2](../developer-guide/en/part-3/2-agentao-as-server.md), [developer guide 2.5](../developer-guide/en/part-2/5-runtime-llm-switch.md), [developer guide 5.2](../developer-guide/en/part-5/2-skills.md), or another file under [guides/](guides)
 
 ### For Contributors
 

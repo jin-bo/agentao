@@ -58,7 +58,7 @@ def on_session_end(cli: AgentaoCLI, *, reason: str = "other") -> None:
     _dispatch_session_end_hooks(cli, reason=reason)
 
     # Close the current replay instance before persisting the session.
-    # The SESSION_REPLAY_PLAN reserves ``session_saved`` for an explicit
+    # The session-replay plan reserves ``session_saved`` for an explicit
     # save entrypoint; the auto-save triggered by /clear / /new / exit
     # does NOT emit it.
     try:

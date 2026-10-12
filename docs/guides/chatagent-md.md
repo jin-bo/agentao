@@ -1,237 +1,103 @@
 # AGENTAO.md Auto-Loading Feature
 
+This guide moved into the developer guide: **[5.6 · System Prompt, §1 `AGENTAO.md`](https://agentao.cn/en/part-5/6-system-prompt)** ([中文](https://agentao.cn/zh/part-5/6-system-prompt)). The headings below are kept so that old links still land on the right section.
+
 ## Overview
 
-Agentao now automatically loads project-specific instructions from a `AGENTAO.md` file at startup, similar to how Claude Code reads `CLAUDE.md`. This allows you to define project conventions, workflows, and best practices that the agent will follow throughout the session.
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-project-instructions) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-%E9%A1%B9%E7%9B%AE%E7%BA%A7%E6%8C%87%E4%BB%A4)
 
 ## How It Works
 
-1. **Automatic Detection**: When Agentao starts, it looks for `AGENTAO.md` in the current working directory
-2. **Content Injection**: If found, the entire file content is injected into the system prompt
-3. **Session-Wide Scope**: Instructions apply to all interactions in that session
-4. **Graceful Fallback**: If the file doesn't exist, the agent works normally with default instructions
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-project-instructions) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-%E9%A1%B9%E7%9B%AE%E7%BA%A7%E6%8C%87%E4%BB%A4)
 
 ## File Location
 
-```
-your-project/
-├── AGENTAO.md       # Place in the root of your project
-├── .env
-├── main.py
-└── ...
-```
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#how-the-file-is-found-and-placed) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#%E6%96%87%E4%BB%B6%E6%80%8E%E4%B9%88%E6%89%BE%E3%80%81%E6%94%BE%E5%9C%A8%E5%93%AA)
 
 ### `AGENTS.md` fallback
 
-If there is no `AGENTAO.md`, Agentao reads `AGENTS.md` from the same directory instead — the cross-tool convention from [agents.md](https://agents.md/), so a project that already has one works without a copy. Only one file is ever read: with both present, `AGENTAO.md` is used and `AGENTS.md` is ignored. Only the project root is checked; `AGENTS.md` files in subdirectories are not.
-
-Either file comes straight from the working directory, so opening Agentao in a repository you did not write puts that repository's instructions into the system prompt. An embedding host that wants neither file read passes `Agentao(project_instructions="")`.
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#how-the-file-is-found-and-placed) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#%E6%96%87%E4%BB%B6%E6%80%8E%E4%B9%88%E6%89%BE%E3%80%81%E6%94%BE%E5%9C%A8%E5%93%AA)
 
 ## What to Include
 
-The `AGENTAO.md` file can contain:
-
-- **Code Style**: Naming conventions, formatting rules, type hint requirements
-- **Project Structure**: Module organization, file locations, import patterns
-- **Development Workflows**: How to add tools, skills, tests
-- **Common Patterns**: Error handling, file operations, security best practices
-- **Testing Approaches**: Test file conventions, testing tools
-- **Documentation Standards**: Comment styles, README updates
-- **Package Management**: Use of uv, dependency management
-- **Common Commands**: Development, testing, debugging commands
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-project-instructions) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-%E9%A1%B9%E7%9B%AE%E7%BA%A7%E6%8C%87%E4%BB%A4)
 
 ## Example AGENTAO.md Structure
 
-```markdown
-# Project Name Instructions
-
-## Code Style & Conventions
-- Use type hints for all functions
-- Max line length: 100 characters
-- Tool names in snake_case
-
-## Project Structure
-[Explain directory organization]
-
-## Development Workflows
-### Adding a New Tool
-1. Create tool class...
-2. Register in agent.py...
-3. Test...
-
-## Common Patterns
-[Error handling examples, etc.]
-
-## Common Commands
-```bash
-uv sync                    # Install dependencies
-uv run python main.py     # Run agent
-```
-```
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-project-instructions) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-%E9%A1%B9%E7%9B%AE%E7%BA%A7%E6%8C%87%E4%BB%A4)
 
 ## Benefits
 
-1. **Consistency**: All sessions follow the same project conventions
-2. **Reduced Repetition**: No need to explain project structure every time
-3. **Onboarding**: New contributors understand the project faster
-4. **Context Preservation**: Important patterns and workflows are always available
-5. **Customization**: Each project can have its own instructions
+Removed: a list of benefits with no facts beyond §1.
 
 ## Implementation Details
 
+Removed: the code moved to `agentao/prompts/helpers.py` and `builder.py`; source links are in §1.
+
 ### Code Changes
 
-**File**: `agentao/agent.py`
-
-1. Added `_load_project_instructions()` method to read `AGENTAO.md`
-2. Modified `__init__()` to load instructions at startup
-3. Updated `_build_system_prompt()` to include instructions in the system prompt
+Removed: see the line above.
 
 ### System Prompt Structure
 
-When `AGENTAO.md` exists:
-```
-=== Project Instructions ===
-[Full content of AGENTAO.md]
-
-=== Agent Instructions ===
-[Default Agentao instructions]
-
-=== Available Skills ===
-[List of skills]
-```
-
-When `AGENTAO.md` doesn't exist:
-```
-[Default Agentao instructions]
-
-=== Available Skills ===
-[List of skills]
-```
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#how-the-file-is-found-and-placed) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#%E6%96%87%E4%BB%B6%E6%80%8E%E4%B9%88%E6%89%BE%E3%80%81%E6%94%BE%E5%9C%A8%E5%93%AA)
 
 ## Testing
 
-Created `test_agentao_md.py` with two test cases:
-
-1. **test_agentao_md_loading**: Verifies that the file is loaded and included in system prompt
-2. **test_agentao_md_missing**: Verifies graceful handling when file doesn't exist
-
-Run tests:
-```bash
-uv run python test_agentao_md.py
-```
+Removed: the test is `tests/test_agentao_md.py`, linked from §1.
 
 ## Usage Examples
 
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-project-instructions) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-%E9%A1%B9%E7%9B%AE%E7%BA%A7%E6%8C%87%E4%BB%A4)
+
 ### Basic Usage
 
-1. Create `AGENTAO.md` in your project root
-2. Add your project-specific instructions
-3. Start Agentao
-4. The agent will automatically follow your instructions
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-project-instructions) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-%E9%A1%B9%E7%9B%AE%E7%BA%A7%E6%8C%87%E4%BB%A4)
 
 ### Multiple Projects
 
-Different projects can have different `AGENTAO.md` files:
-
-```
-project-a/
-├── AGENTAO.md    # Instructions for project A
-└── ...
-
-project-b/
-├── AGENTAO.md    # Different instructions for project B
-└── ...
-```
-
-The agent loads the instructions from the current working directory.
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#different-agentao-md-per-business-line) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#%E4%B8%BA%E4%B8%8D%E5%90%8C%E4%B8%9A%E5%8A%A1%E9%85%8D%E7%BD%AE%E4%B8%8D%E5%90%8C-agentao-md)
 
 ## Best Practices
 
-1. **Keep It Focused**: Include essential project information only
-2. **Update Regularly**: Keep instructions current as project evolves
-3. **Be Specific**: Provide concrete examples and patterns
-4. **Organize Clearly**: Use headers and sections for easy reference
-5. **Include Examples**: Show code examples for common patterns
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-project-instructions) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#_1-agentao-md-%E2%80%94-%E9%A1%B9%E7%9B%AE%E7%BA%A7%E6%8C%87%E4%BB%A4)
 
 ## Logging
 
-When `AGENTAO.md` is loaded, you'll see a log entry:
-```
-INFO: Loaded project instructions from /path/to/AGENTAO.md
-```
-
-Check `agentao.log` to verify the file was loaded successfully.
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#when-the-instructions-do-not-take-effect) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#%E6%8C%87%E4%BB%A4%E6%B2%A1%E6%9C%89%E7%94%9F%E6%95%88%E6%97%B6)
 
 ## Compatibility
 
-- **No Breaking Changes**: Existing setups without `AGENTAO.md` continue to work
-- **Optional Feature**: File is completely optional
-- **No Configuration Needed**: Works automatically when file exists
+Removed: it only said the file is optional, which §1 states.
 
 ## Comparison with CLAUDE.md
 
-| Feature | CLAUDE.md | AGENTAO.md |
-|---------|-----------|--------------|
-| Purpose | General instructions for any codebase | Project-specific Agentao instructions |
-| Read by | Claude Code (external tool) | Agentao itself |
-| Scope | Affects all Claude Code interactions | Affects Agentao sessions only |
-| Use case | General coding conventions | Agentao-specific workflows |
-
-Both files can coexist:
-- `CLAUDE.md` - For general project instructions (read by Claude Code)
-- `AGENTAO.md` - For Agentao-specific workflows and patterns
+Removed: Agentao does not read `CLAUDE.md`.
 
 ## Future Enhancements
 
-Potential improvements:
-- Support for `.agentao/` directory with multiple instruction files
-- Template system for common project types
-- Per-user override files (`.agentao.local.md`)
-- Validation and linting for instruction files
-- Web UI for editing instructions
+Removed: no planned work is tracked here.
 
 ## Troubleshooting
 
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#when-the-instructions-do-not-take-effect) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#%E6%8C%87%E4%BB%A4%E6%B2%A1%E6%9C%89%E7%94%9F%E6%95%88%E6%97%B6)
+
 ### Instructions Not Loading
 
-1. **Check file location**: Must be in current working directory
-2. **Check file name**: Must be exactly `AGENTAO.md` (case-sensitive)
-3. **Check logs**: Look for "Loaded project instructions" in `agentao.log`
-4. **Check permissions**: Ensure file is readable
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#when-the-instructions-do-not-take-effect) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#%E6%8C%87%E4%BB%A4%E6%B2%A1%E6%9C%89%E7%94%9F%E6%95%88%E6%97%B6)
 
 ### File Found But Not Applied
 
-1. **Verify system prompt**: Check that instructions appear in system prompt
-2. **Check encoding**: File should be UTF-8 encoded
-3. **Check content**: Ensure file isn't empty
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#when-the-instructions-do-not-take-effect) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#%E6%8C%87%E4%BB%A4%E6%B2%A1%E6%9C%89%E7%94%9F%E6%95%88%E6%97%B6)
 
 ### Debugging
 
-View the system prompt to verify instructions are loaded:
-```python
-from pathlib import Path
-from agentao.embedding import build_from_environment
-agent = build_from_environment(working_directory=Path.cwd())
-print(agent._build_system_prompt())
-```
+Moved to [English](https://agentao.cn/en/part-5/6-system-prompt#inspect-the-system-prompt) · [中文](https://agentao.cn/zh/part-5/6-system-prompt#%E9%AA%8C%E8%AF%81%E7%B3%BB%E7%BB%9F%E6%8F%90%E7%A4%BA)
 
 ## Contributing
 
-If you have suggestions for improving this feature:
-1. Test the change with `test_agentao_md.py`
-2. Update documentation
-3. Submit a pull request
+Removed: contribution notes are in the repository README.
 
 ## Related Files
 
-- `AGENTAO.md` - Example project instructions for this codebase
-- `test_agentao_md.py` - Test suite for this feature
-- `agentao/agent.py` - Implementation
-- `README.md` - Updated with feature documentation
-
----
-
-**Feature Status**: ✅ Implemented and Tested
-**Version**: Added in 0.1.0
-**Last Updated**: 2026-02-11
+Removed: source links are in §1.

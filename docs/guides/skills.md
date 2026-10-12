@@ -1,515 +1,147 @@
 # Skills System Guide
 
+This guide moved into the developer guide: **[5.2 · Skills](https://agentao.cn/en/part-5/2-skills)** ([中文](https://agentao.cn/zh/part-5/2-skills)) for authoring and hosts, and **[CLI 5 · Skills & Crystallize](https://agentao.cn/en/cli/5-skills-crystallize)** ([中文](https://agentao.cn/zh/cli/5-skills-crystallize)) for `/skills` and `agentao skill install`. The headings below are kept so that old links still land on the right section.
+
 ## Overview
 
-Agentao dynamically loads skills from the `skills` directory. Each skill is defined in its own subdirectory with a `SKILL.md` file.
+Moved to [English](https://agentao.cn/en/part-5/2-skills#skill-shape) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%8A%80%E8%83%BD%E7%9A%84%E5%BD%A2%E6%80%81)
 
 ## How Skills Are Loaded
 
-1. **Skills Directory**: `<project-root>/skills/`
-2. **Scan Subdirectories**: Each subdirectory represents one skill
-3. **Read SKILL.md**: Each subdirectory must contain a `SKILL.md` file
-4. **Parse Metadata**: Extract name and description from YAML frontmatter
-5. **Make Available**: Skills are automatically available in the CLI
+Moved to [English](https://agentao.cn/en/part-5/2-skills#three-layer-directory-search) · [中文](https://agentao.cn/zh/part-5/2-skills#%E4%B8%89%E5%B1%82%E7%9B%AE%E5%BD%95%E6%90%9C%E7%B4%A2%E9%A1%BA%E5%BA%8F)
 
 ## Enabling and Disabling Skills
 
-A discovered skill can be switched off without deleting it:
-
-```bash
-/skills disable <name>     # persistent — survives restart
-/skills enable <name>      # reverse it
-/skills                    # list, including a Disabled section
-```
-
-The state lives in `.agentao/skills_config.json` under `disabled_skills`, so
-it applies to every future session in that project.
-
-**Disable is not deactivate.** `/skills deactivate` drops a skill out of the
-current session's prompt; the skill is still there and can be activated again.
-`disable` is the stronger statement: the skill does not load, does not appear
-in the catalogue the model is shown, and — since 0.4.24 — cannot be activated
-by name either, by the model's `activate_skill` tool, by `/skills activate`, by
-a session restore, or by a sub-agent that inherited the catalogue. Before
-0.4.24 the name was merely hidden, and activating it directly still worked.
-A sub-agent copies the disabled set when it starts, so a `/skills disable`
-made while one is running applies to the next sub-agent, not to that one.
-
-**A disable is never pruned by a scan.** A reload cannot tell "this skill was
-deleted" from "this skill is not discoverable right now" — a project
-`.agentao/skills` on an unmounted share, a directory renamed mid-session — so
-`/skills reload` (and `/crystallize`, which calls it) leaves the disabled set
-alone. The accepted cost is that a name can outlive the skill it disabled;
-`/skills` lists those under **Disabled, not found by the last scan**, and
-`/skills enable <name>` clears such a name whether or not the skill is
-currently present.
-
-**The file is safe to hand-edit and safe to share between processes.** Each
-`/skills disable` / `/skills enable` is a read-modify-write of that one name,
-with the read and the write inside one lock, swapped in via a temp file. Every
-other disabled name and every other key in the file survives, including ones
-another agentao process wrote after this one started. The write path parses
-strictly: malformed JSON, a non-array `disabled_skills`, or a non-string entry
-in it refuses the write and reports the path, rather than writing back a
-lenient reading that would delete the names the file holds.
+Moved to [English](https://agentao.cn/en/part-5/2-skills#disabling-a-skill) · [中文](https://agentao.cn/zh/part-5/2-skills#%E7%A6%81%E7%94%A8%E4%B8%80%E4%B8%AA%E6%8A%80%E8%83%BD)
 
 ## Current Skills
 
-✅ **17 skills loaded successfully:**
-
-- algorithmic-art
-- brand-guidelines
-- canvas-design
-- doc-coauthoring
-- docx
-- frontend-design
-- internal-comms
-- mcp-builder
-- pdf
-- pptx
-- research-wbs-review
-- skill-creator
-- slack-gif-creator
-- theme-factory
-- web-artifacts-builder
-- webapp-testing
-- xlsx
+Removed: the list of 17 bundled skills was out of date. Only `skill-creator` ships now.
 
 ## SKILL.md Format
 
-Each `SKILL.md` file should follow this structure:
-
-```markdown
----
-name: skill-name
-description: Brief description of what this skill does and when to use it
-license: Optional license information
----
-
-# Skill Title
-
-Main documentation content goes here...
-
-## Sections
-
-- Overview
-- Usage examples
-- API reference
-- etc.
-```
+Moved to [English](https://agentao.cn/en/part-5/2-skills#skill-md-format) · [中文](https://agentao.cn/zh/part-5/2-skills#skill-md-%E6%A0%BC%E5%BC%8F)
 
 ### Required Fields
 
-- **name**: Unique identifier for the skill (lowercase with hyphens)
-- **description**: Detailed description of when to trigger and use this skill
+Moved to [English](https://agentao.cn/en/part-5/2-skills#yaml-frontmatter) · [中文](https://agentao.cn/zh/part-5/2-skills#yaml-frontmatter)
 
 ### Optional Fields
 
-- **license**: License information
-- Any other metadata you need
+Moved to [English](https://agentao.cn/en/part-5/2-skills#yaml-frontmatter) · [中文](https://agentao.cn/zh/part-5/2-skills#yaml-frontmatter)
 
 ## Adding a New Skill
 
+Moved to [English](https://agentao.cn/en/part-5/2-skills#skill-shape) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%8A%80%E8%83%BD%E7%9A%84%E5%BD%A2%E6%80%81)
+
 ### Method 1: Create from Scratch
 
-1. Create a new directory in `skills/`:
-   ```bash
-   mkdir skills/my-new-skill
-   ```
-
-2. Create `SKILL.md` file:
-   ```bash
-   touch skills/my-new-skill/SKILL.md
-   ```
-
-3. Add content following the format above:
-   ```markdown
-   ---
-   name: my-new-skill
-   description: Use this skill when...
-   ---
-
-   # My New Skill
-
-   ## Overview
-   This skill provides...
-   ```
-
-4. Reload (restart Agentao or use reload feature)
+Moved to [English](https://agentao.cn/en/part-5/2-skills#skill-shape) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%8A%80%E8%83%BD%E7%9A%84%E5%BD%A2%E6%80%81)
 
 ### Method 2: Copy from Template
 
-1. Copy an existing skill directory:
-   ```bash
-   cp -r skills/pdf skills/my-new-skill
-   ```
-
-2. Edit `SKILL.md` to match your new skill
-
-3. Update the name and description in the frontmatter
+Moved to [English](https://agentao.cn/en/cli/5-skills-crystallize#skill-gallery-in-this-repo) · [中文](https://agentao.cn/zh/cli/5-skills-crystallize#%E6%9C%AC%E4%BB%93%E8%87%AA%E5%B8%A6%E7%9A%84-skill-gallery)
 
 ## Installing Anthropic Official Claude Code Skills
 
-Anthropic publishes the official Claude Code skills in
-[`anthropics/skills`](https://github.com/anthropics/skills). Agentao can install
-a single skill from a GitHub repository subdirectory with:
-
-```bash
-agentao skill install owner/repo:path/to/skill
-```
-
-To install the official document and documentation co-authoring skills into the
-current project:
-
-```bash
-agentao skill install anthropics/skills:skills/pptx
-agentao skill install anthropics/skills:skills/docx
-agentao skill install anthropics/skills:skills/xlsx
-agentao skill install anthropics/skills:skills/pdf
-agentao skill install anthropics/skills:skills/doc-coauthoring
-```
-
-By default, Agentao installs into the current project's managed skill directory:
-
-```text
-<project-root>/.agentao/skills/
-```
-
-Use `--scope global` if you want the skills available across projects:
-
-```bash
-agentao skill install anthropics/skills:skills/pdf --scope global
-```
-
-Verify that Agentao can discover them:
-
-```bash
-agentao skill list
-```
-
-Expected skill names:
-
-- `pptx` - PowerPoint presentations, decks, and slides
-- `docx` - Word documents
-- `xlsx` - spreadsheets
-- `pdf` - PDF workflows
-- `doc-coauthoring` - structured documentation co-authoring
-
-These skills may rely on external tools such as LibreOffice, Poppler, Node
-packages, or Python packages. Agentao installs the skill instructions; runtime
-dependencies are documented inside each skill's `SKILL.md` and are not installed
-automatically.
-
-To pin a branch, tag, or commit:
-
-```bash
-agentao skill install anthropics/skills:skills/pdf@main
-```
-
-Managed installs can be updated later:
-
-```bash
-agentao skill update pdf
-agentao skill update --all
-```
-
-Managed installs are recorded in `skills_registry.json` (`.agentao/` for the
-project scope, `~/.agentao/` for global). If that file is damaged, skill
-commands warn and treat it as empty, but install, update and remove refuse to
-overwrite it, so the records in it are never lost by accident. Fix the file or
-move it aside to continue. A single unusable entry is skipped with a warning
-and kept as is.
+Moved to [English](https://agentao.cn/en/cli/5-skills-crystallize#installing-skills-from-github) · [中文](https://agentao.cn/zh/cli/5-skills-crystallize#%E4%BB%8E-github-%E5%AE%89%E8%A3%85-skill)
 
 ## Using Skills in Agentao
 
+Moved to [English](https://agentao.cn/en/cli/5-skills-crystallize#skills-%E2%80%94-list-activate-deactivate-reload) · [中文](https://agentao.cn/zh/cli/5-skills-crystallize#skills-%E2%80%94-%E5%88%97%E3%80%81%E6%BF%80%E6%B4%BB%E3%80%81%E5%81%9C%E7%94%A8%E3%80%81reload)
+
 ### List Available Skills
 
-```
-You: /skills
-```
-
-This shows all loaded skills with their descriptions.
+Moved to [English](https://agentao.cn/en/cli/5-skills-crystallize#skills-%E2%80%94-list-activate-deactivate-reload) · [中文](https://agentao.cn/zh/cli/5-skills-crystallize#skills-%E2%80%94-%E5%88%97%E3%80%81%E6%BF%80%E6%B4%BB%E3%80%81%E5%81%9C%E7%94%A8%E3%80%81reload)
 
 ### Activate a Skill
 
-```
-You: Activate the pdf skill to help me work with PDFs
-```
-
-The agent will use the `activate_skill` tool automatically.
-
-Or explicitly, then ask for the task in your next message:
-
-```
-You: /skills activate pdf
-You: I need to merge multiple PDF files
-```
+Moved to [English](https://agentao.cn/en/cli/5-skills-crystallize#when-to-manually-activate) · [中文](https://agentao.cn/zh/cli/5-skills-crystallize#%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E6%89%8B%E5%8A%A8%E6%BF%80%E6%B4%BB)
 
 ### Check Active Skills
 
-```
-You: /status
-```
-
-Shows conversation status including active skills.
+Moved to [English](https://agentao.cn/en/cli/5-skills-crystallize#skills-%E2%80%94-list-activate-deactivate-reload) · [中文](https://agentao.cn/zh/cli/5-skills-crystallize#skills-%E2%80%94-%E5%88%97%E3%80%81%E6%BF%80%E6%B4%BB%E3%80%81%E5%81%9C%E7%94%A8%E3%80%81reload)
 
 ## Skills from MCP Servers
 
-An MCP server can serve skills too, through the MCP Skills extension. Turn it on per server in `.agentao/mcp.json`:
-
-```json
-{ "mcpServers": { "docs": { "url": "https://docs.example/mcp", "skills": true } } }
-```
-
-Such a skill is listed by `/skills` under its server and named `mcp:<server>:<SKILL.md URI>`, for example `mcp:docs:skill://pdf-processing/SKILL.md`. The `mcp:` prefix is reserved: a local or plugin skill with a name that starts with it is not loaded.
-
-What is different from a local skill:
-
-- **You approve it.** The first activation in a session asks you, showing the server, the description, and the file count and size. Approval lasts for the session and binds to the files the server listed. If the server later changes them, you are asked again.
-- **It is verified.** `SKILL.md` and every file read later must match the size, SHA-256 digest and frontmatter the server published, or they are not used.
-- **Its files stay on the server.** The model reads them with `read_skill_file`, never from disk.
-- **It tightens permissions.** From the first MCP skill loaded until `/clear`, shell commands, sub-agents that can run shell commands, and resource reads from other servers ask first, even in `full-access`.
-
-Requirements and limits: mcp 2.x, a server on protocol 2026-07-28 or later, at most 512 files and 16 MiB per skill, and a `SKILL.md` of at most 100,000 bytes (an active skill's `SKILL.md` is sent with every request; put long material in a supporting file, which `read_skill_file` reads in pages). `"dynamic"` skills are shown as unavailable. See the `skills` key in `docs/reference/configuration.md`, and `docs/design/mcp-skills.md`.
+Moved to [English](https://agentao.cn/en/cli/5-skills-crystallize#skills-from-mcp-servers) · [中文](https://agentao.cn/zh/cli/5-skills-crystallize#%E6%9D%A5%E8%87%AA-mcp-server-%E7%9A%84-skill)
 
 ## Skill Structure Best Practices
 
+Moved to [English](https://agentao.cn/en/part-5/2-skills#three-rules-for-a-good-skill) · [中文](https://agentao.cn/zh/part-5/2-skills#%E5%86%99%E4%B8%80%E4%B8%AA%E5%A5%BD%E6%8A%80%E8%83%BD%E7%9A%84-3-%E6%9D%A1%E5%8E%9F%E5%88%99)
+
 ### File Organization
 
-```
-skills/
-  my-skill/
-    ├── SKILL.md          # Main documentation (required)
-    ├── examples/         # Usage examples (optional)
-    ├── templates/        # Templates or samples (optional)
-    └── scripts/          # Helper scripts (optional)
-```
-
-On activation, the agent is told the skill's directory and that relative
-paths inside SKILL.md (e.g. `scripts/foo.py`) resolve against that
-directory rather than the agent's current working directory — the skill is
-usually installed under `~/.agentao/skills/` or `.agentao/skills/`, not in
-the cwd. The activation message also enumerates resource files by absolute
-path: `references/` and `assets/` (`*.md`), and helper files under
-`scripts/` (hidden files and caches such as `__pycache__` are skipped, and
-very long listings are truncated). Skill authors therefore don't need to
-hardcode absolute paths; plain relative references work from any cwd.
+Moved to [English](https://agentao.cn/en/part-5/2-skills#on-demand-references) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%8C%89%E9%9C%80%E5%8F%82%E8%80%83%E7%9B%AE%E5%BD%95)
 
 ### SKILL.md Content
 
-1. **Clear Trigger Description**: Explain when to use this skill
-2. **Concrete Examples**: Provide real-world usage examples
-3. **API Reference**: Document functions, commands, or tools
-4. **Best Practices**: Share tips and common patterns
-5. **Troubleshooting**: Address common issues
+Moved to [English](https://agentao.cn/en/part-5/2-skills#three-rules-for-a-good-skill) · [中文](https://agentao.cn/zh/part-5/2-skills#%E5%86%99%E4%B8%80%E4%B8%AA%E5%A5%BD%E6%8A%80%E8%83%BD%E7%9A%84-3-%E6%9D%A1%E5%8E%9F%E5%88%99)
 
 ### Example Structure
 
-```markdown
----
-name: my-skill
-description: Detailed trigger description explaining when to activate this skill...
----
-
-# Skill Title
-
-## Overview
-Brief introduction to what this skill does.
-
-## Quick Start
-```
-# Quick example
-command or code here
-```
-
-## Common Tasks
-
-### Task 1
-Step-by-step guide...
-
-### Task 2
-Another common use case...
-
-## API Reference
-Detailed reference...
-
-## Best Practices
-- Tip 1
-- Tip 2
-
-## Examples
-Real-world examples...
-
-## Troubleshooting
-Common issues and solutions...
-```
+Moved to [English](https://agentao.cn/en/part-5/2-skills#example-code-review-skill-for-an-engineering-team) · [中文](https://agentao.cn/zh/part-5/2-skills#%E7%A4%BA%E4%BE%8B-%E7%BB%99%E5%B7%A5%E7%A8%8B%E5%9B%A2%E9%98%9F%E7%9A%84-%E4%BB%A3%E7%A0%81%E5%AE%A1%E6%9F%A5-%E6%8A%80%E8%83%BD)
 
 ## Programmatic Access
 
+Moved to [English](https://agentao.cn/en/part-5/2-skills#skillmanager-api) · [中文](https://agentao.cn/zh/part-5/2-skills#skillmanager-%E6%8E%A5%E5%8F%A3)
+
 ### In Python Code
 
-```python
-from agentao.skills import SkillManager
-
-# Initialize with default location
-manager = SkillManager()
-
-# Or specify custom location
-manager = SkillManager(skills_dir="/path/to/skills")
-
-# List skills
-skills = manager.list_available_skills()
-
-# Get skill info
-info = manager.get_skill_info("pdf")
-print(info['title'])
-print(info['description'])
-print(info['path'])
-
-# Read full content
-content = manager.get_skill_content("pdf")
-
-# Activate skill
-result = manager.activate_skill("pdf", "Merge PDF files")
-
-# Reload skills (after adding new ones)
-manager.reload_skills()
-```
+Moved to [English](https://agentao.cn/en/part-5/2-skills#skillmanager-api) · [中文](https://agentao.cn/zh/part-5/2-skills#skillmanager-%E6%8E%A5%E5%8F%A3)
 
 ## Skill Discovery
 
-Skills are discovered by:
-
-1. Scanning all directories in the skills folder
-2. Looking for `SKILL.md` files
-3. Parsing YAML frontmatter
-4. Extracting metadata
-
-**Note**: Hidden directories (starting with `.`) are ignored.
+Moved to [English](https://agentao.cn/en/part-5/2-skills#three-layer-directory-search) · [中文](https://agentao.cn/zh/part-5/2-skills#%E4%B8%89%E5%B1%82%E7%9B%AE%E5%BD%95%E6%90%9C%E7%B4%A2%E9%A1%BA%E5%BA%8F)
 
 ## Testing Skills
 
-Test your skills with the provided test script:
-
-```bash
-uv run python test_skills.py
-```
-
-This will:
-- List all loaded skills
-- Show metadata for each skill
-- Test skill activation
-- Verify content retrieval
+Moved to [English](https://agentao.cn/en/part-5/2-skills#debugging-is-the-skill-actually-in-the-prompt) · [中文](https://agentao.cn/zh/part-5/2-skills#%E8%B0%83%E8%AF%95%E6%8A%80%E8%83%BD-%E7%9C%8B%E5%AE%83%E5%88%B0%E5%BA%95%E8%BF%9B%E6%B2%A1%E8%BF%9B%E7%B3%BB%E7%BB%9F%E6%8F%90%E7%A4%BA)
 
 ## Troubleshooting
 
+Moved to [English](https://agentao.cn/en/part-5/2-skills#troubleshooting) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%8E%92%E6%9F%A5)
+
 ### Skill Not Loading
 
-1. **Check directory structure**: Ensure `SKILL.md` exists
-2. **Verify frontmatter**: Check YAML syntax (name and description)
-3. **Check file encoding**: Use UTF-8 encoding
-4. **Restart Agentao**: Skills are loaded at startup
+Moved to [English](https://agentao.cn/en/part-5/2-skills#troubleshooting) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%8E%92%E6%9F%A5)
 
 ### Skill Not Activating
 
-1. **Check name**: Use exact name from `skills` command
-2. **Case sensitivity**: Skill names are case-sensitive
-3. **Spelling**: Verify correct spelling
+Moved to [English](https://agentao.cn/en/part-5/2-skills#troubleshooting) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%8E%92%E6%9F%A5)
 
 ### Invalid Frontmatter
 
-If frontmatter is invalid:
-- Ensure it starts and ends with `---`
-- Check YAML syntax (key: value)
-- Remove quotes from strings unless needed
-- Use proper indentation
+Moved to [English](https://agentao.cn/en/part-5/2-skills#troubleshooting) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%8E%92%E6%9F%A5)
 
 ## Advanced Features
 
+Moved to [English](https://agentao.cn/en/part-5/2-skills#troubleshooting) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%8E%92%E6%9F%A5)
+
 ### Multiple Skill Versions
 
-You can have different versions:
-
-```
-skills/
-  pdf-v1/
-    SKILL.md
-  pdf-v2/
-    SKILL.md
-```
-
-Name them differently in frontmatter.
+Moved to [English](https://agentao.cn/en/part-5/2-skills#troubleshooting) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%8E%92%E6%9F%A5)
 
 ### Skill Dependencies
 
-Reference other skills in your documentation:
-
-```markdown
-## Related Skills
-
-This skill works well with:
-- [xlsx](#) for data processing
-- [docx](#) for reports
-```
+Moved to [English](https://agentao.cn/en/part-5/2-skills#troubleshooting) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%8E%92%E6%9F%A5)
 
 ### Dynamic Content
 
-Skills can include:
-- Code examples with syntax highlighting
-- Links to external resources
-- Images and diagrams (in subdirectories)
-- Sample files and templates
+Moved to [English](https://agentao.cn/en/part-5/2-skills#troubleshooting) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%8E%92%E6%9F%A5)
 
 ## CLI Commands
 
-All commands start with `/`:
-
-| Command | Description |
-|---------|-------------|
-| `/skills` | List all available and active skills |
-| `/status` | Show conversation and skill status |
-| `/skills activate <name>` | Activate a skill for this session |
-| `/skills deactivate <name>` | Deactivate a skill for this session |
-| `/help` | Show general help including skills info |
-| `/memory` | Show saved memories |
-| `/clear` | Clear conversation history and all memories (active skills are deactivated) |
-| `/new` | Start a fresh conversation, keeping memories (active skills are deactivated) |
-| `/exit` or `/quit` | Exit the program |
+Moved to [English](https://agentao.cn/en/cli/5-skills-crystallize#skills-%E2%80%94-list-activate-deactivate-reload) · [中文](https://agentao.cn/zh/cli/5-skills-crystallize#skills-%E2%80%94-%E5%88%97%E3%80%81%E6%BF%80%E6%B4%BB%E3%80%81%E5%81%9C%E7%94%A8%E3%80%81reload)
 
 ## API Integration
 
-Skills integrate with the Agentao through:
-
-1. **activate_skill tool**: LLM can call this tool
-2. **Skills context**, in two places. The available-skills **catalogue** is in
-   the system message (`_build_system_prompt()`); it lists every enabled
-   skill, active ones included, so activating a skill does not change it and
-   the provider's prompt cache survives. The **bodies of active skills** ride
-   the per-request volatile tail — `SystemPromptBuilder.build_volatile_tail()`
-   (stage 0a, 0.4.26) — so reading them out of `_build_system_prompt()` alone
-   finds nothing. (In 0.4.26 the catalogue was in the tail too; 0.4.27 moved
-   it back.) An active skill's body is re-sent uncached on every request, so
-   `/skills deactivate <name>` when you are done with one.
-3. **Documentation access**: LLM can read full SKILL.md content
+Moved to [English](https://agentao.cn/en/part-5/2-skills#activation-flow) · [中文](https://agentao.cn/zh/part-5/2-skills#%E6%BF%80%E6%B4%BB%E6%9C%BA%E5%88%B6)
 
 ## Best Practices for Skill Development
 
-1. **Clear triggers**: Make it obvious when to use the skill
-2. **Comprehensive docs**: Include examples and references
-3. **Test thoroughly**: Use test_skills.py before deployment
-4. **Version control**: Track changes to skills
-5. **Keep updated**: Maintain docs as skills evolve
+Moved to [English](https://agentao.cn/en/part-5/2-skills#three-rules-for-a-good-skill) · [中文](https://agentao.cn/zh/part-5/2-skills#%E5%86%99%E4%B8%80%E4%B8%AA%E5%A5%BD%E6%8A%80%E8%83%BD%E7%9A%84-3-%E6%9D%A1%E5%8E%9F%E5%88%99)
 
 ## Examples
 
-See existing skills for reference:
-- `pdf/` - Comprehensive PDF processing
-- `xlsx/` - Excel and spreadsheet operations
-- `docx/` - Word document handling
-- `pptx/` - PowerPoint presentations
-
----
-
-**Last Updated**: 2026-02-09
-**Skills Count**: 17
-**Status**: ✅ Production Ready
+Moved to [English](https://agentao.cn/en/cli/5-skills-crystallize#skill-gallery-in-this-repo) · [中文](https://agentao.cn/zh/cli/5-skills-crystallize#%E6%9C%AC%E4%BB%93%E8%87%AA%E5%B8%A6%E7%9A%84-skill-gallery)
