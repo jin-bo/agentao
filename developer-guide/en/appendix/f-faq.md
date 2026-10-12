@@ -51,7 +51,7 @@ Three likely causes:
 Enforce a hard limit at the host:
 
 ```python
-reply = await asyncio.wait_for(asyncio.to_thread(agent.chat, msg), timeout=120)
+reply = await asyncio.wait_for(agent.arun(msg), timeout=120)
 ```
 
 ### "Why does my tool get called with weird paths?"

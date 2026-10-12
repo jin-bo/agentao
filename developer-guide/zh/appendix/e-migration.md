@@ -43,7 +43,7 @@
 ### 一致的部分
 
 - **对话循环** —— AG 的"agent 说话，工具被调，结果返回"与 Agentao 的内循环一致
-- **异步友好** —— 两者都能在 `asyncio.to_thread` / 事件循环下工作
+- **异步友好** —— 两者都能在事件循环里运行。Agentao 用 `await agent.arun()` 或 `agent.astream()`
 
 ### 不同的部分
 

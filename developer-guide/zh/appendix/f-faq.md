@@ -51,7 +51,7 @@ uv add 'agentao[all]'
 宿主侧硬兜底：
 
 ```python
-reply = await asyncio.wait_for(asyncio.to_thread(agent.chat, msg), timeout=120)
+reply = await asyncio.wait_for(agent.arun(msg), timeout=120)
 ```
 
 ### "我的工具拿到了奇怪的路径"

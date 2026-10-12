@@ -64,13 +64,9 @@ import asyncio
 
 async def chat_with_timeout(agent, msg, timeout_s: float = 120):
     try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(agent.chat, msg),
-            timeout=timeout_s,
-        )
+        # Cancelling the awaiting task cancels the turn's token (2.6.5)
+        return await asyncio.wait_for(agent.arun(msg), timeout=timeout_s)
     except asyncio.TimeoutError:
-        if agent._current_token:
-            agent._current_token.cancel("timeout")
         return "[Timeout: agent took too long]"
 ```
 
@@ -110,7 +106,7 @@ async def chat(req):
     workdir = Path(f"/tmp/ephemeral-{uuid.uuid4()}")
     try:
         async with Agentao(working_directory=workdir) as agent:
-            return await asyncio.to_thread(agent.chat, req.message)
+            return await agent.arun(req.message)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 ```

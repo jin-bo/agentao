@@ -43,7 +43,7 @@ If you've already built agents with another framework, the mental model of Agent
 ### What's the same
 
 - **Conversational loop** — AutoGen's "agent talks, tool is called, result returns" matches Agentao's inner loop.
-- **Async-friendly** — both are OK under `asyncio.to_thread` / event-loop integration.
+- **Async-friendly** — both run inside an event loop. In Agentao, use `await agent.arun()` or `agent.astream()`.
 
 ### What's different
 

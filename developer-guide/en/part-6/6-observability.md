@@ -412,6 +412,8 @@ async def chat(req: ChatRequest):
         return {"reply": reply}
 ```
 
+This example uses `asyncio.to_thread`, not `arun()`, for one reason. `to_thread` copies the caller's context into the worker thread, so the spans that `on_event` starts on the turn's thread (below) are children of `agent_chat`. `arun()` does not copy the context, so with `arun()` those spans start new traces. The cost is the one [2.3](/en/part-2/3-lifecycle#async-hosts-arun-and-the-turn-pool) describes: the turn holds a worker of the loop's default executor. If you use `arun()`, pass the parent to `start_span(context=...)` yourself.
+
 ### Inner spans: use the event stream, don't monkey-patch
 
 There is no need to wrap `LLMClient` or `Tool.execute` — the runtime already emits its lifecycle as events. Two entry points, different trade-offs:
