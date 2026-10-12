@@ -103,3 +103,38 @@ def test_plain_string_content_unaffected(client):
     assert "Content (11 chars):" in log_text
     assert "hello world" in log_text
     assert "multimodal" not in log_text
+
+
+def _log_text(c, log_file, messages):
+    c._log_request("req-t", {"model": "m", "messages": messages})
+    for handler in c.logger.handlers:
+        handler.flush()
+    return log_file.read_text(encoding="utf-8")
+
+
+def test_a_tool_result_is_logged_once(client):
+    c, log_file = client
+    result = "line-one of the tool result\nline-two"
+    log_text = _log_text(c, log_file, [
+        {"role": "system", "content": "sys"},
+        {"role": "tool", "tool_call_id": "call_7", "name": "read_file", "content": result},
+    ])
+
+    assert "Tool: read_file (call_id=call_7)" in log_text
+    assert log_text.count("line-one of the tool result") == 1
+    assert log_text.count("line-two") == 1
+
+
+def test_a_multimodal_tool_result_is_summarized_not_dumped(client):
+    c, log_file = client
+    blob = "B" * 5000
+    log_text = _log_text(c, log_file, [
+        {"role": "system", "content": "sys"},
+        {"role": "tool", "tool_call_id": "call_8", "name": "read_file", "content": [
+            {"type": "text", "text": "an image"},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{blob}"}},
+        ]},
+    ])
+
+    assert "Content (multimodal, 2 parts):" in log_text
+    assert blob not in log_text

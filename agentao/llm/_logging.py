@@ -136,6 +136,13 @@ class _LoggingMixin:
                 continue
 
             self.logger.info(f"  Message {abs_index} [{role}]:")
+            if role == 'tool':
+                # The content below is the result: logged once, by the same
+                # path that summarizes a multimodal result's inline images.
+                self.logger.info(
+                    f"    Tool: {msg.get('name', 'unknown')} "
+                    f"(call_id={msg.get('tool_call_id', 'N/A')})"
+                )
 
             # Log full content as single write (only first line gets timestamp prefix)
             if isinstance(content, str):
@@ -195,15 +202,6 @@ class _LoggingMixin:
                     if tc.get('function', {}).get('thought_signature') is not None:
                         sig = tc['function']['thought_signature']
                         self.logger.info(f"        Thought Signature ({len(str(sig))} chars): [preserved]")
-
-            # Log tool results if present
-            if msg.get('role') == 'tool':
-                tool_name = msg.get('name', 'unknown')
-                tool_call_id = msg.get('tool_call_id', 'N/A')
-                result = msg.get('content', '')
-                self.logger.info(f"    Tool: {tool_name} (call_id={tool_call_id})\n" +
-                                 f"    Result ({len(result)} chars):\n" +
-                                 "\n".join(f"      {line}" for line in str(result).split('\n')))
 
         # Log tools if present
         tools = kwargs.get('tools')
