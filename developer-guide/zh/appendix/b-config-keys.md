@@ -101,7 +101,7 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
 | `url` | string | URL 传输的服务器 URL（Streamable HTTP 或 SSE） |
 | `headers` | object | URL 传输的请求头（`$VAR` 展开） |
 | `trust` | bool | 该服务器的工具跳过确认。当 `true` 时，server 的 `ToolAnnotations`（`readOnlyHint`、`destructiveHint`）也会被读取；`destructiveHint=true` 会重新引入对该 op 的确认。`trust` 为 `false` 时注解被完全忽略。 |
-| `timeout` | number (秒) | 单次工具调用超时 |
+| `timeout` | number（秒）或 `{startup, request}` | 写数字限制连接和握手（默认 60）；`request` 限制每次工具调用（无默认） |
 
 支持三种 MCP 传输：stdio、Streamable HTTP、SSE。裸 `url` 默认使用 **Streamable HTTP**；旧版 SSE 端点需显式设置 `"type": "sse"`。
 

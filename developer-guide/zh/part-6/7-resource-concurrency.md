@@ -90,11 +90,13 @@ class ApiCallTool(Tool):
             return "Request timed out"
 ```
 
-MCP 工具的超时从 `timeout` 字段：
+MCP 工具调用的上限来自 `timeout.request`。`timeout` 写数字只限制连接和握手，管不到调用：
 
 ```json
-{"mcpServers": {"x": {"command": "...", "timeout": 30}}}
+{"mcpServers": {"x": {"command": "...", "timeout": {"startup": 60, "request": 30}}}}
 ```
+
+超过 `request` 的调用报错失败。server 照常运行，这次调用已经开始的工作也可能还在继续。
 
 ## 并发：会话池
 

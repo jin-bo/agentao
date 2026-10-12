@@ -110,8 +110,8 @@ Install the MCP extras. On Linux you may also need a JS runtime if the MCP serve
 
 Three layers:
 
-1. Per-tool timeout in `mcp.json` (`"timeout": 30`)
-2. Transport default (~30s for stdio, ~60s for SSE)
+1. `timeout` in `mcp.json`. A number (`"timeout": 30`) bounds only connecting and the handshake, default 60 s. `{"startup": 60, "request": 30}` also bounds each tool call
+2. Without `request`, a tool call has no limit over stdio. Over SSE and Streamable HTTP it drops only after about 300 s with no data from the server
 3. Your wrapping `asyncio.wait_for`
 
 The tightest wins. See [Appendix B.3.1](./b-config-keys#b-3-1-mcp-json).

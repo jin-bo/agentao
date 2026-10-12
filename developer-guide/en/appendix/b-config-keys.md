@@ -101,7 +101,7 @@ JSON config files live in an `.agentao/` directory (project at `<working_directo
 | `url` | string | URL-transport server URL (Streamable HTTP or SSE) |
 | `headers` | object | URL-transport request headers (`$VAR` expanded) |
 | `trust` | bool | Skip confirmation prompt for tools from this server. When `true`, the server's `ToolAnnotations` (`readOnlyHint`, `destructiveHint`) are also consulted; `destructiveHint=true` re-introduces confirmation for that op. Hints are ignored entirely when `trust` is `false`. |
-| `timeout` | number (s) | Per-tool-call timeout |
+| `timeout` | number (s) or `{startup, request}` | A number bounds connecting and the handshake (default 60). `request` bounds each tool call (no default) |
 
 All three MCP transports are supported: stdio, Streamable HTTP, and SSE. A bare `url` defaults to **Streamable HTTP**; set `"type": "sse"` for a legacy SSE endpoint.
 

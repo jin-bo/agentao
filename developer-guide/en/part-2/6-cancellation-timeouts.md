@@ -174,9 +174,9 @@ If you're paying per token, `max_iterations=20-30` is a good default for a chat 
 Two other places you can bound work:
 
 - **Shell tool**: each command has an inactivity timeout, the tool's `timeout` argument (120 s by default). Any new output restarts the timer. On timeout the tool kills the command's whole process tree (`SIGKILL` to the process group; `taskkill /T` on Windows). See [6.2](/en/part-6/2-shell-sandbox).
-- **MCP request timeout**: each MCP server has a `timeout` field (default 60 s). See [5.3 MCP](/en/part-5/3-mcp).
+- **MCP timeouts**: a server's `timeout` set to a number bounds only connecting and the handshake (default 60 s). Tool calls have no limit unless you set `"timeout": {"startup": 60, "request": 30}`. When `request` expires, the call fails with an error; the server is not stopped, and work it already started may go on. See [5.3 MCP](/en/part-5/3-mcp).
 
-These are lower-layer hard kills — they complement, not replace, `CancellationToken`. A hung MCP server will still be killed by its own timeout regardless of whether the token fires.
+These limits work below the token and complement it. Only the shell timeout kills anything.
 
 ## 2.6.8 Checklist
 

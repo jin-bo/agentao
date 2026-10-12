@@ -90,11 +90,13 @@ class ApiCallTool(Tool):
             return "Request timed out"
 ```
 
-MCP tool timeout comes from the `timeout` field:
+An MCP tool call is bounded by `timeout.request`. A plain number in `timeout` bounds only connecting and the handshake, so it does not limit calls:
 
 ```json
-{"mcpServers": {"x": {"command": "...", "timeout": 30}}}
+{"mcpServers": {"x": {"command": "...", "timeout": {"startup": 60, "request": 30}}}}
 ```
+
+A call past `request` fails with an error. The server keeps running, and so may the work the call started.
 
 ## Concurrency: session pools
 

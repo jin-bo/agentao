@@ -96,7 +96,7 @@ agent = Agentao(
 | `args` | ❌ | 命令行参数列表 |
 | `env` | ❌ | 额外环境变量；支持 `$VAR` / `${VAR}` 从进程环境展开 |
 | `cwd` | ❌ | 子进程工作目录 |
-| `timeout` | ❌ | 初始化超时（秒），默认 60 |
+| `timeout` | ❌ | 写数字：连接和握手的时限（秒），默认 60，**不**限制工具调用。要同时限制每次调用，写 `{"startup": 60, "request": 30}`；`request` 没有默认值（[配置参考](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md)） |
 | `trust` | ❌ | 为 true 时跳过工具确认 |
 
 ### Streamable HTTP 传输（远程服务，裸 `url` 的默认）
@@ -106,7 +106,7 @@ agent = Agentao(
 | `url` | ✅ | Streamable HTTP endpoint URL |
 | `type` | ❌ | `"http"`（别名：`"streamable-http"` / `"streamable_http"`）；给裸 `url` 时这是默认值 |
 | `headers` | ❌ | HTTP 头；支持 `${VAR}` 展开 |
-| `timeout` | ❌ | 秒，默认 60 |
+| `timeout` | ❌ | 同 stdio |
 | `trust` | ❌ | 同上 |
 
 ### SSE 传输（远程服务，旧版）
@@ -116,7 +116,7 @@ agent = Agentao(
 | `url` | ✅ | SSE endpoint URL |
 | `type` | ✅ | 必须为 `"sse"`——SSE 是旧版传输（在 MCP 规范 2025-03-26 中已弃用）。裸 `url` 现在默认走 Streamable HTTP，所以 SSE **必须**显式选择。 |
 | `headers` | ❌ | HTTP 头；支持 `${VAR}` 展开 |
-| `timeout` | ❌ | 秒，默认 60 |
+| `timeout` | ❌ | 同 stdio |
 | `trust` | ❌ | 同上 |
 
 三种 transport 还都接受两个键，对应下文的两个功能：

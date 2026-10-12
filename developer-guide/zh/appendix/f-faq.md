@@ -110,8 +110,8 @@ agent.memory.clear(scope="project")
 
 三层：
 
-1. `mcp.json` 的单工具超时（`"timeout": 30`）
-2. 传输默认（stdio 约 30s，SSE 约 60s）
+1. `mcp.json` 的 `timeout`。写数字（`"timeout": 30`）只限制连接和握手，默认 60 秒；写 `{"startup": 60, "request": 30}` 才同时限制每次工具调用
+2. 不写 `request` 时，stdio 上的工具调用没有上限；SSE 和 Streamable HTTP 上要连续约 300 秒收不到 server 的数据才会断开
 3. 外层 `asyncio.wait_for`
 
 最严格那一层胜出。见 [附录 B.3.1](./b-config-keys#b-3-1-mcp-json)。
