@@ -21,13 +21,22 @@ def _make_agent():
         return Agentao(working_directory=Path.cwd())
 
 
+# The label ``chat_loop/_runner.py`` writes. These tests once checked a label
+# the runner never used ("Current Date and Time:"), so the "absent" half could
+# not fail.
+_DATE_LABEL = "Current Date/Time:"
+
+
 def test_date_not_in_system_prompt():
     """Date should no longer be in the system prompt (moved to user message)."""
     agent = _make_agent()
     system_prompt = agent._build_system_prompt()
 
-    assert "Current Date and Time:" not in system_prompt, (
+    assert _DATE_LABEL not in system_prompt, (
         "Date should NOT be in system prompt — it is now injected as <system-reminder> in user messages"
+    )
+    assert _DATE_LABEL not in (agent._build_volatile_tail() or ""), (
+        "Date should NOT be in the volatile tail — it is persisted in the user message"
     )
     print("✅ Date correctly absent from system prompt")
 
@@ -70,7 +79,7 @@ def test_date_with_project_instructions():
 
     system_prompt = agent._build_system_prompt()
 
-    assert "Current Date and Time:" not in system_prompt, (
+    assert _DATE_LABEL not in system_prompt, (
         "Date should NOT be in system prompt even with project instructions"
     )
     assert "=== Project Instructions ===" in system_prompt

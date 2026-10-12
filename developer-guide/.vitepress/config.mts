@@ -25,6 +25,7 @@ const zhSidebar = [
       { text: '10. 配置文件参考', link: '/zh/cli/10-config-reference' },
       { text: '11. 会话、子 Agent 与任务', link: '/zh/cli/11-sessions-agents' },
       { text: '12. 非交互入口', link: '/zh/cli/12-non-interactive' },
+      { text: '13. 长任务目标', link: '/zh/cli/13-goal' },
     ],
   },
   {
@@ -165,6 +166,7 @@ const enSidebar = [
       { text: '10. Configuration Reference', link: '/en/cli/10-config-reference' },
       { text: '11. Sessions, Agents & Tasks', link: '/en/cli/11-sessions-agents' },
       { text: '12. Non-Interactive Entry Points', link: '/en/cli/12-non-interactive' },
+      { text: '13. Long-Task Goals', link: '/en/cli/13-goal' },
     ],
   },
   {

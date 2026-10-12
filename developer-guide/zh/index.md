@@ -14,7 +14,7 @@ hero:
 features:
   - icon: 🖥️
     title: 我用的是终端 CLI
-    details: Slash 命令、plan 模式、子 agent、记忆、回放、非交互入口 — 终端侧的全部能力，12 章覆盖。
+    details: Slash 命令、plan 模式、子 agent、记忆、回放、非交互入口 — 终端侧的全部能力，13 章覆盖。
     link: /zh/cli/
     linkText: CLI 命令手册 →
   - icon: ⚡

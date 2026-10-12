@@ -1,5 +1,7 @@
 # funds-data-cleaning: Parallelism Architecture Analysis
 
+> **Historical note (2026-06-05, moved from `docs/guides/` on 2026-10-11).** Its premises no longer hold: sub-agents are not sequential any more (a tool batch runs on up to 8 workers, and `run_in_background` allows 6 background sub-agents at once by default), `agentao/agents/tools.py` is now a package, and `agentao -p` is a shim over `agentao run`. Keep it as a record of that analysis, not as current guidance.
+
 ## Summary
 
 The `funds-data-cleaning` SKILL uses `ThreadPoolExecutor(max_workers=3)` with `agentao -p` subprocesses for Steps 2/3/4. The generalist sub-agent (`agent_generalist`) **cannot improve efficiency** in this context.

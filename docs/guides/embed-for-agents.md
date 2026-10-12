@@ -632,7 +632,7 @@ at 3, injects a visible message) — that's for one extra nudge inside a single
 turn, not sustained pursuit. Full pattern + invariants:
 [developer-guide 4.8 Orchestration Continuation](../../developer-guide/en/part-4/8-orchestration-continuation.md).
 Agentao's own CLI `/goal` is the worked reference
-([guide](goal.md), `agentao/cli/input_loop.py::run_goal_continuation`).
+([CLI 13 · Long-task goals](../../developer-guide/en/cli/13-goal.md), `agentao/cli/input_loop.py::run_goal_continuation`).
 
 ---
 

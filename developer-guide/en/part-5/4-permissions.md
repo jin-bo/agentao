@@ -177,17 +177,39 @@ A single domain rule can list both `allowlist` and `blocklist` — a hit on eith
 
 The built-in WORKSPACE_WRITE preset already ships a reasonable set (see below).
 
+#### How the host is extracted
+
+The engine reads the URL from the `url` argument. Set `domain.url_arg` to read another argument. It takes the host from `urlparse(url).hostname` ([`_extract_domain`](https://github.com/jin-bo/agentao/blob/main/agentao/permissions.py)):
+
+- Matching ignores case. The port is dropped, so `docs.python.org:8443` matches `.docs.python.org`.
+- Userinfo is dropped. `https://github.com@evil.com/` has the host `evil.com`, not `github.com`.
+- A URL without a scheme is read as `https://`.
+- A URL with no host never matches a domain rule. The engine then tries the next rule.
+- An IP address is an exact pattern (no leading dot). `1.127.0.0.1` does not match `127.0.0.1`.
+
+The rule sees only the URL that the model passed. Redirect hops are checked later, by the URL policy at request time ([6.3 Layer 2](/en/part-6/3-network-ssrf#layer-2-·-http-client-behavior)).
+
+With the default WORKSPACE_WRITE rules:
+
+| Call | Decision | Why |
+|------|----------|-----|
+| `web_fetch https://docs.python.org/3/library/os.html` | ALLOW | Suffix match on `.docs.python.org` |
+| `web_fetch http://169.254.169.254/latest/meta-data` | DENY | Exact match in the blocklist |
+| `web_fetch https://example.com/api` | ASK | No domain rule matches. The catch-all `web_fetch` ask rule applies |
+
 ### `action`
 
 ```json
-{"action": "allow"}   // default if omitted
+{"action": "allow"}
 {"action": "deny"}
 {"action": "ask"}
 ```
 
+`action` is required, like `tool`. A rule without it fails validation (`PermissionRuleError`, or `PermissionConfigError` for a file). The engine does not fill in a default.
+
 ## Preset cheat sheet
 
-The WORKSPACE_WRITE preset (source `agentao/permissions.py:68-118`):
+The WORKSPACE_WRITE preset (source `agentao/permissions.py::_PRESET_RULES`):
 
 ```json
 [

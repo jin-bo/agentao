@@ -29,20 +29,99 @@ Agents are classic "long-tail bug" workloads — fine 90% of the time, then 10% 
 
 ### The built-in agentao.log
 
-Defaults to `<working_directory>/agentao.log`. It's **very thorough**:
+It is on by default, at `<working_directory>/agentao.log`. It's **very thorough**:
 
-- Every LLM request/response (full content — untruncated, but credential-shaped strings are redacted to `[REDACTED:<kind>]` on write — plus tokens, model)
-- Every tool call with args and result
-- MCP server start/stop
-- Plugin hook dispatch
-- Context compression triggers
+- Every LLM request and response in full, with the model, `finish_reason` and token usage. Content is not truncated, but credential-shaped strings become `[REDACTED:<kind>]` on write ([6.5](./5-secrets-injection#four-log-scrubbing)).
+- Every tool call with its arguments, and every tool result. They appear as messages in the request that follows them.
+- Everything the other `agentao.*` modules log at DEBUG and above: MCP connections, plugin hooks, compaction, retries.
+
+On the `anthropic-messages` and `openai-responses` wires, the log shows the conversation as Agentao holds it (OpenAI-shaped messages), not the translated request body.
+
+Size and location:
+
+- **Rotation is built in.** The handler is a `RotatingFileHandler` with 10 MB per file and 5 backups (`agentao.log.1` … `agentao.log.5`). So one working directory holds at most about 60 MB of log. Older records are deleted.
+- **A fallback exists.** If the file cannot be opened, Agentao writes to `~/.agentao/agentao.log` and prints the reason to stderr. If that fails too, it runs without a file.
+- Every line starts with `HH:MM:SS` (no date, no level, no logger name). A multi-line record has the time on its first line only.
 
 This is your most important **debugging tool**. In production:
 
 1. Mount it on a persistent volume (survives restarts)
-2. Rotate daily + keep 7–30 days
+2. Size the volume for the built-in rotation. For time-based retention, inject your own logger ([below](#take-over-agentao-s-logger)) and rotate in your stack.
 3. Scrub (see [6.5](./5-secrets-injection#four-log-scrubbing))
 4. Isolate per tenant (natural with `working_directory`)
+
+### Reading a request and its response
+
+Each model call writes one request block and one response block. Both carry the same `req_N` id. The counter belongs to the `LLMClient` and starts at `req_1`. A sub-agent builds its own client, so one file can hold `req_1` more than once. A retry of the same call does not write a new request block. An excerpt, with annotations:
+
+```text
+17:18:52 ================================================================================
+17:18:52 [req_2] LLM REQUEST                     ← 80 "=" above and below each header
+17:18:52 ================================================================================
+17:18:52 Model: gpt-5
+17:18:52 Temperature: (not sent)
+17:18:52 Max Tokens: 65536
+17:18:52 Extra Body: {'reasoning_effort': 'high', 'api_key': '***'}
+17:18:52 Messages (4 total, logging 2 new):     ← only messages since req_1
+17:18:52   Message 1 [system]:
+17:18:52     [system prompt unchanged: 9214 chars]  ← in full on first send, then a diff
+17:18:52   Message 3 [assistant]:
+17:18:52     Content: None
+17:18:52     Tool Calls: 1
+17:18:52       Tool Call 1: read_file (id=call_abc)
+          {
+                    "file_path": "main.py"
+          }
+17:18:52   Message 4 [tool]:
+17:18:52     Tool: read_file (call_id=call_abc)
+    Result (53 chars):
+      print('hi')
+      KEY=[REDACTED:openai_api_key]
+17:18:52 Tools (14 available, unchanged)        ← names listed only when the set changes
+17:18:53 ================================================================================
+17:18:53 [req_2] LLM RESPONSE
+17:18:53 ================================================================================
+17:18:53 Model: gpt-5
+17:18:53 Finish Reason: stop
+Token Usage:
+17:18:53   Prompt Tokens: 1400
+17:18:53   Completion Tokens: 6
+17:18:53   Total Tokens: 1406
+17:18:53 Assistant Response (13 chars):
+  It prints hi.
+```
+
+The logging is incremental. To rebuild a full conversation, read the blocks in order from the first request. Inline images are summarized by size and never dumped as base64. The layout is in [`llm/_logging.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/_logging.py).
+
+### Debugging with grep
+
+These recipes match the real line format:
+
+```bash
+# List every call, with line numbers
+grep -nE '\[req_[0-9]+\] LLM (REQUEST|RESPONSE)' agentao.log
+
+# Print one call, from its request up to the next request
+sed -n '/\[req_5\] LLM REQUEST/,/\[req_6\] LLM REQUEST/p' agentao.log
+
+# Sum the tokens (add the rotated files for a longer window)
+grep 'Total Tokens' agentao.log | awk '{sum += $NF} END {print sum}'
+
+# Find failed and retried calls (the lines carry no level, so grep ERROR finds nothing)
+grep -nE '\[req_[0-9]+\] .*(failed|retryable|mid-stream)' agentao.log
+```
+
+### When the log is missing or incomplete
+
+| Symptom | Likely cause |
+|---------|--------------|
+| No `agentao.log` | A `logger=` was injected, or the client was built with `log_file=None`. Or the directory is not writable: check stderr and `~/.agentao/agentao.log`. |
+| Another agent's records in this file, or none of yours | Several agents share one process. Records go to the newest open agent's file ([below](#several-agents-in-one-process)). |
+| The start of the session is gone | Rotation moved it to `agentao.log.1` … `.5`, or deleted it after 5 backups. |
+| A request shows only a few messages | Logging is incremental. The earlier messages are in earlier blocks. |
+| Records stop after `close()` | By design. A closed client's handler drops late records, so the host can delete the directory. |
+
+Records are written as they are logged. A crash does not lose the records written before it.
 
 ### Take over Agentao's logger
 
@@ -73,6 +152,8 @@ agent = Agentao(
 
 When you pass `logger=`, `LLMClient` short-circuits before building any
 file handler — so even the default `<wd>/agentao.log` is **not** created.
+The request and response blocks go to your logger at `INFO` instead.
+They pass through **your** formatter, not Agentao's redacting one, so scrub them yourself ([6.5](./5-secrets-injection#four-log-scrubbing)).
 For a fully silent agent, use a `NullHandler`:
 
 ```python
@@ -415,7 +496,7 @@ Under compliance regimes: append-only storage (WORM) required.
 
 On a budget:
 
-1. `agentao.log` → per-tenant files, daily rotate, 14d retention
+1. `agentao.log` → per-tenant files: the built-in rotation (10 MB × 5 backups), or your own `logger=` with the rotation and retention you need
 2. `prometheus_client` → the 5 key metrics, Grafana dashboard
 3. Built-in replay JSONL → `.agentao/replays/`, tune `replay.max_instances`
 4. No OpenTelemetry

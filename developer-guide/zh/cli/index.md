@@ -30,6 +30,7 @@ uv run agentao
 - [**10. 配置文件参考**](./10-config-reference) — CLI 读取的所有配置文件、路径与优先级
 - [**11. 会话、子 Agent 与任务**](./11-sessions-agents) — `/sessions` `/agent` `/agents` `/todos` `/tools` · 恢复与并行工作台
 - [**12. 非交互入口**](./12-non-interactive) — `agentao init` `-p` `--resume` `--acp` `agentao doctor` `agentao config validate` · 脚本、CI 校验、宿主集成入口
+- [**13. 长任务目标**](./13-goal) — `/goal` · 在时间 / 轮次预算内跨多轮推进一个目标
 
 ## 怎么读
 
@@ -41,6 +42,7 @@ uv run agentao
 | Agent 吃掉了预算 / context 爆了 | [7. 上下文与状态](./7-context-status) → [6. 记忆](./6-memory) |
 | 想找回旧会话 / 看后台子 agent | [11. 会话、子 Agent 与任务](./11-sessions-agents) |
 | 我要把 CLI 推给团队用 | [3. 权限与模式](./3-permissions-modes) → [10. 配置文件参考](./10-config-reference) |
+| 想让 agent 在一个任务上连续干很多轮 | [13. 长任务目标](./13-goal) → [4. Plan 模式](./4-plan-mode) |
 | 想在脚本、CI、IDE 里调用 | [12. 非交互入口](./12-non-interactive) → [第三部分 · ACP 协议嵌入](/zh/part-3/) |
 | 我要把这个引擎嵌进自己的应用 | [第一部分 · 起步](/zh/part-1/)（不同读者群 — 从那边开始） |
 

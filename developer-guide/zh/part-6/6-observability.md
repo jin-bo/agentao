@@ -29,20 +29,99 @@ Agent 是"长尾出 bug"的典型——90% 时间好好的，10% 出现让你无
 
 ### Agentao 自带的 agentao.log
 
-默认写到 `<working_directory>/agentao.log`，内容**非常详尽**：
+默认开启，写到 `<working_directory>/agentao.log`，内容**非常详尽**：
 
-- 每次 LLM 请求/响应（完整 content——不截断，但形似凭据的字符串写入时会脱敏为 `[REDACTED:<kind>]`——以及 tokens、模型）
-- 每次工具调用参数和结果
-- MCP server 启停
-- 插件 hook 分发
-- 上下文压缩触发
+- 每次 LLM 请求和响应的全文，外加模型、`finish_reason` 和 token 用量。内容不截断，但形似凭据的字符串在写入时会变成 `[REDACTED:<kind>]`（见 [6.5](./5-secrets-injection#四-日志脱敏)）。
+- 每次工具调用的参数和每个工具结果。它们以消息的形式出现在紧随其后的那次请求里。
+- 其他 `agentao.*` 模块在 DEBUG 及以上级别记下的一切：MCP 连接、插件 hook、上下文压缩、重试。
+
+在 `anthropic-messages` 和 `openai-responses` 线路上，日志里是 Agentao 自己持有的对话（OpenAI 形状的消息），不是翻译后的请求体。
+
+大小和位置：
+
+- **自带轮转。** handler 是 `RotatingFileHandler`，单文件 10 MB，保留 5 个备份（`agentao.log.1` … `agentao.log.5`）。所以一个工作目录最多约 60 MB 日志，更早的记录会被删掉。
+- **有兜底路径。** 文件打不开时，Agentao 改写 `~/.agentao/agentao.log`，并把原因打到 stderr。兜底也失败，就不写文件继续运行。
+- 每行以 `HH:MM:SS` 开头（没有日期、级别和 logger 名）。多行记录只有第一行带时间。
 
 这是你**调试 Agent 行为**的最重要工具。生产上：
 
 1. 把它挂到持久化卷（容器重启不丢）
-2. 按天切分 + 保留 7-30 天
+2. 按内置轮转的上限规划卷大小。要按时间保留，就注入自己的 logger（[见下文](#接管-agentao-的-logger)），在你自己的日志栈里轮转
 3. 做[脱敏](./5-secrets-injection#四-日志脱敏)
 4. 按租户分文件（`working_directory` 天然分）
+
+### 读懂一次请求和响应
+
+每次模型调用写一个请求块和一个响应块，两者带同一个 `req_N`。计数器属于 `LLMClient`，从 `req_1` 开始。子代理会构造自己的 client，所以同一个文件里可能出现不止一个 `req_1`。同一次调用的重试不会再写请求块。下面是一段加了注释的节选：
+
+```text
+17:18:52 ================================================================================
+17:18:52 [req_2] LLM REQUEST                     ← 标题上下各一行 80 个 "="
+17:18:52 ================================================================================
+17:18:52 Model: gpt-5
+17:18:52 Temperature: (not sent)
+17:18:52 Max Tokens: 65536
+17:18:52 Extra Body: {'reasoning_effort': 'high', 'api_key': '***'}
+17:18:52 Messages (4 total, logging 2 new):     ← 只记 req_1 之后新增的消息
+17:18:52   Message 1 [system]:
+17:18:52     [system prompt unchanged: 9214 chars]  ← 首次全文，之后只记 diff
+17:18:52   Message 3 [assistant]:
+17:18:52     Content: None
+17:18:52     Tool Calls: 1
+17:18:52       Tool Call 1: read_file (id=call_abc)
+          {
+                    "file_path": "main.py"
+          }
+17:18:52   Message 4 [tool]:
+17:18:52     Tool: read_file (call_id=call_abc)
+    Result (53 chars):
+      print('hi')
+      KEY=[REDACTED:openai_api_key]
+17:18:52 Tools (14 available, unchanged)        ← 工具集变化时才列出名字
+17:18:53 ================================================================================
+17:18:53 [req_2] LLM RESPONSE
+17:18:53 ================================================================================
+17:18:53 Model: gpt-5
+17:18:53 Finish Reason: stop
+Token Usage:
+17:18:53   Prompt Tokens: 1400
+17:18:53   Completion Tokens: 6
+17:18:53   Total Tokens: 1406
+17:18:53 Assistant Response (13 chars):
+  It prints hi.
+```
+
+日志是增量记录的。要还原完整对话，从第一次请求起按顺序读各个块。内联图片只记大小摘要，不会把 base64 倒进日志。版式定义在 [`llm/_logging.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/_logging.py)。
+
+### 用 grep 排查
+
+下面几条命令都按真实的行格式写：
+
+```bash
+# 列出所有调用及行号
+grep -nE '\[req_[0-9]+\] LLM (REQUEST|RESPONSE)' agentao.log
+
+# 打印一次调用：从它的请求到下一次请求
+sed -n '/\[req_5\] LLM REQUEST/,/\[req_6\] LLM REQUEST/p' agentao.log
+
+# 累计 token（要更长的窗口，把轮转出的文件也带上）
+grep 'Total Tokens' agentao.log | awk '{sum += $NF} END {print sum}'
+
+# 找失败和重试的调用（行里不带级别，grep ERROR 什么也找不到）
+grep -nE '\[req_[0-9]+\] .*(failed|retryable|mid-stream)' agentao.log
+```
+
+### 日志缺失或不完整时
+
+| 现象 | 可能原因 |
+|------|----------|
+| 没有 `agentao.log` | 注入了 `logger=`，或 client 构造时传了 `log_file=None`。也可能目录不可写：看 stderr 和 `~/.agentao/agentao.log`。 |
+| 文件里是别的 agent 的记录，或没有你的记录 | 同一进程里有多个 agent，记录写进最新的未关闭 agent 的文件（[见下文](#同一进程里的多个-agent)）。 |
+| 会话开头不见了 | 轮转把它移到了 `agentao.log.1` … `.5`，超过 5 个备份后已删除。 |
+| 某次请求只显示几条消息 | 日志是增量的，更早的消息在更早的块里。 |
+| `close()` 之后不再有记录 | 设计如此。已关闭 client 的 handler 会丢弃迟到的记录，好让宿主删除目录。 |
+
+记录随写随落盘，进程崩溃不会丢掉崩溃前已写出的记录。
 
 ### 接管 Agentao 的 logger
 
@@ -72,6 +151,8 @@ agent = Agentao(
 
 只要传了 `logger=`，`LLMClient` 在建 file handler **之前**就早返回，
 所以默认那条 `<wd>/agentao.log` 也不会被创建。
+请求块和响应块改为以 `INFO` 级别写进你的 logger。
+它们经过的是**你的** formatter，不是 Agentao 的脱敏 formatter，所以要自己脱敏（见 [6.5](./5-secrets-injection#四-日志脱敏)）。
 完全静默的写法配 `NullHandler`：
 
 ```python
@@ -412,7 +493,7 @@ agent = Agentao(working_directory=".", transport=SdkTransport(on_event=on_event)
 
 预算有限时：
 
-1. `agentao.log` → 每租户独立文件、日切、保 14 天
+1. `agentao.log` → 每租户独立文件：用内置轮转（10 MB × 5 份），或者传入自己的 `logger=`，按需设定轮转与保留期
 2. `prometheus_client` → 上面 5 个关键指标、Grafana 面板
 3. 内建 replay JSONL → `.agentao/replays/`，通过 `replay.max_instances` 控制保留量
 4. 无 OpenTelemetry

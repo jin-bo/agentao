@@ -17,8 +17,8 @@ User-facing configuration files (the surfaces you may hand-edit):
 | # | Surface | Project path | User (global) path | Loader | Feature doc |
 |---|---|---|---|---|---|
 | 1 | LLM env | `.env` (cwd) | shell env | `dotenv.load_dotenv` → `discover_llm_kwargs` | — (see `.env.example`) |
-| 2 | Runtime mode + builtin agents | `.agentao/settings.json` | — | `embedding/factory.py::_load_settings`, `plan/controller.py::_load_settings` | [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) |
-| 3 | Tool permissions | — *(user-only; project file is ignored)* | `~/.agentao/permissions.json` | `permissions.py::PermissionEngine` | [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) |
+| 2 | Runtime mode + builtin agents | `.agentao/settings.json` | — | `embedding/factory.py::_load_settings`, `plan/controller.py::_load_settings` | [developer guide 5.4](../../developer-guide/en/part-5/4-permissions.md) |
+| 3 | Tool permissions | — *(user-only; project file is ignored)* | `~/.agentao/permissions.json` | `permissions.py::PermissionEngine` | [developer guide 5.4](../../developer-guide/en/part-5/4-permissions.md) |
 | 4 | MCP servers | `.agentao/mcp.json` *(add-only — cannot override user-scope names)* | `~/.agentao/mcp.json` | `mcp/FileBackedMCPRegistry` (see `mcp/config.py`) | `CLAUDE.md` § MCP |
 | 5 | ACP subagents | `.agentao/acp.json` | — *(project-only)* | `acp_client/config.py` | [CLI 8 · `/acp`](../../developer-guide/en/cli/8-mcp-acp-plugins.md) / [developer guide 3.4](../../developer-guide/en/part-3/4-reverse-acp-call.md) |
 | 6 | Skills disable list | `.agentao/skills_config.json` | — | `skills/manager.py` | [developer guide 5.2](../../developer-guide/en/part-5/2-skills.md) |
@@ -36,7 +36,7 @@ Internal state files (auto-managed; documented for awareness, not for editing):
 | Replay events | `.agentao/replays/*.jsonl` | `replay/` | See [developer guide 6.6](../../developer-guide/en/part-6/6-observability.md). |
 | Sessions / plans | `.agentao/sessions/`, `.agentao/plan-history/` | various | Per-session artifacts. **Not secret-scanned** — see the note below. |
 | Tool outputs | `.agentao/tool-outputs/` | `runtime/tool_result_formatter.py::_save_and_truncate` | Oversized tool output spilled to disk, referenced from the in-context excerpt. Anchored to `working_directory` (since 0.5.7; before, the process cwd — which an ACP server or embedded host does not share with its sessions). Files older than 7 days, by mtime, are pruned on a session's first spill. **Secret-scanned before write.** |
-| `/goal` continuation state | `.agentao/goal.json` | `cli/goal_state.py::GoalState` | One long-task goal (objective, status, time/turn caps, usage). Survives restarts; corrupt/missing → treated as no goal. See [goal.md](../guides/goal.md). |
+| `/goal` continuation state | `.agentao/goal.json` | `cli/goal_state.py::GoalState` | One long-task goal (objective, status, time/turn caps, usage). Survives restarts; corrupt/missing → treated as no goal. See [developer guide CLI 13](../../developer-guide/en/cli/13-goal.md). |
 
 > **Secret scanning is asymmetric, deliberately.** `.agentao/tool-outputs/` is passed through `security/secret_scan.py::scan_and_redact` before it reaches disk — credential-shaped strings become `[REDACTED:<kind>]`. `.agentao/sessions/*.json` (`embedding/sessions.py::save_session`) and `.agentao/background_tasks.json` are **not** scanned, and that is a trade rather than an oversight: both round-trip back into `agent.messages` on resume, so redacting them would silently corrupt a resumed conversation the same way redacting the live tool result would corrupt a live one. Redaction is applied where the output is terminal, withheld where it is re-read.
 >
@@ -141,7 +141,7 @@ Nothing is written into `os.environ`. **Only LLM variables are taken from the pr
 
 > `/goal` state itself is **not** stored in `settings.json` — it lives in `.agentao/goal.json` (see §1 file table). Per-goal caps set with `/goal <obj> --for/--turns` or `/goal budget` override these defaults; `--unbounded` opts out of them entirely.
 
-See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each `mode` actually permits.
+See [developer guide 5.4](../../developer-guide/en/part-5/4-permissions.md) for what each `mode` actually permits.
 
 > **Tool-set selection is construction-only — not a `settings.json` field (v1).** Which tools the model sees is chosen at `Agentao(...)` construction, not via any config file:
 > - `enabled_tools={...}` — additive allowlist: keep only the named built-in / agent-path tools (`extra_tools`, MCP, plan-only always kept). `None` = disabled; the empty set still *enables* it. Mutually exclusive with `disable_tools`.
@@ -210,7 +210,7 @@ See [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) for what each
 - `full-access` — single rule `{"tool": "*", "action": "allow"}`.
 - `plan` — denies all writes / memory mutations; allows the read-only shell allowlist; web rules identical to `workspace-write`.
 
-Full rule taxonomy, examples, and runtime semantics → [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md).
+Full rule taxonomy, examples, and runtime semantics → [developer guide 5.4](../../developer-guide/en/part-5/4-permissions.md).
 
 ### The `shell` block — choosing the interpreter
 

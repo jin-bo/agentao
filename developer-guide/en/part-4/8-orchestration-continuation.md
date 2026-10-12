@@ -133,7 +133,7 @@ tool-call loop *within one* `chat()`; the turn cap bounds the *number of*
 Agentao plugins have a `Stop` hook that can re-enter the loop
 (`StopHookResult.force_continue`). It is the **wrong tool** for a goal:
 
-- it is **hard-capped** (`_stop_reentry_cap`, default 3) as a runaway guard —
+- it is **hard-capped** (`_stop_reentry_cap`: 3 under `agentao-v1`, 8 for a `claude-code@profile-1` rule) as a runaway guard —
   fine for "nudge once more", useless for sustained pursuit;
 - it injects a **visible user message** into history each time.
 
@@ -160,4 +160,4 @@ above becomes a small JSON file; on launch you reload it and, if it's still
 - [ ] **Not** built on `force_continue`.
 
 → Worked reference: `agentao/cli/input_loop.py::run_goal_continuation`. User
-guide: [Long-Task Goals](https://github.com/jin-bo/agentao/blob/main/docs/guides/goal.md).
+guide: [CLI 13 · Long-Task Goals](/en/cli/13-goal).

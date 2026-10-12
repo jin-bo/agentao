@@ -30,6 +30,7 @@ You drop into a chat REPL. Type a normal sentence to talk to the agent. Type `/`
 - [**10. Configuration Reference**](./10-config-reference) — every config file the CLI reads, with paths and precedence
 - [**11. Sessions, Agents & Tasks**](./11-sessions-agents) — `/sessions`, `/agent`, `/agents`, `/todos`, `/tools` · restore and parallel workbench
 - [**12. Non-Interactive Entry Points**](./12-non-interactive) — `agentao init`, `-p`, `--resume`, `--acp`, `agentao doctor`, `agentao config validate` · scripts, CI checks, and host integration
+- [**13. Long-Task Goals**](./13-goal) — `/goal` · drive one objective across many turns under a time / turn budget
 
 ## How to read
 
@@ -41,6 +42,7 @@ You drop into a chat REPL. Type a normal sentence to talk to the agent. Type `/`
 | The agent ate my budget / context blew up | [7. Context & Status](./7-context-status) → [6. Memory](./6-memory) |
 | I want to resume a session / inspect background agents | [11. Sessions, Agents & Tasks](./11-sessions-agents) |
 | I'm shipping the CLI to my team | [3. Permissions & Modes](./3-permissions-modes) → [10. Configuration Reference](./10-config-reference) |
+| I want the agent to keep working on one task for many turns | [13. Long-Task Goals](./13-goal) → [4. Plan Mode](./4-plan-mode) |
 | I want to call Agentao from scripts, CI, or an IDE | [12. Non-Interactive Entry Points](./12-non-interactive) → [Part 3 · ACP Protocol](/en/part-3/) |
 | I want to embed this engine into my own app | [Part 1 · Getting Started](/en/part-1/) (different audience — start there) |
 

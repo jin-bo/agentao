@@ -85,6 +85,26 @@ often: a `save_memory` rebuilds from block 11 on, and the catalog stays cached
 — on a token-prefix cache. With the explicit breakpoints below the system
 message is one cached block, and a `save_memory` re-writes all of it.
 
+### The date/time reminder
+
+Each turn, the runner puts the current date and time in front of the user's text ([`ChatLoopRunner.run`](https://github.com/jin-bo/agentao/blob/main/agentao/runtime/chat_loop/_runner.py)):
+
+```
+<system-reminder>
+Current Date/Time: 2026-04-16 15:30:00 (Thursday)
+</system-reminder>
+<the text you passed to chat()>
+```
+
+The format is `%Y-%m-%d %H:%M:%S (%A)`. The value is `datetime.now()`: the local time of the host process, with no timezone. If your users are in another timezone, say so in `AGENTAO.md`. On a turn with images, the reminder goes into the text part.
+
+The reminder is in neither of the two instruction messages, on purpose:
+
+- **Not in the system message.** The time changes every second. In the prefix, it would break the prompt cache on every turn.
+- **Not in the volatile tail.** The tail is never stored. The date/time is stored with the user message, so a resumed session or a replay shows when each turn happened.
+
+[`tests/test_date_in_prompt.py`](https://github.com/jin-bo/agentao/blob/main/tests/test_date_in_prompt.py) pins both sides: the reminder is in the user message, and it is in neither the system prompt nor the volatile tail.
+
 ## Three injection points you own
 
 ### 1. `AGENTAO.md` — project instructions

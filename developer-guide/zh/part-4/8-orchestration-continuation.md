@@ -121,7 +121,7 @@ def run_goal(agent, objective, *, max_turns=25, time_budget_s=7200):
 Agentao 插件有个 `Stop` 钩子可以重入循环(`StopHookResult.force_continue`)。
 对 goal 而言它是**错的工具**:
 
-- 它被**硬上限**(`_stop_reentry_cap`,默认 3)钉死,作为失控护栏 —— 用于"再推一把"
+- 它被**硬上限**(`_stop_reentry_cap`:`agentao-v1` 下为 3,`claude-code@profile-1` 规则为 8)钉死,作为失控护栏 —— 用于"再推一把"
   尚可,持续推进无用;
 - 它每次往历史里注入一条**可见的用户消息**。
 
@@ -144,4 +144,4 @@ CLI 在每轮后把 goal 写入 `.agentao/goal.json`,使 goal 跨进程重启存
 - [ ] **不**建在 `force_continue` 上。
 
 → 范例:`agentao/cli/input_loop.py::run_goal_continuation`。用户指南:
-[长任务目标](https://github.com/jin-bo/agentao/blob/main/docs/guides/goal.md)。
+[CLI 13 · 长任务目标](/zh/cli/13-goal)。

@@ -17,8 +17,8 @@
 | # | 配置面 | 项目路径 | 用户（全局）路径 | Loader | Feature 文档 |
 |---|---|---|---|---|---|
 | 1 | LLM 环境变量 | `.env`（cwd） | shell env | `dotenv.load_dotenv` → `discover_llm_kwargs` | —（参见 `.env.example`） |
-| 2 | 运行模式 + 内置子代理 | `.agentao/settings.json` | — | `embedding/factory.py::_load_settings`、`plan/controller.py::_load_settings` | [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) |
-| 3 | 工具权限规则 | — *（仅用户级；项目级文件被忽略）* | `~/.agentao/permissions.json` | `permissions.py::PermissionEngine` | [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md) |
+| 2 | 运行模式 + 内置子代理 | `.agentao/settings.json` | — | `embedding/factory.py::_load_settings`、`plan/controller.py::_load_settings` | [开发者指南 5.4](../../developer-guide/zh/part-5/4-permissions.md) |
+| 3 | 工具权限规则 | — *（仅用户级；项目级文件被忽略）* | `~/.agentao/permissions.json` | `permissions.py::PermissionEngine` | [开发者指南 5.4](../../developer-guide/zh/part-5/4-permissions.md) |
 | 4 | MCP 服务器 | `.agentao/mcp.json` *（仅可新增名字，不能覆盖用户级同名服务器）* | `~/.agentao/mcp.json` | `mcp/FileBackedMCPRegistry`（见 `mcp/config.py`） | `CLAUDE.md` § MCP |
 | 5 | ACP 子代理 | `.agentao/acp.json` | — *（仅项目级）* | `acp_client/config.py` | [CLI 8 · `/acp`](../../developer-guide/zh/cli/8-mcp-acp-plugins.md) / [开发者指南 3.4](../../developer-guide/zh/part-3/4-reverse-acp-call.md) |
 | 6 | 禁用 skill 列表 | `.agentao/skills_config.json` | — | `skills/manager.py` | [开发者指南 5.2](../../developer-guide/zh/part-5/2-skills.md) |
@@ -36,7 +36,7 @@
 | 回放事件 | `.agentao/replays/*.jsonl` | `replay/` | 见 [开发者指南 6.6](../../developer-guide/zh/part-6/6-observability.md)。 |
 | 会话 / 计划 | `.agentao/sessions/`、`.agentao/plan-history/` | 多模块 | 单次会话产物。**不做密钥扫描**——见下方注记。 |
 | 工具产物 | `.agentao/tool-outputs/` | `runtime/tool_result_formatter.py::_save_and_truncate` | 超长工具输出溢写到磁盘，由上下文中的摘录引用其路径。锚定到 `working_directory`（自 0.5.7；此前是进程 cwd——ACP 服务器或嵌入式宿主的会话并不与它共享这个目录）。按 mtime 超过 7 天的文件在会话第一次溢写时清理。**落盘前会做密钥扫描。** |
-| `/goal` 续跑状态 | `.agentao/goal.json` | `cli/goal_state.py::GoalState` | 一个长任务目标（目标描述、状态、时间/轮次上限、已用量）。跨重启存活；损坏或缺失一律按「没有目标」处理。见 [goal.md](../guides/goal.md)。 |
+| `/goal` 续跑状态 | `.agentao/goal.json` | `cli/goal_state.py::GoalState` | 一个长任务目标（目标描述、状态、时间/轮次上限、已用量）。跨重启存活；损坏或缺失一律按「没有目标」处理。见 [开发者指南 CLI 13](../../developer-guide/zh/cli/13-goal.md)。 |
 
 > **密钥扫描是有意不对称的。** `.agentao/tool-outputs/` 在落盘前会过一遍 `security/secret_scan.py::scan_and_redact`——形似凭据的字符串被替换成 `[REDACTED:<kind>]`。而 `.agentao/sessions/*.json`（`embedding/sessions.py::save_session`）与 `.agentao/background_tasks.json` **不扫描**，这是权衡而非疏漏：两者在恢复会话时都会原样回灌进 `agent.messages`，对它们做脱敏会静默污染一次被恢复的对话，正如对实时工具结果做脱敏会污染当前对话一样。**产物是终点就脱敏，产物会被回读就不脱敏。**
 >
@@ -134,7 +134,7 @@
 | `goal.default_time_budget` | string | `"120m"` | 时长 `90s` / `30m` / `2h` / `1h30m`；留空或缺失表示无时间上限默认值 | `/goal` 没带 `--for` 时套用的活动墙钟上限。它被刻意设得**高于**轮次上限，因此只兜住墙钟层面的异常，不会盖过轮次上限（见 `docs/design/codex-goal-mechanism-review.md` §11.1 C）。 |
 | `background_agents.auto_wake` | bool | `true`（键缺失时） | `true`、`false` | 仅交互式 CLI。CLI 停在空提示符上、有后台子代理的更新排队时，自动开一轮（`⟳ background agent finished — continuing`），不必再手动输入 `continue` 才能读到更新。正在输入、有 `/image` 暂存的图片、或处于 plan 模式时不会触发；连续唤醒 3 次后暂停，直到你提交一行输入。设为 `false` 关闭；其他值会报告并按 `true` 处理。`agentao run`、ACP 和嵌入宿主不会自行唤醒（见 host-api《后台子 Agent 结束后继续》）。 |
 
-每个 `mode` 的具体放行/拦截语义详见 [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md)。
+每个 `mode` 的具体放行/拦截语义详见 [开发者指南 5.4](../../developer-guide/zh/part-5/4-permissions.md)。
 
 > **子代理的工具集。** 模型能看到哪些工具，由 `Agentao(...)` 构造时的 `enabled_tools=` / `disable_tools=` / `extra_tools=` 决定，不在任何配置文件里。子代理拿到的是父代理启动它那一刻已有的工具，再按代理定义的 `tools:` 列表收窄（没有列表则全部保留）。所以上述三个选项从父代理身上去掉的工具，子代理同样没有。剩下的工具里，子代理只保留：
 > - **内置工具**：用子代理自己的实例，绑定到父代理的 `filesystem` 和 `shell`；
@@ -196,7 +196,7 @@
 - `full-access` —— 单条 `{"tool": "*", "action": "allow"}`。
 - `plan` —— 拒绝所有写入与记忆改动；放行只读 shell allowlist；web 规则与 `workspace-write` 相同。
 
-完整的规则分类、示例、运行期语义 → [TOOL_CONFIRMATION_FEATURE.md](../guides/tool-confirmation.md)。
+完整的规则分类、示例、运行期语义 → [开发者指南 5.4](../../developer-guide/zh/part-5/4-permissions.md)。
 
 ### `shell` 块 —— 选择解释器
 

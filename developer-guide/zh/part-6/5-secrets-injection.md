@@ -172,9 +172,26 @@ if "run_shell_command" in agent.tools.tools:
 ## 四：日志脱敏
 
 `agentao.log` 记录完整的工具参数，所以参数里带密钥曾经意味着"日志泄漏 = 密钥泄漏"。
-现在 agentao 默认会脱敏这个文件：文件 handler 上挂了 `_RedactingFormatter`，用
-`agentao/security/secret_scan.py` 里的共享模式集把凭据形状的字符串改写为
-`[REDACTED:<kind>]`。同一套模式也守着 `.agentao/tool-outputs/*.txt` 和 `MemoryGuard`。
+现在 agentao 分两层给日志脱敏。
+
+**第 1 层：`extra_body` 按键脱敏。** 请求块会在 `Extra Body:` 一行记下宿主配置的
+`extra_body`。有些网关在请求体或透传的请求头里收 key，所以这个值先脱敏一遍：在
+dict、list、tuple 的任意嵌套深度上，键名小写后**精确等于**固定集合中某一项的，
+其值替换为 `***`。集合同时覆盖请求体式和请求头式的写法：`authorization`、`api_key`、
+`x-api-key`、`token`、`access_token`、`secret`、`client_secret`、`password`、
+`cookie` 等。匹配是精确的，不是子串，所以 `max_tokens` 不会被误伤。集合是
+[`llm/_logging.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/_logging.py)
+里的 `_SENSITIVE_KEYS`。client 自己的 `api_key` 根本不进日志。
+
+**第 2 层：逐行按模式脱敏。** 文件 handler 上挂了 `_RedactingFormatter`，把凭据形状的
+字符串改写为 `[REDACTED:<kind>]`。它拦的是从任何地方流进来的密钥：`env` 的输出、
+`cat .env` 的内容、模型贴出来的 token。模式覆盖私钥块、各家 provider 的 API key
+（Anthropic、OpenAI、Google、AWS）、GitHub / Slack / Stripe token、JWT、`Bearer` 和
+`Authorization:` 的值，以及 `api_key=` / `token=` / `password=` 这类内联键值对。
+列表会持续增加，以
+[`security/secret_scan.py`](https://github.com/jin-bo/agentao/blob/main/agentao/security/secret_scan.py)
+为准。同一套模式也守着 `.agentao/tool-outputs/*.txt`、replay 文件和 `MemoryGuard`。
+formatter 绝不抛异常：扫描器在某一行出错，那一行按原样写出，会话照常继续。
 
 把它当作纵深防御，**不是**密封：
 
@@ -182,6 +199,9 @@ if "run_shell_command" in agent.tools.tools:
   `psql` 连接串里的密码——会原样漏过去。
 - 它只覆盖**日志文件**。发给 LLM provider 的对话是刻意保持原文的：扫描器无法区分
   真实凭据和测试用例，脱敏模型视野会破坏正常的 agent 工作。
+- 第 2 层**只挂在 Agentao 自己的文件 handler 上**。注入了 `logger=`
+  （见 [6.6](./6-observability#接管-agentao-的-logger)）时，你的 handler 拿到的记录
+  不经过它，只剩第 1 层还生效。
 - `.agentao/sessions/*.json` 和 `.agentao/background_tasks.json` **刻意不扫描**——
   两者都会被读回 `agent.messages`，脱敏它们会损坏恢复后的会话。
 
