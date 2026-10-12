@@ -96,7 +96,7 @@ Merge rule: **same-name entries override** those from `.agentao/mcp.json`.
 | `args` | ❌ | Command-line arguments |
 | `env` | ❌ | Additional env vars; supports `$VAR` / `${VAR}` expansion |
 | `cwd` | ❌ | Subprocess working directory |
-| `timeout` | ❌ | Init timeout in seconds, default 60 |
+| `timeout` | ❌ | A number: seconds for connecting and the handshake, default 60. It does **not** bound tool calls. To bound each call too, use `{"startup": 60, "request": 30}`; `request` has no default ([config reference](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md)) |
 | `trust` | ❌ | Skip confirmation when true |
 
 ### Streamable HTTP transport (remote service, default for a bare `url`)
@@ -106,7 +106,7 @@ Merge rule: **same-name entries override** those from `.agentao/mcp.json`.
 | `url` | ✅ | Streamable HTTP endpoint URL |
 | `type` | ❌ | `"http"` (aliases: `"streamable-http"` / `"streamable_http"`); this is the default when a bare `url` is given |
 | `headers` | ❌ | HTTP headers; supports `${VAR}` expansion |
-| `timeout` | ❌ | Seconds, default 60 |
+| `timeout` | ❌ | Same as stdio |
 | `trust` | ❌ | Same as above |
 
 ### SSE transport (remote service, legacy)
@@ -116,7 +116,7 @@ Merge rule: **same-name entries override** those from `.agentao/mcp.json`.
 | `url` | ✅ | SSE endpoint URL |
 | `type` | ✅ | Must be `"sse"` — SSE is the legacy transport (deprecated in MCP spec 2025-03-26). A bare `url` now defaults to Streamable HTTP, so SSE **must** be selected explicitly. |
 | `headers` | ❌ | HTTP headers; supports `${VAR}` expansion |
-| `timeout` | ❌ | Seconds, default 60 |
+| `timeout` | ❌ | Same as stdio |
 | `trust` | ❌ | Same as above |
 
 All three transports also take two keys for the features below:

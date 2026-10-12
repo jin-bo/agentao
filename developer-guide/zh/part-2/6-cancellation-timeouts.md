@@ -173,9 +173,9 @@ agent.chat("干 20 件事", max_iterations=20)
 还有两处可以设边界：
 
 - **Shell 工具**：每条命令有无输出超时，即工具的 `timeout` 参数（默认 120 秒），有新输出就重新计时。超时后工具杀掉命令的整个进程树（对进程组发 `SIGKILL`；Windows 上用 `taskkill /T`）。详见 [6.2](/zh/part-6/2-shell-sandbox)
-- **MCP 请求超时**：每个 MCP server 有 `timeout` 字段（默认 60 秒）。详见 [5.3 MCP](/zh/part-5/3-mcp)
+- **MCP 超时**：server 的 `timeout` 写数字时只限制连接和握手（默认 60 秒）。工具调用没有上限，除非写成 `"timeout": {"startup": 60, "request": 30}`。`request` 到时调用报错失败；server 不会被停掉，已经开始的工作可能还在继续。详见 [5.3 MCP](/zh/part-5/3-mcp)
 
-它们是更底层的**强杀**——与 `CancellationToken` 互补，不替代。MCP 卡死时其自身超时会兜底，无论 token 是否触发。
+这些上限在 token 之下起作用，与它互补。只有 shell 超时会真正杀掉东西。
 
 ## 2.6.8 上线前自查
 
