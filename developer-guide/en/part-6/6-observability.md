@@ -201,7 +201,9 @@ This writes `.agentao/settings.json`:
 }
 ```
 
-Recording starts on the next session. Existing replay files remain readable after `/replay off`.
+Recording is off by default. A toggle takes effect on the next session and leaves the file being written alone. Existing replay files remain readable after `/replay off`. A broken `settings.json` falls back to the defaults and never blocks startup.
+
+`replay.max_instances` caps the number of files under `.agentao/replays/` (default 20). It does not touch `.agentao/sessions/`. The oldest files are pruned when an instance starts and when it ends. A value that is not a count (`true`, `"abc"`, `0`) is ignored and 20 is used, and `agentao doctor` reports an error. A number written as a string (`"50"`) or with a fraction (`2.9` becomes 2) still applies, and doctor warns. The rules are in [`check_max_instances`](https://github.com/jin-bo/agentao/blob/main/agentao/replay/config.py).
 
 Replay enables:
 
@@ -217,13 +219,56 @@ Replay enables:
 /replay show <id>       # grouped render
 /replay show <id> --raw
 /replay show <id> --turn <turn_id>
-/replay show <id> --kind tool_
+/replay show <id> --kind tool_    # kind prefix
 /replay show <id> --errors
 /replay tail <id> 50
 /replay prune
+/replay delete <id> | /replay delete all
 ```
 
-Replay files are separate from saved sessions: `save_session` / `load_session` restore conversation state, while replay records what the runtime did.
+Every command reads up to the current end of the file. There is no follow or live-tail mode. For live observation, use normal output and `agentao.log`. Command details: [CLI · Replay & Output](/en/cli/9-replay-output).
+
+Replay files are separate from saved sessions: `save_session` / `load_session` restore conversation state, while replay records what the runtime did. ACP `session/load` keeps the logical `session_id` but starts a new replay file. It never appends to the old one.
+
+### Replay file layout
+
+- **Path:** `.agentao/replays/<session_id>.<instance_id>.jsonl`. Characters other than letters, digits, `_` and `-` in the session id become `_`.
+- **One event per line.** Each event has `event_id`, `session_id`, `instance_id`, `seq`, `ts`, `kind`, `turn_id`, `parent_turn_id` and `payload`.
+- **First line:** a `replay_header` with `schema_version` (currently `1.4`), `session_id`, `instance_id`, `created_at`, and `capture_flags` when any are set.
+- **Last line:** a `replay_footer`, written on a clean close. It has `event_count` and the per-kind `redaction_hits`, `dropped_field_hits` and `truncated_field_hits`.
+- **A new instance per session birth.** `/clear`, `/new`, `/sessions resume`, ACP `session/new` and ACP `session/load` each start a fresh file. A file never spans those boundaries.
+
+The JSON Schemas are in [`schemas/`](https://github.com/jin-bo/agentao/tree/main/schemas), one file per schema version. Version policy: [`docs/reference/replay-schema-policy.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/replay-schema-policy.md).
+
+### What a replay records
+
+One turn is one `Agentao.chat()` call. The kinds, grouped (full list: [`agentao/replay/events.py`](https://github.com/jin-bo/agentao/blob/main/agentao/replay/events.py)):
+
+| Group | Kinds | Notes |
+|-------|-------|-------|
+| File and session | `replay_header`, `replay_footer`, `session_started`, `session_ended` | `session_started` has `cwd` and `model` |
+| Turn | `turn_started`, `user_message`, `turn_completed` | `turn_completed` has `final_text`, `status` (`ok` / `cancelled` / `error`) and an optional `incomplete_reason` |
+| Model output | `assistant_text_chunk`, `assistant_thought_chunk` | Streamed text and reasoning |
+| LLM calls | `llm_call_started`, `llm_call_completed`, `llm_call_delta`, `llm_call_io` | `llm_call_completed` has token counts and latency. `llm_call_delta` needs `capture_llm_delta`, `llm_call_io` needs `capture_full_llm_io` |
+| Tools | `tool_confirmation_requested`, `tool_confirmation_resolved`, `tool_started`, `tool_output_chunk`, `tool_completed`, `tool_result` | `tool_started.tool_source` is `mcp` for an `mcp_*` tool, else `builtin` |
+| Host projections | `tool_lifecycle`, `subagent_lifecycle`, `permission_decision` | Same shapes as the [`agentao.host`](/en/part-4/7-host-contract) models |
+| Sub-agents | `subagent_started`, `subagent_completed` | The child's events get their own `turn_id` and point back with `parent_turn_id` |
+| Interaction | `ask_user_requested`, `ask_user_answered`, `background_notification_injected` | |
+| State changes | `model_changed`, `permission_mode_changed`, `readonly_mode_changed`, `skill_activated`, `skill_deactivated`, `memory_write`, `memory_delete`, `memory_cleared`, `session_summary_written`, `plugin_hook_fired` | |
+| Context | `context_compressed`, `compaction_settled`, `images_removed` | Read `compaction_settled` for every attempt, `context_compressed` for the successes |
+| Errors | `error` | |
+
+Three kinds are declared but not emitted: `session_saved`, `session_loaded` and `session_forked`. `session_saved` is reserved for a future explicit save entry point. The auto-save on `/clear`, `/new` or exit does not emit it.
+
+### Privacy and truncation
+
+Every payload goes through a sanitizer before it is written ([`agentao/replay/sanitize.py`](https://github.com/jin-bo/agentao/blob/main/agentao/replay/sanitize.py)):
+
+- **JSON coercion.** Values become JSON-native types. A field that cannot be converted is dropped on its own. The event then carries `redacted: "filter_error"` and the field names in `redacted_fields`.
+- **Secret scan.** Every string is scanned for credential-shaped patterns. A match becomes `[REDACTED:<kind>]`. Each event counts its hits in `redaction_hits`, and the footer sums them. This is pattern matching, not full secret scanning. A credential that does not look like one passes through. The scanner is [`agentao/security/secret_scan.py`](https://github.com/jin-bo/agentao/blob/main/agentao/security/secret_scan.py), shared with `agentao.log` and `.agentao/tool-outputs/`.
+- **Head + tail truncation.** Long fields keep a head and a tail, with `truncated`, `original_chars` and `omitted_chars`. The caps: `tool_output_chunk` 4,000 chars, `tool_result` 8,000 (20% head, because errors land at the end), `memory_write` 2,000, `ask_user_answered` 500, `plugin_hook_fired` output 500. `assistant_text_chunk` is not truncated.
+
+The deep-capture flags below lift some of these caps. The secret scan still runs.
 
 ### Capture depth
 
@@ -237,6 +282,12 @@ Deep capture flags live under `replay.capture_flags` in `.agentao/settings.json`
 | `capture_full_llm_io` | `false` | Full provider payloads; sensitive |
 | `capture_tool_result_full` | `false` | Full tool output; may be large or sensitive |
 | `capture_plugin_hook_output_full` | `false` | Full plugin hook output |
+
+### Failure model and readers
+
+- Replay never breaks a turn. A sanitizer or write failure is logged as a warning and swallowed.
+- A crash can leave a partial last line. Readers skip it and still return the earlier events.
+- To read replays from code, use `agentao.replay.ReplayReader` (and `list_replays`). Any tool you build on replays should read through it, not rebuild the timeline from `agent.messages`. There is no ACP method that serves replays.
 
 ### Custom archive hook
 
@@ -352,7 +403,7 @@ Follow OpenTelemetry GenAI semantic conventions.
 | User approves dangerous tool | confirm_tool = True | 180–365 days |
 | Permission rule denied | decide = DENY | 90 days |
 | Agent modified user data | Business tool execution | Business-defined (usually 1–7 years) |
-| User requests "forget me" | memory.clear_all | Indefinite (compliance evidence) |
+| User requests "forget me" | `MemoryManager.wipe_all()` | Indefinite (compliance evidence) |
 
 ### Scrubbing and retention
 

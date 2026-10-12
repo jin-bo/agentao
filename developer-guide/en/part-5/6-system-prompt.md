@@ -116,6 +116,45 @@ Place it at the root of `working_directory`. Loaded automatically on constructio
 - Commit to git so the team shares
 - Use `##` sections so the LLM absorbs structure
 
+#### How the file is found and placed
+
+- **One file, root only.** Agentao checks `<working_directory>/AGENTAO.md`, then `<working_directory>/AGENTS.md` (the [agents.md](https://agents.md/) convention). The first file that exists is the only one read. The two are never merged. Subdirectories and parent directories are not searched. In the CLI, the working directory is the directory where you start `agentao`.
+- **Read once, at construction.** `/clear` and `/new` do not re-read it. To pick up an edit, start a new process or build a new `Agentao`.
+- **Read as UTF-8.** A leading YAML frontmatter block is stripped (useful for a file carried over from another tool). An empty file adds nothing.
+- **No silent swap.** If `AGENTAO.md` exists but cannot be read (permissions, bad encoding), Agentao logs a warning and starts with no project instructions. It does not fall back to `AGENTS.md`.
+- **Host override.** Any string passed as `project_instructions=` is used verbatim, and no file is read. `""` turns the feature off.
+- **Sub-agents do not see it.** A sub-agent's project block is the `system_instructions` of its own definition.
+
+The text opens the stable system prompt, in this frame:
+
+```text
+=== Project Instructions ===
+
+<content of AGENTAO.md>
+
+=== Agent Instructions ===
+
+<Agentao's built-in sections: identity, reliability, …>
+```
+
+Because it is the first block of the cached prefix, an edit invalidates the whole prompt cache. Lookup: [`agentao/prompts/helpers.py`](https://github.com/jin-bo/agentao/blob/main/agentao/prompts/helpers.py) (`load_project_instructions`). Framing: [`agentao/prompts/builder.py`](https://github.com/jin-bo/agentao/blob/main/agentao/prompts/builder.py). Tests: `tests/test_agentao_md.py`.
+
+#### When the instructions do not take effect
+
+`agentao.log` records the load:
+
+```text
+Loaded project instructions from /path/to/project/AGENTAO.md
+Could not load AGENTAO.md: <error>
+```
+
+The first line gets the suffix `(ignored leading YAML frontmatter)` when a frontmatter block was stripped. Work through this list:
+
+1. **No log line at all.** No file was found. Check that the file is in the root of the working directory, not in a subdirectory. Check the exact name `AGENTAO.md`. Case matters on a case-sensitive file system.
+2. **`Could not load …`.** Fix the file permissions. If the error is a decode error, save the file as UTF-8. PowerShell 5.1 writes UTF-16LE from `>` and `Out-File`.
+3. **Loaded, but the wrong file.** With both files present, `AGENTS.md` is ignored.
+4. **Loaded, but no effect.** Print `agent._build_system_prompt()` (see [Inspect the system prompt](#inspect-the-system-prompt)) and look for `=== Project Instructions ===`. If it is missing, check whether your host passes `project_instructions=`. If the file changed, restart.
+
 ### 2. Skills — on-demand long docs
 
 Need more than 1500 words of guidance? Split into a Skill ([5.2](./2-skills)). Full body is only injected when activated.

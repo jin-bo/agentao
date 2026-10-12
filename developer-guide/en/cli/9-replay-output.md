@@ -62,7 +62,7 @@ Renders all events in the replay, grouped by turn. The default view groups relat
 |------|--------|
 | `--raw` | Flat chronological view, no grouping |
 | `--turn <tid>` | Show only one turn |
-| `--kind <kind>` | Filter by event kind (`tool_started`, `permission_decision`, `memory_write`, ...) |
+| `--kind <kind>` | Filter by event-kind prefix (`tool_` matches `tool_started`, `tool_result`, ...) |
 | `--errors` | Show only events flagged as errors |
 
 `<id>` is a **prefix** of the short ID, the full `session.instance` id, the session id or the instance id. `/replay show 3f9c` works if it's unambiguous; if several replays match, the CLI prints the matches and asks you to disambiguate. An exact match on any of those ids always wins.
@@ -102,16 +102,16 @@ Deleted 18 replays. (Skipped: 1 active)
 | Situation | What replays give you |
 |-----------|----------------------|
 | Bug report — "the agent did something weird" | Exact event log including tool args and results |
-| Cost analysis — "where did the tokens go" | Per-turn token counts in `--raw` view |
+| Cost analysis — "where did the tokens go" | Token counts on each `llm_call_completed` event (`--kind llm_call`) |
 | Debugging a custom plugin | The plugin's hook decisions are recorded as events |
-| Audit / compliance | A signed JSONL trail per session |
-| Reproducing a session for testing | Replays are valid input to the embedded `Replay` API |
+| Audit / compliance | A JSONL trail per session, with credential-shaped strings redacted |
+| Checking a run in a test | `agentao.replay.ReplayReader` loads the file. A replay records a run. It does not re-execute one |
 
 ## Pitfalls
 
 - **Recording is off by default for performance** — turn on only when needed; long sessions can produce big JSONL files
-- **`max_instances` enforces FIFO eviction at write time** — older recordings disappear automatically once you exceed the limit; use `/replay prune` only if it's lagging
-- **Short IDs are derived from full IDs** — they don't change across renames, but if you're scripting, prefer the full filename
+- **`max_instances` evicts the oldest files automatically** — when a recording starts and when it ends. `/replay prune` runs the same eviction on demand
+- **Short IDs are prefixes of the full IDs** — two replays can share one, so scripts should use the full `session.instance` id or the filename
 - **`delete all` is genuinely destructive** — there's no replay-of-replays. Audit first if these are anything you might need
 
 ## `/copy` — copy the last assistant response
@@ -171,7 +171,7 @@ A common workflow:
 ---
 
 ::: info Where this fits
-Replay is implemented in `agentao.replay` — embedding hosts can read the same JSONL files with `agentao.replay.ReplayReader`. The event schema is identical across CLI and embedded paths. Use replays in CI to verify behavior changes don't regress against past sessions.
+Replay is implemented in `agentao.replay` — embedding hosts can read the same JSONL files with `agentao.replay.ReplayReader`. The event schema is identical across CLI and embedded paths. In CI, read a replay with `ReplayReader` to assert what a run did. File layout, event kinds and redaction: [6.6 · Axis three: session replay](/en/part-6/6-observability#axis-three-session-replay).
 :::
 
 ::: tip Authoritative help

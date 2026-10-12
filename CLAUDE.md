@@ -247,7 +247,7 @@ The skill manager discovers skills in `skills/`. Each subdirectory has a `SKILL.
 
 ### Memory system
 
-`MemoryManager` (`agentao/memory/manager.py`) stores memory in SQLite. Guide: `docs/guides/memory-management.md`.
+`MemoryManager` (`agentao/memory/manager.py`) stores memory in SQLite. Guide: `developer-guide/en/part-5/5-memory.md` (hosts) and `developer-guide/en/cli/6-memory.md` (CLI).
 
 | Database | Path | Content |
 |---|---|---|
@@ -274,7 +274,7 @@ Data types:
 `ReplayManager` (`agentao/replay/manager.py`) records turns to `.agentao/replays/*.jsonl`.
 - Replay is **outside** the `Agentao` core. It subscribes to `TURN_BEGIN` / `TURN_END` from the transport.
 - Configure it in `.agentao/settings.json :: replay.{enabled, max_instances}` or with `/replay on|off`.
-- Guide: `docs/guides/session-replay.md`.
+- Guide: `developer-guide/en/part-6/6-observability.md` (session replay) and `developer-guide/en/cli/9-replay-output.md` (`/replay`).
 
 ### Plugin hooks
 

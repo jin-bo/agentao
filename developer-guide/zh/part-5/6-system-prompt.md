@@ -87,6 +87,45 @@ Agent 的指令是**每轮 chat() 动态重建**的，不是一个静态字符�
 - 进 git 让团队共享
 - 用 `##` 分段便于 LLM 吸收
 
+#### 文件怎么找、放在哪
+
+- **只读一个文件，只看根目录。** Agentao 先找 `<working_directory>/AGENTAO.md`，再找 `<working_directory>/AGENTS.md`（[agents.md](https://agents.md/) 约定）。只读第一个存在的文件，两者不会合并。子目录和上级目录都不查找。在 CLI 里，working directory 就是你启动 `agentao` 的目录。
+- **构造时读一次。** `/clear` 和 `/new` 不会重读。改了文件要生效，需要重启进程或新建一个 `Agentao`。
+- **按 UTF-8 读取。** 开头的 YAML frontmatter 会被去掉（从别的工具搬过来的文件常带这一块）。空文件不注入任何内容。
+- **不会悄悄换文件。** `AGENTAO.md` 存在但读不了（权限、编码问题）时，Agentao 记一条 warning，然后在没有项目指令的情况下启动，不会退而去读 `AGENTS.md`。
+- **宿主覆盖。** 传入的 `project_instructions=` 只要是字符串，就原样使用，不读任何文件；传 `""` 等于关掉这个功能。
+- **子 agent 看不到它。** 子 agent 的项目指令块是它自己定义里的 `system_instructions`。
+
+文件内容位于稳定系统提示的最前面，外框如下：
+
+```text
+=== Project Instructions ===
+
+<AGENTAO.md 的内容>
+
+=== Agent Instructions ===
+
+<Agentao 内建的各个段落：identity、reliability……>
+```
+
+它是缓存前缀的第一块，所以改动它会让整段 prompt cache 失效。查找逻辑：[`agentao/prompts/helpers.py`](https://github.com/jin-bo/agentao/blob/main/agentao/prompts/helpers.py)（`load_project_instructions`）。外框：[`agentao/prompts/builder.py`](https://github.com/jin-bo/agentao/blob/main/agentao/prompts/builder.py)。测试：`tests/test_agentao_md.py`。
+
+#### 指令没有生效时
+
+`agentao.log` 会记录加载结果：
+
+```text
+Loaded project instructions from /path/to/project/AGENTAO.md
+Could not load AGENTAO.md: <error>
+```
+
+如果去掉了 frontmatter，第一行末尾会多出 `(ignored leading YAML frontmatter)`。按下面的顺序排查：
+
+1. **日志里一行都没有。** 没找到文件。确认它在 working directory 根下而不是子目录里，文件名正好是 `AGENTAO.md`——大小写敏感的文件系统上大小写也要对。
+2. **出现 `Could not load …`。** 修好文件权限；如果是解码错误，把文件另存为 UTF-8。PowerShell 5.1 用 `>` 和 `Out-File` 写出的是 UTF-16LE。
+3. **加载了，但不是你想要的文件。** 两个文件都在时，`AGENTS.md` 会被忽略。
+4. **加载了，但没效果。** 打印 `agent._build_system_prompt()`（见[验证系统提示](#验证系统提示)），找 `=== Project Instructions ===`。找不到就检查宿主是否传了 `project_instructions=`；文件改过的话，重启。
+
 ### 2. 技能 — 按需加载的长文档
 
 需要写 > 1500 字的规范？拆成技能（[5.2 节](./2-skills)）。用户/LLM 触发激活时才注入全文。

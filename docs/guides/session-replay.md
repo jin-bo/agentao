@@ -1,130 +1,31 @@
 # Session Replay
 
-Session Replay captures the runtime timeline of an Agentao session — turns,
-tool calls, permission decisions, streaming chunks, errors — as an
-append-only JSONL file under `.agentao/replays/`. It is separate from
-`save_session` / `load_session`: sessions restore the conversation you
-can continue; replays record *what the agent did* for debugging, audit,
-and future protocol replay.
+This guide moved into the developer guide: **[6.6 · Observability, session replay](https://agentao.cn/en/part-6/6-observability#axis-three-session-replay)** ([中文](https://agentao.cn/zh/part-6/6-observability#%E7%BB%B4%E5%BA%A6%E4%B8%89-session-replay)) and **[CLI 9 · `/replay`](https://agentao.cn/en/cli/9-replay-output)** ([中文](https://agentao.cn/zh/cli/9-replay-output)). The headings below are kept so that old links still land on the right section.
 
 ## Enabling recording
 
-Recording is **disabled by default**. Turn it on with either:
-
-```bash
-/replay on        # writes replay.enabled=true into .agentao/settings.json
-```
-
-or by editing `.agentao/settings.json` directly:
-
-```json
-{
-  "mode": "workspace-write",
-  "replay": {
-    "enabled": true,
-    "max_instances": 20
-  }
-}
-```
-
-- `replay.enabled` — boolean master switch.
-- `replay.max_instances` — retention cap under `.agentao/replays/`. Defaults
-  to 20. Does not affect `.agentao/sessions/`. A value that is not a count
-  (`true`, `"abc"`, `0`) is ignored and 20 is used; `agentao doctor` reports
-  it as an error. A number written as a string (`"50"`) or with a fraction
-  (`2.9` → 2) still applies, with a doctor warning.
-
-Toggling recording takes effect on the **next** session; the currently
-running instance is not touched. Use `/replay off` to stop recording
-future sessions without deleting existing files.
+Moved to [English](https://agentao.cn/en/part-6/6-observability#axis-three-session-replay) · [中文](https://agentao.cn/zh/part-6/6-observability#%E7%BB%B4%E5%BA%A6%E4%B8%89-session-replay)
 
 ## File layout
 
-- Directory: `.agentao/replays/`
-- Filename: `<session_id>.<instance_id>.jsonl`
-- First line: a `replay_header` event carrying `schema_version`,
-  `session_id`, `instance_id`, and `created_at`.
-- Each subsequent line: one JSON object, one event.
-
-A new `instance_id` is minted for each session birth — so `/clear`,
-`/new`, and ACP `session/load` each produce a fresh file. Replay files
-never span across those boundaries.
+Moved to [English](https://agentao.cn/en/part-6/6-observability#replay-file-layout) · [中文](https://agentao.cn/zh/part-6/6-observability#replay-%E6%96%87%E4%BB%B6%E5%B8%83%E5%B1%80)
 
 ## Inspecting replays
 
-```bash
-/replay list           # list recorded instances (newest first)
-/replay show <id>      # render events for one instance in sequence
-/replay tail <id> [n]  # show the last N events (default 20)
-/replay prune          # delete instances above replay.max_instances
-```
-
-`<id>` can be a full `session_id.instance_id` or any unambiguous prefix
-(an `instance_id` is unique enough in practice). Readers stop at the
-current end of the file — there is no follow / live-tail mode; live
-observation remains the job of normal output and `agentao.log`.
+Moved to [English](https://agentao.cn/en/part-6/6-observability#commands) · [中文](https://agentao.cn/zh/part-6/6-observability#%E5%91%BD%E4%BB%A4)
 
 ## What is recorded
 
-Each `turn` corresponds to one `Agentao.chat()` call. Inside that turn
-you will see, typically in this order:
-
-| Kind | When |
-|------|------|
-| `turn_started` / `user_message` | Start of the turn |
-| `assistant_thought_chunk` | Reasoning / thinking output |
-| `tool_confirmation_requested` / `tool_confirmation_resolved` | When a permission prompt was shown |
-| `tool_started` / `tool_output_chunk` / `tool_completed` | Per tool call |
-| `assistant_text_chunk` | Streaming assistant text |
-| `subagent_started` / `subagent_completed` | Nested agent invocations (new `turn_id`, back-pointer via `parent_turn_id`) |
-| `turn_completed` | Final message, status (`ok` / `cancelled`), optional `final_text` |
-
-Built-in and MCP tools share the same event kinds; `tool_source` on
-`tool_started` differentiates them (`builtin` vs `mcp`).
-
-Explicitly reserved but **not emitted in v1**:
-
-- `session_saved` — reserved for a future explicit save entrypoint. The
-  auto-save triggered by `/clear`, `/new`, or process exit, and the CLI's
-  per-turn save, do not emit this event.
+Moved to [English](https://agentao.cn/en/part-6/6-observability#what-a-replay-records) · [中文](https://agentao.cn/zh/part-6/6-observability#replay-%E8%AE%B0%E5%BD%95%E4%BA%86%E4%BB%80%E4%B9%88)
 
 ## Privacy and truncation
 
-- Every payload passes through a field-level sanitizer that coerces
-  values to JSON-native types; a field that cannot be serialized is
-  dropped individually and the event keeps a `redacted: "filter_error"`
-  marker plus `redacted_fields`.
-- Every string in a payload is also scanned for credential-shaped
-  patterns and rewritten to `[REDACTED:<kind>]`, with per-kind counts
-  rolled up into `replay_footer.redaction_hits`. This is best-effort
-  pattern matching, **not** full secrets scanning: a credential that
-  does not look like one passes through untouched. The scanner lives in
-  `agentao/security/secret_scan.py` — shared with `agentao.log` and
-  `.agentao/tool-outputs/`, which are written whether or not replay is
-  enabled, so it cannot sit inside this optional subsystem.
-- `tool_output_chunk` payloads over the per-event cap are kept as
-  head+tail excerpts with `truncated`, `original_chars`, and
-  `omitted_chars` metadata. `assistant_text_chunk` is not truncated by
-  default.
+Moved to [English](https://agentao.cn/en/part-6/6-observability#privacy-and-truncation) · [中文](https://agentao.cn/zh/part-6/6-observability#%E9%9A%90%E7%A7%81%E4%B8%8E%E6%88%AA%E6%96%AD)
 
 ## Failure model
 
-- A broken `.agentao/settings.json` falls back to safe defaults rather
-  than blocking startup.
-- Sanitizer or write failures are logged (warning level) and never
-  raise. The runtime is unaffected by replay bookkeeping.
-- If the process crashes mid-write, the final JSONL line may be
-  partial. The reader skips it and still returns earlier events.
+Moved to [English](https://agentao.cn/en/part-6/6-observability#failure-model-and-readers) · [中文](https://agentao.cn/zh/part-6/6-observability#%E6%95%85%E9%9A%9C%E6%A8%A1%E5%9E%8B%E4%B8%8E%E8%AF%BB%E5%8F%96)
 
 ## Relationship to other surfaces
 
-- `save_session` / `load_session` continue to own conversation
-  persistence and resume.
-- ACP `session/load` reuses the logical `session_id` but creates a new
-  replay instance file rather than appending to the old one.
-- v1 does not add an ACP `session/replay` method or any protocol-level
-  replay contract. Any future protocol surface must read from
-  `ReplayReader` rather than reconstructing from `messages`.
-
-See [`../implementation/SESSION_REPLAY_PLAN.md`](../history/implementation/session-replay-plan.md)
-for the full design plan and roadmap.
+Moved to [English](https://agentao.cn/en/part-6/6-observability#commands) · [中文](https://agentao.cn/zh/part-6/6-observability#%E5%91%BD%E4%BB%A4)

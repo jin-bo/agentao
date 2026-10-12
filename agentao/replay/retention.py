@@ -1,6 +1,6 @@
 """ReplayRetentionPolicy — prune old replay files to a configured cap.
 
-Rules (from SESSION_REPLAY_PLAN.md):
+Rules (from docs/history/implementation/session-replay-plan.md):
 
 - keep the most recent ``N`` replay instances, default ``N = 20``
 - prune best-effort after a new instance is created or one ends

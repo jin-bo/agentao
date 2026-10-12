@@ -190,7 +190,7 @@ class ReplayEvent:
     """One structured replay event.
 
     Always serialized as a single JSON object on its own JSONL line.
-    Fields match the schema defined in ``SESSION_REPLAY_PLAN.md``.
+    Fields match the schema defined in ``docs/history/implementation/session-replay-plan.md``.
     """
 
     event_id: str

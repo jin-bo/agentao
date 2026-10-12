@@ -14,10 +14,14 @@
 ```
 my-skill/
 ├── SKILL.md              # 必需：入口文件
-└── references/            # 可选：按需加载的辅助文档
-    ├── conventions.md
-    └── templates.md
+├── references/           # 可选：按需加载的辅助文档（*.md）
+│   ├── conventions.md
+│   └── templates.md
+├── assets/               # 可选：更多文档（*.md）
+└── scripts/              # 可选：辅助脚本（任意文件）
 ```
+
+没有 `SKILL.md` 的子目录会被跳过。`references/`、`assets/`、`scripts/` 里的文件从不内联：激活时按绝对路径列出，模型需要时再用 `read_file` 读（见[按需参考目录](#按需参考目录)）。
 
 ### `SKILL.md` 格式
 
@@ -51,14 +55,23 @@ description: 处理客户工单时使用——遵循公司退款规范、用固�
 
 ### YAML Frontmatter
 
-只有两个字段：
-
 | 字段 | 必填 | 用途 |
 |------|------|------|
-| `name` | ✅ | 唯一 id；不能含空格，建议 kebab-case |
+| `name` | ✅ | 唯一 id；不能含空格，建议 kebab-case。区分大小写 |
 | `description` | ✅ | **触发描述**——告诉 LLM 什么时候激活这个技能 |
+| `when-to-use` | — | 额外的触发提示，目录里显示为描述下面的 `Activate when: …` |
+| `license` 及其他字段 | — | 保存在技能的 `frontmatter` 字典里，其余一概不用 |
 
 `description` 被注入到系统提示的"可用技能清单"里。LLM 看到用户请求匹配 description 时，会主动调用 `activate_skill` 工具激活它。
+
+本地加载器很宽松，所以写坏的技能往往是悄无声息地失效：
+
+- 缺 `name` 时退回用目录名。
+- `description` 为空的技能照样加载，`/skills` 也列得出，但目录里没有它，模型永远不会激活。
+- YAML 写坏了就当作没有 frontmatter，加载器会往 `agentao.log` 写一条带文件路径的警告。最常见的原因是没加引号的冒号：`description: Deploy to AWS: ECS` 解析失败，`description: "Deploy to AWS: ECS"` 才对。
+- 以 `mcp:` 开头的名字会被拒绝，这个前缀留给 [MCP 技能](/zh/part-5/3-mcp#mcp-skills)。
+
+`agentao skill install` 则是严格的：`SKILL.md` 缺 `name` 或 `description` 就拒绝安装（[`skills/installer.py`](https://github.com/jin-bo/agentao/blob/main/agentao/skills/installer.py)）。
 
 ## 三层目录搜索顺序
 
@@ -68,7 +81,7 @@ description: 处理客户工单时使用——遵循公司退款规范、用固�
 3. <cwd>/skills/                 ← 项目仓库目录
 ```
 
-**同名冲突时，后加载的覆盖先加载的**（也就是 `.agentao/skills/` 覆盖全局，`skills/` 覆盖前两层）。所以：
+**同名冲突时，后加载的覆盖先加载的**（也就是 `.agentao/skills/` 覆盖全局，`skills/` 覆盖前两层）。首次运行时，Agentao 会把内置技能（目前只有 `skill-creator`）复制到 `~/.agentao/skills/`，已有的副本不会被覆盖。所以：
 
 - **嵌入你的产品时**：把技能放在**项目 repo 根的 `skills/` 下**，用户拉代码即有
 - **用户自定义**：留出 `~/.agentao/skills/` 让用户自己写个人技能
@@ -101,7 +114,16 @@ agent_a = Agentao(working_directory=Path("/data/tenant-a"))
 agent_b = Agentao(working_directory=Path("/data/tenant-b"))
 ```
 
-但 **`~/.agentao/skills/` 是全局共享**的（进程级用户 HOME），如果你不希望它被加载，在构造 Agent 之前用环境变量改 HOME 或者设计成 `SkillManager(skills_dir=...)` 的私有目录。
+但 **`~/.agentao/skills/` 是全局共享**的（进程级用户 HOME）。这个路径在导入 `agentao.skills.manager` 时就定下了，之后再改 `HOME` 不起作用。不想加载它，就自己传一个 manager：`SkillManager(skills_dir=...)` 只扫这一个目录，也不复制内置技能。
+
+```python
+from agentao.skills import SkillManager
+
+agent = Agentao(
+    working_directory=Path("/data/tenant-a"),
+    skill_manager=SkillManager(skills_dir="/data/tenant-a/skills"),
+)
+```
 
 ## 激活机制
 
@@ -123,6 +145,13 @@ agent_b = Agentao(working_directory=Path("/data/tenant-b"))
 
 这个设计让你可以**堆很多技能**而不污染上下文：只有真正用到的才占 token。
 
+两部分在请求里各自的位置：
+
+- **技能目录**（每个已启用技能的 name + description）在系统提示里。系统提示跨轮次逐字节不变，provider 的提示缓存因此能命中。目录也列出已激活的技能，所以激活不会改动它；只有已启用集合变化（enable、disable、安装、reload）时它才变。只有 Agent 拥有 `activate_skill` 工具时才渲染目录。
+- **已激活技能的正文**放在每次请求的易变尾部，即末尾那条 `<system-reminder>`，从不写入历史。激活的正文每次请求都会不走缓存地重发一遍，用完就取消激活。
+
+各段的顺序见 [`prompts/builder.py`](https://github.com/jin-bo/agentao/blob/main/agentao/prompts/builder.py)。
+
 ## 禁用一个技能
 
 `activate_skill` 不是唯一的门禁。技能可以按项目**禁用**，这比「取消激活」更强：
@@ -141,11 +170,27 @@ agent_b = Agentao(working_directory=Path("/data/tenant-b"))
 
 最后一条的代价是：名字可能比它禁用的技能活得更久。`/skills` 会把这类名字单列在 **Disabled, not found by the last scan** 之下，而 `/skills enable <name>` 不论该技能当前是否存在都能清掉它。
 
+### `skills_config.json` 怎样写入
+
+这个文件可以放心手改，也可以放心在多个进程间共享：
+
+- 每次 `disable` / `enable` 只改一个名字：在同一把锁（`skills_config.json.lock`）内读、改、写，再用临时文件替换原文件。
+- 其他禁用名和文件里的其他键都会保留，包括本进程启动后另一个 Agentao 进程写进去的名字。
+- 写入路径严格解析。JSON 写坏了、`disabled_skills` 不是数组、或数组里有非字符串项，都会拒绝写入并报出路径。若按宽松读法写回去，就会删掉文件里原有的名字。
+- 启动时的读取是宽松的。文件损坏时记一条警告，按"没有禁用任何技能"加载，CLI 照常启动。
+
+宿主侧的接口是 `skill_manager.disable_skill(name)` / `enable_skill(name)`，都返回 CLI 打印的那条消息字符串。代码见 [`skills/manager.py`](https://github.com/jin-bo/agentao/blob/main/agentao/skills/manager.py)。
+
 ## 按需参考目录
 
-`references/*.md` 不会自动加载。技能正文里可以告诉 LLM："如果你遇到特殊情况，用 `read_file` 读 `skills/my-skill/references/edge-cases.md`"。
+`references/*.md` 不会自动加载。技能正文里可以告诉 LLM："如果你遇到特殊情况，读 `references/edge-cases.md`"。
 
-这样做的好处：
+普通的相对路径在任何工作目录下都能用。激活时模型会拿到两样东西：
+
+- **技能目录**，外加一句说明：`SKILL.md` 里的相对路径（比如 `scripts/foo.py`）相对技能目录解析，而不是相对 Agent 的工作目录。装好的技能通常在 `~/.agentao/skills/` 或 `.agentao/skills/` 下，不在 cwd 里。
+- **按绝对路径列出的资源文件**：`references/*.md`、`assets/*.md` 和 `scripts/` 下的所有文件。隐藏文件和 `__pycache__` 会跳过；每个文件夹最多列 50 个，其余只给个数。
+
+所以技能里不要硬编码绝对路径。这样做的好处：
 
 - 技能主文件保持 < 2KB，容易被 LLM 吸收
 - 附属文档只在**真正需要时**才加载，节省 token
@@ -238,12 +283,37 @@ agent = Agentao(working_directory=Path.cwd())
 print(list(agent.skill_manager.available_skills.keys()))   # 都发现了吗？
 print(list(agent.skill_manager.active_skills.keys()))       # 当前激活了哪些？
 
-# 手动激活（通常 LLM 自己激活）
-agent.skill_manager.activate_skill("customer-ticket-handler")
+# 手动激活（通常 LLM 自己激活）。任务描述是必填参数
+print(agent.skill_manager.activate_skill("customer-ticket-handler", "回复工单 #4521"))
 
-# 查看激活后的注入内容
+# 查看易变尾部会拿到的内容
 print(agent.skill_manager.get_skills_context())
 ```
+
+### `SkillManager` 接口
+
+| 方法 | 返回 |
+|------|------|
+| `list_available_skills()` | 已启用技能的名字 |
+| `list_all_skills()` | 发现到的全部技能名，包括已禁用的 |
+| `get_skill_info(name)` | 元数据字典（`name`、`title`、`description`、`path`、`frontmatter` 等），或 `None` |
+| `get_skill_content(name)` | `SKILL.md` 全文，或 `None` |
+| `activate_skill(name, task_description)` | 激活消息。名字未知或已禁用时返回 `Error: Unknown skill …` |
+| `deactivate_skill(name)` | 原本处于激活状态时返回 `True` |
+| `get_skills_context()` | 易变尾部里的已激活技能块 |
+| `reload_skills()` | 重扫三层目录，返回已启用技能数。插件和 MCP 技能会保留 |
+| `disable_skill(name)` / `enable_skill(name)` | CLI 打印的那条消息（见[上文](#skills-config-json-怎样写入)） |
+
+`available_skills` 和 `active_skills` 都是以名字为键的普通字典。
+
+### 排查
+
+| 现象 | 检查什么 |
+|------|----------|
+| `/skills` 里没有 | 文件名是否正好是 `SKILL.md`，且位于三层目录之一的直接子目录里？是不是 UTF-8？跑过 `/skills reload` 或重启了吗？ |
+| 列出来了，模型却从不激活 | `description` 为空或没解析出来——去 `agentao.log` 找 frontmatter 警告。技能是否被禁用？Agent 有没有 `activate_skill`？ |
+| 激活时报 `Unknown skill` | 名字区分大小写，取自 `name:` 而不是目录名。被禁用的技能也会回答 `Unknown skill`。 |
+| 加载的不是你想要的那份 | 两层目录里有同名技能，后面的层胜出：`<wd>/skills/` 优先于 `<wd>/.agentao/skills/`，再优先于 `~/.agentao/skills/`。 |
 
 ## 技能 vs 工具：何时加工具、何时加技能？
 
@@ -260,7 +330,7 @@ print(agent.skill_manager.get_skills_context())
 
 ## TL;DR
 
-- 技能是一个**目录**：`SKILL.md`（YAML frontmatter + 正文）+ 可选 `references/*.md`（激活时按需加载）。
+- 技能是一个**目录**：`SKILL.md`（YAML frontmatter + 正文）+ 可选的 `references/`、`assets/`、`scripts/`。激活时只按绝对路径列出、不内联，模型按需 `read_file`（见[按需参考目录](#按需参考目录)）。
 - `description` 决定 LLM **何时**激活——按 LLM 第一视角写（"用户问到 X 时激活我"）。
 - 三层搜索顺序：`~/.agentao/skills/`（全局）→ `<wd>/.agentao/skills/` → `<wd>/skills/`，**项目内的优先级最高**。
 - 多个小而具体的技能 > 一个大杂烩。激活会消耗上下文 token，技能小才不肉疼。

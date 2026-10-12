@@ -32,7 +32,7 @@ docs/
 - 配置参考（每个文件、环境变量、公开 API）：[reference/configuration.md](reference/configuration.md)
 - 日志与调试：[guides/logging.md](guides/logging.md)
 - 模型和 provider 切换：[开发者指南 CLI 2](../developer-guide/zh/cli/2-models-providers.md) · [2.5](../developer-guide/zh/part-2/5-runtime-llm-switch.md)
-- 技能系统使用：[guides/skills.md](guides/skills.md)
+- 技能系统使用：[开发者指南 5.2](../developer-guide/zh/part-5/2-skills.md) · [CLI 5](../developer-guide/zh/cli/5-skills-crystallize.md)
 
 ## start —— 入门
 
@@ -55,14 +55,14 @@ docs/
 | [开发者指南 3.4](../developer-guide/zh/part-3/4-reverse-acp-call.md) | 专门嵌入 ACP 面 |
 | [guides/logging.md](guides/logging.md) | 你在排查会话、工具调用或模型行为 |
 | [开发者指南 CLI 2](../developer-guide/zh/cli/2-models-providers.md) · [2.5](../developer-guide/zh/part-2/5-runtime-llm-switch.md) | 你要切换 provider 或模型 |
-| [guides/skills.md](guides/skills.md) | 你要创建、安装或管理技能 |
-| [guides/memory-quickstart.md](guides/memory-quickstart.md) | 从用户视角快速理解记忆系统 |
-| [guides/memory-management.md](guides/memory-management.md) | 记忆系统行为与实现细节 |
-| [guides/session-replay.md](guides/session-replay.md) | 运行时事件的结构化 JSONL replay |
+| [开发者指南 5.2](../developer-guide/zh/part-5/2-skills.md) · [CLI 5](../developer-guide/zh/cli/5-skills-crystallize.md) | 你要创建、安装或管理技能 |
+| [开发者指南 CLI 6](../developer-guide/zh/cli/6-memory.md) | 从用户视角快速理解记忆系统 |
+| [开发者指南 5.5](../developer-guide/zh/part-5/5-memory.md) | 记忆系统行为与实现细节 |
+| [开发者指南 6.6](../developer-guide/zh/part-6/6-observability.md) · [CLI 9](../developer-guide/zh/cli/9-replay-output.md) | 运行时事件的结构化 JSONL replay |
 | [guides/macos-sandbox-exec.md](guides/macos-sandbox-exec.md) | macOS `sandbox-exec` shell 隔离 |
 | [guides/tool-confirmation.md](guides/tool-confirmation.md) | 工具确认与安全模型 |
 | [guides/date-context.md](guides/date-context.md) | 日期时间上下文注入 |
-| [guides/chatagent-md.md](guides/chatagent-md.md) | 项目指令自动加载（`AGENTAO.md`） |
+| [开发者指南 5.6](../developer-guide/zh/part-5/6-system-prompt.md) | 项目指令自动加载（`AGENTAO.md`） |
 | [开发者指南 3.4](../developer-guide/zh/part-3/4-reverse-acp-call.md) | 非交互 / headless 运行时行为 |
 | [guides/funds-data-cleaning-parallelism.md](guides/funds-data-cleaning-parallelism.md) | 一个特定功能工作流说明 |
 
@@ -113,7 +113,7 @@ Schema 快照已 check-in。任何改变 wire form 的 model 变更必须在同�
 1. [../README.zh.md](../README.zh.md)
 2. [start/quickstart.md](start/quickstart.md)
 3. [start/quick-reference.md](start/quick-reference.md)
-4. 再根据任务进入一篇更深的文档：[开发者指南 3.2](../developer-guide/zh/part-3/2-agentao-as-server.md)、[开发者指南 2.5](../developer-guide/zh/part-2/5-runtime-llm-switch.md)、[guides/skills.md](guides/skills.md) 或 [guides/](guides) 下其他文件
+4. 再根据任务进入一篇更深的文档：[开发者指南 3.2](../developer-guide/zh/part-3/2-agentao-as-server.md)、[开发者指南 2.5](../developer-guide/zh/part-2/5-runtime-llm-switch.md)、[开发者指南 5.2](../developer-guide/zh/part-5/2-skills.md) 或 [guides/](guides) 下其他文件
 
 ### 面向贡献者
 
