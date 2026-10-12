@@ -75,8 +75,9 @@ if reply.startswith("[Cancelled:"):
 客户端断连时取消本轮：
 
 ```python
+import asyncio
+
 from fastapi import FastAPI, Request
-from asyncio import to_thread
 from agentao.cancellation import CancellationToken
 
 @app.post("/chat/{session_id}")
@@ -92,7 +93,7 @@ async def chat_endpoint(session_id: str, message: str, request: Request):
     watcher = asyncio.create_task(watch_disconnect())
     try:
         async with lock:
-            reply = await to_thread(agent.chat, message, cancellation_token=token)
+            reply = await agent.arun(message, cancellation_token=token)
     finally:
         watcher.cancel()
 
@@ -118,7 +119,7 @@ async def chat_endpoint(session_id: str, message: str):
     _active_tokens[session_id] = token
     try:
         async with lock:
-            reply = await to_thread(agent.chat, message, cancellation_token=token)
+            reply = await agent.arun(message, cancellation_token=token)
     finally:
         _active_tokens.pop(session_id, None)
     return {"reply": reply}
@@ -139,29 +140,20 @@ async def cancel_endpoint(session_id: str):
 
 ```python
 import asyncio
-from asyncio import to_thread, wait_for, TimeoutError
-from agentao.cancellation import CancellationToken
 
 async def chat_with_timeout(agent, msg: str, seconds: float) -> str:
-    token = CancellationToken()
     try:
-        return await wait_for(
-            to_thread(agent.chat, msg, cancellation_token=token),
-            timeout=seconds,
-        )
-    except TimeoutError:
-        token.cancel("timeout")
-        # 线程还在跑；下一个 checkpoint 会观察到 token 并返回
-        # "[Cancelled: timeout]"。调用方已经收到 TimeoutError，
-        # 所以线程那边的返回值被忽略——但 cancel 保证它尽快停。
+        return await asyncio.wait_for(agent.arun(msg), timeout=seconds)
+    except asyncio.TimeoutError:
         return "[Cancelled: timeout]"
 ```
 
 注意：
 
-- `wait_for` 取消的是**等待协程**，**不是**底下那个线程。所以还要 `token.cancel()`——不然线程跑到结束，白烧 CPU
-- `await agent.arun(...)` 会替你做这件事，而且更多：取消等待它的任务时，它先取消 token，再最多等 5 秒让这一轮收尾（补齐历史、发出 `TURN_END`），然后才重抛 `CancelledError`。上面基于线程的写法会在线程结束前就返回
-- 每个 agent 同一时间只跑一轮：上一轮还在跑时调用 `chat()` / `arun()` 会抛 `agentao.runtime.turn.TurnInProgressError`，而不是和它共用 `agent.messages`。`wait_for` 超时后，等上一轮的 `TURN_END` 再开始下一轮
+- 定时器到点时，`wait_for` 取消等待 `arun()` 的任务。`arun()` 随即取消这一轮的 token，再最多等 5 秒让这一轮收尾（补齐历史、发出 `TURN_END`），然后 `wait_for` 才抛出超时。你不需要自己建 token
+- 5 秒后仍在跑的轮次（比如某个不检查 token 的阻塞工具）会在后台继续跑
+- 每个 agent 同一时间只跑一轮：上一轮还在跑时调用 `chat()` / `arun()` 会抛 `agentao.runtime.turn.TurnInProgressError`，而不是和它共用 `agent.messages`。超时后，等上一轮的 `TURN_END` 再开始下一轮
+- 不要写 `asyncio.wait_for(asyncio.to_thread(agent.chat, msg), ...)`。取消它停不了线程，而且这一轮会跑在事件循环的默认执行器上（[2.3](./3-lifecycle#异步宿主-arun-与轮次线程池)）
 - 真正硬 SLA（比如 30s）用这套；软 SLA 用 `max_iterations` 就够了
 
 ## 2.6.6 `max_iterations` — 结构上限

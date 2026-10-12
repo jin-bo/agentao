@@ -409,6 +409,8 @@ async def chat(req: ChatRequest):
         return {"reply": reply}
 ```
 
+这个例子用 `asyncio.to_thread` 而不是 `arun()`，原因只有一个：`to_thread` 把调用方的上下文复制到工作线程，所以 `on_event` 在这一轮的线程上开的 span（见下文）挂在 `agent_chat` 下面。`arun()` 不复制上下文，用 `arun()` 时这些 span 会各自开新的 trace。代价就是 [2.3](/zh/part-2/3-lifecycle#异步宿主-arun-与轮次线程池) 讲的问题：这一轮会占住事件循环默认执行器的一个工作线程。如果用 `arun()`，自己把父 span 传给 `start_span(context=...)`。
+
 ### 内层 span：用事件流，别 monkey-patch
 
 不用去包 `LLMClient` 或 `Tool.execute`——运行时已经把生命周期发成事件了。两个接入点，取舍不同：

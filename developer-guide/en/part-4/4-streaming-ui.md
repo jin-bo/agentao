@@ -82,6 +82,7 @@ app = FastAPI()
 
 # session_id -> (agent, event_queue)
 _sessions: dict = {}
+_turns: set = set()   # keep a reference so the turn task is not garbage-collected
 
 
 def make_session(session_id: str):
@@ -115,7 +116,9 @@ async def chat(req: ChatRequest):
     """Kick off a turn; events flow via /events."""
     entry = _sessions.get(req.session_id) or make_session(req.session_id)
     agent, _ = entry
-    asyncio.create_task(asyncio.to_thread(agent.chat, req.message))
+    task = asyncio.create_task(agent.arun(req.message))
+    _turns.add(task)
+    task.add_done_callback(_turns.discard)
     return {"ok": True}
 
 
@@ -242,7 +245,9 @@ async def ws(websocket: WebSocket, session_id: str):
         while True:
             msg = await websocket.receive_json()
             if msg["type"] == "chat":
-                asyncio.create_task(asyncio.to_thread(agent.chat, msg["message"]))
+                task = asyncio.create_task(agent.arun(msg["message"]))
+                _turns.add(task)
+                task.add_done_callback(_turns.discard)
             elif msg["type"] == "confirm_response":
                 fut = pending_confirms.pop(msg["call_id"], None)
                 if fut and not fut.done():

@@ -81,6 +81,7 @@ app = FastAPI()
 
 # session_id -> (agent, event_queue)
 _sessions: dict = {}
+_turns: set = set()   # 持有引用，免得轮次任务被垃圾回收
 
 
 def make_session(session_id: str):
@@ -116,8 +117,9 @@ async def chat(req: ChatRequest):
     if not entry:
         entry = make_session(req.session_id)
     agent, q = entry
-    # 在线程池里跑（chat 是阻塞的）
-    asyncio.create_task(asyncio.to_thread(agent.chat, req.message))
+    task = asyncio.create_task(agent.arun(req.message))
+    _turns.add(task)
+    task.add_done_callback(_turns.discard)
     return {"ok": True}
 
 
@@ -249,7 +251,9 @@ async def ws(websocket: WebSocket, session_id: str):
         while True:
             msg = await websocket.receive_json()
             if msg["type"] == "chat":
-                asyncio.create_task(asyncio.to_thread(agent.chat, msg["message"]))
+                task = asyncio.create_task(agent.arun(msg["message"]))
+                _turns.add(task)
+                task.add_done_callback(_turns.discard)
             elif msg["type"] == "confirm_response":
                 fut = pending_confirms.pop(msg["call_id"], None)
                 if fut and not fut.done():

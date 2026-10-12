@@ -75,8 +75,9 @@ A running shell command does **not** get killed — the token just stops the nex
 When a client disconnects (closed connection), cancel the turn:
 
 ```python
+import asyncio
+
 from fastapi import FastAPI, Request
-from asyncio import to_thread
 from agentao.cancellation import CancellationToken
 
 @app.post("/chat/{session_id}")
@@ -93,7 +94,7 @@ async def chat_endpoint(session_id: str, message: str, request: Request):
     watcher = asyncio.create_task(watch_disconnect())
     try:
         async with lock:
-            reply = await to_thread(agent.chat, message, cancellation_token=token)
+            reply = await agent.arun(message, cancellation_token=token)
     finally:
         watcher.cancel()
 
@@ -119,7 +120,7 @@ async def chat_endpoint(session_id: str, message: str):
     _active_tokens[session_id] = token
     try:
         async with lock:
-            reply = await to_thread(agent.chat, message, cancellation_token=token)
+            reply = await agent.arun(message, cancellation_token=token)
     finally:
         _active_tokens.pop(session_id, None)
     return {"reply": reply}
@@ -140,30 +141,20 @@ A timeout is a cancellation on a timer. Wrap the call yourself:
 
 ```python
 import asyncio
-from asyncio import to_thread, wait_for, TimeoutError
-from agentao.cancellation import CancellationToken
 
 async def chat_with_timeout(agent, msg: str, seconds: float) -> str:
-    token = CancellationToken()
     try:
-        return await wait_for(
-            to_thread(agent.chat, msg, cancellation_token=token),
-            timeout=seconds,
-        )
-    except TimeoutError:
-        token.cancel("timeout")
-        # The thread is still running; it will observe the token on its
-        # next checkpoint and return "[Cancelled: timeout]". Your caller
-        # already got TimeoutError, so the thread's return value is
-        # ignored — but the cancel call ensures it stops soon.
+        return await asyncio.wait_for(agent.arun(msg), timeout=seconds)
+    except asyncio.TimeoutError:
         return "[Cancelled: timeout]"
 ```
 
 Notes:
 
-- `wait_for` cancels the awaiting coroutine, **not** the underlying thread. That's why we also call `token.cancel()` — otherwise the thread runs to completion and leaks CPU
-- `await agent.arun(...)` does this for you, and more: cancelling the task that awaits it cancels the token, then waits up to 5 s for the turn to finish (history backfilled, `TURN_END` emitted) before re-raising `CancelledError`. The thread-based pattern above returns before the thread is done
-- One turn at a time per agent: `chat()` / `arun()` on an agent whose previous turn is still running raises `agentao.runtime.turn.TurnInProgressError` instead of sharing `agent.messages` with it. After a `wait_for` timeout, wait for that turn's `TURN_END` before starting the next
+- When the timer fires, `wait_for` cancels the task that awaits `arun()`. `arun()` then cancels the turn's token and waits up to 5 s for the turn to finish (history backfilled, `TURN_END` emitted) before `wait_for` raises. You need no token of your own
+- A turn that is still running after those 5 s, such as a blocking tool that does not check the token, keeps running in the background
+- One turn at a time per agent: `chat()` / `arun()` on an agent whose previous turn is still running raises `agentao.runtime.turn.TurnInProgressError` instead of sharing `agent.messages` with it. After a timeout, wait for that turn's `TURN_END` before starting the next
+- Don't use `asyncio.wait_for(asyncio.to_thread(agent.chat, msg), ...)`. Cancelling it does not stop the thread, and the turn runs on the loop's default executor ([2.3](./3-lifecycle#async-hosts-arun-and-the-turn-pool))
 - For true hard SLAs (e.g. 30s), use the above pattern. For soft SLAs, just use `max_iterations`
 
 ## 2.6.6 `max_iterations` — the structural cap
