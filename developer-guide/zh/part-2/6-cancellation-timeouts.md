@@ -68,7 +68,7 @@ if reply.startswith("[Cancelled:"):
 | 长耗时工具内部（shell、web fetch） | 尽力而为——有些外部 IO 打不断 |
 | MCP 转发 | 请求已发出；取消只是停止**监听**，远端仍可能在干活 |
 
-**正在跑的 shell 命令不会被强杀**——token 只阻断下一轮。想真杀 shell，给 shell 工具自己设超时（`.agentao/sandbox.json`）。
+**正在跑的前台 shell 命令会被终止**：shell 工具监视 token，取消时杀掉命令的整个进程树。后台命令（`is_background`）立即返回，不跟这一轮绑定，所以取消管不到它。shell 工具另有自己的 `timeout` 参数，是无输出超时，默认 120 秒（[6.7](/zh/part-6/7-resource-concurrency#控制点-4-·-工具超时)）。
 
 ## 2.6.3 对接 FastAPI / HTTP 断连
 
@@ -154,7 +154,7 @@ async def chat_with_timeout(agent, msg: str, seconds: float) -> str:
 - 5 秒后仍在跑的轮次（比如某个不检查 token 的阻塞工具）会在后台继续跑
 - 每个 agent 同一时间只跑一轮：上一轮还在跑时调用 `chat()` / `arun()` 会抛 `agentao.runtime.turn.TurnInProgressError`，而不是和它共用 `agent.messages`。超时后，等上一轮的 `TURN_END` 再开始下一轮
 - 不要写 `asyncio.wait_for(asyncio.to_thread(agent.chat, msg), ...)`。取消它停不了线程，而且这一轮会跑在事件循环的默认执行器上（[2.3](./3-lifecycle#异步宿主-arun-与轮次线程池)）
-- 真正硬 SLA（比如 30s）用这套；软 SLA 用 `max_iterations` 就够了
+- 截止时间不是精确的：定时器到点后，`arun()` 最多还要等 5 秒让这一轮收尾。要限墙钟时间用这套，要限工具轮数用 `max_iterations`
 
 ## 2.6.6 `max_iterations` — 结构上限
 
@@ -172,7 +172,7 @@ agent.chat("干 20 件事", max_iterations=20)
 
 还有两处可以设边界：
 
-- **Shell 工具**：每条命令默认 30 秒超时（可在 `.agentao/sandbox.json` 配）。超时就 `SIGTERM`。详见 [6.2](/zh/part-6/2-shell-sandbox)
+- **Shell 工具**：每条命令有无输出超时，即工具的 `timeout` 参数（默认 120 秒），有新输出就重新计时。超时后工具杀掉命令的整个进程树（对进程组发 `SIGKILL`；Windows 上用 `taskkill /T`）。详见 [6.2](/zh/part-6/2-shell-sandbox)
 - **MCP 请求超时**：每个 MCP server 有 `timeout` 字段（默认 60 秒）。详见 [5.3 MCP](/zh/part-5/3-mcp)
 
 它们是更底层的**强杀**——与 `CancellationToken` 互补，不替代。MCP 卡死时其自身超时会兜底，无论 token 是否触发。

@@ -68,7 +68,7 @@ Cancellation propagates through the call stack on a **cooperative** basis — ch
 | Inside long tools (shell, web fetch) | Best-effort — some external I/O can't be interrupted |
 | MCP forward | MCP subprocess requests are sent; cancellation stops *listening* but the remote server may still do work |
 
-A running shell command does **not** get killed — the token just stops the next iteration. For true shell kills, wire a timeout into the shell tool itself (`.agentao/sandbox.json`).
+A running foreground shell command **is** killed: the shell tool watches the token and kills the command's whole process tree. A background command (`is_background`) returns at once and is not tied to the turn, so a cancel does not stop it. The shell tool also has its own `timeout` argument, an inactivity timeout of 120 s by default ([6.7](/en/part-6/7-resource-concurrency#control-4-·-tool-timeout)).
 
 ## 2.6.3 Wiring from FastAPI / HTTP disconnect
 
@@ -155,7 +155,7 @@ Notes:
 - A turn that is still running after those 5 s, such as a blocking tool that does not check the token, keeps running in the background
 - One turn at a time per agent: `chat()` / `arun()` on an agent whose previous turn is still running raises `agentao.runtime.turn.TurnInProgressError` instead of sharing `agent.messages` with it. After a timeout, wait for that turn's `TURN_END` before starting the next
 - Don't use `asyncio.wait_for(asyncio.to_thread(agent.chat, msg), ...)`. Cancelling it does not stop the thread, and the turn runs on the loop's default executor ([2.3](./3-lifecycle#async-hosts-arun-and-the-turn-pool))
-- For true hard SLAs (e.g. 30s), use the above pattern. For soft SLAs, just use `max_iterations`
+- The deadline is not exact: after the timer fires, `arun()` waits up to 5 s more for the turn to clean up. Use this pattern for a wall-clock limit, and `max_iterations` for a limit on tool rounds
 
 ## 2.6.6 `max_iterations` — the structural cap
 
@@ -173,7 +173,7 @@ If you're paying per token, `max_iterations=20-30` is a good default for a chat 
 
 Two other places you can bound work:
 
-- **Shell tool**: default 30 s timeout per command (configurable in `.agentao/sandbox.json`). Processes that exceed the limit are `SIGTERM`-ed. See [6.2](/en/part-6/2-shell-sandbox).
+- **Shell tool**: each command has an inactivity timeout, the tool's `timeout` argument (120 s by default). Any new output restarts the timer. On timeout the tool kills the command's whole process tree (`SIGKILL` to the process group; `taskkill /T` on Windows). See [6.2](/en/part-6/2-shell-sandbox).
 - **MCP request timeout**: each MCP server has a `timeout` field (default 60 s). See [5.3 MCP](/en/part-5/3-mcp).
 
 These are lower-layer hard kills — they complement, not replace, `CancellationToken`. A hung MCP server will still be killed by its own timeout regardless of whether the token fires.

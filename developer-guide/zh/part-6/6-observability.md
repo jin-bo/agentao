@@ -74,7 +74,7 @@ Agent 是"长尾出 bug"的典型——90% 时间好好的，10% 出现让你无
           }
 17:18:52   Message 4 [tool]:
 17:18:52     Tool: read_file (call_id=call_abc)
-    Result (53 chars):
+17:18:52     Content (53 chars):
       print('hi')
       KEY=[REDACTED:openai_api_key]
 17:18:52 Tools (14 available, unchanged)        ← 工具集变化时才列出名字

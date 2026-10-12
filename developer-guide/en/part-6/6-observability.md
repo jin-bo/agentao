@@ -74,7 +74,7 @@ Each model call writes one request block and one response block. Both carry the 
           }
 17:18:52   Message 4 [tool]:
 17:18:52     Tool: read_file (call_id=call_abc)
-    Result (53 chars):
+17:18:52     Content (53 chars):
       print('hi')
       KEY=[REDACTED:openai_api_key]
 17:18:52 Tools (14 available, unchanged)        ← names listed only when the set changes
