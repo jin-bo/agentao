@@ -209,7 +209,7 @@ access, etc.) rather than a real command error, ask the user to run `/sandbox of
 switch profile via `/sandbox profile <name>`.
 ```
 
-这样模型会请用户放宽沙箱，而不是把沙箱错误当成命令 bug 去调。并非每个 `Operation not permitted` 都来自沙箱，所以这只是提示，不是定论。被拦的网络请求往往只表现为 DNS 错误（`Could not resolve host`），输出里没有上述标记，也就不会有提示。
+这样模型会请用户放宽沙箱，而不是把沙箱错误当成命令 bug 去调。并非每个 `Operation not permitted` 都来自沙箱，所以这只是提示，不是定论。被拦的网络请求往往只表现为 DNS 错误：`Could not resolve host`（curl、git）、`getaddrinfo ENOTFOUND`（Node）或 `nodename nor servname provided`（Python）。普通的 DNS 失败也是这样，所以只有配置禁网时它们才带提示：有 `(deny network…)` 规则，或者 `(deny default)` 且没有 `(allow network…)` 规则。内置配置里就是 `readonly` 和 `workspace-write-no-network`。
 
 ## sandbox-exec 的局限
 

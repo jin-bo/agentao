@@ -209,7 +209,7 @@ access, etc.) rather than a real command error, ask the user to run `/sandbox of
 switch profile via `/sandbox profile <name>`.
 ```
 
-Thus the model can ask the user to relax the sandbox, and does not debug the command. Not every `Operation not permitted` comes from the sandbox, so the text is a hint, not a verdict. A blocked network call often shows only as a DNS error (`Could not resolve host`). That output has none of the markers, so it gets no hint.
+Thus the model can ask the user to relax the sandbox, and does not debug the command. Not every `Operation not permitted` comes from the sandbox, so the text is a hint, not a verdict. A blocked network call often shows only as a DNS error: `Could not resolve host` (curl, git), `getaddrinfo ENOTFOUND` (Node) or `nodename nor servname provided` (Python). An ordinary DNS failure looks the same, so these get the hint only when the profile blocks the network: a `(deny network…)` rule, or `(deny default)` with no `(allow network…)` rule. Of the built-in profiles, that is `readonly` and `workspace-write-no-network`.
 
 ## Limits of sandbox-exec
 

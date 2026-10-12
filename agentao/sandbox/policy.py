@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import platform
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -63,6 +64,31 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
+_SB_COMMENT = re.compile(r";[^\n]*")
+_SB_DENY_NETWORK = re.compile(r"\(\s*deny\s+network")
+_SB_DENY_DEFAULT = re.compile(r"\(\s*deny\s+default\s*\)")
+_SB_ALLOW_NETWORK = re.compile(r"\(\s*allow\s+network")
+
+
+def profile_denies_network(path: Path) -> bool:
+    """Whether the ``.sb`` profile at ``path`` blocks network access.
+
+    True for a ``(deny network…)`` rule, or for ``(deny default)`` with no
+    ``(allow network…)`` rule. Comments are ignored. A profile that cannot
+    be read counts as not blocking: this only decides whether a network
+    error gets the sandbox hint, and a wrong hint misleads more than a
+    missing one.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    text = _SB_COMMENT.sub("", text)
+    if _SB_DENY_NETWORK.search(text):
+        return True
+    return bool(_SB_DENY_DEFAULT.search(text)) and not _SB_ALLOW_NETWORK.search(text)
+
+
 @dataclass(frozen=True)
 class SandboxProfile:
     """Resolved sandbox profile ready to be applied to a subprocess."""
@@ -70,6 +96,8 @@ class SandboxProfile:
     path: Path
     workspace_root: Path
     params: Dict[str, str] = field(default_factory=dict)
+    # Read from the profile when it is resolved; see ``profile_denies_network``.
+    denies_network: bool = False
 
     def as_args(self) -> List[str]:
         """Return argv *prefix* for sandbox-exec (without the wrapped command).
@@ -513,6 +541,7 @@ class SandboxPolicy:
             path=profile_path,
             workspace_root=self.workspace_root,
             params={"_RW1": str(self.workspace_root)},
+            denies_network=profile_denies_network(profile_path),
         )
 
     # ------------------------------------------------------------------

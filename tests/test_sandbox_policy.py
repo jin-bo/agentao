@@ -1020,3 +1020,85 @@ def test_workspace_write_profile_blocks_writes_outside(tmp_path, dir_outside_pro
     assert outside.returncode != 0, "write outside the profile's roots unexpectedly succeeded"
     assert "Operation not permitted" in (outside.stdout + outside.stderr)
     assert not target.exists()
+
+
+# ---------------------------------------------------------------------------
+# A blocked network call gets the hint only under a profile that blocks it
+# ---------------------------------------------------------------------------
+
+_BUILTIN_PROFILES = Path(__file__).parent.parent / "agentao" / "sandbox" / "profiles"
+
+
+@pytest.mark.parametrize("name, denies", [
+    ("readonly", True),
+    ("workspace-write-no-network", True),
+    ("workspace-write", False),
+])
+def test_the_builtin_profiles_report_whether_they_block_the_network(name, denies):
+    from agentao.sandbox.policy import profile_denies_network
+
+    assert profile_denies_network(_BUILTIN_PROFILES / f"{name}.sb") is denies
+
+
+@pytest.mark.parametrize("text, denies", [
+    ("(version 1)\n(deny default)\n(allow file-read*)\n", True),
+    ("(version 1)\n(deny default)\n(allow network-outbound)\n", False),
+    ("(version 1)\n(allow default)\n;; (deny network*)\n", False),
+    ("(version 1)\n(allow default)\n(deny network-outbound (remote ip \"*:*\"))\n", True),
+])
+def test_a_custom_profile_is_read_for_network_rules(tmp_path, text, denies):
+    from agentao.sandbox.policy import profile_denies_network
+
+    sb = tmp_path / "custom.sb"
+    sb.write_text(text)
+    assert profile_denies_network(sb) is denies
+
+
+def test_an_unreadable_profile_does_not_count_as_blocking(tmp_path):
+    from agentao.sandbox.policy import profile_denies_network
+
+    assert profile_denies_network(tmp_path / "missing.sb") is False
+
+
+@MACOS_ONLY
+def test_resolve_records_whether_the_profile_blocks_the_network(tmp_path):
+    def resolved(profile_name):
+        return SandboxPolicy(project_root=tmp_path, config={
+            "enabled": True, "platform": "darwin", "default_profile": profile_name,
+        }).resolve("run_shell_command", {"command": "ls"})
+
+    assert resolved("workspace-write-no-network").denies_network is True
+    assert resolved("workspace-write").denies_network is False
+
+
+@pytest.mark.parametrize("output", [
+    "STDERR: curl: (6) Could not resolve host: example.com\n\nExit code: 6",
+    "STDOUT:\nError: getaddrinfo ENOTFOUND example.com\n",
+    "STDERR: socket.gaierror: [Errno 8] nodename nor servname provided, or not known",
+])
+def test_a_dns_failure_gets_the_hint_only_when_the_profile_blocks_the_network(tmp_path, output):
+    def profile(denies):
+        return SandboxProfile(
+            name="p", path=tmp_path / "p.sb", workspace_root=tmp_path,
+            params={"_RW1": str(tmp_path)}, denies_network=denies,
+        )
+
+    assert "Sandbox hint" in _annotate_sandbox_denial(output, profile(True))
+    assert _annotate_sandbox_denial(output, profile(False)) == output
+
+
+@MACOS_ONLY
+def test_a_network_call_blocked_by_the_sandbox_gets_the_hint(tmp_path):
+    """A real ``curl`` under the real profile: the sandbox blocks the DNS lookup."""
+    from agentao.tools.shell import ShellTool
+
+    profile = SandboxPolicy(project_root=Path.cwd(), config={
+        "enabled": True, "platform": "darwin",
+        "default_profile": "workspace-write-no-network",
+    }).resolve("run_shell_command", {"command": "curl"})
+    out = ShellTool().execute(
+        command="curl -sS https://example.com -o /dev/null",
+        working_directory=".", timeout=30, _sandbox_profile=profile,
+    )
+    assert "Could not resolve host" in out
+    assert "[Sandbox hint]" in out

@@ -268,6 +268,16 @@ _SANDBOX_DENIAL_MARKERS = (
     "deny network",
 )
 
+# What a network call blocked by the sandbox prints (measured under
+# ``workspace-write-no-network``): curl and git, Node, and Python's
+# ``getaddrinfo``. An ordinary DNS failure prints the same, so these count
+# only under a profile that blocks the network.
+_SANDBOX_NETWORK_DENIAL_MARKERS = (
+    "Could not resolve host",
+    "getaddrinfo ENOTFOUND",
+    "nodename nor servname provided",
+)
+
 
 def _sandbox_hint(profile: SandboxProfile) -> str:
     """The note appended to a result that looks like a sandbox denial."""
@@ -285,7 +295,8 @@ def _annotate_sandbox_denial(result: str, profile: SandboxProfile) -> str:
 
     We only annotate when there's evidence of sandbox rejection — not every
     EPERM is sandbox-caused, but the marker + an active profile is a strong
-    enough signal to flag.
+    enough signal to flag. A DNS error is evidence only under a profile that
+    blocks the network (``SandboxProfile.denies_network``).
 
     NB: we deliberately do NOT look for the literal "sandbox-exec" because
     the wrapped command string is echoed back by the background-start path
@@ -296,7 +307,11 @@ def _annotate_sandbox_denial(result: str, profile: SandboxProfile) -> str:
     stay within ``_MAX_OUTPUT_CHARS``. The foreground path reserves the hint's
     length up front, so this cut is normally a no-op there.
     """
-    if any(m in result for m in _SANDBOX_DENIAL_MARKERS):
+    denied = any(m in result for m in _SANDBOX_DENIAL_MARKERS) or (
+        getattr(profile, "denies_network", False) is True
+        and any(m in result for m in _SANDBOX_NETWORK_DENIAL_MARKERS)
+    )
+    if denied:
         return _cap_result(result, _sandbox_hint(profile))
     return _cap_result(result)
 
