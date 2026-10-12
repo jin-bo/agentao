@@ -203,6 +203,7 @@ from agentao.transport import SdkTransport
 from pathlib import Path
 
 app = FastAPI()
+_turns: set = set()   # keep a reference so the turn task is not garbage-collected
 
 
 @app.websocket("/ws/{session_id}")

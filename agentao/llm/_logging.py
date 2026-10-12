@@ -178,6 +178,15 @@ class _LoggingMixin:
                     f"    Content (multimodal, {len(content)} parts): "
                     f"[{', '.join(parts_summary)}]"
                 )
+                # The text parts are content like any other: logged in full.
+                # Only the inline image data is left out.
+                for k, part in enumerate(content, 1):
+                    if isinstance(part, dict) and part.get('type') == 'text':
+                        text = str(part.get('text', ''))
+                        self.logger.info(
+                            f"    Part {k} text ({len(text)} chars):\n" +
+                            "\n".join(f"      {line}" for line in text.split('\n'))
+                        )
             else:
                 self.logger.info(f"    Content: {content}")
 

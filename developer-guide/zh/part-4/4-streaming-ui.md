@@ -207,6 +207,7 @@ from agentao.transport import SdkTransport
 from pathlib import Path
 
 app = FastAPI()
+_turns: set = set()   # 持有引用，免得轮次任务被垃圾回收
 
 
 @app.websocket("/ws/{session_id}")

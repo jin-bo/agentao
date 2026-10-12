@@ -138,3 +138,21 @@ def test_a_multimodal_tool_result_is_summarized_not_dumped(client):
 
     assert "Content (multimodal, 2 parts):" in log_text
     assert blob not in log_text
+
+
+def test_the_text_of_a_multimodal_message_is_logged_in_full(client):
+    c, log_file = client
+    blob = "C" * 5000
+    image = {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{blob}"}}
+    log_text = _log_text(c, log_file, [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": [{"type": "text", "text": "user asks about\nthe chart"}, image]},
+        {"role": "tool", "tool_call_id": "call_9", "name": "read_file", "content": [
+            {"type": "text", "text": "tool answer body"}, image,
+        ]},
+    ])
+
+    assert "Part 1 text (25 chars):" in log_text
+    assert "      user asks about\n      the chart" in log_text
+    assert log_text.count("tool answer body") == 1
+    assert blob not in log_text
