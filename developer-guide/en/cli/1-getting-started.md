@@ -21,6 +21,8 @@ Type your message or /help for commands.
 >
 ```
 
+`agentao --version` prints `agentao <version>` and exits; it works on a library-only install too. An unknown top-level flag, such as a typo in `agentao --sandbox-of`, is refused with `unrecognized arguments: …` and exit code 2 instead of being ignored.
+
 ## Plain message vs. slash command
 
 | You type | What happens |

@@ -1,6 +1,6 @@
 # MCP Skills — Design
 
-**Status:** **Implemented (2026-10-03), unreleased (`[Unreleased]`, targeting 0.5.10).** For
+**Status:** **Implemented (2026-10-03), shipped in 0.5.10.** For
 issue [#397](https://github.com/jin-bo/agentao/issues/397). Design rev 3.2; all ten decisions as
 settled in §11. PR 1 and PR 2 of §13 landed together. Deviations from the text are in
 Appendix B.
