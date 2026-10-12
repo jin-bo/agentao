@@ -1,6 +1,6 @@
 # MCP Resources — Design
 
-**Status:** **Implemented (2026-10-03), unreleased** — rev 3.4 as written, with D2 and D3 taken as
+**Status:** **Implemented (2026-10-03), shipped in 0.5.10** — rev 3.4 as written, with D2 and D3 taken as
 recommended ((a) and (a)). One refinement over §5.2: an all-servers listing walks only servers
 whose connection has *ever* declared `resources` (`McpClient.resources_seen`), so a dropped
 resource server is recovered while servers that never offered any are not reconnected on every

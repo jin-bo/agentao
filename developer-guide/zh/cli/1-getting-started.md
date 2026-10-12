@@ -21,6 +21,8 @@ Model: gpt-5.4 · Mode: workspace-write
 >
 ```
 
+`agentao --version` 打印 `agentao <版本号>` 后退出，只装了库也能用。不认识的顶层参数（比如拼错的 `agentao --sandbox-of`）会以 `unrecognized arguments: …` 和退出码 2 拒绝，而不是被悄悄忽略。
+
 ## 普通消息 vs. slash 命令
 
 | 你输入 | 发生了什么 |

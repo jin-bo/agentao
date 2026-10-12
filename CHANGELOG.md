@@ -5,12 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.5.13. Add entries under the relevant heading as work lands._
+## [0.5.13] — 2026-10-12
 
 ### Added
 
+- **New public names from the fixes below.** Each is described in the entry that introduced it:
+  - `agentao.json_parse.loads()` / `load()`: `json.loads` / `json.load` that report an over-long integer literal as `JSONDecodeError` (#495).
+  - `agentao.replay.ReplaySettingsError` and `agentao.mcp.config.McpConfigWriteError`, raised instead of overwriting a `settings.json` or `mcp.json` that cannot be read (#495, #497).
+  - `agentao.replay.config.check_max_instances()`, the one reading of `replay.max_instances` shared by the runtime and `agentao doctor` (#499).
+  - `MemoryPromptRenderer.fit_stable_records()`, the stable records that fit the `<memory-stable>` budget (#529).
+  - `SandboxProfile.denies_network` and `agentao.sandbox.policy.profile_denies_network()`, whether a sandbox profile blocks the network (#531).
 - **`agentao --version`** prints `agentao <version>` and exits 0. It needs none of the `[cli]` extras, so it works on a library-only install.
 
 ### Changed

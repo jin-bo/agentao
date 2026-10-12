@@ -1,6 +1,6 @@
 # 子 Agent 事件桥：回调出去，事件回来
 
-**状态：** **已实施。** A 在 #514、#515，B 在 #517（2026-10-11）。决策（rev 2）：两个方案都实施，分两步走——先 A，后 B。rev 3 完成对 rev 2 的复审；rev 4 记录 A 的落地情况（§5），rev 5 记录 B 的落地情况（§6.4）。
+**状态：** **已实施，随 0.5.13 发布。** A 在 #514、#515，B 在 #517（2026-10-11）。决策（rev 2）：两个方案都实施，分两步走——先 A，后 B。rev 3 完成对 rev 2 的复审；rev 4 记录 A 的落地情况（§5），rev 5 记录 B 的落地情况（§6.4）。
 **锚点：** agentao `main@60fcca9`（2026-10-11）。下文行号均以该提交为准，即 A 落地之前。
 **相关：** `0-5-0-removal-checklist.zh.md` §C（子 Agent 工厂今天为什么用 `build_compat_transport`）；`host-tool-injection.zh.md`；`embedded-host-contract.md`（公共事件 `SubagentLifecycleEvent`，本文不改它）。
 **修订记录：** rev 1（`af7b014`）把 B 暂缓，并提出给子 Agent 的 id 加命名空间。rev 2 采纳先 A 后 B，删掉 id 命名空间，公开的 `build_compat_transport` 一行不删（rev 1 错把其中一部分算作可删），并把字段默认值、异常范围和事件顺序写死。rev 3 要求父侧入口在每次调用时读取 `agent.transport`（rev 2 传的是绑定方法，会绕过回放对 transport 的替换），并把 `tests/test_subagent_cancelled_terminal_state.py` 加入测试迁移范围。rev 4 标记 A 已实施：#514 发出结束事件，#515 把其中为 0 的计数（§5 中划掉的一句）换成真实值或省略。rev 5 标记 B 已实施，并写明现在钉住不变量 4–7、9、11 的测试。

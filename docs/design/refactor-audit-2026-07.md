@@ -170,7 +170,7 @@ most expensive module in the import graph, which is what made it look like a
 finding. It is still 17ms, one-time, and for an embedded host it is paid once at
 module import. Demand-gated.
 
-**Reversed 2026-10-10.** The premise was the 17ms. The wrapper-grammar work in
+**Reversed 2026-10-10 (#505, shipped in 0.5.13).** The premise was the 17ms. The wrapper-grammar work in
 #169 put a ~4 KB command-position prefix at the head of every pattern, and the
 table's 23 regexes now take ~77ms to compile, ~94ms for the module, about half
 of a ~190ms `import agentao.agent`. The table is now compiled on first use
