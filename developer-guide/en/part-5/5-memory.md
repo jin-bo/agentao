@@ -89,7 +89,7 @@ SQLiteMemoryStore.open_or_memory(<cwd>/.agentao/memory.db)
      → agent keeps starting (no crash)
 ```
 
-The user-scope store uses `SQLiteMemoryStore.open(...)` (strict): a failure disables the user scope for the session rather than degrading to `:memory:` (silently re-routing user-scope writes into project would conflate the scopes). **Memory never crashes agent construction** — worst case is loss of cross-session persistence.
+The user-scope store uses `SQLiteMemoryStore.open(...)` (strict), with no `:memory:` fallback. If it fails, the factory logs a warning and builds the manager without a user store. Existing user memories are then not read this session, and a new user-scope write is saved to the **project** store, with a log entry ([below](#disable-user-level-memory)). **Memory never crashes agent construction** — worst case is loss of cross-session persistence.
 
 ## How to use it while embedding
 

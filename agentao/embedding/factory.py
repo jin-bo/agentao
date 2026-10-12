@@ -319,10 +319,10 @@ def build_from_environment(
     if memory_manager is None:
         # Project store always succeeds — degrades to ``:memory:`` on disk
         # error (matches the pre-#16 behavior in restricted environments
-        # like ACP subprocess launches). User store is optional and
-        # disabled with a warning if it cannot be opened, since user-scope
-        # memory is cross-project state and silently re-routing to project
-        # would conflate the scopes.
+        # like ACP subprocess launches). User store is optional and opened
+        # strictly. If it cannot be opened, the manager has no user store:
+        # user memories are not read, and ``MemoryManager.upsert`` saves a
+        # user-scope write to the project store and logs that (#260).
         project_store = SQLiteMemoryStore.open_or_memory(
             wd / ".agentao" / "memory.db"
         )
@@ -334,7 +334,8 @@ def build_from_environment(
             except (OSError, sqlite3.Error) as exc:
                 logger.warning(
                     "User memory store at %s unavailable (%s: %s); "
-                    "user-scope memory disabled for this session.",
+                    "user memories are not read this session, and "
+                    "user-scope writes go to the project store.",
                     user / "memory.db",
                     type(exc).__name__,
                     exc,

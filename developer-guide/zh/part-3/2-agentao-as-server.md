@@ -224,11 +224,11 @@ ACP 是客户端驱动的——server 不能自己开会话——所以 `--resum
 
 | 条目 | `mcpCapabilities` | 说明 |
 |------|-------------------|------|
-| stdio `{name, command, args, env}`（不写 `type`） | 始终支持 | `env` 是 `{name, value}` 列表 |
+| stdio `{name, command, args, env}`（不写 `type` 或写 `"stdio"`） | 始终支持 | `env` 是 `{name, value}` 列表 |
 | `{type:"http", name, url, headers}` | `http: true` | Streamable HTTP；`headers` 是 `{name, value}` 列表 |
 | `{type:"sse", name, url, headers}` | `sse: true` | 旧式 SSE |
 
-- 不写 `type` 的条目就是 **stdio**，需要 `command`。和 `mcp.json` 不同，这里裸 `url` 不代表 HTTP。其他 `type` 一律以 `-32602` 拒绝
+- 不写 `type` 或写 `"type": "stdio"` 的条目就是 **stdio**，需要 `command`。和 `mcp.json` 不同，这里裸 `url` 不代表 HTTP。`"stdio"`、`"http"`、`"sse"` 以外的 `type` 一律以 `-32602` 拒绝
 - 客户端注入的每个服务器都带 `trust: false`，其工具仍要走确认；也都带 `oauth: false`：Agentao 绝不为它发起浏览器登录
 - 客户端注入的服务器会**替换**项目 `.agentao/mcp.json` 中同名的条目
 - 这些服务器**只属于本会话**。兄弟会话看不到它们，会话关闭时断开

@@ -56,7 +56,7 @@ Create a fresh session.
 | Field | Type | Notes |
 |-------|------|-------|
 | `name` | `string` | Non-empty |
-| `type` | `"http"` / `"sse"`, or omitted | Omitted means `stdio`, which needs `command`. A `url` entry must say `"http"` or `"sse"`: unlike `mcp.json`, a bare `url` is not HTTP here. Any other value → `-32602` |
+| `type` | `"stdio"` / `"http"` / `"sse"`, or omitted | Omitted means `"stdio"`, which needs `command`. A `url` entry must say `"http"` or `"sse"`: unlike `mcp.json`, a bare `url` is not HTTP here. Any other value → `-32602` |
 | `command` | `string` | stdio only |
 | `args` | `[string]` | stdio only |
 | `env` | `[{name, value}]` | stdio only — note **list of name/value objects**, not a map |

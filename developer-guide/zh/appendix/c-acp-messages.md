@@ -56,7 +56,7 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `name` | `string` | 非空 |
-| `type` | `"http"` / `"sse"`，或省略 | 省略即 `stdio`，需要 `command`。带 `url` 的条目必须写 `"http"` 或 `"sse"`：和 `mcp.json` 不同，这里裸 `url` 不代表 HTTP。其他值 → `-32602` |
+| `type` | `"stdio"` / `"http"` / `"sse"`，或省略 | 省略即 `"stdio"`，需要 `command`。带 `url` 的条目必须写 `"http"` 或 `"sse"`：和 `mcp.json` 不同，这里裸 `url` 不代表 HTTP。其他值 → `-32602` |
 | `command` | `string` | 仅 stdio |
 | `args` | `[string]` | 仅 stdio |
 | `env` | `[{name, value}]` | 仅 stdio——注意**是键值对对象数组**，不是 map |

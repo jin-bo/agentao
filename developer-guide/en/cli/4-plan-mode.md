@@ -152,5 +152,5 @@ Plan mode is implemented in [`agentao/plan/controller.py`](https://github.com/ji
 :::
 
 ::: tip Authoritative help
-Command syntax: `/help`. Behavior: [`agentao/cli/commands.py:handle_plan_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands.py). Plan file path defaults to `.agentao/plan.md` ([`agentao/plan/session.py`](https://github.com/jin-bo/agentao/blob/main/agentao/plan/session.py)).
+Command syntax: `/help`. Behavior: [`agentao/cli/commands/planning.py:handle_plan_command`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/planning.py). Plan file path defaults to `.agentao/plan.md` ([`agentao/plan/session.py`](https://github.com/jin-bo/agentao/blob/main/agentao/plan/session.py)).
 :::

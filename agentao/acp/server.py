@@ -343,8 +343,11 @@ class AcpServer:
           3. Drains the executor with ``shutdown(wait=True)``. We wait so
              ``run()``'s return is a happens-before barrier for all
              handler writes — tests that inspect ``stdout`` after
-             ``run()`` see every response. Steps 1 + 2 guarantee every
-             worker has a stop signal, so this drain is bounded.
+             ``run()`` see every response. Steps 1 + 2 give every worker
+             a stop signal, but the signal is cooperative and the drain
+             has no timeout: a worker in a blocking call that does not
+             check its token (a sync tool's ``execute()``) still delays
+             it until that call returns.
           4. Calls :meth:`AcpSessionManager.close_all` so every
              session-owned Agentao runtime gets its MCP connections
              disconnected. Done last so handlers running during shutdown
@@ -391,9 +394,9 @@ class AcpServer:
             # bit and leaves runtime state intact.
             self.sessions.cancel_all_active_turns("connection-closed")
             # Step 3: drain executor. ``shutdown(wait=True)`` blocks
-            # until every submitted handler finishes. Steps 1 + 2 mean
-            # every worker now has a stop signal, so this drain is
-            # bounded.
+            # until every submitted handler finishes. Steps 1 + 2 give
+            # every worker a stop signal; a worker in a blocking call that
+            # ignores its token still holds this wait until it returns.
             executor = self._executor
             self._executor = None
             if executor is not None:

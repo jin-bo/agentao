@@ -123,7 +123,7 @@ Hook type 'prompt' is not supported for event 'Stop' — skipped.
 { "matcher": { "tool_name": "Bash" } }
 ```
 
-注意 `Bash` 是 Claude Code 的工具名；Agentao 内部叫 `run_shell_command`。运行时通过 [`ToolAliasResolver`](https://github.com/jin-bo/agentao/blob/main/agentao/plugins/hooks.py) 把这两个名字**双向打通**——你写 `Bash` 或 `run_shell_command` 都能匹配同一个工具。
+注意 `Bash` 是 Claude Code 的工具名；Agentao 内部叫 `run_shell_command`。运行时通过 [`ToolAliasResolver`](https://github.com/jin-bo/agentao/blob/main/agentao/plugins/hooks/_alias.py) 把这两个名字**双向打通**——你写 `Bash` 或 `run_shell_command` 都能匹配同一个工具。
 
 `matcher` 的字符串值支持 glob（`*`、`?`）和**整串 regex**（写成 `^...$` 形式会按 regex 解释）。`null` matcher 匹配该事件的所有调用。
 

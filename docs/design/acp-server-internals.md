@@ -53,7 +53,7 @@ Two consequences:
 
 1. **Cancel pending server → client requests.** A worker inside `confirm_tool` wakes with `PendingRequestCancelled` and rejects the tool.
 2. **Trip every active turn's cancel token** (`AcpSessionManager.cancel_all_active_turns`). A worker inside a model call or a tool has no other stop signal. This step does not disconnect MCP, because the worker may still use it.
-3. **Drain the executor** with `shutdown(wait=True)`. Steps 1 and 2 give every worker a stop signal, so the drain is bounded. `run()` returning is then a happens-before barrier for all handler writes.
+3. **Drain the executor** with `shutdown(wait=True)`. Steps 1 and 2 give every worker a stop signal, but the signal is cooperative and the drain has no timeout: a worker inside a blocking call that does not check its token (a sync tool's `execute()`, for example) still delays shutdown until that call returns. `run()` returning is then a happens-before barrier for all handler writes.
 4. **Close all sessions** (`AcpSessionManager.close_all`). MCP disconnects last, after every worker has unwound.
 
 Draining before step 1 or 2 hangs the process. `tests/test_acp_request_permission.py` covers the order.
