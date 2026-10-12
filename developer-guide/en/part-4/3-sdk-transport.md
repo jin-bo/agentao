@@ -33,6 +33,8 @@ class SdkTransport:
 | `ask_user` | Returns `"[ask_user: not available in non-interactive mode]"` |
 | `on_max_iterations` | `{"action": "stop"}` |
 
+So a transport without `confirm_tool` turns every ask into an allow. What still stops a call then, with or without a permission engine, is listed in [5.4](/en/part-5/4-permissions#permissionmode-four-presets). A headless host that should refuse passes `confirm_tool=lambda *_: False`.
+
 ## Minimum use
 
 ```python

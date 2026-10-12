@@ -14,7 +14,15 @@
 | **`Agentao(...)` directly** | You want explicit control — no env / disk side effects at construction time. The body of this page covers this. |
 | **`agentao.embedding.build_from_environment(...)`** | Your host follows the same project-directory conventions as the CLI. Reads `.env`, `permissions.json`, `mcp.json`, memory roots and builds `Agentao` for you. See [§ Factory](#factory-path-build-from-environment). |
 
-Both produce an `Agentao` instance. Pick one — don't mix.
+| Situation | Use |
+|-----------|-----|
+| A notebook or script that should behave like the CLI and read your local config | `build_from_environment` |
+| A multi-tenant web app with one agent per request or tenant | `Agentao(...)` |
+| A container or sandbox that ships no `.env` | `Agentao(...)` |
+| An IDE plugin whose host already owns the state | `Agentao(...)` |
+| A test harness that needs reproducible runs | `Agentao(...)` |
+
+Both produce an `Agentao` instance. They combine in one way: every `Agentao` keyword is also a factory override, and an override wins over what the factory discovers. So `build_from_environment(working_directory=wd, permission_engine=my_engine)` keeps the rest of the discovery and replaces only the engine. What does not work is a half-way mix: a direct `Agentao(...)` that tries to reproduce the factory's discovery by hand drifts from it on the next release.
 
 ---
 
@@ -117,7 +125,7 @@ agent = Agentao(
 | `project_instructions` | `str` | (read from `<wd>/AGENTAO.md`) | Pass AGENTAO.md content directly — skips the disk read |
 
 ::: tip Async hosts use `arun()`
-`agent.chat(...)` is synchronous. Async hosts call `await agent.arun(user_message)`, which runs the turn on Agentao's own worker pool, not on the event loop's default executor. Cancellation, replay, and `max_iterations` semantics are identical across both surfaces.
+`agent.chat(...)` is synchronous. Async hosts call `await agent.arun(user_message)`, which runs the turn on Agentao's own worker pool, not on the event loop's default executor. Cancellation, replay, and `max_iterations` semantics are identical across both surfaces. Why the pool is separate, and what that means for sizing: [2.3 Async hosts](./3-lifecycle#async-hosts-arun-and-the-turn-pool).
 :::
 
 ---
@@ -133,7 +141,7 @@ Four host→Agentao injection slots cover every IO surface tools touch. Replace 
 |------|----------|---------|----------|
 | `filesystem` | `FileSystem` | `LocalFileSystem` | Tool registration → `tool.filesystem` on every file/search tool |
 | `shell` | `ShellExecutor` | `LocalShellExecutor` | Tool registration → `tool.shell` on the shell tool |
-| `mcp_registry` | `MCPRegistry` | `FileBackedMCPRegistry` | `Agentao.__init__` reads `list_servers()` once during MCP init |
+| `mcp_registry` | `MCPRegistry` | `None`: reads `<wd>/.agentao/mcp.json` and `~/.agentao/mcp.json`, the same files as the factory's `FileBackedMCPRegistry` | `Agentao.__init__` reads `list_servers()` once during MCP init |
 | `memory_manager` (wraps `MemoryStore`) | `MemoryStore` | `SQLiteMemoryStore` under `<wd>/.agentao/memory.db` | Held on `agent._memory_manager`; the `save_memory` tool delegates here |
 
 ```python
@@ -152,7 +160,9 @@ agent = Agentao(
 )
 ```
 
-Always import the **protocols** from `agentao.host.protocols` (public surface). Default impls live in `agentao.capabilities` and `agentao.memory`. `None` for any slot means *fall back to the local default*, not *disable*; to disable a capability, inject an implementation that raises on call.
+Always import the **protocols** from `agentao.host.protocols` (public surface). Default impls live in `agentao.capabilities` and `agentao.memory`. `None` for any slot means *fall back to the local default*, not *disable*; to disable a capability, inject an implementation that raises on call. For MCP, `mcp_registry=InMemoryMCPRegistry()` (from `agentao.mcp`) loads no servers at all.
+
+Matching the method signatures is not the whole contract. `FileSystem.write_text` must replace an existing file **atomically**, so a process killed mid-write cannot leave the user's file truncated. A wrapper that delegates to `LocalFileSystem` gets this for free. A from-scratch implementation must stage the content and swap it in with one operation, as `LocalFileSystem` does with a sibling temp file and `os.replace` ([`host-api.md`](https://github.com/jin-bo/agentao/blob/main/docs/reference/host-api.md#filesystemwrite_text-must-replace-atomically)).
 
 ::: tip Runnable end-to-end example — [`examples/protocol-injection/`](https://github.com/jin-bo/agentao/tree/main/examples/protocol-injection)
 Replaces all four slots with small adapters (in-memory FS, audit-logging shell, dict-backed memory store, programmatic MCP registry) and asserts each one is consulted via 6 smoke tests. No `OPENAI_API_KEY` required. Run with `uv sync --extra dev && PYTHONPATH=. uv run pytest tests/`.
@@ -178,9 +188,14 @@ Inject pre-built managers when you don't want Agentao to construct them from def
 | Param | When `None` |
 |-------|-------------|
 | `bg_store` | Background-task tools (`check_background_agent`, `cancel_background_agent`) are not registered; sub-agent tool schemas drop the `run_in_background` field; `/agent bg\|dashboard\|cancel\|delete\|logs\|result` CLI subcommands no-op with a warning |
-| `sandbox_policy` | Shell runs without macOS `sandbox-exec` wrapper |
+| `sandbox_policy` | Shell runs without macOS `sandbox-exec` wrapper. The policy wraps only `run_shell_command`, only on macOS, and only when `sandbox.json` (`~/.agentao/`, then `<wd>/.agentao/`) sets `enabled: true`; it does not restrict the file tools ([`sandbox/policy.py`](https://github.com/jin-bo/agentao/blob/main/agentao/sandbox/policy.py)) |
 | `enable_builtin_agents` (`False`) | The built-in sub-agents (`codebase-investigator`, `generalist`) are not registered as delegation tools. The factory reads `agents.enable_builtin` from `settings.json` |
 | `replay_config` | The `replay` block of `<wd>/.agentao/settings.json` is not read at construction; no `ReplayManager` is attached until `start_replay()` / `reload_replay_config()` creates one. `start_replay()` alone creates it with replay off (it returns `None`); `reload_replay_config()` reads that block but starts nothing: a `start_replay()` after it records only if the block has `enabled` true |
+
+With a value set:
+
+- **`bg_store`** enables background sub-agents. `BackgroundTaskStore(persistence_dir=wd)` keeps its records in `<wd>/.agentao/background_tasks.json`. After a restart, a task that was still running is marked `failed`: the record survives, the work does not. At most `max_concurrent` run at once (default 6, `None` for no cap), and a launch past that is refused, not queued. Leave it `None` in a one-shot process, as `agentao run` does, because the workers are daemon threads that die at exit. Details: [Appendix A.1](/en/appendix/a-api-reference#constructor).
+- **`replay_config`** records to `<wd>/.agentao/replays/*.jsonl` only after the host calls `agent.start_replay()`. The CLI and ACP do this per session. Neither the factory nor `Agentao(...)` does. Replay records a session; it does not re-run one ([6.6](/en/part-6/6-observability#axis-three-session-replay)).
 :::
 
 ::: details Logger injection — `logger`
@@ -269,15 +284,32 @@ agent = build_from_environment(
 )
 ```
 
-What it does:
+What it does, in order ([`embedding/factory.py`](https://github.com/jin-bo/agentao/blob/main/agentao/embedding/factory.py)):
 
-1. Resolves `working_directory` (defaults to `Path.cwd()`) and freezes it
-2. Calls `load_dotenv()` against `<wd>/.env` if present, else process-wide
-3. Reads `LLM_PROVIDER` and matching `*_API_KEY` / `*_BASE_URL` / `*_MODEL` env vars
-4. Builds a `PermissionEngine`, `MemoryManager`, and `FileBackedMCPRegistry` rooted at `wd`
-5. Forwards everything explicitly to `Agentao(...)` — **caller `**overrides` win** over auto-discovered values
+| # | Step | If it goes wrong |
+|---|------|------------------|
+| 1 | Resolves `working_directory` to an absolute path and freezes it. Omitted, it is `Path.cwd()`, which an embedded host should not rely on | — |
+| 2 | Reads `<wd>/.agentao/settings.json` for factory toggles such as `agents.enable_builtin` | A malformed file is logged and ignored |
+| 3 | Loads `<wd>/.env` into `os.environ`. Without one, it loads the nearest `.env` from the process cwd upward. A non-empty variable already in the environment wins | — |
+| 4 | Reads the LLM settings from `LLM_PROVIDER` (default `OPENAI`) and `{PROVIDER}_API_KEY` / `_BASE_URL` / `_MODEL` / `_API_FORMAT`, plus `LLM_TEMPERATURE`, `LLM_MAX_TOKENS`, `LLM_EXTRA_BODY`, `LLM_PROMPT_CACHE`, `LLM_PROMPT_CACHE_TTL`. Skipped when you pass `llm_client=` | A non-numeric `LLM_TEMPERATURE` / `LLM_MAX_TOKENS` raises. A bad `LLM_EXTRA_BODY` is warned about and skipped |
+| 5 | Reads `~/.agentao/permissions.json` and builds `PermissionEngine(project_root=wd, user_root=~/.agentao)` with its rules. Its `shell` block picks the shell executor | **Fails closed**: a file that exists but is unreadable or invalid raises `PermissionConfigError`. Dropping it would turn a `deny` rule into an ask, or into no prompt at all for an `mcp_*` tool. `<wd>/.agentao/permissions.json` is never loaded, only warned about |
+| 6 | Wires the opt-in subsystems: `BackgroundTaskStore(persistence_dir=wd)`, `SandboxPolicy(project_root=wd)`, `replay_config` from the `replay` block of `settings.json`, and `enable_builtin_agents` from step 2 | A malformed replay block means no replay |
+| 7 | Uses `FileBackedMCPRegistry(project_root=wd, user_root=~/.agentao)` unless you pass `mcp_registry=` or `mcp_manager=` | — |
+| 8 | Opens memory: the project store at `<wd>/.agentao/memory.db` and the user store at `~/.agentao/memory.db` | The project store falls back to an in-memory database. The user store is disabled with a warning. User memories are never rerouted to the project |
+| 9 | Calls `Agentao(...)` with all of the above as explicit keywords. **Your overrides win** over everything discovered | If construction raises, the factory closes the memory stores it opened |
 
-This is **the only place in the codebase that reads env / dotenv / `.agentao/*.json` at startup**. Hosts that don't want any of that should construct `Agentao` directly.
+An explicit `None` for `bg_store`, `sandbox_policy` or `replay_config` disables that subsystem. `permission_mode=` is applied to the engine from step 5, so the user's rules stay. The CLI and ACP `session/new` build their agents through this factory.
+
+**What reads the environment.** The factory is the only code that reads environment variables or `.env`. It is also the only reader of `permissions.json`, `settings.json` and `sandbox.json`. A direct `Agentao(...)` still reads some files under its defaults:
+
+| Default | Reads | To avoid it, pass |
+|---------|-------|-------------------|
+| `project_instructions=None` | `<wd>/AGENTAO.md` | `project_instructions=` |
+| `skill_manager=None` | `~/.agentao/skills/`, `<wd>/.agentao/skills/`, `<wd>/skills/`, `<wd>/.agentao/skills_config.json`. It also copies the bundled skills into `~/.agentao/skills/` on first run | `skill_manager=` |
+| `memory_manager=None` | Opens `<wd>/.agentao/memory.db` (project scope only) | `memory_manager=` |
+| `mcp_registry=None` | `<wd>/.agentao/mcp.json` and `~/.agentao/mcp.json` | `mcp_registry=` or `mcp_manager=` |
+
+A host that must not touch the disk at construction injects all four.
 
 ---
 
@@ -347,7 +379,7 @@ agent = build_from_environment(
 - **0.2.16** — Explicit-injection surface added (`memory_manager`, `skill_manager`, `mcp_manager`, `filesystem`, `shell`, …); `replay_config`, `sandbox_policy`, `bg_store` defaulted to `None`.
 - **0.2.10** — Decoupled core runtime; the 8 legacy callbacks remain accepted via `build_compat_transport()`.
 
-End-to-end embedding patterns: [`docs/guides/embedding.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md).
+Upgrading from 0.2.15: [`docs/migration/0.2.15-to-0.3.3.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md).
 :::
 
 ## TL;DR
@@ -356,6 +388,6 @@ End-to-end embedding patterns: [`docs/guides/embedding.md`](https://github.com/j
 - **Smallest working call**: `api_key` + `base_url` + `model` + `working_directory`, or `llm_client` + `working_directory`. A direct `Agentao(...)` reads no environment variables.
 - **Typical production additions**: `transport`, `permission_mode` (or `permission_engine`), `max_context_tokens`, `extra_mcp_servers`, `project_instructions`, `temperature`.
 - **Everything else is opt-in or advanced** — capability protocols, custom managers, prompt caching, compaction control, sandbox / replay / background / sub-agent subsystems.
-- **Two factories**: `build_from_environment()` for CLI conventions; direct `Agentao(...)` for explicit control. Don't mix.
+- **Two factories**: `build_from_environment()` for CLI conventions; direct `Agentao(...)` for explicit control. To change one part of the factory's result, pass that keyword to the factory as an override.
 
 → Next: [2.3 Lifecycle](./3-lifecycle)

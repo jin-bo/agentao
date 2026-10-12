@@ -90,8 +90,34 @@ handler. To fully suppress the file, either inject your own logger
 (above) or pass `log_file=None` when building `LLMClient` yourself.
 :::
 
-Full reference (knob matrix, code anchors, `LLMClient` direct path) in
-[`docs/guides/embedding.md` §2 → "Optional: silencing or redirecting agentao.log"](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md#optional-silencing-or-redirecting-agentaolog).
+The two knobs, both on `LLMClient.__init__` ([`llm/client.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/client.py)):
+
+| You want | Pass |
+|----------|------|
+| No `agentao.log` file | `log_file=None` on an `LLMClient` you build |
+| No change to `logging.getLogger("agentao")`: no level, no handler, no eviction | `logger=` on `Agentao` or `LLMClient` |
+| Both | `logger=` alone is enough, because it skips the file handler too |
+
+`log_file=None` alone still sets the `"agentao"` logger to `DEBUG`, so every `agentao.*` module logs at DEBUG into whatever handlers sit upstream. A host that builds its own client can set both:
+
+```python
+from agentao.llm import LLMClient
+
+llm = LLMClient(
+    api_key=..., base_url=..., model=...,
+    log_file=None,     # no agentao.log
+    logger=quiet,      # leave the "agentao" logger alone
+)
+agent = Agentao(llm_client=llm, working_directory=workdir)
+```
+
+The other package loggers (`agentao.mcp`, `agentao.tools.web`, `agentao.acp_client`, …) never attach handlers of their own. With `logger=`, they follow the propagation and handlers your host already configured.
+
+### Several agents in one process
+
+The file handler lives on the shared `"agentao"` logger, and each new `LLMClient` replaces the previous one's. So with several agents in one process, records go to the `agentao.log` of the **most recently built agent that is still open**. Closing that agent hands the logger back to the next most recent open agent, so the others keep logging. A client dropped without `close()` is not handed the log back.
+
+`agent.close()` (or `with` / `async with` / `aclose()`) detaches and closes the handler its own client attached, so a host can delete the working directory afterwards, Windows included. A client you built and passed as `llm_client=` is yours: call `llm.close()`.
 
 ### Essential fields
 

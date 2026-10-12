@@ -300,8 +300,10 @@ def build_from_environment(
         overrides["enable_builtin_agents"] = _builtin_agents_enabled(settings)
     # Issue #17: default MCP registry reads the same on-disk files the
     # pre-Protocol path consulted. Embedded hosts that want
-    # programmatic registration pass ``mcp_registry=`` (or
-    # ``mcp_registry=None`` to opt out of file discovery entirely).
+    # programmatic registration pass ``mcp_registry=``. To load no
+    # servers, pass an empty ``InMemoryMCPRegistry()``: ``None`` is not an
+    # opt-out, because ``init_mcp`` then falls back to reading the same
+    # ``mcp.json`` files (``tooling/mcp_tools.py``).
     if "mcp_registry" not in overrides and "mcp_manager" not in overrides:
         overrides["mcp_registry"] = FileBackedMCPRegistry(
             project_root=wd,

@@ -67,6 +67,16 @@ not a string (`.value` gives the string).
 
 **"Ask" is answered by the transport.** Every "Ask" in the table above goes to `transport.confirm_tool`. The default `NullTransport` answers yes to all of them except a confirmation the MCP Skills gate raises, so in a headless host "Ask" means "Allow". A host with nobody to ask that should refuse passes `SdkTransport(confirm_tool=lambda *_: False)`.
 
+Headless, an ask therefore runs: a shell command outside the read-only allowlist, `web_fetch` to an unlisted domain, `web_search`, a write into `.git/`, `.agentao/` or a credential-shaped path. What still stops a call under `NullTransport`:
+
+| Stop | Needs an engine? |
+|------|------------------|
+| Read-only mode | Yes. It is set through `set_permission_mode` or `permission_mode=` |
+| An engine `deny` rule, including the `workspace-write` preset's own | Yes |
+| The hardline command floor on `run_shell_command` (`rm -rf /`, `mkfs`, …) | No. It stays on without an engine ([`permissions_hardline/`](https://github.com/jin-bo/agentao/tree/main/agentao/permissions_hardline)) |
+| The MCP Skills gate, which `NullTransport` refuses | No |
+| `web_fetch`'s URL policy (private and metadata addresses) | No ([6.3](/en/part-6/3-network-ssrf)) |
+
 ## Rule JSON format
 
 **Location**:

@@ -209,7 +209,7 @@ wherever a string is.
 
 Rules (`rules=`) still need a `PermissionEngine` you build yourself, from
 `agentao.permissions`. Every remaining *ask* is answered by the transport,
-and `NullTransport` answers yes — see [`embedding.md` §2](../guides/embedding.md#permissions-and-the-transport).
+and `NullTransport` answers yes — see [developer guide 5.4 · PermissionMode: four presets](../../developer-guide/en/part-5/4-permissions.md) (the "What still stops a call under `NullTransport`" table).
 
 ### Tool injection methods
 

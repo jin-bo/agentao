@@ -182,7 +182,7 @@ ACP 的 `tool_call_update`）报告一次进度。1800 秒这个上限是暂定�
 
 规则（`rules=`）仍需要你自己从 `agentao.permissions` 构造 `PermissionEngine`。
 剩下的每个"问"都由 transport 回答，而 `NullTransport` 一律回答"是"——见
-[`embedding.md` §2](../guides/embedding.md#permissions-and-the-transport)。
+[开发者指南 5.4 · PermissionMode：四种预设](../../developer-guide/zh/part-5/4-permissions.md)（`NullTransport` 下仍会拦住调用的情况）。
 
 ## 流式文本（`Agentao.astream`）
 

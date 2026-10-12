@@ -113,7 +113,7 @@ def main() -> int:
     if not os.environ.get("OPENAI_API_KEY"):
         print(
             "OPENAI_API_KEY is not set. Configure it (or any "
-            "LLM_PROVIDER-prefixed credential — see docs/guides/embedding.md) "
+            "LLM_PROVIDER-prefixed credential — see developer-guide/en/part-2/2-constructor-reference.md) "
             "before running this example.",
             file=sys.stderr,
         )

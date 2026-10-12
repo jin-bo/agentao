@@ -9,7 +9,7 @@ this because someone asked you to "add Agentao" / "embed the agent" /
 authoritative sources are linked inline; open them only when a step
 below points you there.
 
-- Full embedding reference: [`docs/guides/embedding.md`](embedding.md)
+- Full embedding reference: [developer guide Part 2 · Constructor Reference](../../developer-guide/en/part-2/2-constructor-reference.md)
 - Stable host API: [`docs/reference/host-api.md`](../reference/host-api.md)
 - Design / stability boundary: [`docs/design/embedded-host-contract.md`](../design/embedded-host-contract.md)
 - Non-Python hosts (stdio): [developer guide 3.2 · Agentao as an ACP Server](../../developer-guide/en/part-3/2-agentao-as-server.md)
@@ -127,7 +127,7 @@ agent = Agentao(
 ```
 
 The other defaults (`memory_manager`, `mcp_registry`) are in the table in
-[`EMBEDDING.md` §2](embedding.md#2-pure-injection-construction).
+[developer guide 2.2 · Constructor Reference](../../developer-guide/en/part-2/2-constructor-reference.md) (Tier 3, and "What reads the environment" under the factory path).
 
 > **MCP transports.** The default `mcp_registry` reads `.agentao/mcp.json` and
 > speaks all three MCP transports with no embedding-side work: **stdio**,
@@ -212,7 +212,7 @@ tag appended at the end — `<attachment uri="..." mimetype="..."/>` (`uri` =
 persist `agent.messages`. Since 0.5.12, an image the *provider* refuses
 (400/413/422 mentioning an image) gets every image part in history replaced
 with a text note and ends the turn with an error; both rewrites emit
-`IMAGES_REMOVED`. Full contract: `docs/guides/embedding.md` §4.
+`IMAGES_REMOVED`. Full contract: `developer-guide/en/appendix/a-api-reference.md`, "Image input and vision degradation".
 
 ---
 
@@ -308,7 +308,7 @@ agent = build_from_environment(
 
 The four protocols: `FileSystem`, `ShellExecutor`, `MemoryStore`,
 `MCPRegistry`. Full method signatures: `agentao/host/protocols.py` and
-[`EMBEDDING.md` §3](embedding.md#3-capability-injection).
+[developer guide 2.2, Tier 3](../../developer-guide/en/part-2/2-constructor-reference.md).
 
 ### 4.1 Path-domain write boundary (declare some subpaths read-only)
 
@@ -652,7 +652,7 @@ agent = Agentao(api_key=..., base_url=..., model=...,
 
 ⚠️ Passing only `log_file=None` skips the file but **still** elevates
 the package logger to DEBUG. To leave the host's logging untouched you
-must pass `logger=`. ([`EMBEDDING.md` §2](embedding.md#2-pure-injection-construction))
+must pass `logger=`. ([developer guide 6.6 · Observability](../../developer-guide/en/part-6/6-observability.md), "Take over Agentao's logger")
 
 ---
 
@@ -692,4 +692,4 @@ what makes this smoke test able to fail.
 
 For the host-facing API and event contract specifics, the canonical
 reference is [`docs/reference/host-api.md`](../reference/host-api.md); for everything not
-covered here, [`docs/guides/embedding.md`](embedding.md).
+covered here, [developer guide Part 2](../../developer-guide/en/part-2/2-constructor-reference.md) and [4.7 · Host Contract](../../developer-guide/en/part-4/7-host-contract.md).

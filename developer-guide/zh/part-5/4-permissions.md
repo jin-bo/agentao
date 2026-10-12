@@ -65,6 +65,16 @@ agent.set_permission_mode("read-only")                   # 返回 PermissionMode
 
 **"问"由 transport 回答。** 上表里所有的"问"都交给 `transport.confirm_tool`。默认的 `NullTransport` 对它们一律回答"是"，只有 MCP Skills 闸门发起的确认除外；所以在无界面宿主里，"问"就等于"允"。没人可问、又希望拒绝的宿主，应传入 `SdkTransport(confirm_tool=lambda *_: False)`。
 
+因此在无界面宿主里，"问"的调用都会执行：只读白名单以外的 shell 命令、访问未列出域名的 `web_fetch`、`web_search`、写入 `.git/`、`.agentao/` 或疑似凭据的路径。在 `NullTransport` 下仍能拦住调用的有：
+
+| 拦截 | 需要引擎吗 |
+|------|-----------|
+| 只读模式 | 需要。通过 `set_permission_mode` 或 `permission_mode=` 设置 |
+| 引擎的 `deny` 规则，包括 `workspace-write` 预设自带的 | 需要 |
+| `run_shell_command` 的硬性命令底线（`rm -rf /`、`mkfs` 等） | 不需要。没有引擎时它也开着（[`permissions_hardline/`](https://github.com/jin-bo/agentao/tree/main/agentao/permissions_hardline)） |
+| MCP Skills 闸门，`NullTransport` 会拒绝它的确认 | 不需要 |
+| `web_fetch` 的 URL 策略（内网和元数据地址） | 不需要（[6.3](/zh/part-6/3-network-ssrf)） |
+
 ## 规则 JSON 格式
 
 **加载位置**：

@@ -21,7 +21,7 @@
 
 ### 构造器
 
-完整参数表见 [Part 2.2](/zh/part-2/2-constructor-reference)。**0.3.0 起**，不传 `working_directory=` 调用 `Agentao()` 会从 Python 签名分派直接抛 `TypeError`——软废弃周期已结束。完整嵌入式接入实践见 [`docs/guides/embedding.md`](https://github.com/jin-bo/agentao/blob/main/docs/guides/embedding.md)。
+完整参数表见 [Part 2.2](/zh/part-2/2-constructor-reference)。**0.3.0 起**，不传 `working_directory=` 调用 `Agentao()` 会从 Python 签名分派直接抛 `TypeError`——软废弃周期已结束。从 0.2.15 升级见 [`docs/migration/0.2.15-to-0.3.3.md`](https://github.com/jin-bo/agentao/blob/main/docs/migration/0.2.15-to-0.3.3.md)。
 
 ```python
 Agentao(
@@ -75,7 +75,7 @@ Agentao(
 
 - `replay_config=None` —— 构造时不读 `<wd>/.agentao/settings.json` 的 `replay` 块，也不挂 `ReplayManager`：在 `start_replay()` / `reload_replay_config()` 创建它之前，`agent.replay_manager` 是 `None`。
 - `sandbox_policy=None` —— `ToolRunner` 跑 shell 时不再走 macOS `sandbox-exec` 包装。
-- `bg_store=None` —— `check_background_agent` / `cancel_background_agent` 不注册，chat loop 后台通知 drain 短路，子 agent 工具定义里 `run_in_background` 字段在 **schema 层被移除**（LLM 看不到、就不会调用一个被禁用的能力）。`/agent bg|dashboard|cancel|delete|logs|result` 这几个 CLI 子命令也会短路，并打印明确的提示。一次性进程应该传它，`agentao run` 就是这样做的（0.5.6）：后台 worker 是 daemon 线程，会随进程一起结束。
+- `bg_store=None` —— `check_background_agent` / `cancel_background_agent` 不注册，chat loop 后台通知 drain 短路，子 agent 工具定义里 `run_in_background` 字段在 **schema 层被移除**（LLM 看不到、就不会调用一个被禁用的能力）。`/agent bg|dashboard|cancel|delete|logs|result` 这几个 CLI 子命令也会短路，并打印明确的提示。一次性进程应保持 `None`，`agentao run` 就是这样做的（0.5.6）：后台 worker 是 daemon 线程，会随进程一起结束。
 - 有 store 时，后台子代理完成后的更新只会在父级**下一**轮交给它，而运行时从不自己开启这一轮。两种做法任选：在宿主自己驱动轮次的地方，根据终态 `SubagentLifecycleEvent` 续跑（配方见 `docs/reference/host-api.zh.md`《后台子 Agent 结束后继续》）；或者让模型用 `check_background_agent(agent_id, wait_seconds=…)` 在轮次内等待（0.5.6，最多 1800 秒；取消这一轮只结束等待，不取消子代理）。
 - 一个 store 同时最多运行 `max_concurrent` 个后台子代理（keyword-only，默认 `6`；`None` 表示不设上限；0.5.7）。超出时直接拒绝，不排队：`register()` 在记录任何内容之前抛出 `BackgroundCapacityError`，这次工具调用以失败返回，文字告诉模型等一个结束、取消一个，或改为前台运行。只统计这个 store 自己 pending/running 的任务，不算同一个 `background_tasks.json` 里其他进程的记录。
 
@@ -91,14 +91,14 @@ def build_from_environment(
     ...
 ```
 
-CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变量、`~/.agentao/permissions.json`（项目级文件故意不加载 —— 见 [5.4](/zh/part-5/4-permissions)）、`<wd>/.agentao/mcp.json` + `~/.agentao/mcp.json`（同名冲突时用户胜；项目级仅可新增）、内存目录，然后用发现到的值构造 `Agentao`。**调用方传入的 `**overrides` 优先**。同样会触发上面构造器的互斥校验（如果 `overrides` 含 `llm_client`，工厂会先把发现到的 `api_key` / `base_url` / `model` 丢掉再转发）。
+CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变量、`<wd>/.agentao/settings.json`、`~/.agentao/permissions.json`（项目级文件故意不加载 —— 见 [5.4](/zh/part-5/4-permissions)）、`<wd>/.agentao/mcp.json` + `~/.agentao/mcp.json`（同名冲突时用户胜；项目级仅可新增）、内存目录；接上 `bg_store`、`sandbox_policy`、`replay_config`（显式传 `None` 即禁用）；然后用发现到的值构造 `Agentao`。**调用方传入的 `**overrides` 优先**。`~/.agentao/permissions.json` 存在但读不了或校验不过时，抛 `agentao.embedding.PermissionConfigError`（失败即关闭）。逐步顺序见 [2.2 工厂路径](/zh/part-2/2-constructor-reference#工厂路径-build-from-environment)。同样会触发上面构造器的互斥校验（如果 `overrides` 含 `llm_client`，工厂会先把发现到的 `api_key` / `base_url` / `model` 丢掉再转发）。
 
 ### 方法
 
 | 方法 | 签名 | 作用 |
 |------|------|------|
 | `chat` | `chat(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | 跑一轮，返回助手最终文本。`images`（0.4.8+）：内联图片附件——见[图片输入与视觉退化](#图片输入与视觉退化) |
-| `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | 异步接口——通过 `loop.run_in_executor` 桥到 `chat()`。取消、replay、`max_iterations`、`images` 语义与同步版完全一致 |
+| `arun` | `async arun(user_message: str, max_iterations: int = 100, cancellation_token: CancellationToken | None = None, images: list[dict] | None = None) -> str` | 异步接口——在 Agentao 自己的 `agentao-arun-*` 线程池上运行 `chat()`，从不用事件循环的默认执行器（[2.3](/zh/part-2/3-lifecycle#异步宿主-arun-与轮次线程池)）。取消、replay、`max_iterations`、`images` 语义与同步版完全一致 |
 | `astream` | `astream(user_message: str, *, max_iterations: int = 100, images: list[dict] | None = None, cancellation_token: CancellationToken | None = None) -> AsyncGenerator[TextDelta | TurnOutcome, None]` | 跑一轮并流式输出：先产出 `TextDelta`，最后一项是本轮的 `TurnOutcome`。增量用于显示，结果以 outcome 为准——回答取 `TurnOutcome.text`，并先用 `.is_answer` 检查。用 `contextlib.aclosing(...)` 包住——关闭它（或取消消费方）会取消本轮。订阅 agent 的 transport，从不替换它。见 [4.7](/zh/part-4/7-host-contract#streaming-text-agent-astream) |
 | `clear_history` | `clear_history() -> None` | 清 `self.messages`、已激活 skills、todos 与 token 计数；不影响 memory DB。后台 agent 继续运行，但完成通知不再进入历史（用 `check_background_agent` 查看） |
 | `close` | `close() -> None` | 关 agent 自己打开的 MCP 子进程与 DB handle（注入的 `mcp_manager=` / `memory_manager=` 由你释放）；可重复调用。请放 `finally:`，或用 `with` |
@@ -121,6 +121,8 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 ```text
 <attachment uri="share/screenshot.png" mimetype="image/png"/>
 ```
+
+每一项都要有非空字符串 `data`（base64）和 `mimeType`，否则本轮开始前就抛 `ValueError`。可选的 `_source` 键（来源路径或 URL）从不作为图片内容发送，只用于上面标签里的命名和日志标签。**引擎不检查大小、数量或类型。** CLI 和 ACP 执行 `agentao.media_limits` 的上限（每张 20 MB，每轮 16 张，并用 `sniff_image_mime` 嗅探字节）。接收不可信图片的宿主，要在调用 `chat()` 前自己设上限。
 
 `uri` 取已知的来源路径或 URL（例如经 CLI `/image` 命令暂存的文件）；wire 上不带
 来源的图片退化为 `inline-image-N`。本节是该格式的规范出处——实现见

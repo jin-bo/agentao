@@ -45,6 +45,11 @@ All four are **synchronous** and cheap (no network traffic on `set_*`). They onl
 | tiktoken encoding (for token accounting) | Active skills |
 | Token accounting cache (`_last_api_prompt_tokens` is invalidated) | Memory (both scopes) |
 | `agentao.log` line `"Model changed from X to Y"` | Working directory / transport / MCP |
+| Auto-detected request quirks (`omit_temperature`, `max_completion_tokens`) and a `/temperature off` | `extra_body` (host config, kept as is) |
+| A context limit learned from an overflow error, when the model actually changes | |
+| Thinking artifacts in history (`reasoning_content`, signed thinking blocks), when the model actually changes | |
+
+**`extra_body` has no auto-recovery.** A rejected `temperature` is detected and dropped for the new model, but a model-specific `extra_body` key is not. If you set `extra_body={"reasoning_effort": "high"}` and switch to a model that rejects it, every call fails with a provider `400` until you remove the key. Drop model-specific keys yourself when you switch.
 
 **Important**: conversation history is **not cleared**. The new model sees all prior turns the old model saw, including every tool-call trace. If you don't want that context bleed, call `clear_history()` **before** swapping.
 
@@ -151,7 +156,7 @@ except RuntimeError:
    Some providers send smaller/larger chunks or delay the first token. UI-perceived latency can change noticeably after a swap. Your `Transport.emit(...)` still fires — but chunk boundaries are different.
 
 4. **Context window changes**
-   `gpt-5.4` has 128k; `gpt-5.4` has 128k; `deepseek-chat` has 64k. After `set_model("deepseek-chat")`, a long history that fit before may now trigger compaction. This is handled automatically by the context manager — no action needed on your side, but expect a summary block to appear.
+   Windows differ by model: for example `gpt-5.4` has 128k and `deepseek-chat` has 64k. After `set_model("deepseek-chat")`, a long history that fit before may now trigger compaction. This is handled automatically by the context manager — no action needed on your side, but expect a summary block to appear.
 
 5. **Swapping mid-turn is undefined**
    Don't call `set_model()` inside a `chat()` — `chat()` holds a reference to the LLM client and the swap won't apply cleanly until the next turn. If you need it, wrap `chat()` with `clear_history()` + `set_model()` + new `chat()`.

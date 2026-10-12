@@ -1,7 +1,7 @@
 # Agentao CLI — Quick Start Guide
 
 > **Embedding `agentao` in a Python host instead of using the CLI?**
-> See [`EMBEDDING.md`](../guides/embedding.md) — that's the primary use case
+> See [developer guide Part 2 · Constructor Reference](../../developer-guide/en/part-2/2-constructor-reference.md) — that's the primary use case
 > and has its own setup path. This guide covers the CLI only.
 
 Get the CLI up and running in under 2 minutes.

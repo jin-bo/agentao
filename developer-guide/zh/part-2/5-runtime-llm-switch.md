@@ -45,6 +45,11 @@ models = agent.list_available_models()  # -> ["gpt-5.4", "gpt-5.4", ...]
 | tiktoken 编码（用于 token 估算） | 激活中的技能 |
 | token 计数缓存（`_last_api_prompt_tokens` 置空） | 记忆（两种作用域） |
 | `agentao.log` 里一行 `"Model changed from X to Y"` | 工作目录 / transport / MCP |
+| 自动探测到的请求兼容项（`omit_temperature`、`max_completion_tokens`）以及 `/temperature off` | `extra_body`（宿主配置，原样保留） |
+| 从上下文溢出错误里学到的窗口上限，仅在模型真正变化时 | |
+| 历史中的思考产物（`reasoning_content`、带签名的 thinking 块），仅在模型真正变化时 | |
+
+**`extra_body` 没有自动恢复。** 新模型拒绝 `temperature` 时会被探测到并自动去掉，但模型专属的 `extra_body` 键不会。如果设了 `extra_body={"reasoning_effort": "high"}` 再切到不支持它的模型，之后每次调用都会以 provider `400` 失败，直到你删掉这个键。切换时请自己去掉模型专属的键。
 
 **重要**：对话历史**不会清空**。新模型会看到旧模型看过的所有历史，包括工具调用轨迹。如果不希望这种上下文渗透，先调用 `clear_history()` 再 swap。
 
@@ -151,7 +156,7 @@ except RuntimeError:
    不同 provider 的 chunk 切分、首 token 延迟不同。切换后 UI 感受可能明显变化。`Transport.emit(...)` 仍会照样触发——只是 chunk 边界不一样
 
 4. **上下文窗口会变**
-   `gpt-5.4` 128k、`gpt-5.4` 128k、`deepseek-chat` 64k。`set_model("deepseek-chat")` 后，原本装得下的长历史可能触发压缩。上下文管理器会自动处理——但会出现摘要块，心里有数
+   不同模型窗口不同：例如 `gpt-5.4` 128k、`deepseek-chat` 64k。`set_model("deepseek-chat")` 后，原本装得下的长历史可能触发压缩。上下文管理器会自动处理——但会出现摘要块，心里有数
 
 5. **chat() 进行中切换是未定义行为**
    不要在 `chat()` 里面调 `set_model()`——`chat()` 持有 LLM 客户端的引用，切换要下一轮才生效。要做请用 `clear_history()` + `set_model()` + 新的 `chat()` 这个组合

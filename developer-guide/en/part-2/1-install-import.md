@@ -112,6 +112,7 @@ if Version(agentao.__version__) < MIN:
 """Bare-minimum embedding boilerplate."""
 from pathlib import Path
 from agentao import Agentao
+from agentao.embedding import build_from_environment
 from agentao.transport import SdkTransport
 
 def make_agent(workdir: Path, on_token=None) -> Agentao:
@@ -119,7 +120,9 @@ def make_agent(workdir: Path, on_token=None) -> Agentao:
         on_event=lambda ev: on_token(ev.data.get("chunk", ""))
                              if on_event_is_text(ev) else None,
     )
-    return Agentao(transport=transport, working_directory=workdir)
+    # Credentials come from the env / .env. To pass them yourself, call
+    # Agentao(api_key=..., base_url=..., model=..., working_directory=workdir, transport=transport).
+    return build_from_environment(working_directory=workdir, transport=transport)
 
 def on_event_is_text(ev) -> bool:
     return ev.type.name == "LLM_TEXT"

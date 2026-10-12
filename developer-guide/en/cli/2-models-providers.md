@@ -40,7 +40,7 @@ A provider is only listed if **all three** of its env vars are set. If `GEMINI_A
 
 ### Wire protocol
 
-`XXXX_API_FORMAT` names the protocol spoken to that block's endpoint: `openai-completions` (the default when unset), `anthropic-messages` (Anthropic's Messages API) or `openai-responses` (OpenAI's Responses API, 0.5.3). It is **never inferred** — not from the URL, the provider name or the model name — so `CLAUDE_*` pointing at an OpenAI-compatible gateway stays on Chat Completions until you say otherwise, and an unknown value is an error rather than a fallback. What the native wire buys is prompt caching that works and is reported (`LLM_PROMPT_CACHE=anthropic`) and signed thinking blocks that survive a tool loop. Full notes: [configuration reference §2](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#2-env--llm-provider-config).
+`XXXX_API_FORMAT` names the protocol spoken to that block's endpoint: `openai-completions` (the default when unset), `anthropic-messages` (Anthropic's Messages API) or `openai-responses` (OpenAI's Responses API, 0.5.3). It is **never inferred** — not from the URL, the provider name or the model name — so `CLAUDE_*` pointing at an OpenAI-compatible gateway stays on Chat Completions until you say otherwise, and an unknown value is an error rather than a fallback. What the native wire buys is prompt caching that works and is reported (`LLM_PROMPT_CACHE=anthropic`) and signed thinking blocks that survive a tool loop. Full notes: [configuration reference §2](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#2-env--llm-provider-configuration).
 
 ## `/provider` — list or switch
 
@@ -166,7 +166,7 @@ On current Anthropic models the effort alone turns adaptive thinking on. There i
 
 - **Switching mid-tool-call**: if you switch model or provider while the agent is still iterating tools, the next iteration uses the new client. Mostly fine, but tool-call format differences between providers can cause a single garbled turn — use `/clear` after switching if you see this.
 - **Conversation history is preserved across switches**: this is usually what you want, but it means the new model sees the previous model's tool-use traces. Some models are stricter than others about message format mismatches.
-- **Models you can name aren't always models you can call**: `/model` lists what the provider's `/models` endpoint reports; some entries (embedding models, fine-tunes you don't have access to) will fail at the next turn. Check the error and pick another.
+- **Models you can name aren't always models you can call**: `/model` lists what the provider's `/models` endpoint reports; some entries (embedding models, fine-tunes you don't have access to) will fail at the next turn. `/model <name>` also accepts a name that is not in the list, without checking it: a typo is reported only when the next turn fails. Check the error and pick another.
 
 ## Where to go next
 
@@ -183,5 +183,5 @@ The CLI uses `cli.agent.set_provider(api_key, base_url, model)` and `cli.agent.s
 :::
 
 ::: tip Authoritative help
-Command syntax: `/help` and [`agentao/cli/help_text.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/help_text.py). Discovery logic for providers: [`agentao/cli/commands.py:_list_providers_from_env`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands.py).
+Command syntax: `/help` and [`agentao/cli/help_text.py`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/help_text.py). Discovery logic for providers: [`agentao/cli/commands/provider.py:_list_providers_from_env`](https://github.com/jin-bo/agentao/blob/main/agentao/cli/commands/provider.py).
 :::
