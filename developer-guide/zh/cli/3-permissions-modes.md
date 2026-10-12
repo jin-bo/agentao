@@ -125,7 +125,7 @@ Press 1, 2, or 3 (single key, no Enter needed) · Esc to cancel
 
 `/sandbox` 在 `run_shell_command` **下面**再加一层：即使 agent 拿到了执行 shell 命令的批准，macOS `sandbox-exec` profile 会限制这条命令实际能碰什么（文件系统、网络）。
 
-Linux 和 Windows 没有这玩意，那两个平台 `/sandbox` 是 no-op。
+Linux 和 Windows 没有 `sandbox-exec`，那两个平台上 `/sandbox on` 会拒绝，shell 命令不经包装直接执行。profile、配置字段和自定义 profile 见 [6.2 Shell 沙箱](/zh/part-6/2-shell-sandbox)。
 
 ```text
 > /sandbox
@@ -143,7 +143,6 @@ Sandbox: enabled
 | `/sandbox on` | 本会话启用 |
 | `/sandbox off` | 本会话停用 |
 | `/sandbox profile <name>` | 切 profile（仅会话） |
-| `/sandbox profiles` | 列出可用 profile |
 | `/sandbox profiles` | 列出可用 profile 名 |
 
 ::: danger 配置坏掉时 fail-closed

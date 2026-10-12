@@ -433,7 +433,8 @@ See [docs/guides/adding-components.md](docs/guides/adding-components.md). Tools 
 - **A capability probe must check the answer, not the attribute.**
   - `hasattr` and `getattr(obj, name, None)` fail open at duck-typed seams. Examples: a bare-`def` `copies_to_subagents` is truthy. `wipe_all_memories` once trusted any object with a `wipe_all`.
   - Type-check the result and fail closed. `_REQUIRED_AGENT_ATTRS` in `cli/app.py` asserts only that an attribute exists.
-- **Docs come in en/zh twins** (`.zh.md`, `README.zh.md`, `developer-guide/en` + `/zh`). Update both. The stale twin is not always zh. Some parts of `docs/guides/` are only in Chinese.
+- **Docs come in en/zh twins** (`.zh.md`, `README.zh.md`, `developer-guide/en` + `/zh`). Update both. The stale twin is not always zh.
+- **User-facing behaviour is documented in the developer guide** (`developer-guide/en` + `/zh`), not in `docs/guides/`. That folder keeps only `embed-for-agents.md`, `adding-components.md` and stubs whose headings point into the developer guide (`docs/README.md`, Documentation Policy).
 - **Three memory tests that pass without testing anything:**
   1. The parent's store must be at `wd/.agentao/memory.db`, the CLI's layout.
   2. A read from a `:memory:` store after `close()` sees a fresh empty schema.

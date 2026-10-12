@@ -14,7 +14,7 @@ hero:
 features:
   - icon: 🖥️
     title: CLI · Terminal Reference / 终端命令手册
-    details: "Slash commands, plan mode, memory, replay — 12 chapters · bilingual: /en/cli/ · /zh/cli/"
+    details: "Slash commands, plan mode, memory, replay — 13 chapters · bilingual: /en/cli/ · /zh/cli/"
     link: /en/cli/
     linkText: "Open English CLI handbook →"
   - icon: 🐍

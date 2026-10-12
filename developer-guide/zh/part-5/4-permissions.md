@@ -173,17 +173,39 @@ agent.set_permission_mode("read-only")                   # 返回 PermissionMode
 
 默认内置的 WORKSPACE_WRITE 预设已经带了一套合理的 allow/block 域名（参见下方）。
 
+#### 主机名怎么取
+
+引擎默认从 `url` 参数读 URL，要读别的参数就设 `domain.url_arg`。主机名取自 `urlparse(url).hostname`（[`_extract_domain`](https://github.com/jin-bo/agentao/blob/main/agentao/permissions.py)）：
+
+- 不区分大小写；端口会被去掉，所以 `docs.python.org:8443` 也匹配 `.docs.python.org`。
+- userinfo 会被去掉：`https://github.com@evil.com/` 的主机名是 `evil.com`，不是 `github.com`。
+- 没写 scheme 的 URL 按 `https://` 解析。
+- 取不出主机名的 URL 不匹配任何 domain 规则，引擎接着看下一条规则。
+- IP 地址写成精确模式（不带前导点）：`1.127.0.0.1` 不会匹配 `127.0.0.1`。
+
+规则只看模型传进来的那个 URL。重定向的每一跳由请求时的 URL 策略另行检查（[6.3 层 2](/zh/part-6/3-network-ssrf#层-2-·-http-客户端行为)）。
+
+在默认 WORKSPACE_WRITE 规则下：
+
+| 调用 | 决策 | 原因 |
+|------|------|------|
+| `web_fetch https://docs.python.org/3/library/os.html` | ALLOW | 后缀匹配 `.docs.python.org` |
+| `web_fetch http://169.254.169.254/latest/meta-data` | DENY | 精确命中 blocklist |
+| `web_fetch https://example.com/api` | ASK | 没有 domain 规则命中，落到兜底的 `web_fetch` ask 规则 |
+
 ### `action` — 动作
 
 ```json
-{"action": "allow"}   // 默认；也是未写 action 字段时的值
+{"action": "allow"}
 {"action": "deny"}
 {"action": "ask"}
 ```
 
+`action` 和 `tool` 一样是必填字段。缺了它，规则校验失败（`PermissionRuleError`；来自文件时是 `PermissionConfigError`），引擎不会替你补默认值。
+
 ## 预设规则速览
 
-WORKSPACE_WRITE 模式自带规则（源码 `agentao/permissions.py:68-118`）：
+WORKSPACE_WRITE 模式自带规则（源码 `agentao/permissions.py::_PRESET_RULES`）：
 
 ```json
 [

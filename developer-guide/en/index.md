@@ -14,7 +14,7 @@ hero:
 features:
   - icon: 🖥️
     title: I'm here for the terminal CLI
-    details: Slash commands, plan mode, sub-agents, memory, replay, non-interactive entry points — everything terminal-side, in 12 chapters.
+    details: Slash commands, plan mode, sub-agents, memory, replay, non-interactive entry points — everything terminal-side, in 13 chapters.
     link: /en/cli/
     linkText: CLI reference →
   - icon: ⚡

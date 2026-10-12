@@ -1,457 +1,167 @@
 # Agentao Logging System
 
+Moved to **[6.6 · Observability](https://agentao.cn/en/part-6/6-observability)** ([中文](https://agentao.cn/zh/part-6/6-observability)), with log scrubbing in [6.5](https://agentao.cn/en/part-6/5-secrets-injection) ([中文](https://agentao.cn/zh/part-6/5-secrets-injection)). The headings below are kept so that old links still land on the right section. 本文已并入开发者指南；下面保留原标题，旧链接仍能落到对应小节。
+
 ## Overview
 
-Agentao 自动记录所有与 LLM 的交互到日志文件，包括请求和响应的完整内容（不截断；写入前会对形似凭据的字符串做脱敏，见[凭据脱敏](#-凭据脱敏两层)）。
+Moved to [English](https://agentao.cn/en/part-6/6-observability#the-built-in-agentao-log) · [中文](https://agentao.cn/zh/part-6/6-observability#agentao-%E8%87%AA%E5%B8%A6%E7%9A%84-agentao-log)
 
 ## 日志文件
 
-**默认位置**: `agentao.log`（在运行目录）
+Moved to [English](https://agentao.cn/en/part-6/6-observability#the-built-in-agentao-log) · [中文](https://agentao.cn/zh/part-6/6-observability#agentao-%E8%87%AA%E5%B8%A6%E7%9A%84-agentao-log)
 
 ## 记录内容
 
+Moved to [English](https://agentao.cn/en/part-6/6-observability#reading-a-request-and-its-response) · [中文](https://agentao.cn/zh/part-6/6-observability#%E8%AF%BB%E6%87%82%E4%B8%80%E6%AC%A1%E8%AF%B7%E6%B1%82%E5%92%8C%E5%93%8D%E5%BA%94)
+
 ### 1. 请求信息 (Request)
 
-每次发送给 LLM 的请求都会记录：
-
-```
-================================================================================
-[req_1] LLM REQUEST
-================================================================================
-Model: claude-sonnet-4-5
-Temperature: 0.7
-Max Tokens: (if specified)
-
-Messages (N total):
-
-  Message 1 [system]:
-    Content (XXX chars):
-      You are Agentao, a helpful AI assistant...
-      (完整的系统提示)
-
-  Message 2 [user]:
-    Content (XXX chars):
-      用户的完整消息内容...
-      (逐行记录，不截断)
-
-  Message 3 [assistant]:
-    Content (XXX chars):
-      助手的回复...
-    Tool Calls: 2
-      Tool Call 1:
-        Function: read_file
-        ID: call_xxx
-        Arguments (full):
-          {
-            "file_path": "example.py"
-          }
-
-  Message 4 [tool]:
-    Tool: read_file
-    Tool Call ID: call_xxx
-    Result (XXX chars):
-      文件的完整内容...
-      (逐行记录，不截断；形似凭据的字符串写入前被替换为 [REDACTED:<kind>])
-
-Tools (N available):
-  - read_file
-  - write_file
-  - (其他工具...)
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#reading-a-request-and-its-response) · [中文](https://agentao.cn/zh/part-6/6-observability#%E8%AF%BB%E6%87%82%E4%B8%80%E6%AC%A1%E8%AF%B7%E6%B1%82%E5%92%8C%E5%93%8D%E5%BA%94)
 
 ### 2. 响应信息 (Response)
 
-LLM 返回的响应也会完整记录：
-
-```
-================================================================================
-[req_1] LLM RESPONSE
-================================================================================
-Model: claude-sonnet-4-5
-Finish Reason: stop
-
-Token Usage:
-  Prompt Tokens: 1234
-  Completion Tokens: 567
-  Total Tokens: 1801
-
-Assistant Response (XXX chars):
-  助手的完整回复内容...
-  (逐行记录，不截断)
-
-Tool Calls (N):
-  Tool: write_file
-  ID: call_yyy
-  Arguments:
-    {
-      "file_path": "output.txt",
-      "content": "完整的文件内容..."
-    }
-
-================================================================================
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#reading-a-request-and-its-response) · [中文](https://agentao.cn/zh/part-6/6-observability#%E8%AF%BB%E6%87%82%E4%B8%80%E6%AC%A1%E8%AF%B7%E6%B1%82%E5%92%8C%E5%93%8D%E5%BA%94)
 
 ## 日志特性
 
+Moved to [English](https://agentao.cn/en/part-6/6-observability#the-built-in-agentao-log) · [中文](https://agentao.cn/zh/part-6/6-observability#agentao-%E8%87%AA%E5%B8%A6%E7%9A%84-agentao-log)
+
 ### ✅ 完整记录
 
-- **不截断内容** - 记录完整的消息、工具参数和结果（长度不设上限；但内容并非逐字原样——形似凭据的片段在落盘前被替换，见[凭据脱敏](#-凭据脱敏两层)）
-- **逐行记录** - 每行独立记录，便于阅读
-- **JSON 格式化** - 工具参数自动格式化为易读的 JSON
+Moved to [English](https://agentao.cn/en/part-6/6-observability#the-built-in-agentao-log) · [中文](https://agentao.cn/zh/part-6/6-observability#agentao-%E8%87%AA%E5%B8%A6%E7%9A%84-agentao-log)
 
 ### ✅ 详细信息
 
-记录的详细信息包括：
-
-1. **请求参数**
-   - 模型名称
-   - 温度设置
-   - 最大 token 数
-   - `extra_body`（host 配置的请求体直通，**凭据脱敏**——见下）
-   - 所有消息（system, user, assistant, tool）
-   - 可用工具列表
-
-2. **消息内容**
-   - 角色 (role)
-   - 内容长度统计
-   - 完整文本内容
-   - 工具调用详情
-   - 工具结果详情
-
-3. **响应数据**
-   - 模型版本
-   - 完成原因 (finish_reason)
-   - Token 使用统计
-   - 完整的助手回复
-   - 工具调用请求
+Moved to [English](https://agentao.cn/en/part-6/6-observability#reading-a-request-and-its-response) · [中文](https://agentao.cn/zh/part-6/6-observability#%E8%AF%BB%E6%87%82%E4%B8%80%E6%AC%A1%E8%AF%B7%E6%B1%82%E5%92%8C%E5%93%8D%E5%BA%94)
 
 ### ✅ 请求追踪
 
-- 每个请求有唯一 ID (`req_1`, `req_2`, ...)
-- 请求和响应通过 ID 关联
-- 请求计数器自动递增
+Moved to [English](https://agentao.cn/en/part-6/6-observability#reading-a-request-and-its-response) · [中文](https://agentao.cn/zh/part-6/6-observability#%E8%AF%BB%E6%87%82%E4%B8%80%E6%AC%A1%E8%AF%B7%E6%B1%82%E5%92%8C%E5%93%8D%E5%BA%94)
 
 ### 🔒 凭据脱敏（两层）
 
-日志的凭据脱敏由两层独立机制组成：一层针对 `extra_body` 的结构化按键脱敏，一层针对整个日志文件的全局按模式脱敏。
+Moved to [English](https://agentao.cn/en/part-6/5-secrets-injection#four-log-scrubbing) · [中文](https://agentao.cn/zh/part-6/5-secrets-injection#%E5%9B%9B-%E6%97%A5%E5%BF%97%E8%84%B1%E6%95%8F)
 
 #### 第 1 层：`extra_body` 递归按键脱敏
 
-当 host 配置了 `extra_body`（请求体直通，见 [embedding 指南](embedding.md#optional-provider-specific-request-params-extra_body)）时，它会作为单独一行 `Extra Body:` 记录。由于 `extra_body` 可能嵌套 provider 凭据（有些网关在 body 或 `extra_headers` 里收 key），其值在写日志前会**递归脱敏**：
-
-- 凡键名（小写后）**精确等于**敏感键集之一的值，被替换为 `***`——覆盖 body 式与头部式名（`authorization`、`proxy-authorization`、`api_key`/`apikey`/`api-key`/`x-api-key`、`token`/`access_token`/`x-auth-token`、`secret`/`client_secret`、`password`、`cookie` 等）。
-- **精确键名匹配，而非子串**——故 `max_tokens` 之类的良性 `*_tokens` 键不会被误脱敏。
-- 递归覆盖 dict、list、tuple 任意嵌套深度。
-
-例：`extra_body={"reasoning_effort":"high","api_key":"sk-x"}` 在日志里显示为 `reasoning_effort` 原值、`api_key` 为 `***`。其余请求字段（`api_key` 凭据本身）一如既往不进日志。
+Moved to [English](https://agentao.cn/en/part-6/5-secrets-injection#four-log-scrubbing) · [中文](https://agentao.cn/zh/part-6/5-secrets-injection#%E5%9B%9B-%E6%97%A5%E5%BF%97%E8%84%B1%E6%95%8F)
 
 #### 第 2 层：日志文件全局按模式脱敏（默认开启）
 
-第 1 层只看得见 `extra_body` 这一个字段，但凭据同样会**从别处流进日志**——`run_shell_command("env")` 的输出、`cat .env` 的文件内容、模型回复里粘贴的一段 token。为此，文件 handler 上装了一个 `_RedactingFormatter`（`agentao/llm/client.py`），对**每一条**写入 `agentao.log` 的记录做正则扫描，命中的片段替换为 `[REDACTED:<kind>]`。
-
-模式集合是共享模块 `agentao/security/secret_scan.py`，按“先具体后宽泛”排序，覆盖 11 条：私钥块（`-----BEGIN … KEY-----`）、Anthropic `sk-ant-`、OpenAI `sk-` / `sk-proj-`、Google `AIza`、AWS `AKIA`/`ASIA`、GitHub `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`、Slack `xox[baprs]-`、JWT（`eyJ….eyJ….…`）、`Bearer <token>`、`Authorization:` 头、以及 `api_key=` / `token=` / `secret=` / `password=` 这类内联键值对。
-
-几个实现上的要点：
-
-- **只装在文件 handler 上**。刻意实现为 `Formatter` 而非 `Filter`：`Filter` 得改写共享的 `LogRecord`，那份改动会按 handler 注册顺序泄漏到该 logger 的**其他** handler（embedded host 自己的 handler、ACP 的 stderr guard）；`Formatter` 只影响本 handler 写出的字节。
-- **绝不抛异常**。`format()` 把脱敏调用包在 `try/except` 里，扫描器一旦出 bug，代价是这一行日志少脱敏一次，而不是整个会话崩掉。
-- **不作用于交给模型的工具结果**。正则分不清线上凭据和测试夹具，把 agent 正在编辑的文件里的 `sk-test-…` 改坏，是 agent 既看不见也修不了的破坏。误报的代价在日志里只是一行不好读，在工作数据里则是数据损坏——所以只在前者上启用。
+Moved to [English](https://agentao.cn/en/part-6/5-secrets-injection#four-log-scrubbing) · [中文](https://agentao.cn/zh/part-6/5-secrets-injection#%E5%9B%9B-%E6%97%A5%E5%BF%97%E8%84%B1%E6%95%8F)
 
 ## 使用方法
 
+Moved to [English](https://agentao.cn/en/part-6/6-observability#the-built-in-agentao-log) · [中文](https://agentao.cn/zh/part-6/6-observability#agentao-%E8%87%AA%E5%B8%A6%E7%9A%84-agentao-log)
+
 ### 自动记录
 
-日志功能默认开启，无需配置：
-
-```bash
-# 启动 Agentao
-uv run python main.py
-
-# 所有交互会自动记录到 agentao.log
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#the-built-in-agentao-log) · [中文](https://agentao.cn/zh/part-6/6-observability#agentao-%E8%87%AA%E5%B8%A6%E7%9A%84-agentao-log)
 
 ### 查看日志
 
-**实时查看**：
-```bash
-tail -f agentao.log
-```
-
-**查看完整日志**：
-```bash
-cat agentao.log
-```
-
-**搜索特定内容**：
-```bash
-grep "read_file" agentao.log
-grep "ERROR" agentao.log
-grep "req_5" agentao.log  # 查看特定请求
-```
-
-**查看最近 N 行**：
-```bash
-tail -n 100 agentao.log
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#debugging-with-grep) · [中文](https://agentao.cn/zh/part-6/6-observability#%E7%94%A8-grep-%E6%8E%92%E6%9F%A5)
 
 ### 自定义日志位置
 
-在代码中可以指定日志文件位置：
-
-```python
-from agentao.llm import LLMClient
-
-client = LLMClient(
-    api_key="your-key",
-    base_url="https://api.anthropic.com/v1",  # 0.2.16 起必传
-    model="claude-sonnet-4-5",
-    log_file="custom_location.log",  # 自定义日志文件
-)
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#take-over-agentao-s-logger) · [中文](https://agentao.cn/zh/part-6/6-observability#%E6%8E%A5%E7%AE%A1-agentao-%E7%9A%84-logger)
 
 ### 关闭日志文件 / 让 host 完全接管日志栈（嵌入场景）
 
-嵌入式 host 想完全关掉 `agentao.log`、或不让 LLMClient 改写
-`logging.getLogger("agentao")`（package-root level、handler）时，有两个独立的钮：
-
-| 想关掉的东西 | 怎么传 |
-|---|---|
-| `agentao.log` 文件 | `log_file=None` 给 `LLMClient` |
-| 对 `"agentao"` 包级 logger 的 level / handler 改写 | `logger=<your_logger>` 给 `Agentao` 或 `LLMClient` |
-
-最简洁的写法是直接在 `Agentao(...)` 里注入 logger —
-`LLMClient.__init__` 在收到非空 `logger=` 时会走早返回分支，根本不会建 file handler，
-所以即使 `Agentao` 仍按默认把 `<wd>/agentao.log` 作为 `log_file=` 传下去，也不会产生文件。
-完整说明、踩坑提醒和 `NullHandler + propagate=False` 静默写法见
-**[docs/guides/embedding.md §2 → "Optional: silencing or redirecting agentao.log"](embedding.md#optional-silencing-or-redirecting-agentaolog)**。
+Moved to [English](https://agentao.cn/en/part-6/6-observability#take-over-agentao-s-logger) · [中文](https://agentao.cn/zh/part-6/6-observability#%E6%8E%A5%E7%AE%A1-agentao-%E7%9A%84-logger)
 
 ## 日志格式
 
+Moved to [English](https://agentao.cn/en/part-6/6-observability#reading-a-request-and-its-response) · [中文](https://agentao.cn/zh/part-6/6-observability#%E8%AF%BB%E6%87%82%E4%B8%80%E6%AC%A1%E8%AF%B7%E6%B1%82%E5%92%8C%E5%93%8D%E5%BA%94)
+
 ### 时间戳格式
 
-```
-2026-02-09 14:30:45 - agentao.llm - INFO - [req_1] LLM REQUEST
-```
-
-格式说明：
-- `2026-02-09 14:30:45` - 时间戳
-- `agentao.llm` - 日志来源
-- `INFO` - 日志级别
-- `[req_1]` - 请求 ID
-- `LLM REQUEST` - 日志内容
+Moved to [English](https://agentao.cn/en/part-6/6-observability#the-built-in-agentao-log) · [中文](https://agentao.cn/zh/part-6/6-observability#agentao-%E8%87%AA%E5%B8%A6%E7%9A%84-agentao-log)
 
 ### 分隔线
 
-使用 `=` 字符作为分隔线（80 个字符宽）：
-
-```
-================================================================================
-[req_1] LLM REQUEST
-================================================================================
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#reading-a-request-and-its-response) · [中文](https://agentao.cn/zh/part-6/6-observability#%E8%AF%BB%E6%87%82%E4%B8%80%E6%AC%A1%E8%AF%B7%E6%B1%82%E5%92%8C%E5%93%8D%E5%BA%94)
 
 ## 日志级别
 
-- **INFO** - 正常的请求/响应记录
-- **ERROR** - API 调用失败或异常
+Moved to [English](https://agentao.cn/en/part-6/6-observability#debugging-with-grep) · [中文](https://agentao.cn/zh/part-6/6-observability#%E7%94%A8-grep-%E6%8E%92%E6%9F%A5)
 
 ## 隐私和安全
 
+Moved to [English](https://agentao.cn/en/part-6/5-secrets-injection#four-log-scrubbing) · [中文](https://agentao.cn/zh/part-6/5-secrets-injection#%E5%9B%9B-%E6%97%A5%E5%BF%97%E8%84%B1%E6%95%8F)
+
 ### ⚠️ 注意事项
 
-1. **敏感信息** - 日志包含完整的对话内容，可能包含敏感信息
-2. **API 密钥** - 默认脱敏，但**不是密封**。写入 `agentao.log` 的每条记录都会经过[第 2 层模式脱敏](#第-2-层日志文件全局按模式脱敏默认开启)，形似凭据的字符串变成 `[REDACTED:<kind>]`。请按它的实际边界理解这条保证：
-   - **基于正则、尽力而为**。不长得像凭据的密钥就不会被拦——自定义格式的内部 token、纯十六进制串、短口令，都照原样落盘。它降低泄漏面，不构成合规意义上的保证。
-   - **只覆盖日志文件**。发给 LLM provider 的那份对话是**刻意逐字原样**的：正则区分不了线上凭据和测试夹具，改写在途内容会悄悄破坏 agent 的工作数据。凭据一旦进了上下文就会离开本机——这属于 host 的管控范围，不是日志层能解决的。
-   - **会话状态同样不扫描**。`.agentao/sessions/*.json`、`.agentao/background_tasks.json` 原样序列化消息文本，因为它们在 resume 时会回灌进 `agent.messages`，脱敏会污染恢复出来的对话。脱敏施加于**终点产物**，回读的路径上则不施加。
-3. **文件权限** - 确保日志文件权限设置正确
-4. **定期清理** - 日志文件会持续增长，需要定期清理
+Moved to [English](https://agentao.cn/en/part-6/5-secrets-injection#four-log-scrubbing) · [中文](https://agentao.cn/zh/part-6/5-secrets-injection#%E5%9B%9B-%E6%97%A5%E5%BF%97%E8%84%B1%E6%95%8F)
 
 ### 建议
 
-- 在 `.gitignore` 中忽略日志文件（已配置）
-- 不要将日志文件提交到版本控制
-- 定期归档或删除旧日志
-- 在生产环境中考虑日志轮转
+Moved to [English](https://agentao.cn/en/part-6/6-observability#the-built-in-agentao-log) · [中文](https://agentao.cn/zh/part-6/6-observability#agentao-%E8%87%AA%E5%B8%A6%E7%9A%84-agentao-log)
 
 ## 日志管理
 
+Moved to [English](https://agentao.cn/en/part-6/6-observability#the-built-in-agentao-log) · [中文](https://agentao.cn/zh/part-6/6-observability#agentao-%E8%87%AA%E5%B8%A6%E7%9A%84-agentao-log)
+
 ### 清空日志
 
-```bash
-# 清空但保留文件
-> agentao.log
-
-# 或删除文件
-rm agentao.log
-```
+Removed: plain shell commands, nothing specific to Agentao.
 
 ### 归档日志
 
-```bash
-# 按日期归档
-mv agentao.log agentao_$(date +%Y%m%d).log
-
-# 压缩归档
-gzip agentao_$(date +%Y%m%d).log
-```
+Removed: the built-in rotation keeps the backups.
 
 ### 日志轮转
 
-创建 logrotate 配置（Linux/macOS）：
-
-```bash
-# /etc/logrotate.d/agentao 或 ~/.logrotate.d/agentao
-/path/to/agentao.log {
-    daily
-    rotate 7
-    compress
-    missingok
-    notifempty
-}
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#the-built-in-agentao-log) · [中文](https://agentao.cn/zh/part-6/6-observability#agentao-%E8%87%AA%E5%B8%A6%E7%9A%84-agentao-log)
 
 ## 示例日志
 
+Moved to [English](https://agentao.cn/en/part-6/6-observability#reading-a-request-and-its-response) · [中文](https://agentao.cn/zh/part-6/6-observability#%E8%AF%BB%E6%87%82%E4%B8%80%E6%AC%A1%E8%AF%B7%E6%B1%82%E5%92%8C%E5%93%8D%E5%BA%94)
+
 ### 完整对话示例
 
-```
-2026-02-09 14:30:45 - agentao.llm - INFO - LLMClient initialized with model: claude-sonnet-4-5
-2026-02-09 14:30:50 - agentao.llm - INFO - ================================================================================
-2026-02-09 14:30:50 - agentao.llm - INFO - [req_1] LLM REQUEST
-2026-02-09 14:30:50 - agentao.llm - INFO - ================================================================================
-2026-02-09 14:30:50 - agentao.llm - INFO - Model: claude-sonnet-4-5
-2026-02-09 14:30:50 - agentao.llm - INFO - Temperature: 0.7
-2026-02-09 14:30:50 - agentao.llm - INFO -
-Messages (2 total):
-2026-02-09 14:30:50 - agentao.llm - INFO -
-  Message 1 [system]:
-2026-02-09 14:30:50 - agentao.llm - INFO -     Content (245 chars):
-2026-02-09 14:30:50 - agentao.llm - INFO -       You are Agentao, a helpful AI assistant with access to various tools and skills.
-2026-02-09 14:30:50 - agentao.llm - INFO -
-2026-02-09 14:30:50 - agentao.llm - INFO -       You can help users with:
-2026-02-09 14:30:50 - agentao.llm - INFO -       - Reading, writing, and editing files
-2026-02-09 14:30:50 - agentao.llm - INFO -       - Searching for files and text content
-2026-02-09 14:30:50 - agentao.llm - INFO -       ...
-2026-02-09 14:30:50 - agentao.llm - INFO -
-  Message 2 [user]:
-2026-02-09 14:30:50 - agentao.llm - INFO -     Content (25 chars):
-2026-02-09 14:30:50 - agentao.llm - INFO -       Read the file main.py
-2026-02-09 14:30:50 - agentao.llm - INFO -
-Tools (13 available):
-2026-02-09 14:30:50 - agentao.llm - INFO -   - read_file
-2026-02-09 14:30:50 - agentao.llm - INFO -   - write_file
-2026-02-09 14:30:50 - agentao.llm - INFO -   ...
-2026-02-09 14:30:52 - agentao.llm - INFO - ================================================================================
-2026-02-09 14:30:52 - agentao.llm - INFO - [req_1] LLM RESPONSE
-2026-02-09 14:30:52 - agentao.llm - INFO - ================================================================================
-2026-02-09 14:30:52 - agentao.llm - INFO - Model: claude-sonnet-4-5
-2026-02-09 14:30:52 - agentao.llm - INFO - Finish Reason: tool_calls
-2026-02-09 14:30:52 - agentao.llm - INFO -
-Token Usage:
-2026-02-09 14:30:52 - agentao.llm - INFO -   Prompt Tokens: 1234
-2026-02-09 14:30:52 - agentao.llm - INFO -   Completion Tokens: 45
-2026-02-09 14:30:52 - agentao.llm - INFO -   Total Tokens: 1279
-2026-02-09 14:30:52 - agentao.llm - INFO -
-Tool Calls (1):
-2026-02-09 14:30:52 - agentao.llm - INFO -   Tool: read_file
-2026-02-09 14:30:52 - agentao.llm - INFO -   ID: call_abc123
-2026-02-09 14:30:52 - agentao.llm - INFO -   Arguments:
-2026-02-09 14:30:52 - agentao.llm - INFO -     {
-2026-02-09 14:30:52 - agentao.llm - INFO -       "file_path": "main.py"
-2026-02-09 14:30:52 - agentao.llm - INFO -     }
-2026-02-09 14:30:52 - agentao.llm - INFO - ================================================================================
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#reading-a-request-and-its-response) · [中文](https://agentao.cn/zh/part-6/6-observability#%E8%AF%BB%E6%87%82%E4%B8%80%E6%AC%A1%E8%AF%B7%E6%B1%82%E5%92%8C%E5%93%8D%E5%BA%94)
 
 ## 调试技巧
 
+Moved to [English](https://agentao.cn/en/part-6/6-observability#debugging-with-grep) · [中文](https://agentao.cn/zh/part-6/6-observability#%E7%94%A8-grep-%E6%8E%92%E6%9F%A5)
+
 ### 查找错误
 
-```bash
-grep -n "ERROR" agentao.log
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#debugging-with-grep) · [中文](https://agentao.cn/zh/part-6/6-observability#%E7%94%A8-grep-%E6%8E%92%E6%9F%A5)
 
 ### 查看特定请求
 
-```bash
-grep -A 50 "req_5" agentao.log
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#debugging-with-grep) · [中文](https://agentao.cn/zh/part-6/6-observability#%E7%94%A8-grep-%E6%8E%92%E6%9F%A5)
 
 ### 统计 Token 使用
 
-```bash
-grep "Total Tokens" agentao.log | awk '{sum += $NF} END {print "Total:", sum}'
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#debugging-with-grep) · [中文](https://agentao.cn/zh/part-6/6-observability#%E7%94%A8-grep-%E6%8E%92%E6%9F%A5)
 
 ### 查看工具调用
 
-```bash
-grep -B 2 -A 5 "Tool Calls" agentao.log
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#debugging-with-grep) · [中文](https://agentao.cn/zh/part-6/6-observability#%E7%94%A8-grep-%E6%8E%92%E6%9F%A5)
 
 ## 配置选项
 
-在初始化 `Agentao` 时，可以传递日志配置：
-
-```python
-from pathlib import Path
-from agentao.agent import Agentao
-
-agent = Agentao(
-    api_key="your-key",
-    base_url="https://api.anthropic.com/v1",  # 0.2.16 起必传
-    model="claude-sonnet-4-5",
-    working_directory=Path.cwd(),
-    # log_file 会传递给 LLMClient
-)
-
-# 或者走工厂从 .env 自动发现（.env 里设 LLM_PROVIDER + 对应 _API_KEY/_BASE_URL/_MODEL）
-from agentao.embedding import build_from_environment
-agent = build_from_environment(working_directory=Path.cwd())
-```
-
-> 嵌入式 host 的完整接入指南（凭据、能力注入、异步、回放/沙箱/后台等）见
-> **[docs/guides/embedding.md](embedding.md)**。
+Moved to [English](https://agentao.cn/en/part-6/6-observability#take-over-agentao-s-logger) · [中文](https://agentao.cn/zh/part-6/6-observability#%E6%8E%A5%E7%AE%A1-agentao-%E7%9A%84-logger)
 
 ## 故障排除
 
+Moved to [English](https://agentao.cn/en/part-6/6-observability#when-the-log-is-missing-or-incomplete) · [中文](https://agentao.cn/zh/part-6/6-observability#%E6%97%A5%E5%BF%97%E7%BC%BA%E5%A4%B1%E6%88%96%E4%B8%8D%E5%AE%8C%E6%95%B4%E6%97%B6)
+
 ### 日志文件未创建
 
-检查：
-1. 当前目录的写入权限
-2. 是否有足够的磁盘空间
-3. 是否有其他进程占用文件
+Moved to [English](https://agentao.cn/en/part-6/6-observability#when-the-log-is-missing-or-incomplete) · [中文](https://agentao.cn/zh/part-6/6-observability#%E6%97%A5%E5%BF%97%E7%BC%BA%E5%A4%B1%E6%88%96%E4%B8%8D%E5%AE%8C%E6%95%B4%E6%97%B6)
 
 ### 日志内容不完整
 
-可能原因：
-1. 程序异常退出
-2. 缓冲区未刷新
-
-解决方案：
-- 正常退出程序（使用 `exit` 命令）
-- Python 日志会自动刷新
+Moved to [English](https://agentao.cn/en/part-6/6-observability#when-the-log-is-missing-or-incomplete) · [中文](https://agentao.cn/zh/part-6/6-observability#%E6%97%A5%E5%BF%97%E7%BC%BA%E5%A4%B1%E6%88%96%E4%B8%8D%E5%AE%8C%E6%95%B4%E6%97%B6)
 
 ### 日志文件过大
 
-定期清理或使用日志轮转：
-
-```bash
-# 只保留最近 1000 行
-tail -n 1000 agentao.log > agentao_temp.log
-mv agentao_temp.log agentao.log
-```
+Moved to [English](https://agentao.cn/en/part-6/6-observability#when-the-log-is-missing-or-incomplete) · [中文](https://agentao.cn/zh/part-6/6-observability#%E6%97%A5%E5%BF%97%E7%BC%BA%E5%A4%B1%E6%88%96%E4%B8%8D%E5%AE%8C%E6%95%B4%E6%97%B6)
 
 ## 最佳实践
 
-1. **定期检查** - 定期查看日志了解系统运行状况
-2. **定期清理** - 避免日志文件过大占用磁盘
-3. **安全存储** - 确保日志文件不被未授权访问
-4. **分析 Token** - 通过日志分析 API 使用情况
-5. **调试工具调用** - 日志是调试工具问题的最佳资源
-
----
-
-**更新日期**: 2026-02-09
-**功能状态**: ✅ 已实现并测试
-**记录方式**: 完整内容，不截断
+Moved to [English](https://agentao.cn/en/part-6/6-observability#the-built-in-agentao-log) · [中文](https://agentao.cn/zh/part-6/6-observability#agentao-%E8%87%AA%E5%B8%A6%E7%9A%84-agentao-log)

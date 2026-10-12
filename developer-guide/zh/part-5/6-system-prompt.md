@@ -56,6 +56,26 @@ Agent 的指令是**每轮 chat() 动态重建**的，不是一个静态字符�
 
 **技能清单（块 10）在 0.4.26 跟着一起搬了出去，0.4.27 又搬了回来。** 它列出每一个已启用的技能，**包括**已激活的，所以激活一个技能不会改动 system 消息的任何字节；激活改变的是尾消息里的块 12，模型也正是从那里得知清单中哪些已经激活。清单只在启用集合变化时才变 —— 启用、禁用、安装、reload —— 而这些事件本来就会改写 `activate_skill` 工具的 `skill_name` 枚举，前缀在这些时刻原本就要重建。它排在 `<memory-stable>` 之前，因为它变得更少：一次 `save_memory` 只从块 11 起重建，清单仍然命中缓存 —— 这是就按 token 前缀匹配的缓存而言。启用下文的显式断点时，system 消息是一个整块缓存，一次 `save_memory` 会把它整块重写。
 
+### 日期时间提醒
+
+每一轮开始时，runner 把当前日期和时间放在用户文本前面（[`ChatLoopRunner.run`](https://github.com/jin-bo/agentao/blob/main/agentao/runtime/chat_loop/_runner.py)）：
+
+```
+<system-reminder>
+Current Date/Time: 2026-04-16 15:30:00 (Thursday)
+</system-reminder>
+<你传给 chat() 的文本>
+```
+
+格式是 `%Y-%m-%d %H:%M:%S (%A)`。取值是 `datetime.now()`：宿主进程所在时区的本地时间，不带时区标记。如果你的用户在别的时区，在 `AGENTAO.md` 里写明。带图片的轮次，提醒放在文本部分里。
+
+这条提醒刻意不放进两条指令消息中的任何一条：
+
+- **不放进 system 消息**：时间每秒都在变，放进前缀就会让每一轮的提示缓存失效。
+- **不放进易变尾消息**：尾消息从不落盘。日期时间随用户消息一起存下来，恢复会话或查看 replay 时，就能知道每一轮发生在什么时候。
+
+[`tests/test_date_in_prompt.py`](https://github.com/jin-bo/agentao/blob/main/tests/test_date_in_prompt.py) 两头都锁定：提醒出现在用户消息里，并且既不在系统提示里，也不在易变尾部。
+
 ## 你能定制的 3 个注入点
 
 ### 1. `AGENTAO.md` — 项目级指令

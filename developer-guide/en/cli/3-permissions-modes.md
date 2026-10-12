@@ -125,7 +125,7 @@ Picking `3` doesn't break the conversation. The agent sees the cancellation, oft
 
 `/sandbox` adds a second layer **under** `run_shell_command`: even if the agent gets approval to run a shell command, the macOS `sandbox-exec` profile constrains what that command can actually touch (filesystem, network).
 
-Linux and Windows don't have this; the command is a no-op there.
+Linux and Windows don't have `sandbox-exec`. There, `/sandbox on` refuses and shell commands run unwrapped. Profiles, config fields and custom profiles: [6.2 Shell Sandbox](/en/part-6/2-shell-sandbox).
 
 ```text
 > /sandbox
@@ -143,8 +143,7 @@ Subcommands:
 | `/sandbox on` | Enable for this session |
 | `/sandbox off` | Disable for this session |
 | `/sandbox profile <name>` | Switch profile (session only) |
-| `/sandbox profiles` | List the available profiles |
-| `/sandbox profiles` | List available profile names |
+| `/sandbox profiles` | List the available profile names |
 
 ::: danger Fail-closed on broken config
 If `/sandbox` is enabled but the profile is malformed (typo, missing file), **all shell commands fail** until you fix it or `/sandbox off`. The status output flags this in red as `enabled but BROKEN`. This is intentional — silently falling back to "no sandbox" would be a security regression.

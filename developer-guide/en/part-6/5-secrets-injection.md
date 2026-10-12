@@ -173,11 +173,30 @@ Even if the LLM is tricked into calling dangerous tools, the `PermissionEngine` 
 ## Four: Log scrubbing
 
 `agentao.log` records full tool args, so args holding a secret used to mean log
-leakage = secret leakage. Agentao now redacts that file by default: the file
-handler carries a `_RedactingFormatter` that rewrites credential-shaped strings
-to `[REDACTED:<kind>]` using the shared pattern set in
-`agentao/security/secret_scan.py`. The same patterns guard
-`.agentao/tool-outputs/*.txt` and `MemoryGuard`.
+leakage = secret leakage. Agentao now redacts the log in two layers.
+
+**Layer 1: `extra_body` keys.** The request block logs a host's `extra_body` on
+an `Extra Body:` line. Some gateways take a key in the body or in passed-through
+headers, so this value is redacted first. Any dict key, at any depth through
+dicts, lists and tuples, whose lower-cased name is **exactly** one of a fixed
+set has its value replaced by `***`. The set covers body-style and header-style
+names: `authorization`, `api_key`, `x-api-key`, `token`, `access_token`,
+`secret`, `client_secret`, `password`, `cookie` and similar. The match is
+exact, not a substring, so `max_tokens` survives. The set is `_SENSITIVE_KEYS`
+in [`llm/_logging.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/_logging.py).
+The client's own `api_key` is never logged at all.
+
+**Layer 2: patterns on every line.** The file handler carries a
+`_RedactingFormatter` that rewrites credential-shaped strings to
+`[REDACTED:<kind>]`. This catches secrets that arrive from anywhere: the output
+of `env`, a `cat .env`, a token the model pasted. The patterns cover private-key
+blocks, provider API keys (Anthropic, OpenAI, Google, AWS), GitHub, Slack and
+Stripe tokens, JWTs, `Bearer` and `Authorization:` values, and inline
+`api_key=` / `token=` / `password=` pairs. The list grows, so read it in
+[`security/secret_scan.py`](https://github.com/jin-bo/agentao/blob/main/agentao/security/secret_scan.py).
+The same patterns guard `.agentao/tool-outputs/*.txt`, replay files and
+`MemoryGuard`. The formatter never raises. If the scanner fails on a line, that
+line is written unredacted and the session goes on.
 
 Treat it as defense in depth, **not** a seal:
 
@@ -187,6 +206,9 @@ Treat it as defense in depth, **not** a seal:
 - It covers the **log file only**. The conversation sent to your LLM provider is
   deliberately verbatim: a scanner cannot distinguish a live credential from a
   fixture, and redacting the model's view breaks legitimate work.
+- Layer 2 sits on Agentao's **own file handler only**. If you inject `logger=`
+  ([6.6](./6-observability#take-over-agentao-s-logger)), your handlers get the
+  records without it. Only layer 1 still applies.
 - `.agentao/sessions/*.json` and `.agentao/background_tasks.json` are
   **deliberately not** scanned — both are read back into `agent.messages`, so
   redacting them would corrupt a resumed conversation.

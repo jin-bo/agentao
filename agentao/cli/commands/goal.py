@@ -4,7 +4,7 @@ The user sets an objective; the host (this CLI) drives a continuation loop
 (``run_goal_continuation`` in ``input_loop.py``) that keeps calling
 ``agent.chat`` toward the objective until the agent marks it complete/blocked
 or a time/turn budget trips. See ``docs/design/codex-goal-mechanism-review.md``
-§11.1 for the surface and ``docs/guides/goal.md`` for usage.
+§11.1 for the surface and ``developer-guide/en/cli/13-goal.md`` for usage.
 
 The continuation loop lives in ``input_loop.py`` and is imported lazily inside
 the handlers below to avoid an import cycle (``input_loop`` → ``commands`` →

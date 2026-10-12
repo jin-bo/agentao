@@ -1,134 +1,35 @@
 # Long-Task Goals (`/goal`)
 
-`/goal` gives the CLI a **long-task continuation loop**: you state an objective
-once, and Agentao keeps driving the agent toward it across multiple turns —
-without you having to type "continue" — until the agent reports the objective
-**complete** or **blocked**, or a **time / turn budget** trips.
-
-It is a CLI (host) feature built on the harness's existing primitives (drive a
-turn, inject a per-turn message, inject a tool). The harness has no "goal"
-concept of its own; other hosts assemble the same pattern themselves — see
-[developer-guide part-4 / orchestration-continuation](../../developer-guide/en/part-4/8-orchestration-continuation.md).
-Design record: [`docs/design/codex-goal-mechanism-review.md`](../design/codex-goal-mechanism-review.md).
+This guide moved into the developer guide: **[CLI 13 · Long-Task Goals](https://agentao.cn/en/cli/13-goal)** ([中文](https://agentao.cn/zh/cli/13-goal)). Hosts that want the same pattern read [4.8](https://agentao.cn/en/part-4/8-orchestration-continuation). The headings below are kept so that old links still land on the right section.
 
 ## Setting a goal
 
-```
-/goal Migrate every call site off the deprecated auth API and make the suite green
-```
-
-Agentao sets the goal and immediately starts driving it. Each *turn* is a full
-agent turn (the agent reads, edits, runs tests, …); between turns the loop
-re-prompts the agent to keep going. The loop stops when:
-
-- the agent calls `update_goal(status="complete")` — objective achieved;
-- the agent calls `update_goal(status="blocked")` — it needs you (missing
-  credentials, an ambiguous decision);
-- a budget cap trips — one final **wrap-up** turn summarizes progress and
-  remaining work, then the loop stops;
-- **three consecutive turns make no progress** — the goal is marked `blocked`.
-  A turn counts as no-progress when it produced no answer (`no_output`,
-  `reasoning_only`) and called no tools, or when it failed at the provider
-  (`llm_error`) **whether or not** tools ran first — a tool call earlier in the
-  turn does not make a dead provider a working one. Everything else resets the
-  streak: an answered turn, a turn that called a tool, and a turn the harness
-  halted at a ceiling (`max_iterations`, `doom_loop`, `length_truncated`,
-  `hook_stop`), which did work and is not idle. This is the orthogonal runaway a
-  turn cap cannot see: budgets bound how much a goal may *do*, this bounds how
-  long it may do *nothing*, and it is the only stop condition that survives
-  `--unbounded`.
+Moved to [English](https://agentao.cn/en/cli/13-goal#setting-a-goal) · [中文](https://agentao.cn/zh/cli/13-goal#%E8%AE%BE%E7%BD%AE%E7%9B%AE%E6%A0%87)
 
 ## Budgets — two axes
 
-```
-/goal <objective> --for 30m          # cap on accumulated active wall-clock
-/goal <objective> --turns 10         # cap on continuation turns
-/goal <objective> --for 1h --turns 20  # both — first to trip wins
-/goal <objective> --unbounded        # no caps (opt out of defaults)
-```
-
-- **`--for <duration>`** — accumulated **active** wall-clock. Formats: `90s`,
-  `30m`, `2h`, `1h30m`. A unit is required (`30` alone is rejected). Time spent
-  while a goal is **paused** is not counted.
-- **`--turns <n>`** — number of continuation turns. ⚠️ This is **not**
-  `max_iterations`: `max_iterations` bounds the inner tool-call loop *within one
-  turn*; `--turns` bounds the *outer* number of turns. They are independent.
-
-When you omit a cap, the defaults from `.agentao/settings.json` apply (see
-below). `--unbounded` opts out of both.
-
-> **Why the time default is large (`120m`) and turns small (`25`).** The two
-> axes guard different risks: `--turns` is the primary runaway guard (a stuck
-> agent looping), while `--for` only guards wall-clock pathology (a hung tool).
-> The time default is sized *above* where the turn cap normally finishes so it
-> does not silently shadow the turn cap on slow-iteration goals.
+Moved to [English](https://agentao.cn/en/cli/13-goal#budgets) · [中文](https://agentao.cn/zh/cli/13-goal#%E9%A2%84%E7%AE%97)
 
 ## Subcommands
 
-```
-/goal                                 show the current goal (status, used / cap)
-/goal show                            same as above
-/goal budget [--for <d>] [--turns <n>]  set/replace caps on the live goal
-/goal budget --clear                  remove caps (make it unbounded)
-/goal pause                           pause (active wall-clock stops accruing)
-/goal resume                          resume a paused — or blocked — goal
-/goal edit <new objective>            re-edit the objective (keeps status + caps)
-/goal clear                           remove the goal
-```
-
-- **Re-budgeting a limit-reached goal** reactivates it: `/goal budget --turns 50`
-  after hitting a 25-turn cap bumps the cap and resumes driving.
-- **`resume`** revives a `paused` goal or restarts a `blocked` one. A
-  `limit_reached` goal is revived by re-budgeting (above) or `/goal clear`, not
-  by `resume`. A `complete` goal is terminal.
+Moved to [English](https://agentao.cn/en/cli/13-goal#subcommands) · [中文](https://agentao.cn/zh/cli/13-goal#%E5%AD%90%E5%91%BD%E4%BB%A4)
 
 ## States
 
-| Status | Meaning | How it ends / continues |
-|---|---|---|
-| `active` | being driven by the loop | agent completes/blocks, or a cap trips |
-| `paused` | you paused it; time stops accruing | `/goal resume` |
-| `blocked` | agent needs your input | address it, then `/goal resume` |
-| `complete` | objective achieved (terminal) | `/goal clear` to start fresh |
-| `limit_reached` | a budget cap tripped | `/goal budget …` to continue, or `/goal clear` |
-
-The agent sets `complete` / `blocked` (via the injected `update_goal` tool, and
-only while the goal is active); only you set pause/resume/clear/edit/budget;
-only the host loop sets `limit_reached`. The host loop also sets `blocked`, in
-the one case the agent cannot report itself: three consecutive turns that
-produced nothing, where a model that answers nothing cannot call `update_goal`
-either.
+Moved to [English](https://agentao.cn/en/cli/13-goal#states) · [中文](https://agentao.cn/zh/cli/13-goal#%E7%8A%B6%E6%80%81)
 
 ## Settings
 
-`.agentao/settings.json`:
-
-```jsonc
-"goal": {
-  "enabled": true,            // master switch for the /goal command
-  "default_max_turns": 25,    // applied when --turns is omitted (0 = no turn cap)
-  "default_time_budget": "120m" // applied when --for is omitted
-}
-```
-
-See [configuration.md](../reference/configuration.md) §3 for the full schema.
+Moved to [English](https://agentao.cn/en/cli/13-goal#settings) · [中文](https://agentao.cn/zh/cli/13-goal#%E8%AE%BE%E7%BD%AE)
 
 ## Persistence
 
-The goal is stored in `.agentao/goal.json` (one goal at a time) and survives
-process restarts — re-launch and `/goal` shows where it left off. A corrupt or
-missing file is treated as "no goal". This file is per-project working
-directory; it is safe to delete by hand (equivalent to `/goal clear`).
+Moved to [English](https://agentao.cn/en/cli/13-goal#persistence-and-restarts) · [中文](https://agentao.cn/zh/cli/13-goal#%E6%8C%81%E4%B9%85%E5%8C%96%E4%B8%8E%E9%87%8D%E5%90%AF)
 
 ## Interrupting
 
-Press **Ctrl-C** during a goal run to **pause** it (the current turn stops and
-the goal is saved as `paused`). Resume later with `/goal resume`.
+Moved to [English](https://agentao.cn/en/cli/13-goal#interrupting-with-ctrl-c) · [中文](https://agentao.cn/zh/cli/13-goal#%E7%94%A8-ctrl-c-%E4%B8%AD%E6%96%AD)
 
 ## Relationship to other surfaces
 
-- **Not** built on the plugin `Stop` / `force_continue` hook (which is
-  hard-capped at 3 re-entries and injects a visible message) — `/goal` runs a
-  host-owned loop with its own stop condition.
-- Plan mode (`/plan`) is a *single* post-approval continuation; `/goal` is a
-  *sustained* one. They are independent.
+Moved to [English](https://agentao.cn/en/cli/13-goal#goals-plan-mode-and-stop-hooks) · [中文](https://agentao.cn/zh/cli/13-goal#%E7%9B%AE%E6%A0%87%E3%80%81plan-%E6%A8%A1%E5%BC%8F%E4%B8%8E-stop-%E9%92%A9%E5%AD%90)

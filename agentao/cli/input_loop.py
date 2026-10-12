@@ -895,7 +895,7 @@ def run_goal_continuation(cli: "AgentaoCLI", goal, *, _run_turn=None) -> None:
     tool so the agent can mark the goal complete/blocked, and stop on a
     complete/blocked status or a tripped time/turn budget (one final wrap-up
     turn). Deliberately NOT built on the plugin ``Stop`` / ``force_continue``
-    path (hard-capped at 3, injects a visible user message) — the host owns the
+    path (hard-capped at 3 under `agentao-v1`, 8 for a `claude-code@profile-1` rule; injects a visible user message) — the host owns the
     stop condition. See ``docs/design/codex-goal-mechanism-review.md`` §F.
 
     ``_run_turn`` is an injection seam for tests; production passes ``None`` and
