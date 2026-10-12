@@ -220,15 +220,20 @@ class SystemPromptBuilder:
         # can read it without re-rendering.
         stable_records = agent.memory_manager.get_stable_entries()
         cross_session_tail = agent.memory_manager.get_cross_session_tail()
-        stable_block = agent.memory_renderer.render_stable_block(
+        # Only the records that fit the budget are shown. A record the budget
+        # left out stays eligible for dynamic recall below.
+        shown_records = agent.memory_renderer.fit_stable_records(
             stable_records, session_tail=cross_session_tail,
+        )
+        stable_block = agent.memory_renderer.render_stable_block(
+            shown_records, session_tail=cross_session_tail,
         )
         agent._stable_block_chars = len(stable_block)
         # Handed to the tail builder, which excludes these from dynamic
         # recall. Written even when the block is empty, so a memory that
         # *stops* being stable cannot stay excluded from recall by a set
         # left over from an earlier build.
-        agent._stable_memory_ids = {r.id for r in stable_records}
+        agent._stable_memory_ids = {r.id for r in shown_records}
         if stable_block:
             sections["stable_memory"] = "\n\n" + stable_block
 
