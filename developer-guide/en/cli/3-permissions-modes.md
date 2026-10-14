@@ -168,7 +168,7 @@ There's also a `/permission` command for inspecting the currently effective rule
 - **Confirmation UI hangs** — the spinner stops on confirmation. If the prompt seems frozen, you might be looking at the spinner-stopped state and missed the menu. Scroll up.
 - **`workspace-write` and writes outside cwd** — overwriting `~/Documents/...` from a project at `/repo/foo` triggers a confirmation, even though you're in workspace-write. That's by design; the "workspace" is the launch dir.
 - **Picking `2` in confirmation flips the whole session** — there's no undo other than `/mode workspace-write` or restart. Treat option 2 as "I'm done supervising this session".
-- **Sandbox profile change is session-only** — to make the change stick across restarts, edit `default_profile` in `.agentao/sandbox.json` or `~/.agentao/sandbox.json`.
+- **Sandbox profile change is session-only** — to make the change stick across restarts, edit `default_profile` in `~/.agentao/sandbox.json`. A project `.agentao/sandbox.json` is ignored, and `/sandbox status` shows it as ignored.
 
 ## Where to go next
 

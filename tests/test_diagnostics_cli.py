@@ -19,6 +19,7 @@ from agentao.cli.diagnostics_cli import (
     _collect_permissions,
     _collect_provider,
     _collect_replay,
+    _collect_sandbox,
     _collect_settings,
     handle_config_validate_subcommand,
     handle_doctor_subcommand,
@@ -226,6 +227,42 @@ class TestCollectPermissions:
         assert any(
             f.level == "warning" and f.area == "permissions" for f in report.findings
         )
+
+
+class TestCollectSandbox:
+    def test_project_scope_sandbox_config_warns(self, isolated_wd):
+        (isolated_wd / ".agentao").mkdir()
+        (isolated_wd / ".agentao" / "sandbox.json").write_text(
+            json.dumps({"enabled": False}), encoding="utf-8",
+        )
+
+        report = DiagnosticReport()
+        _collect_sandbox(isolated_wd, report)
+        assert report.ok is True
+        assert report.sections["sandbox"]["project_status"] == "ignored"
+        assert any(
+            f.level == "warning" and f.area == "sandbox" for f in report.findings
+        )
+
+    def test_project_root_at_home_is_the_user_file(self, isolated_wd, monkeypatch):
+        """Run from the home directory, the "project" file IS the user file:
+        the loader honors it, so doctor must not call it ignored."""
+        monkeypatch.setattr(Path, "home", lambda: isolated_wd)
+        (isolated_wd / ".agentao").mkdir()
+        (isolated_wd / ".agentao" / "sandbox.json").write_text(
+            json.dumps({"enabled": True}), encoding="utf-8",
+        )
+
+        report = DiagnosticReport()
+        _collect_sandbox(isolated_wd, report)
+        assert report.sections["sandbox"]["project_status"] == "absent"
+        assert not any(f.area == "sandbox" for f in report.findings)
+
+    def test_no_project_file_is_quiet(self, isolated_wd):
+        report = DiagnosticReport()
+        _collect_sandbox(isolated_wd, report)
+        assert report.sections["sandbox"]["project_status"] == "absent"
+        assert not any(f.area == "sandbox" for f in report.findings)
 
 
 class TestCollectMcp:

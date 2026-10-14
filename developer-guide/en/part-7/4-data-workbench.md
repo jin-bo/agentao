@@ -38,25 +38,22 @@ Agentao instance    │
 
 ### 1 · Sandbox configuration
 
-```json
-// .agentao/sandbox.json
-{
-  "shell": {
-    "enabled": true,
-    "default_profile": "workspace-write-no-network",
-    "allow_network": false,
-    "allowed_commands_without_confirm": [
-      "duckdb", "python", "python3", "uv", "head", "wc", "ls", "cat"
-    ]
-  }
-}
+```python
+from agentao.sandbox import SandboxPolicy
+
+policy = SandboxPolicy(project_root=workdir)
+policy.set_enabled(True)
+policy.set_default_profile("workspace-write-no-network")
+agent = Agentao(working_directory=workdir, sandbox_policy=policy)
 ```
+
+The policy is built in code, per session. Agentao ignores a `.agentao/sandbox.json` inside the session directory, so the agent cannot loosen its own sandbox by writing one.
 
 Why `workspace-write-no-network`:
 
 - Analysts never need outbound network inside shell — block SSRF, data exfil
 - Full read of the parquet mount; writes only inside workspace
-- The allowlist lets `duckdb` / `python` skip the confirmation prompt for interactivity
+- To let `duckdb` / `python` skip the confirmation prompt, add allow rules to the injected `PermissionEngine` (5.4); the sandbox does not decide prompts
 
 ### 2 · Skills
 
@@ -114,6 +111,7 @@ The UI parses this marker to render the image.
 from contextlib import aclosing
 from agentao import Agentao
 from agentao.host import TextDelta
+from agentao.sandbox import SandboxPolicy
 from pathlib import Path
 import re
 
@@ -124,7 +122,10 @@ async def ask(req: dict, user=Depends(current_user)):
     workdir = Path(f"/workspaces/{user.username}")
     workdir.mkdir(exist_ok=True)
 
-    agent = Agentao(working_directory=workdir)
+    policy = SandboxPolicy(project_root=workdir)
+    policy.set_enabled(True)
+    policy.set_default_profile("workspace-write-no-network")
+    agent = Agentao(working_directory=workdir, sandbox_policy=policy)
     agent.skill_manager.activate_skill(
         "duckdb-analyst",
         task_description=f"Answer: {req['question']}",
@@ -175,7 +176,7 @@ Each row below is a real production incident. Skim them before you ship — the 
 |-----------|------------|-----|
 | Query runs 10 minutes, client times out | No shell-tool timeout | Set a timeout on `run_shell_command` custom override or use DuckDB's `SET statement_timeout` |
 | `workspaces/` fills disk | Old chart PNGs never cleaned | Cron-evict files older than N days |
-| Analyst escapes the sandbox | They asked "please disable the sandbox to test something" → LLM complied via config file hint | Keep sandbox config outside the writable workspace; prompt injection guardrails (6.5) |
+| Analyst escapes the sandbox | They asked "please disable the sandbox to test something" → LLM complied via config file hint | Build the sandbox policy in code (a workspace `sandbox.json` is ignored) and keep `~/.agentao/` read-only to the agent; prompt injection guardrails (6.5) |
 | Wrong data returned | LLM mis-read schema, printed confident SQL | Skill rule: always `DESCRIBE` first; Review UI highlights SQL for user approval |
 | `matplotlib` crashes headless | No DISPLAY | `os.environ["MPLBACKEND"] = "Agg"` in the entrypoint |
 

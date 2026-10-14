@@ -128,7 +128,7 @@ Open `agentao.log` — the exact denial reason is logged. Common fixes:
 
 ### "Sandbox disabled in production — how do I enforce it?"
 
-Sandbox config is merged: project `.agentao/sandbox.json` overrides user. Mount project config read-only in your container so LLM-led changes to sandbox settings can't persist. See [7.4 pitfall table](/en/part-7/4-data-workbench#⚠️-pitfalls).
+Sandbox config comes from `~/.agentao/sandbox.json` only. A project `.agentao/sandbox.json` is ignored with a warning, so a checked-in or agent-written file cannot turn the sandbox off. Make the user-scope file read-only to the agent in your container, and use `agentao doctor` to spot ignored project files. See [7.4 pitfall table](/en/part-7/4-data-workbench#⚠️-pitfalls).
 
 ### "Agent tried to fetch 169.254.169.254"
 

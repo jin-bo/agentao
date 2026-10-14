@@ -5,9 +5,12 @@ subprocess that restricts filesystem writes (and optionally network) based
 on a named profile. The policy is a strict *added* layer — it runs after
 the permission engine already decided ALLOW.
 
-Config precedence (lower overrides higher? No — project overrides home):
-    1. ~/.agentao/sandbox.json           (user-level defaults)
-    2. <project>/.agentao/sandbox.json    (project overrides user)
+Config source: ``~/.agentao/sandbox.json`` only. A project-level
+``<project>/.agentao/sandbox.json`` is ignored with a warning, for the same
+reason ``embedding/permission_loader.py`` ignores a project
+``permissions.json``: a checked-in file (or a write by a sandboxed command,
+which can write the whole workspace) could switch the sandbox off or swap
+its profile. Session toggles (``/sandbox on|off|profile``) still apply.
 
 Schema::
 
@@ -29,6 +32,7 @@ users can override built-ins by dropping a file with the same name.
 from __future__ import annotations
 
 import json
+import logging
 import platform
 import re
 import subprocess
@@ -41,7 +45,15 @@ from ..paths import user_root
 from .. import json_parse
 
 
+_logger = logging.getLogger(__name__)
+
 _BUILTIN_PROFILES_DIR = Path(__file__).parent / "profiles"
+
+# macOS ships sandbox-exec here. Never resolve it through PATH: a sandboxed
+# command can write a directory that is on PATH (``.venv/bin``,
+# ``node_modules/.bin``) and plant a ``sandbox-exec`` that drops the profile
+# for every later command.
+SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 
 
 class SandboxMisconfiguredError(RuntimeError):
@@ -104,9 +116,9 @@ class SandboxProfile:
 
         Example output::
 
-            ["sandbox-exec", "-D", "_RW1=/Users/me/proj", "-f", "/abs/p.sb"]
+            ["/usr/bin/sandbox-exec", "-D", "_RW1=/Users/me/proj", "-f", "/abs/p.sb"]
         """
-        out: List[str] = ["sandbox-exec"]
+        out: List[str] = [SANDBOX_EXEC]
         for k, v in self.params.items():
             out.extend(["-D", f"{k}={v}"])
         out.extend(["-f", str(self.path)])
@@ -144,6 +156,10 @@ def _load_json(path: Path) -> Tuple[Dict[str, Any], Optional[str]]:
 # SandboxPolicy can fail-closed. NOT a documented public config field.
 _PARSE_ERRORS_KEY = "_load_errors"
 
+# Sentinel key carrying the path of an ignored project-level file, so
+# ``/sandbox status`` can say why it has no effect. NOT a config field.
+_IGNORED_PROJECT_KEY = "_ignored_project_config"
+
 
 # Expected Python type(s) for each user-writable top-level config field.
 # `None` is allowed wherever the documented default is null.
@@ -166,13 +182,9 @@ def _absolutize_path_fields(cfg: Dict[str, Any], anchor: Path) -> None:
     A home-level config like ``~/.agentao/sandbox.json`` with
     ``"profiles_dir": "profiles"`` means *this user's* profiles dir — i.e.
     ``~/.agentao/profiles`` — not "some dir called profiles under whatever
-    project the agent happens to load next". Once the home config is merged
-    into the project config, that provenance is lost, so we bake each
-    file's anchor in at load time.
-
-    By the time merging runs, every path string is already absolute, so
-    downstream callers (``_resolve_config_path``, ``_search_dirs``) can
-    treat them uniformly regardless of which config they came from.
+    project the agent happens to load next". The policy later resolves a
+    relative path against the project root, so we bake the file's anchor in
+    at load time.
 
     No-ops on non-string values — type errors are routed through
     ``_validate_field_types`` and ``health_error()`` instead.
@@ -204,7 +216,7 @@ def _preflight_profile(profile_path: Path, workspace_root: Path) -> Optional[str
     try:
         r = subprocess.run(
             [
-                "sandbox-exec",
+                SANDBOX_EXEC,
                 "-D", f"_RW1={workspace_root}",
                 "-f", str(profile_path),
                 "/bin/sh", "-c", ":",
@@ -214,7 +226,7 @@ def _preflight_profile(profile_path: Path, workspace_root: Path) -> Optional[str
             timeout=5,
         )
     except FileNotFoundError:
-        return "sandbox-exec not found on PATH"
+        return f"{SANDBOX_EXEC} not found"
     except subprocess.TimeoutExpired:
         return "sandbox-exec preflight timed out after 5s"
     except OSError as e:
@@ -255,34 +267,27 @@ def _validate_field_types(cfg: Dict[str, Any], source: Path) -> List[str]:
 
 
 def load_sandbox_config(*, project_root: Optional[Path] = None) -> Dict[str, Any]:
-    """Load and merge sandbox config from home + project locations.
+    """Load the sandbox config from ``~/.agentao/sandbox.json``.
 
-    Project config overrides user config key-by-key (shallow merge). An
-    explicit `null` in the project file IS applied — this is how a
-    project can reset an inherited user-level `profiles_dir` or
-    `workspace_root` back to the documented default of `None`.
+    A project-level ``<project>/.agentao/sandbox.json`` is never honored.
+    When one exists, a warning is logged and its path is carried under
+    ``_ignored_project_config`` so the CLI can show it. The file is not
+    parsed: a malformed project file can no longer change anything, so it
+    has no reason to fail the sandbox closed either.
 
-    Relative path fields (``profiles_dir``, ``workspace_root``) are
-    resolved *before* merging, each against its own config file's anchor:
+    A relative path field (``profiles_dir``, ``workspace_root``) is resolved
+    against ``~/.agentao/`` at load time. Without this, a user-level
+    ``"profiles_dir": "profiles"`` would be searched under whichever project
+    later consumed the dict.
 
-      - home config ``~/.agentao/sandbox.json``  →  ``~/.agentao/``
-      - project config ``<proj>/.agentao/sandbox.json``  →  ``<proj>/``
-
-    Without this, a global `"profiles_dir": "profiles"` would be searched
-    under whichever project later consumed the merged dict, completely
-    bypassing the shared user-level profiles directory.
-
-    If either file is present on disk but unreadable / malformed, the
-    merged config carries a `_load_errors` list so SandboxPolicy can
-    fail-closed instead of quietly falling back to the default-disabled
-    config.
+    If the user file is present but unreadable or malformed, the config
+    carries a ``_load_errors`` list so SandboxPolicy can fail closed instead
+    of quietly falling back to the default-disabled config.
     """
     global_path = user_root() / "sandbox.json"
     project_cwd = project_root if project_root is not None else Path.cwd()
-    project_path = project_cwd / ".agentao" / "sandbox.json"
 
     global_cfg, g_err = _load_json(global_path)
-    project_cfg, p_err = _load_json(project_path)
 
     # Collect parse + type-validation errors so misconfigurations fail
     # closed through the same channel.
@@ -292,23 +297,46 @@ def load_sandbox_config(*, project_root: Optional[Path] = None) -> Dict[str, Any
     else:
         errors.extend(_validate_field_types(global_cfg, global_path))
         _absolutize_path_fields(global_cfg, global_path.parent)
-    if p_err:
-        errors.append(p_err)
-    else:
-        errors.extend(_validate_field_types(project_cfg, project_path))
-        _absolutize_path_fields(project_cfg, project_cwd)
 
     merged: Dict[str, Any] = dict(_DEFAULT_CONFIG)
-    for cfg in (global_cfg, project_cfg):
-        # Apply every key the user wrote, including explicit `null` values.
-        # Skipping `null` would prevent a project file from clearing an
-        # inherited user-level `profiles_dir` back to the default.
-        for k, v in cfg.items():
-            merged[k] = v
+    # Apply every key the user wrote, including explicit `null` values.
+    merged.update(global_cfg)
 
     if errors:
         merged[_PARSE_ERRORS_KEY] = errors
+    project_path = ignored_project_sandbox_config(project_cwd)
+    if project_path is not None:
+        _logger.warning(
+            "Ignoring %s: project-scope sandbox config is no longer honored "
+            "(a checked-in or agent-written file could switch the sandbox "
+            "off). Move settings to %s.",
+            project_path,
+            global_path,
+        )
+        merged[_IGNORED_PROJECT_KEY] = str(project_path)
     return merged
+
+
+def ignored_project_sandbox_config(project_root: Path) -> Optional[Path]:
+    """Path of the project-level sandbox.json the loader ignores, else None.
+
+    ``samefile`` guards the case where the project root IS the home
+    directory: then the "project" file is the user file, and it is honored.
+    ``agentao doctor`` calls this too, so both report the same file.
+    """
+    project_path = project_root / ".agentao" / "sandbox.json"
+    if not project_path.exists():
+        return None
+    if _same_file(project_path, user_root() / "sandbox.json"):
+        return None
+    return project_path
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return a.samefile(b)
+    except OSError:
+        return False
 
 
 def _is_platform_supported(config_platform: str) -> bool:
@@ -325,8 +353,9 @@ class SandboxPolicy:
     policy must do the same or a `cd` between turns will silently apply
     the old project's profile).
 
-    Relative paths in the JSON config (``workspace_root``, ``profiles_dir``)
-    are resolved against the live project root, NOT process cwd.
+    A relative ``workspace_root`` / ``profiles_dir`` in a config passed as
+    ``config=`` is resolved against the live project root, NOT process cwd.
+    The disk loader has already made the user file's paths absolute.
     """
 
     def __init__(
@@ -396,12 +425,12 @@ class SandboxPolicy:
         return {**self._disk_config(), **self._session_overrides}
 
     def _resolve_config_path(self, raw: Any) -> Optional[Path]:
-        """Resolve a user-supplied path against the owning project, not cwd.
+        """Resolve a configured path against the project root, not cwd.
 
-        Relative paths in ``sandbox.json`` should mean "relative to the
-        project that owns this config file" — not "whichever directory the
-        host process happens to be in right now". Absolute and ``~``-prefixed
-        paths are left to stdlib rules.
+        A relative path in a ``config=`` dict means "relative to the
+        project" — not "whichever directory the host process happens to be
+        in right now". Absolute and ``~``-prefixed paths are left to stdlib
+        rules.
 
         Returns None for non-string inputs. Load-time validation already
         converts these to `_load_errors`, but we defend in depth so the
@@ -462,6 +491,12 @@ class SandboxPolicy:
     def config(self) -> Dict[str, Any]:
         """Read-only view of the merged config."""
         return dict(self._config)
+
+    @property
+    def ignored_project_config(self) -> Optional[Path]:
+        """Path of a project-level sandbox.json that was ignored, else None."""
+        raw = self._config.get(_IGNORED_PROJECT_KEY)
+        return Path(raw) if isinstance(raw, str) else None
 
     @property
     def default_profile_name(self) -> str:
@@ -532,7 +567,7 @@ class SandboxPolicy:
             raise SandboxMisconfiguredError(
                 f"Sandbox is enabled but profile {profile_name!r} could not "
                 f"be located. Available: {avail}. Fix `default_profile` / "
-                f"`rules` / `profiles_dir` in .agentao/sandbox.json, or run "
+                f"`rules` / `profiles_dir` in ~/.agentao/sandbox.json, or run "
                 f"/sandbox off to proceed unsandboxed."
             )
 
@@ -628,9 +663,8 @@ class SandboxPolicy:
     def _search_dirs(self) -> List[Path]:
         """Profile search path: user-configured dir first, then built-ins.
 
-        User-configured paths are resolved against the project root so a
-        project-local `sandbox.json` can use relative paths without getting
-        silently redirected to the host process's cwd.
+        A relative configured path is resolved against the project root,
+        never the host process's cwd.
         """
         out: List[Path] = []
         user_dir = self._config.get("profiles_dir")

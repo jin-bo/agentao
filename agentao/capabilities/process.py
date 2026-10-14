@@ -90,6 +90,34 @@ def _provider_key_names(source: Any) -> set:
     return {f"{provider}_API_KEY"}
 
 
+# Provider keys this process actually sent. ``/provider X``, a host's
+# ``set_provider`` and an ACP config switch all reach a key that
+# ``LLM_PROVIDER`` does not name, so :func:`_provider_key_names` alone would
+# let the key in use reach ``env`` in a child. Matched by *value*: the entry
+# path knows the key, not the env var it came from. Process-wide, like the
+# environment it scrubs.
+_used_credential_values: set = set()
+_used_credential_lock = threading.Lock()
+
+# Below this length a value is not a credential worth scrubbing for, and
+# matching it would drop unrelated variables (``EMPTY``, ``ollama``, ``1``).
+_MIN_CREDENTIAL_LEN = 16
+
+
+def note_credential_value(value: Optional[str]) -> None:
+    """Record that ``value`` is an LLM credential this process uses.
+
+    :func:`build_child_env` drops every variable whose value is a recorded
+    one, whatever its name. ``LLMClient`` calls this each time it takes a
+    key. Do not widen the scrub to every ``*_API_KEY`` name: those belong to
+    the user's own tools as often as to agentao.
+    """
+    if not isinstance(value, str) or len(value) < _MIN_CREDENTIAL_LEN:
+        return
+    with _used_credential_lock:
+        _used_credential_values.add(value)
+
+
 # Escape hatch. Running ``agentao run`` — or any script that calls the
 # provider — from inside the agent's own shell is a legitimate workflow
 # that this scrubbing breaks. Set to "0"/"false"/"no" to restore full
@@ -105,7 +133,9 @@ def build_child_env(
     """Return the environment to hand a child process.
 
     Copies ``base`` (default ``os.environ``), drops
-    :data:`HARNESS_ENV_KEYS`, then applies ``overrides`` — which are
+    :data:`HARNESS_ENV_KEYS`, the key ``LLM_PROVIDER`` implies and every
+    variable holding a value passed to :func:`note_credential_value`, then
+    applies ``overrides`` — which are
     applied *after* the drop, so a caller that deliberately wants a
     provider key in the child can still pass one explicitly.
 
@@ -121,8 +151,12 @@ def build_child_env(
     if opt_out in {"0", "false", "no", "off"}:
         env = dict(source)
     else:
+        with _used_credential_lock:
+            used = set(_used_credential_values)
         drop = HARNESS_ENV_KEYS | _provider_key_names(source)
-        env = {k: v for k, v in source.items() if k not in drop}
+        env = {
+            k: v for k, v in source.items() if k not in drop and v not in used
+        }
     if overrides:
         env.update(overrides)
     return env

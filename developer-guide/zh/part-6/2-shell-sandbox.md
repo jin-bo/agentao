@@ -32,7 +32,7 @@ macOS 自带 `sandbox-exec` 工具，内核级隔离文件写入和网络访问�
 ### 命令是怎么被包起来的
 
 1. 调用被放行后，工具执行器向策略要一个 profile（[`runtime/tool_executor.py`](https://github.com/jin-bo/agentao/blob/main/agentao/runtime/tool_executor.py)），通过一个私有参数交给 shell 工具。模型和插件 hook 都看不到这个参数。
-2. shell 工具把命令改写成 `sandbox-exec -D _RW1=<workspace_root> -f <profile.sb> <shell> -c '<command>'`（[`tools/shell.py::_wrap_with_sandbox`](https://github.com/jin-bo/agentao/blob/main/agentao/tools/shell.py)）。后台命令也一样被包。
+2. shell 工具把命令改写成 `/usr/bin/sandbox-exec -D _RW1=<workspace_root> -f <profile.sb> <shell> -c '<command>'`（[`tools/shell.py::_wrap_with_sandbox`](https://github.com/jin-bo/agentao/blob/main/agentao/tools/shell.py)）。后台命令也一样被包。这里特意用绝对路径：沙箱内的命令能写 `PATH` 上的目录（比如 `.venv/bin`），放在那里的 `sandbox-exec` 不能接管下一条命令。
 3. 内层的 `<shell>` 和不开沙箱时用的是同一个 shell（`resolve_shell_executable()`：有 bash 用 bash，否则 `/bin/sh`）。所以同一条命令开不开沙箱，解析方式都一样。
 
 stdout、stderr 和退出码原样透传。
@@ -53,7 +53,7 @@ stdout、stderr 和退出码原样透传。
 
 ### 最小配置
 
-在 `~/.agentao/sandbox.json` 或 `<project>/.agentao/sandbox.json`：
+在 `~/.agentao/sandbox.json`：
 
 ```json
 {
@@ -66,7 +66,7 @@ stdout、stderr 和退出码原样透传。
 
 ### 配置字段
 
-Agentao 先读 `~/.agentao/sandbox.json`，再读 `<project>/.agentao/sandbox.json`，项目文件逐键覆盖家目录文件。项目文件里显式写 `null`，可以把继承来的值重置回默认。
+Agentao 只读 `~/.agentao/sandbox.json`。**`<project>/.agentao/sandbox.json` 会被忽略**：记一条 warning，并在 `/sandbox status` 和 `agentao doctor` 里显示被忽略的路径。项目里的文件可能来自克隆下来的仓库，也可能是沙箱内的命令写的（整个工作区都可写）。这样的文件不能关掉沙箱，也不能换 profile。项目级 `permissions.json` 被忽略也是同一个原因。
 
 ```json
 {
@@ -88,7 +88,7 @@ Agentao 先读 `~/.agentao/sandbox.json`，再读 `<project>/.agentao/sandbox.js
 | `profiles_dir` | 自定义 `.sb` 文件目录，搜索时排在内置 profile 前面。 |
 | `workspace_root` | 作为 `_RW1` 传入的可写路径，默认是项目根。 |
 
-`profiles_dir`、`workspace_root` 写相对路径时，按写它的那个文件解析：家目录配置以 `~/.agentao/` 为基准，项目配置以项目根为基准。加载逻辑在 [`sandbox/policy.py::load_sandbox_config`](https://github.com/jin-bo/agentao/blob/main/agentao/sandbox/policy.py)，每个字段都做类型检查，类型不对和 JSON 写错一样按 fail-closed 处理。
+`profiles_dir`、`workspace_root` 写相对路径时，以 `~/.agentao/` 为基准。加载逻辑在 [`sandbox/policy.py::load_sandbox_config`](https://github.com/jin-bo/agentao/blob/main/agentao/sandbox/policy.py)，每个字段都做类型检查，类型不对和 JSON 写错一样按 fail-closed 处理。
 
 ### 按命令类型选不同 profile
 
@@ -131,9 +131,9 @@ agent = Agentao(working_directory=Path("/data/tenant-a"), sandbox_policy=policy)
 }
 ```
 
-项目配置里的相对 `profiles_dir` 以项目根为基准，所以这里是 `<project>/sandbox-profiles/`。和内置 profile 同名的文件会替换掉那个内置 profile。
+相对的 `profiles_dir` 以 `~/.agentao/` 为基准，所以这里是 `~/.agentao/sandbox-profiles/`。和内置 profile 同名的文件会替换掉那个内置 profile。
 
-建议复制一个内置 profile 再往窄里改。下面这个骨架和内置 profile 结构相同。`./sandbox-profiles/my-strict.sb`：
+建议复制一个内置 profile 再往窄里改。下面这个骨架和内置 profile 结构相同。`~/.agentao/sandbox-profiles/my-strict.sb`：
 
 ```scheme
 (version 1)
@@ -170,7 +170,7 @@ agent = Agentao(working_directory=Path("/data/tenant-a"), sandbox_policy=policy)
 
 在 macOS 上用之前，先手动确认一遍：
 
-1. 建 `.agentao/sandbox.json`：`{"enabled": true, "default_profile": "workspace-write-no-network"}`。
+1. 建 `~/.agentao/sandbox.json`：`{"enabled": true, "default_profile": "workspace-write-no-network"}`。
 2. 运行 `uv run agentao`，`/sandbox status` 应显示 `enabled` 和对应 profile。
 3. 让 Agent 执行 `echo hello > /tmp/ok.txt`：成功。
 4. 让它执行 `echo bad > ~/sandbox-test.txt`：失败，报 `Operation not permitted`。
@@ -180,7 +180,7 @@ agent = Agentao(working_directory=Path("/data/tenant-a"), sandbox_policy=policy)
 不经过 Agent，也可以直接用 `sandbox-exec` 测 profile：
 
 ```bash
-sandbox-exec -D _RW1="$PWD" -f sandbox-profiles/my-strict.sb /bin/bash -c 'touch build/x && echo ok'
+/usr/bin/sandbox-exec -D _RW1="$PWD" -f ~/.agentao/sandbox-profiles/my-strict.sb /bin/bash -c 'touch build/x && echo ok'
 ```
 
 在 Linux / Windows 上，`uv run agentao` 应正常启动，shell 命令不经包装直接执行。
@@ -191,9 +191,9 @@ Agentao 的沙箱策略**严格 fail-closed**——配置有问题就拒绝执�
 
 | 错误情形 | 行为 |
 |---------|------|
-| `sandbox.json` JSON 解析失败或字段类型不对 | macOS 上每次 shell 调用都以 `SandboxMisconfiguredError` 失败，即使文件里根本没写 `enabled`；非 macOS 不开沙箱 |
+| `~/.agentao/sandbox.json` JSON 解析失败或字段类型不对 | macOS 上每次 shell 调用都以 `SandboxMisconfiguredError` 失败，即使文件里根本没写 `enabled`；非 macOS 不开沙箱 |
 | 引用的 profile 名字找不到 | 抛 `SandboxMisconfiguredError`，命令拒绝执行 |
-| `sandbox-exec` 二进制不在 PATH（macOS） | `/sandbox status` 会报出来；被包装的命令执行失败，绝不会不包装直接跑 |
+| `/usr/bin/sandbox-exec` 不存在（macOS） | `/sandbox status` 会报出来；被包装的命令执行失败，绝不会不包装直接跑 |
 | profile 文件语法错（Scheme 错） | `/sandbox status`、`/sandbox on`、`/sandbox profile <name>` 会用 `sandbox-exec` 实际加载一次 profile 并报错（`health_error()` / `profile_health_error()`）。构造时不检查。调用时 `sandbox-exec` 非零退出，错误原样交给模型 |
 
 **含义**：生产环境 enabled=true 后，任何配置错误**都会**让 Shell 工具停摆——这是有意为之，比"无声禁用保护"好。配置坏了的时候，`/sandbox off` 依然有效，是兜底的逃生口。

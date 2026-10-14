@@ -46,8 +46,7 @@
 │   ├── AGENTAO.md            ← acme 的项目说明
 │   ├── .agentao/
 │   │   ├── memory.db          ← 记忆
-│   │   ├── mcp.json           ← MCP 配置（仅可新增 —— 见下方 warning）
-│   │   └── sandbox.json       ← 沙箱规则
+│   │   └── mcp.json           ← MCP 配置（仅可新增 —— 见下方 warning）
 │   ├── skills/                ← 技能
 │   └── workspace/             ← Agent 可写临时区
 ├── tenant-globex/
@@ -60,7 +59,7 @@
 agent = Agentao(working_directory=Path(f"/data/tenant-{tenant.id}"))
 ```
 
-**好处**：所有目录锚定的配置（记忆、MCP 增量服务器、技能、沙箱、项目说明）自动按租户隔离，**代码里不用写 tenant_id 过滤逻辑**。
+**好处**：所有目录锚定的配置（记忆、MCP 增量服务器、技能、项目说明）自动按租户隔离，**代码里不用写 tenant_id 过滤逻辑**。
 
 ::: warning 权限不在这里
 租户目录下**没有 `permissions.json`**。引擎故意忽略 `<wd>/.agentao/permissions.json`（一条 checked-in 的 allow 规则会越权所有租户）。要做按租户的权限策略，请编程构造 `PermissionEngine` 注入：
@@ -79,6 +78,8 @@ agent = Agentao(
 ```
 
 项目级 `mcp.json` 按**仅可新增**加载：租户目录可以声明新 MCP 服务器，但不能覆盖用户级同名条目（冲突时打 warning 并跳过）。
+
+`<wd>/.agentao/sandbox.json` 和 `permissions.json` 一样会被忽略。要做按租户的沙箱，注入 `sandbox_policy=SandboxPolicy(project_root=...)` 并用 `set_enabled(True)` 打开（[6.2](/zh/part-6/2-shell-sandbox#运行时开关)）。
 :::
 
 ### 模板 B · 临时工作区

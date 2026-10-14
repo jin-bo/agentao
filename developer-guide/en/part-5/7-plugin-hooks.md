@@ -353,6 +353,17 @@ The host-side hooks **list / disable / hot-reload API** is intentionally absent 
 "Managing hooks from the platform" only has a meaningful shape inside a specific use case — a SaaS platform may want a tenant-level toggle, an IDE may want a "disable during testing" switch. The runtime can't predict your semantics, and forcing an abstraction would just produce a middle layer no one wants to use. So that freedom stays in *your* plugin layer; the host contract stays out of it.
 :::
 
+### Hooks don't run inside sub-agents
+
+A sub-agent is built without plugins, so **no hook fires for its tool calls**: not `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop` or `PreCompact`. The sub-agent does inherit the parent's permission rules (a snapshot of the engine), so a `permissions.json` deny still holds there.
+
+This has a security consequence. If a `PreToolUse` hook is the **only** thing that blocks an operation, and the parent can start a sub-agent whose `tools:` list includes that tool, the model can delegate the call and the hook never sees it. Two ways to close it:
+
+- Put the block in `permissions.json` as a `deny` rule. Sub-agents inherit those.
+- Add a `PreToolUse` rule with `"matcher": { "tool_name": "agent_*" }` that blocks or reviews delegation itself.
+
+This is a known limit, not a fix: sub-agent hook dispatch is not implemented.
+
 ### Hook types that don't run
 
 `http` / `agent` are listed under `KNOWN_UNSUPPORTED_HOOK_TYPES` — recognised at parse time, not executed at runtime (details in §5.7.3). They're **placeholders for the future**; writing one today only gets you a warning.
@@ -407,6 +418,8 @@ Zero process overhead, injected on every turn. Good for "project-identity awaren
 ```
 
 `shell-guardrail.py` reads the payload from stdin (full command included), and on a blacklist hit (`rm -rf /`, `curl | sh`, etc.) writes back a `hook_blocking_error`. The chat loop honors `blocking_error` and aborts the tool call; the UI sees `[Blocked by hook] {message}`.
+
+This rule does not reach a sub-agent's tool calls (see [§5.7.7](#hooks-don-t-run-inside-sub-agents)). For a hard block, also add a `deny` rule to `permissions.json`.
 
 ::: tip Keep matcher timeouts low
 A `PreToolUse` hook **blocks the tool call**. Set the timeout in single-digit seconds — the hook itself shouldn't become the new bottleneck.

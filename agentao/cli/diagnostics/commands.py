@@ -24,6 +24,7 @@ from .collectors import (
     _collect_plugins,
     _collect_provider,
     _collect_replay,
+    _collect_sandbox,
     _collect_settings,
 )
 from .loaders import _load_dotenv
@@ -40,6 +41,7 @@ def handle_doctor_subcommand(args) -> None:
     settings_data = _collect_settings(wd, report)
     _collect_provider(report)
     _collect_permissions(wd, report)
+    _collect_sandbox(wd, report)
     _collect_mcp(wd, report)
     _collect_replay(wd, report, settings_data)
     _collect_acp_schema(report)
@@ -66,6 +68,7 @@ def handle_config_validate_subcommand(args) -> None:
     settings_data = _collect_settings(wd, report)
     _collect_provider(report)
     _collect_permissions(wd, report)
+    _collect_sandbox(wd, report)
     _collect_mcp(wd, report)
     _collect_replay(wd, report, settings_data)
     _collect_memory_stores(wd, report)

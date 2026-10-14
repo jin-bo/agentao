@@ -204,6 +204,96 @@ class TestChildEnvironment:
         assert set(env) == {"KEEP"}
 
 
+class TestUsedCredentialValues:
+    """A key agentao uses is scrubbed even when ``LLM_PROVIDER`` names another
+    provider, or no env var name can be derived at all (codex #50019 /
+    #52302's class). Matched by value, at ``LLMClient``."""
+
+    HOST_KEY = "sk-host-read-this-from-its-own-var-0123456789"
+
+    def test_a_recorded_value_is_dropped_whatever_its_name(self):
+        from agentao.capabilities.process import note_credential_value
+
+        base = {"LLM_PROVIDER": "OPENAI", "MY_CORP_LLM_TOKEN": self.HOST_KEY, "KEEP": "yes"}
+        assert build_child_env(base=base)["MY_CORP_LLM_TOKEN"] == self.HOST_KEY
+        note_credential_value(self.HOST_KEY)
+        assert build_child_env(base=base) == {"LLM_PROVIDER": "OPENAI", "KEEP": "yes"}
+
+    def test_other_api_keys_are_left_alone(self):
+        """Only values agentao used: ``*_API_KEY`` is the user's tools' too."""
+        from agentao.capabilities.process import note_credential_value
+
+        note_credential_value(self.HOST_KEY)
+        env = build_child_env(base={"STRIPE_API_KEY": "s" * 40, "QWEN_API_KEY": self.HOST_KEY})
+        assert env == {"STRIPE_API_KEY": "s" * 40}
+
+    def test_a_short_placeholder_key_drops_nothing(self):
+        """Local servers take ``EMPTY`` / ``ollama``; matching those would drop
+        unrelated variables that happen to hold the same word."""
+        from agentao.capabilities.process import note_credential_value
+
+        note_credential_value("ollama")
+        note_credential_value("1")
+        env = build_child_env(base={"OLLAMA_HOST_KIND": "ollama", "DEBUG": "1"})
+        assert env == {"OLLAMA_HOST_KIND": "ollama", "DEBUG": "1"}
+
+    def test_the_opt_out_still_wins(self):
+        from agentao.capabilities.process import note_credential_value
+
+        note_credential_value(self.HOST_KEY)
+        env = build_child_env(base={"QWEN_API_KEY": self.HOST_KEY, "AGENTAO_SCRUB_CHILD_ENV": "0"})
+        assert env["QWEN_API_KEY"] == self.HOST_KEY
+
+    def _agent(self, tmp_path, api_key="k"):
+        from agentao.agent import Agentao
+
+        return Agentao(
+            api_key=api_key, base_url="https://api.example.test", model="m",
+            working_directory=tmp_path, logger=logging.getLogger("t"),
+        )
+
+    def test_a_constructor_key_is_scrubbed(self, monkeypatch, tmp_path):
+        """A host that reads its key from its own variable name."""
+        monkeypatch.setenv("LLM_PROVIDER", "OPENAI")
+        monkeypatch.setenv("MY_CORP_LLM_TOKEN", self.HOST_KEY)
+        agent = self._agent(tmp_path, api_key=self.HOST_KEY)
+        try:
+            assert "MY_CORP_LLM_TOKEN" not in build_child_env()
+        finally:
+            agent.close()
+
+    def test_a_host_set_provider_key_is_scrubbed(self, monkeypatch, tmp_path):
+        """``Agentao.set_provider`` — also the ACP ``session/set_config_option`` path."""
+        monkeypatch.setenv("LLM_PROVIDER", "OPENAI")
+        monkeypatch.setenv("QWEN_API_KEY", self.HOST_KEY)
+        agent = self._agent(tmp_path)
+        try:
+            assert "QWEN_API_KEY" in build_child_env()
+            agent.set_provider(api_key=self.HOST_KEY, base_url="https://qwen.example.test/v1")
+            assert "QWEN_API_KEY" not in build_child_env()
+        finally:
+            agent.close()
+
+    def test_cli_provider_switch_scrubs_the_key(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+
+        from agentao.cli.commands import provider as provider_cmd
+
+        monkeypatch.setattr(provider_cmd.console, "print", lambda *a, **k: None)
+        monkeypatch.setenv("LLM_PROVIDER", "OPENAI")
+        monkeypatch.setenv("QWEN_API_KEY", FAKE_KEY)
+        monkeypatch.setenv("QWEN_BASE_URL", "https://qwen.example.test/v1")
+        monkeypatch.setenv("QWEN_MODEL", "qwen-test")
+        agent = self._agent(tmp_path)
+        try:
+            cli = SimpleNamespace(agent=agent, current_provider="OPENAI")
+            provider_cmd.handle_provider_command(cli, "qwen")
+            assert cli.current_provider == "QWEN"
+            assert "QWEN_API_KEY" not in build_child_env()
+        finally:
+            agent.close()
+
+
 class TestShellChildEnvironment:
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell expansion in the probe")
     def test_shell_child_does_not_see_the_provider_key(self, monkeypatch):

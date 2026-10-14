@@ -46,54 +46,79 @@ def test_default_config_is_disabled():
     assert "_load_errors" not in cfg
 
 
-def test_project_config_overrides_home(tmp_path):
-    """Project-level config wins over home-level on matching keys."""
-    home_cfg = {"enabled": True, "default_profile": "readonly"}
+def _write_home_config(tmp_path: Path, text: str) -> Path:
+    """Write ``<fake home>/.agentao/sandbox.json`` and return the fake home."""
+    home = tmp_path / "home"
+    (home / ".agentao").mkdir(parents=True, exist_ok=True)
+    (home / ".agentao" / "sandbox.json").write_text(text)
+    return home
+
+
+def test_project_config_is_ignored(tmp_path, caplog):
+    """A project-level sandbox.json changes nothing, and says so.
+
+    A checked-in file — or one a sandboxed command wrote, since the workspace
+    is writable — must not switch off a sandbox the user enabled or swap its
+    profile (codex #52302's class). ``permissions.json`` has the same rule.
+    """
+    home = _write_home_config(
+        tmp_path, json.dumps({"enabled": True, "default_profile": "readonly"}),
+    )
+    proj_dir = tmp_path / "proj"
+    (proj_dir / ".agentao").mkdir(parents=True)
+    project_file = proj_dir / ".agentao" / "sandbox.json"
+    project_file.write_text(json.dumps({
+        "enabled": False,
+        "default_profile": "workspace-write",
+        "profiles_dir": "evil",
+        "workspace_root": "/",
+    }))
+
+    with patch.object(Path, "home", return_value=home), \
+            caplog.at_level("WARNING", logger="agentao.sandbox.policy"):
+        cfg = load_sandbox_config(project_root=proj_dir)
+        policy = SandboxPolicy(project_root=proj_dir, config=cfg)
+
+    assert cfg["enabled"] is True
+    assert cfg["default_profile"] == "readonly"
+    assert cfg["profiles_dir"] is None
+    assert cfg["workspace_root"] is None
+    assert policy.ignored_project_config == project_file
+    assert policy.workspace_root == proj_dir.resolve()
+    assert any(str(project_file) in r.getMessage() for r in caplog.records)
+
+
+def test_malformed_project_config_does_not_fail_closed(tmp_path):
+    """An ignored file is not parsed, so its syntax cannot block the shell."""
+    proj_dir = tmp_path / "proj"
+    (proj_dir / ".agentao").mkdir(parents=True)
+    (proj_dir / ".agentao" / "sandbox.json").write_text("{ not valid json")
+
+    with patch.object(Path, "home", return_value=tmp_path / "home"):
+        cfg = load_sandbox_config(project_root=proj_dir)
+        policy = SandboxPolicy(project_root=proj_dir, config=cfg)
+
+    assert "_load_errors" not in cfg
+    assert policy.health_error() is None
+    assert policy.enabled is False
+
+
+def test_no_project_file_means_no_ignored_path(tmp_path):
     proj_dir = tmp_path / "proj"
     proj_dir.mkdir()
-    (proj_dir / ".agentao").mkdir()
-    (proj_dir / ".agentao" / "sandbox.json").write_text(
-        json.dumps({"default_profile": "workspace-write"})
-    )
-
-    def _fake_load(path: Path):
-        # The project branch first: on Windows ``tmp_path`` lives *under* the user's home,
-        # so a ``startswith(home)`` test claims the project file too and the home config wins
-        # every comparison this test exists to make.
-        if path == proj_dir / ".agentao" / "sandbox.json":
-            return json.loads(path.read_text(encoding="utf-8")), None
-        if str(path).startswith(str(Path.home())):
-            return home_cfg, None
-        return {}, None
-
-    with patch("agentao.sandbox.policy._load_json", side_effect=_fake_load):
-        cfg = load_sandbox_config(project_root=proj_dir)
-
-    assert cfg["enabled"] is True  # from home
-    assert cfg["default_profile"] == "workspace-write"  # project wins
+    with patch.object(Path, "home", return_value=tmp_path / "home"):
+        policy = SandboxPolicy(project_root=proj_dir)
+    assert policy.ignored_project_config is None
 
 
-def test_project_null_clears_inherited_home_value():
-    """Regression: a project file with an explicit `null` must be able to
-    reset an inherited user-level setting (profiles_dir / workspace_root)
-    back to the documented default of None. Previously the merge loop
-    silently dropped null values and let user-global paths leak into
-    every project."""
-    home_cfg = {"enabled": True, "profiles_dir": "/my/user/profiles"}
-    project_cfg = {"profiles_dir": None}
-
-    def _fake_load(path: Path):
-        if str(path).startswith(str(Path.home())):
-            return home_cfg, None
-        return project_cfg, None
-
-    with patch("agentao.sandbox.policy._load_json", side_effect=_fake_load):
-        cfg = load_sandbox_config(project_root=Path("/tmp/irrelevant"))
-
-    # Explicit project null beats inherited user path
-    assert cfg["profiles_dir"] is None
-    # Other inherited values still survive
+def test_project_root_at_home_reads_the_user_file_once(tmp_path):
+    """When the project root is the home directory, the "project" file IS
+    the user file: honor it, and do not call it ignored."""
+    home = _write_home_config(tmp_path, json.dumps({"enabled": True}))
+    with patch.object(Path, "home", return_value=home):
+        cfg = load_sandbox_config(project_root=home)
     assert cfg["enabled"] is True
+    assert "_ignored_project_config" not in cfg
 
 
 def test_malformed_sandbox_json_fails_closed(tmp_path):
@@ -105,8 +130,8 @@ def test_malformed_sandbox_json_fails_closed(tmp_path):
     """
     proj_dir = tmp_path / "proj"
     proj_dir.mkdir()
-    (proj_dir / ".agentao").mkdir()
-    (proj_dir / ".agentao" / "sandbox.json").write_text("{ not valid json")
+    (tmp_path / "home" / ".agentao").mkdir(parents=True)
+    (tmp_path / "home" / ".agentao" / "sandbox.json").write_text("{ not valid json")
 
     # Need to patch HOME so the test doesn't accidentally pick up a real
     # user-level sandbox.json sitting outside the fixture.
@@ -133,8 +158,9 @@ def test_malformed_platform_field_does_not_silently_disable_sandbox(tmp_path):
     unsandboxed — the exact fail-open case the validation was meant to
     block. Must fail-closed instead."""
     proj_dir = tmp_path / "proj"
-    (proj_dir / ".agentao").mkdir(parents=True)
-    (proj_dir / ".agentao" / "sandbox.json").write_text(
+    proj_dir.mkdir()
+    (tmp_path / "home" / ".agentao").mkdir(parents=True)
+    (tmp_path / "home" / ".agentao" / "sandbox.json").write_text(
         '{"enabled": true, "platform": 123, "default_profile": "workspace-write-no-network"}'
     )
 
@@ -164,8 +190,8 @@ def test_session_off_overrides_malformed_config_fail_closed(tmp_path):
     because the user consciously turned sandboxing off."""
     proj_dir = tmp_path / "proj"
     proj_dir.mkdir()
-    (proj_dir / ".agentao").mkdir()
-    (proj_dir / ".agentao" / "sandbox.json").write_text("{ not valid json")
+    (tmp_path / "home" / ".agentao").mkdir(parents=True)
+    (tmp_path / "home" / ".agentao" / "sandbox.json").write_text("{ not valid json")
 
     with patch.object(Path, "home", return_value=tmp_path / "home"):
         cfg = load_sandbox_config(project_root=proj_dir)
@@ -197,8 +223,9 @@ def test_wrong_typed_config_fields_do_not_crash(tmp_path):
     fields (both load-time validation AND runtime tolerance)."""
     # Load-time: validation produces a health error, policy fail-closes
     proj = tmp_path / "proj"
-    (proj / ".agentao").mkdir(parents=True)
-    (proj / ".agentao" / "sandbox.json").write_text(
+    proj.mkdir()
+    (tmp_path / "home" / ".agentao").mkdir(parents=True)
+    (tmp_path / "home" / ".agentao" / "sandbox.json").write_text(
         '{"enabled": true, "profiles_dir": 123}'
     )
     with patch.object(Path, "home", return_value=tmp_path / "home"):
@@ -237,8 +264,8 @@ def test_non_object_sandbox_json_fails_closed(tmp_path):
     """Array or scalar at the root is also a config error, not silently ignored."""
     proj_dir = tmp_path / "proj"
     proj_dir.mkdir()
-    (proj_dir / ".agentao").mkdir()
-    (proj_dir / ".agentao" / "sandbox.json").write_text("[1, 2, 3]")
+    (tmp_path / "home" / ".agentao").mkdir(parents=True)
+    (tmp_path / "home" / ".agentao" / "sandbox.json").write_text("[1, 2, 3]")
 
     with patch.object(Path, "home", return_value=tmp_path / "home"):
         cfg = load_sandbox_config(project_root=proj_dir)
@@ -512,7 +539,9 @@ def test_wrap_with_sandbox_produces_correct_shell_string(tmp_path):
 
     wrapped = _wrap_with_sandbox("echo hello && ls -la", profile)
 
-    assert wrapped.startswith("sandbox-exec")
+    # Absolute, never via PATH: a planted `sandbox-exec` on a writable PATH
+    # dir would otherwise run every later command unsandboxed (codex #51211).
+    assert wrapped.startswith("/usr/bin/sandbox-exec ")
     assert f"-D _RW1={tmp_path.resolve()}" in wrapped
     assert str(profile.path) in wrapped
     assert f"{_inner_shell()} -c" in wrapped
@@ -749,48 +778,43 @@ def test_absolute_workspace_root_is_honoured_as_is(tmp_path):
 
 def test_project_root_provider_follows_live_cwd(tmp_path, monkeypatch):
     """Regression: when given a provider (instead of a fixed root), the
-    policy must re-read config on cwd drift so ACP/embedded flows that
-    chdir between turns pick up the new project's sandbox.json instead of
-    the old one."""
+    policy must follow cwd drift so ACP/embedded flows that chdir between
+    turns sandbox the new project's tree, not the old one. Config comes
+    from the user file only, so the profile does not follow the cwd."""
     proj_a = tmp_path / "proj_a"
     proj_b = tmp_path / "proj_b"
-    (proj_a / ".agentao").mkdir(parents=True)
+    proj_a.mkdir()
     (proj_b / ".agentao").mkdir(parents=True)
-    (proj_a / ".agentao" / "sandbox.json").write_text(
-        '{"enabled": true, "default_profile": "readonly"}'
-    )
     (proj_b / ".agentao" / "sandbox.json").write_text(
-        '{"enabled": true, "default_profile": "workspace-write"}'
+        '{"enabled": false, "default_profile": "workspace-write"}'
+    )
+    home = _write_home_config(
+        tmp_path, '{"enabled": true, "default_profile": "readonly"}',
     )
 
-    with patch.object(Path, "home", return_value=tmp_path / "home"):
+    with patch.object(Path, "home", return_value=home):
         p = SandboxPolicy(project_root_provider=Path.cwd)
 
         monkeypatch.chdir(proj_a)
         assert p.default_profile_name == "readonly"
         assert p.workspace_root == proj_a.resolve()
+        assert p.ignored_project_config is None
 
         monkeypatch.chdir(proj_b)
-        assert p.default_profile_name == "workspace-write"
+        assert p.default_profile_name == "readonly"
         assert p.workspace_root == proj_b.resolve()
+        assert p.ignored_project_config is not None
+        if sys.platform == "darwin":
+            assert p.enabled
 
 
 def test_session_overrides_survive_cwd_drift(tmp_path, monkeypatch):
     """Regression: `/sandbox on` / `/sandbox profile X` should persist
-    across a chdir — they are session state, not project state.
-
-    Disk-loaded fields (e.g. rules from sandbox.json) follow the new cwd,
-    but explicit session toggles stay put."""
+    across a chdir — they are session state, not project state."""
     proj_a = tmp_path / "proj_a"
     proj_b = tmp_path / "proj_b"
-    (proj_a / ".agentao").mkdir(parents=True)
-    (proj_b / ".agentao").mkdir(parents=True)
-    (proj_a / ".agentao" / "sandbox.json").write_text(
-        '{"enabled": false, "default_profile": "readonly"}'
-    )
-    (proj_b / ".agentao" / "sandbox.json").write_text(
-        '{"enabled": false, "default_profile": "workspace-write"}'
-    )
+    proj_a.mkdir()
+    proj_b.mkdir()
 
     with patch.object(Path, "home", return_value=tmp_path / "home"):
         p = SandboxPolicy(project_root_provider=Path.cwd)
@@ -801,7 +825,6 @@ def test_session_overrides_survive_cwd_drift(tmp_path, monkeypatch):
         assert p.default_profile_name == "workspace-write-no-network"
 
         monkeypatch.chdir(proj_b)
-        # Session override beats whatever proj_b's disk config said.
         assert p.default_profile_name == "workspace-write-no-network"
         if sys.platform == "darwin":
             assert p.enabled
@@ -1102,3 +1125,50 @@ def test_a_network_call_blocked_by_the_sandbox_gets_the_hint(tmp_path):
     )
     assert "Could not resolve host" in out
     assert "[Sandbox hint]" in out
+
+
+# ---------------------------------------------------------------------------
+# sandbox-exec is never resolved through PATH (codex #51211)
+# ---------------------------------------------------------------------------
+
+
+def test_preflight_runs_sandbox_exec_by_absolute_path(tmp_path, monkeypatch):
+    from agentao.sandbox import policy as policy_mod
+
+    seen = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(argv)
+        from types import SimpleNamespace
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(policy_mod.subprocess, "run", fake_run)
+    assert policy_mod._preflight_profile(tmp_path / "p.sb", tmp_path) is None
+    assert seen[0][0] == "/usr/bin/sandbox-exec"
+
+
+@MACOS_ONLY
+def test_a_planted_sandbox_exec_on_path_is_not_used(tmp_path):
+    """A sandboxed command can write a PATH dir such as ``.venv/bin``. A
+    ``sandbox-exec`` it plants there must not run the next command."""
+    import subprocess
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "planted-ran"
+    fake = bin_dir / "sandbox-exec"
+    fake.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    fake.chmod(0o755)
+
+    p = SandboxPolicy(
+        project_root=tmp_path,
+        config={"enabled": True, "platform": "darwin",
+                "default_profile": "workspace-write-no-network"},
+    )
+    profile = p.resolve("run_shell_command", {"command": "true"})
+    wrapped = _wrap_with_sandbox("true", profile)
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path)}
+    r = subprocess.run(wrapped, shell=True, env=env, capture_output=True, text=True)
+
+    assert not marker.exists(), "the PATH-planted sandbox-exec ran"
+    assert r.returncode == 0, r.stderr

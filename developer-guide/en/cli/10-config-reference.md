@@ -9,7 +9,7 @@ This is a CLI-centric **index** to every config file the CLI reads. The schema r
 | **LLM credentials** | `.env` (cwd) | shell env | `/model`, `/provider`, `/temperature` | [§2](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#2-env--llm-provider-configuration) |
 | **Runtime settings** | `.agentao/settings.json` | — | `/mode` (persist), `/replay on/off` | [§3](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#3-agentaosettingsjson--runtime-mode--builtin-agents) |
 | **Permission rules** | — *(project file ignored)* | `~/.agentao/permissions.json` | `/mode`, `/permission`, tool confirmation UI | [§4](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#4-permissionsjson--tool-permission-rules) |
-| **Shell sandbox** | `.agentao/sandbox.json` | `~/.agentao/sandbox.json` | `/sandbox` | [Part 6.2](/en/part-6/2-shell-sandbox) |
+| **Shell sandbox** | — *(project file ignored)* | `~/.agentao/sandbox.json` | `/sandbox` | [Part 6.2](/en/part-6/2-shell-sandbox) |
 | **MCP servers** | `.agentao/mcp.json` | `~/.agentao/mcp.json` | `/mcp` | [§5](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#5-mcpjson--mcp-server-registry) |
 | **ACP servers** | `.agentao/acp.json` | — | `/acp` | [§6](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#6-acpjson--acp-subagent-registry) |
 | **Skill enable/disable** | `.agentao/skills_config.json` | — | `/skills enable`, `/skills disable` | [§7](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#7-skills_configjson--per-project-skill-enabledisable) |
@@ -27,7 +27,7 @@ This is a CLI-centric **index** to every config file the CLI reads. The schema r
 | Allow / deny extra shell commands | `~/.agentao/permissions.json` |
 | Allow / deny extra web domains | `~/.agentao/permissions.json` |
 | Use PowerShell instead of cmd (Windows) | `~/.agentao/permissions.json` → `shell` |
-| Default sandbox profile (macOS) | `.agentao/sandbox.json` or `~/.agentao/sandbox.json` → `default_profile` |
+| Default sandbox profile (macOS) | `~/.agentao/sandbox.json` → `default_profile` |
 | Default context window | `AGENTAO_CONTEXT_TOKENS` environment variable |
 | Default replay recording state | `.agentao/settings.json` → `replay.enabled` |
 | Replay max instances | `.agentao/settings.json` → `replay.max_instances` |
@@ -47,7 +47,7 @@ A few things you set with slash commands are **session-only** and don't write to
 | `/temperature <n>` | No | `.env` (`LLM_TEMPERATURE`) |
 | `/mode <mode>` | No | `.agentao/settings.json` (last-known) |
 | `/context limit <n>` | No | — (current process only; restart reads `AGENTAO_CONTEXT_TOKENS`) |
-| `/sandbox profile <name>` | No | — (edit `sandbox.json` to persist) |
+| `/sandbox profile <name>` | No | — (edit `~/.agentao/sandbox.json` to persist) |
 | `/replay on` / `/replay off` | **Yes** | `.agentao/settings.json` (`replay.enabled`) |
 | `/skills disable <name>` / `/skills enable <name>` | **Yes** | `.agentao/skills_config.json` |
 | `/skills activate` / `/skills deactivate` | No | — |
