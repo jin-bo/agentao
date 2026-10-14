@@ -66,6 +66,8 @@ def register_agent_tools(agent: "Agentao") -> None:
         # values rather than the snapshot frozen at registration time.
         llm_config_getter=lambda: agent._llm_config,
         bg_store=agent.bg_store,
+        # ``close()`` cancels the background tasks launched under this key.
+        bg_owner=agent._bg_owner,
         # A foreground sub-agent's events go to the parent's transport as
         # they are, and its confirmations and questions are answered there.
         # Each lambda reads ``agent.transport`` per call: replay replaces it

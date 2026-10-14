@@ -85,6 +85,7 @@ agent.close()
 ```
 
 Always call this. It:
+- Cancels the background sub-agents this agent launched, first, and waits up to 5 s for them to stop. A sub-agent stops at its next safe point, so one inside a blocking call that ignores the cancel can still be running after that wait. `agentao.log` then gets a warning naming it, and `close()` goes on. After `close()` the agent's sub-agent tool refuses new background launches (`BackgroundOwnerClosedError`). Tasks launched by another agent on the same `bg_store` are left alone
 - Disconnects the MCP clients the agent connected itself, and stops that manager's event loop thread
 - Closes the memory stores the agent opened itself
 - Closes `<working_directory>/agentao.log`, which the agent holds open unless you passed `logger=` or your own `llm_client=` (Windows cannot delete an open file, so removing a temporary working directory before `close()` fails with `WinError 32`)

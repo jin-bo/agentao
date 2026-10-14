@@ -155,6 +155,7 @@ class AgentManager:
         tool_origin_getter: Optional[Callable[[str], str]] = None,
         skill_manager_getter: Optional[Callable[[], Any]] = None,
         usage_sink: Optional[Callable[..., None]] = None,
+        bg_owner: Any = None,
     ) -> List[RegistrableTool]:
         """Create an :class:`AgentToolWrapper` per agent definition.
 
@@ -206,6 +207,7 @@ class AgentManager:
                 tool_origin_getter=tool_origin_getter,
                 skill_manager_getter=skill_manager_getter,
                 usage_sink=usage_sink,
+                bg_owner=bg_owner,
             )
             for defn in self.definitions.values()
         ]

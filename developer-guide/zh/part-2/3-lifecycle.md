@@ -86,6 +86,7 @@ agent.close()
 ```
 
 必须调用。作用：
+- 最先取消这个 agent 启动的后台子代理，并最多等 5 秒让它们停下。子代理在下一个安全点才停，所以卡在一个不理会取消的阻塞调用里的子代理，等完之后仍可能在运行。这时 `agentao.log` 会记一条 warning 写明它，`close()` 继续往下走。`close()` 之后，这个 agent 的子代理工具会拒绝新的后台启动（`BackgroundOwnerClosedError`）。同一个 `bg_store` 上由别的 agent 启动的任务不受影响
 - 断开 agent 自己连接的 MCP 客户端，并关闭该管理器的事件循环线程
 - 关闭 agent 自己打开的 memory 存储
 - 关闭 `<working_directory>/agentao.log`：除非传了 `logger=` 或自己的 `llm_client=`，agent 会一直打开这个文件（Windows 不能删除打开着的文件，所以在 `close()` 之前删除临时工作目录会报 `WinError 32`）

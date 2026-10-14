@@ -41,6 +41,7 @@ def _registered_entry_points(parent_transport=None) -> Dict[str, Any]:
         agent_manager=SimpleNamespace(create_agent_tools=_create_agent_tools),
         tools=SimpleNamespace(tools=[], register=lambda t: None),
         bg_store=None,
+        _bg_owner=object(),
         transport=parent_transport or CapturingTransport(),
         context_manager=SimpleNamespace(max_tokens=100_000),
         _llm_config={},
