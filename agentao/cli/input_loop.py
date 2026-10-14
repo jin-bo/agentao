@@ -369,6 +369,7 @@ def run_loop(cli: "AgentaoCLI") -> None:
     while True:
         try:
             cli._flush_acp_inbox()
+            _report_memory_problems(cli)
             # Handled here, not by the loop's ``except Exception``: that
             # handler goes back to reading input, and a read that cannot
             # succeed fails again at once, thousands of times a second.
@@ -820,7 +821,32 @@ def _run_agent_turn(cli: "AgentaoCLI", message: str, images=None) -> str:
         _print_final_response(cli, response)
 
     cli._flush_acp_inbox()
+    _report_memory_problems(cli)
     return response
+
+
+def _report_memory_problems(cli: "AgentaoCLI") -> None:
+    """Print each new notice about a memory store the session cannot use.
+
+    Before the prompt (so a startup fallback shows before the first turn) and
+    after every goal turn. A ``MagicMock`` agent answers every attribute, so
+    only a real list of strings is printed.
+    """
+    agent = getattr(cli, "agent", None)
+    take = getattr(getattr(agent, "memory_manager", None), "take_store_problems", None)
+    if not callable(take):
+        return
+    try:
+        problems = take()
+    except Exception:
+        return
+    if not isinstance(problems, list):
+        return
+    from rich.markup import escape
+
+    for problem in problems:
+        if isinstance(problem, str):
+            console.print(f"\n[warning]{escape(problem)}[/warning]\n")
 
 
 #: Consecutive automatic continuations that produced nothing before the loop

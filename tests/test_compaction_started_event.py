@@ -28,7 +28,7 @@ def _agent(summary="a summary", controller=None, history=None):
     cm = ContextManager(llm, Mock(), max_tokens=200_000)
     order = []
 
-    def summarize(_formatted, *, cancellation_token=None):
+    def summarize(_formatted, *, cancellation_token=None, accept_truncated=False):
         order.append("summarizer")
         return summary
     cm._summarize_formatted = summarize
@@ -114,7 +114,7 @@ def test_a_cancelled_turn_starts_and_then_raises_with_no_settle():
     agent, events, _ = _agent()
     token = CancellationToken()
 
-    def summarize(_formatted, *, cancellation_token=None):
+    def summarize(_formatted, *, cancellation_token=None, accept_truncated=False):
         token.cancel("user")
         return "a summary"
     agent.context_manager._summarize_formatted = summarize

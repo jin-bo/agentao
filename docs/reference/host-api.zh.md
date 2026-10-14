@@ -250,7 +250,8 @@ outcome = agent.compact(reason="api_overflow")         # 代表溢出恢复阶�
 
 返回 `CompactionOutcome`（`agentao.compaction.types`）—— `status` 取
 `success | cancelled | failed | skipped`，`detail` 指明具体是哪一种
-（`circuit_open`、`history_too_short`、`no_safe_split`、`summary_empty` …）。
+（`circuit_open`、`history_too_short`、`no_safe_split`、`summary_empty`、
+`summary_truncated` …）。
 **除 `success` 外，任何状态下历史都逐字节不变。** 两个 token 字段都**不含**
 system prompt，没有估算的路径上为 `None`。
 

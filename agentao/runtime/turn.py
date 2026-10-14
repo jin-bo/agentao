@@ -198,6 +198,7 @@ def _run_turn(
     # via a ``compress_messages`` call that never re-summarizes.
     try:
         agent.context_manager.last_summary_finish_reason_missing = False
+        agent.context_manager.last_summary_truncated = False
     except Exception:
         pass
     # Compaction cancellations are remembered for the rest of the turn (the

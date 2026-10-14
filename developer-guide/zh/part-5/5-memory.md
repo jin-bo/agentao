@@ -91,6 +91,18 @@ SQLiteMemoryStore.open_or_memory(<cwd>/.agentao/memory.db)
 
 用户作用域走严格构造 `SQLiteMemoryStore.open(...)`，不回落到 `:memory:`。打开失败时，工厂记一条 warning，构造不带用户库的管理器。这次会话里已有的用户记忆读不到，新的用户作用域写入存进**项目**库，并记一条日志（[见下文](#禁用用户级记忆)）。**记忆永远不会让 Agent 启动失败**——最差就是丢失跨会话持久化。
 
+库也可能打开成功、之后才出错：文件头完好、数据页损坏的 `memory.db` 能正常打开，但每次查询都抛 `sqlite3.DatabaseError`。回合里的读取（`<memory-stable>` 块和召回）会兜住数据库错误，记一条 warning，并把这个库当作空的，回合在没有这些记忆的情况下继续。其他异常照常抛出。写入坏掉的库仍会失败：`save_memory` 会把错误返回给模型。
+
+这些情况都不会中断会话，所以除非你把它展示出来，否则只有日志里有记录。`MemoryManager.take_store_problems()` 对每个打不开或读不了的库返回一条消息，每条只返回一次。CLI 在提示符前和每个 `/goal` 回合后打印它们。嵌入 Agentao 的宿主可以在每轮之后调用：
+
+```python
+reply = agent.chat(message)
+for problem in agent.memory_manager.take_store_problems():
+    ui.warn(problem)
+```
+
+要从损坏的库恢复，把 `memory.db` 移走即可，下次会话会新建一个。
+
 ## 在嵌入里怎么用
 
 大多数情况你**不需要直接碰 MemoryManager**——Agentao 自己会：
@@ -338,7 +350,7 @@ save_memory("doc", open("readme.md").read())   # 几十 KB
 
 - 记忆 ≠ 对话历史。记忆跨会话存在 SQLite；历史活在 `agent.messages` 上。
 - 两个作用域 / 两个 DB：**项目**（`<wd>/.agentao/memory.db`）和**用户**（`~/.agentao/memory.db`）。多租户部署里要么按 `tenant_id+user_id` 拆分用户作用域，要么直接禁用。
-- 只读 / 受限 FS 自动降级为内存 store 并 warning——Agent 还是能起。
+- 只读 / 受限 FS 自动降级为内存 store 并 warning——Agent 还是能起。损坏的库在读取时跳过；`take_store_problems()` 给出要展示的提示。
 - `clear_history()` **不**清记忆；这是设计如此。要"新对话"彻底忘记时显式调 `MemoryManager.wipe_all()`，并检查 `result.ok` —— 计数分不清「清除失败」和「本来就是空的」。
 
 → 下一节：[5.6 系统提示定制](./6-system-prompt)

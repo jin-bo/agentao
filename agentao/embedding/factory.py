@@ -327,11 +327,17 @@ def build_from_environment(
             wd / ".agentao" / "memory.db"
         )
         user_store: Optional[SQLiteMemoryStore] = None
+        user_problem: Optional[str] = None
         user = user_root()
         if user is not None:
             try:
                 user_store = SQLiteMemoryStore.open(user / "memory.db")
             except (OSError, sqlite3.Error) as exc:
+                user_problem = (
+                    f"The user memory store at {user / 'memory.db'} could not be "
+                    f"opened ({type(exc).__name__}: {exc}). User memories are not "
+                    f"read this session, and user-scope saves go to the project store."
+                )
                 logger.warning(
                     "User memory store at %s unavailable (%s: %s); "
                     "user memories are not read this session, and "
@@ -344,6 +350,8 @@ def build_from_environment(
             project_store=project_store,
             user_store=user_store,
         )
+        if user_problem is not None:
+            memory_manager.note_store_problem("user", user_problem)
         built_memory_manager = memory_manager
 
     # When the caller supplied an ``llm_client``, do not surface the

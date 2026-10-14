@@ -113,6 +113,10 @@ class SQLiteMemoryStore:
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
         self._is_memory = db_path == ":memory:"
+        # Set by :meth:`open_or_memory` when this transient store stands in
+        # for a file that could not be opened. ``MemoryManager`` turns it into
+        # a user-facing notice; the log line alone was easy to miss.
+        self.fallback_reason: Optional[str] = None
         self._persistent_conn: Optional[sqlite3.Connection] = None
         # Serialises every ``_connect`` scope in this process, on **both**
         # backings. The transient one needs it because its single connection
@@ -174,7 +178,13 @@ class SQLiteMemoryStore:
                 type(exc).__name__,
                 exc,
             )
-            return cls(":memory:")
+            store = cls(":memory:")
+            store.fallback_reason = (
+                f"The memory store at {db_path} could not be opened "
+                f"({type(exc).__name__}: {exc}). This session uses a temporary "
+                f"store: its memories are not read, and new ones are lost on exit."
+            )
+            return store
 
     # ------------------------------------------------------------------
     # Connection

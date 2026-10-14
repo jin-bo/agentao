@@ -315,7 +315,8 @@ outcome = agent.compact(reason="api_overflow")         # on behalf of the ladder
 Returns a `CompactionOutcome`
 (`agentao.compaction.types`) — `status` is
 `success | cancelled | failed | skipped`, with `detail` naming the case
-(`circuit_open`, `history_too_short`, `no_safe_split`, `summary_empty`, …).
+(`circuit_open`, `history_too_short`, `no_safe_split`, `summary_empty`,
+`summary_truncated`, …).
 **History is byte-identical on every status but `success`.** Both token
 fields exclude the system prompt and are `None` where no estimate exists.
 
