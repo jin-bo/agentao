@@ -238,7 +238,7 @@ UserPromptSubmit hook 给出 `additional_contexts` 而不阻断时，chat-loop �
 | `[Hook stopped] {reason}` | `UserPromptSubmitResult.prevent_continuation == True` | `stop_reason`（缺省时为 `"Hook prevented continuation"`） |
 
 ::: tip UI 怎么用
-两个 marker 都是**返回值的前缀**，不走错误抛出路径——你的 UI 看到 `chat()` 返回正常字符串、内容以这两个前缀开头时，应该把这一轮渲染成"被拦截"而不是"assistant 回复"。
+两个 marker 都是**返回值的前缀**，不走错误抛出路径——你的 UI 看到 `chat()` 返回正常字符串、内容以这两个前缀开头时，应该把这一轮渲染成"被拦截"而不是"assistant 回复"。不必匹配前缀：`agent.last_turn.incomplete_reason` 为 `"hook_stop"`，`tool_count == 0`，`is_answer` 为 `False`。`agentao run` 以 `1` 退出，错误类型为 `hook_stop`。
 
 也参考 [2.3 生命周期 · 错误信号](/zh/part-2/3-lifecycle) 里其他几种 chat-loop 早退出 marker。
 :::

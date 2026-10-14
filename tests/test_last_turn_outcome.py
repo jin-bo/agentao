@@ -179,6 +179,40 @@ def test_frozen():
         raise AssertionError("TurnOutcome should be frozen")
 
 
+@pytest.mark.parametrize("hook,prefix", [
+    ({"stderr": "not this prompt\n", "exit_code": 2}, "[Blocked by hook]"),
+    ({"stdout": '{"continue": false, "stopReason": "paused"}\n'}, "[Hook stopped]"),
+])
+def test_a_prompt_hook_that_ends_the_turn_is_not_an_answer(hook, prefix):
+    """A ``UserPromptSubmit`` block or stop returns before the model is called.
+    The text is the harness's own notice, so reporting ``is_answer`` would let
+    ``agentao run`` exit 0 on it and let ``/goal`` read it as progress."""
+    from agentao.plugins.hooks._profile import PROFILE_ID
+    from agentao.plugins.models import ParsedHookRule
+
+    from ._hook_commands import as_kwargs, emitting
+
+    agent = _make_agent()
+    agent._plugin_hook_rules = [ParsedHookRule(
+        event="UserPromptSubmit", hook_type="command", **as_kwargs(emitting(**hook)),
+        contract=PROFILE_ID, plugin_name="p", timeout=30,
+    )]
+
+    def _never(messages, tools, token):
+        raise AssertionError("the model must not be called")
+
+    agent._llm_call = _never
+
+    reply = agent.chat("hi")
+
+    outcome = agent.last_turn
+    assert reply.startswith(prefix), reply
+    assert outcome.status == "ok"
+    assert outcome.incomplete_reason == "hook_stop"
+    assert outcome.tool_count == 0
+    assert outcome.is_answer is False
+
+
 if __name__ == "__main__":
     import sys
 

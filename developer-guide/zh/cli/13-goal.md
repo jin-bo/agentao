@@ -47,11 +47,12 @@ budget: 0/25 turns, 0s/2h
 一轮在两种情况下算**无进展**：
 
 - 没有产出回答（`no_output` 或 `reasoning_only`），也没有调用工具。
+- 被插件 hook 结束（`hook_stop`），也没有调用工具。这是 `UserPromptSubmit` hook 拦截或停止了续跑提示，模型根本没被调用。
 - 在 provider 侧失败（`llm_error`）。同一轮里此前调过工具也不改变这一点 — 一个持续失败的 provider 并没有在干活。
 
-其他任何一轮都把计数清零：给出了回答的轮、调用了工具的轮、被 harness 在上限处叫停的轮（`max_iterations`、`doom_loop`、`length_truncated`、`hook_stop`）。被叫停的轮做过事，不算空转。
+其他任何一轮都把计数清零：给出了回答的轮、调用了工具的轮、被 harness 在上限处叫停的轮（`max_iterations`、`doom_loop`、`length_truncated`）。被叫停的轮做过事，不算空转。工具已经运行过的 `hook_stop` 轮（`PostToolUse` hook 返回 `continue: false`）同样清零。
 
-预算限制的是目标能*做*多少；这条规则限制的是它能*什么都不做*多久。它是 `--unbounded` 下唯一仍然生效的停止条件。触发时，CLI 会说明这几轮没有进展并给出原因，而不会说"需要你的输入"，因为 agent 什么也没问。检查模型或 provider，然后 `/goal resume`。
+预算限制的是目标能*做*多少；这条规则限制的是它能*什么都不做*多久。它是 `--unbounded` 下唯一仍然生效的停止条件。触发时，CLI 会说明这几轮没有进展并给出原因，而不会说"需要你的输入"，因为 agent 什么也没问。检查模型或 provider（`hook_stop` 时检查你的 `UserPromptSubmit` hook），然后 `/goal resume`。
 
 ## 预算
 

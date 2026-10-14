@@ -131,9 +131,11 @@ INCOMPLETE_LENGTH_TRUNCATED = "length_truncated"
 INCOMPLETE_DOOM_LOOP = "doom_loop"
 INCOMPLETE_MAX_ITERATIONS = "max_iterations"
 INCOMPLETE_LLM_ERROR = "llm_error"
-# A ``PostToolUse`` / ``PostToolUseFailure`` hook returned ``continue: false``.
-# The tools ran; what did not happen is the model's answer, so this is an
-# incomplete turn rather than an error — and a *deliberate* one, which is why
+# A plugin hook ended the turn: a ``PreToolUse`` / ``PostToolUse`` /
+# ``PostToolUseFailure`` hook returned ``continue: false`` (the tools ran), or a
+# ``UserPromptSubmit`` hook blocked or stopped the prompt (nothing ran,
+# ``tool_count`` is 0). What did not happen is the model's answer, so this is
+# an incomplete turn rather than an error — and a *deliberate* one, which is why
 # it also joins the halted family below: hook text must not clear it.
 INCOMPLETE_HOOK_STOP = "hook_stop"
 
@@ -385,6 +387,10 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
 
         hook_outcome = self._dispatch_user_prompt_submit(user_message)
         if hook_outcome.early_return is not None:
+            # The model was never called: the text is the harness's notice,
+            # so the turn must not read as an answer (``/goal`` would count it
+            # as progress, ``agentao run`` would exit 0 on it).
+            agent._turn_incomplete_reason = INCOMPLETE_HOOK_STOP
             return hook_outcome.early_return
         user_message = hook_outcome.user_message
 

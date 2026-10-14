@@ -834,8 +834,11 @@ _MAX_EMPTY_CONTINUATIONS = 3
 #: Deliberately **not** the whole answerless family: a ``max_iterations`` /
 #: ``doom_loop`` / ``length_truncated`` turn did work and hit a ceiling, so
 #: counting it here would turn a busy goal into a blocked one. ``hook_stop`` is
-#: out for the same reason plus one more — the tools ran, and the stop was
-#: somebody's deliberate decision. ``llm_error`` is in: three consecutive ones
+#: in, but the ``tool_count`` reset covers it: a ``PostToolUse`` stop ran its
+#: tools and is progress, while a ``UserPromptSubmit`` block ran nothing — a
+#: hook refusing every continuation prompt would otherwise reset the streak
+#: and keep an ``--unbounded`` goal re-sending it forever (codex #52640's
+#: class). ``llm_error`` is in: three consecutive ones
 #: are already twelve-plus failed attempts behind the retry layer, which is a
 #: provider problem the user has to see rather than one to spend a budget on.
 #:
@@ -844,7 +847,13 @@ _MAX_EMPTY_CONTINUATIONS = 3
 #: ``cli/run.py::_INCOMPLETE_OUTCOMES`` gives: the CLI does not import runtime
 #: internals at module scope. A parity test binds this set to the runtime's, so
 #: the duplication cannot drift.
-_NO_PROGRESS_REASONS = frozenset({"no_output", "reasoning_only", "llm_error"})
+_NO_PROGRESS_REASONS = frozenset({
+    "no_output", "reasoning_only", "hook_stop", "llm_error",
+})
+
+#: What to check, per reason, in the line that reports a no-progress stop.
+_NO_PROGRESS_HINT = "Check the model or provider"
+_NO_PROGRESS_HINTS = {"hook_stop": "Check your UserPromptSubmit hooks"}
 
 #: The one member of that set for which tool calls are **not** a reset. See
 #: :func:`_no_progress_reason`.
@@ -1050,7 +1059,8 @@ def _report_goal_outcome(goal, *, no_progress_reason: Optional[str] = None) -> N
             console.print(
                 f"\n[warning]⊘ Goal stopped after {_MAX_EMPTY_CONTINUATIONS} "
                 f"consecutive turns with no progress ({no_progress_reason}). "
-                "Check the model or provider, then /goal resume.[/warning]\n"
+                f"{_NO_PROGRESS_HINTS.get(no_progress_reason, _NO_PROGRESS_HINT)}, "
+                "then /goal resume.[/warning]\n"
             )
         else:
             console.print(

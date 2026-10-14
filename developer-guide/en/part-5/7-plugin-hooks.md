@@ -242,7 +242,7 @@ When a hook returns a blocking signal, `chat()` doesn't enter the LLM loop at al
 | `[Hook stopped] {reason}` | `UserPromptSubmitResult.prevent_continuation == True` | `stop_reason` (defaults to `"Hook prevented continuation"`) |
 
 ::: tip How the UI should handle them
-Both markers are **prefixes on the return value** — they don't go through an exception path. When your UI sees `chat()` return a normal string starting with one of these prefixes, render that turn as "intercepted", not as an "assistant reply".
+Both markers are **prefixes on the return value** — they don't go through an exception path. When your UI sees `chat()` return a normal string starting with one of these prefixes, render that turn as "intercepted", not as an "assistant reply". You don't have to match the prefix: `agent.last_turn.incomplete_reason` is `"hook_stop"` with `tool_count == 0`, and `is_answer` is `False`. `agentao run` exits `1` with error type `hook_stop`.
 
 See also [2.3 Lifecycle · error signals](/en/part-2/3-lifecycle) for other early-return markers the chat loop produces.
 :::

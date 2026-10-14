@@ -495,9 +495,73 @@ def test_a_capped_turn_is_not_no_progress(tmp_path):
     goal = GoalState(objective="obj", max_turns=4)
     _run_with_outcomes(goal, tmp_path, [
         _Outcome("max_iterations"), _Outcome("doom_loop"),
-        _Outcome("length_truncated"), _Outcome("hook_stop"),
+        _Outcome("length_truncated"), _Outcome("hook_stop", tool_count=1),
     ])
     assert goal.status == GoalStatus.LIMIT_REACHED
+
+
+def test_repeated_hook_stops_without_tools_block_the_goal(tmp_path):
+    """A ``UserPromptSubmit`` hook that blocks every continuation ends each
+    turn as ``hook_stop`` with nothing run. Reading that as progress reset the
+    streak, and an ``--unbounded`` goal re-sent the prompt forever (codex
+    #52640's class)."""
+    goal = GoalState(objective="obj", max_turns=10)
+    _run_with_outcomes(goal, tmp_path, [_Outcome("hook_stop")] * 10)
+    assert goal.status == GoalStatus.BLOCKED
+    assert goal.turns_used == 3
+
+
+def test_a_hook_stop_block_points_at_the_hooks(tmp_path, capsys):
+    """Not "check the model or provider": the model was never called."""
+    goal = GoalState(objective="obj", max_turns=10)
+    _run_with_outcomes(goal, tmp_path, [_Outcome("hook_stop")] * 10)
+    out = " ".join(capsys.readouterr().out.split())
+    assert "UserPromptSubmit hooks" in out
+    assert "model or provider" not in out
+
+
+def test_a_hook_stop_after_tools_ran_is_progress(tmp_path):
+    """A ``PostToolUse`` ``continue: false`` stops a turn whose tools ran."""
+    goal = GoalState(objective="obj", max_turns=4)
+    _run_with_outcomes(goal, tmp_path, [_Outcome("hook_stop", tool_count=1)] * 4)
+    assert goal.status == GoalStatus.LIMIT_REACHED
+
+
+def test_a_prompt_hook_blocking_every_continuation_blocks_the_goal(tmp_path):
+    """End to end through a real agent and a real hook: the classification the
+    guard reads has to come from the runtime, not from a fake."""
+    import logging
+
+    from agentao.agent import Agentao
+    from agentao.cli.input_loop import run_goal_continuation
+    from agentao.plugins.hooks._profile import PROFILE_ID
+    from agentao.plugins.models import ParsedHookRule
+
+    from tests._hook_commands import as_kwargs, emitting
+
+    agent = Agentao(
+        api_key="k", base_url="https://api.example.test", model="m",
+        working_directory=tmp_path, logger=logging.getLogger("t"),
+    )
+    agent._plugin_hook_rules = [ParsedHookRule(
+        event="UserPromptSubmit", hook_type="command",
+        **as_kwargs(emitting(stderr="no\n", exit_code=2)),
+        contract=PROFILE_ID, plugin_name="p", timeout=30,
+    )]
+
+    def _never(messages, tools, token):
+        raise AssertionError("the model must not be called")
+
+    agent._llm_call = _never
+    cli = _FakeCLI(tmp_path)
+    cli.agent = agent
+    goal = GoalState(objective="obj", max_turns=10)   # a regression fails, not hangs
+    try:
+        run_goal_continuation(cli, goal, _run_turn=agent.chat)
+    finally:
+        agent.close()
+    assert goal.status == GoalStatus.BLOCKED
+    assert goal.turns_used == 3
 
 
 def test_an_agent_without_last_turn_never_blocks(tmp_path):

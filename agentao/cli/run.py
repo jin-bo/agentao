@@ -81,7 +81,7 @@ _INCOMPLETE_OUTCOMES: Dict[str, Tuple[str, str]] = {
     ),
     "hook_stop": (
         "hook_stop",
-        "a plugin hook returned continue:false and ended the turn",
+        "a plugin hook returned continue:false or blocked the prompt, and ended the turn",
     ),
     "llm_error": (
         "runtime_error",
@@ -953,7 +953,11 @@ def _classify_outcome(
         # it so the envelope is as informative as a raised ``runtime_error``,
         # rather than dropping it behind the generic stem when ``final_text`` is
         # nulled for a non-"ok" status.
-        if incomplete_reason == "llm_error" and final_text.strip():
+        # The ``hook_stop`` path is the same case: the text is the hook's own
+        # reason (``[Blocked by hook] …`` / ``[Hook stopped] …`` / a
+        # ``stopReason``), and ``final_text`` is nulled on the error envelope,
+        # so dropping it here would leave a pipeline no way to see why.
+        if incomplete_reason in ("llm_error", "hook_stop") and final_text.strip():
             message = f"{detail}: {final_text.strip()}"
         else:
             message = f"{detail}; the run produced no answer."
