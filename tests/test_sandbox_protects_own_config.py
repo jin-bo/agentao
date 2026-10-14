@@ -38,7 +38,9 @@ def _profile(home: Path, workspace: Path, **cfg):
     config = {"enabled": True, "default_profile": "workspace-write", **cfg}
     with patch.object(Path, "home", return_value=home):
         policy = SandboxPolicy(project_root=workspace, config=config)
-        return policy.resolve("run_shell_command", {"command": "x"})
+        # ``resolve()`` returns None off macOS. It hands the name to
+        # ``_build_profile``, so the path logic is tested on every platform.
+        return policy._build_profile(config["default_profile"])
 
 
 def _run(profile, script: str) -> subprocess.CompletedProcess:
