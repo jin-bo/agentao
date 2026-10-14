@@ -309,6 +309,8 @@ class AgentaoCLI:
         context_limit = int(os.getenv("AGENTAO_CONTEXT_TOKENS", "200000"))
 
         self.allow_all_tools = False
+        # The mode in force when "2" granted full access for the session.
+        self._pre_grant_mode = None
         self.readonly_mode = False
         self._cached_ctx_pct: float = 0.0
         self._streaming_started: bool = False
@@ -477,6 +479,7 @@ class AgentaoCLI:
         # The CLI's own mirror of the flag, read by the status toolbar.
         self.readonly_mode = (mode == PermissionMode.READ_ONLY)
         self.allow_all_tools = False
+        self._pre_grant_mode = None
         self._save_settings()
 
     # ── ACP inbox flush (delegated) ─────────────────────────────────────

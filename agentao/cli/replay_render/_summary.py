@@ -268,7 +268,8 @@ def _summarize_replay_event(event: dict) -> str:
         )
     if kind in ("permission_mode_changed", "readonly_mode_changed"):
         # ``cause`` names the entry path that made the switch ("cli",
-        # "cli-allow-all", "acp", "run", "host"), and it is the whole point
+        # "cli-allow-all", "cli-plan-implement", "cli-resume", "acp", "run",
+        # "host"), and it is the whole point
         # of the record: a jump to full-access reads very differently as
         # ``/mode`` than as "the user answered yes-to-all at a prompt".
         # ``readonly_mode_changed`` has no cause — it reports one switch's

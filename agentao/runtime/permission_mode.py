@@ -57,7 +57,8 @@ def apply_permission_mode(
     so re-setting the current mode does not pollute a replay timeline.
     ``cause`` names the entry path — ``"cli"`` (``/mode``),
     ``"cli-allow-all"`` (answering "2" at the confirmation prompt),
-    ``"cli-plan-implement"``, ``"acp"``, ``"run"``, ``"host"`` — and is the
+    ``"cli-plan-implement"``, ``"cli-resume"`` (``/sessions resume`` ending
+    that grant), ``"acp"``, ``"run"``, ``"host"`` — and is the
     payload's only free-form field.
 
     ``mode`` may be the string value (``"read-only"`` …) or the enum; it is

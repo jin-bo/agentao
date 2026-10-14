@@ -84,6 +84,70 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
         console.print("[info]Available: /sessions list | /sessions resume <id> | /sessions delete <id> | /sessions delete all[/info]\n")
 
 
+def _saved_mode(cli: AgentaoCLI):
+    """The mode in ``settings.json``; ``workspace-write`` when unset or unusable."""
+    from ...permissions import PermissionMode
+
+    try:
+        mode = PermissionMode(cli._load_settings().get("mode", "workspace-write"))
+    except ValueError:
+        return PermissionMode.WORKSPACE_WRITE
+    return PermissionMode.WORKSPACE_WRITE if mode == PermissionMode.PLAN else mode
+
+
+def _mode_before_grant(cli: AgentaoCLI):
+    """The mode in force when "2" was pressed; the saved mode if it was not recorded."""
+    from ...permissions import PermissionMode
+
+    mode = getattr(cli, "_pre_grant_mode", None)
+    if isinstance(mode, PermissionMode) and mode not in (
+        PermissionMode.FULL_ACCESS, PermissionMode.PLAN,
+    ):
+        return mode
+    return _saved_mode(cli)
+
+
+def _drop_session_grant(cli: AgentaoCLI):
+    """End the "2 = allow all this session" grant; return the mode now in force, else None.
+
+    The grant belongs to the conversation it was given in, and a resumed one
+    is another conversation. The mode restored is the one in force when "2"
+    was pressed (``cli/transport.py`` records it), else the saved mode: the
+    grant is never written to ``settings.json``, which is not touched here.
+
+    Inside ``/plan`` the grant can be in two places, and both are dropped:
+    held for plan exit (``pre_plan_allow_all``), and live (``allow_all_tools``,
+    "2" pressed during plan, which moved the engine off the PLAN preset).
+    """
+    from ...permissions import PermissionMode
+    from ...runtime.permission_mode import apply_permission_mode
+
+    # Only a real ``True`` is a grant: a duck-typed CLI answers any attribute.
+    plan = getattr(cli, "_plan_session", None)
+    plan_active = getattr(plan, "is_active", None) is True
+    held = plan_active and getattr(plan, "pre_plan_allow_all", None) is True
+    live = getattr(cli, "allow_all_tools", None) is True
+    if not (held or live):
+        return None
+    before = _mode_before_grant(cli)
+    dropped = None
+    if held:
+        plan.pre_plan_mode = before
+        plan.pre_plan_allow_all = False
+        dropped = before
+    if live:
+        cli.allow_all_tools = False
+        cli.current_mode = before
+        # Not ``_apply_mode``: that would write ``settings.json``. Inside
+        # ``/plan`` the engine goes back to the PLAN preset.
+        engine_mode = PermissionMode.PLAN if plan_active else before
+        apply_permission_mode(cli.agent, engine_mode, cause="cli-resume")
+        cli.readonly_mode = engine_mode == PermissionMode.READ_ONLY
+        dropped = before
+    cli._pre_grant_mode = None
+    return dropped
+
+
 def resume_session(
     cli: AgentaoCLI,
     session_id: Optional[str] = None,
@@ -244,6 +308,10 @@ def resume_session(
     except Exception:
         pass
 
+    # After the replay restart, so the resumed session's replay records the
+    # mode change. Only here, past the load: a failed resume keeps the grant.
+    dropped_grant_mode = _drop_session_grant(cli)
+
     if at_launch:
         # ``run_loop`` dispatches; see the docstring.
         cli._pending_session_start_source = "resume"
@@ -291,5 +359,13 @@ def resume_session(
         console.print(
             f"[warning]{detached_agents} background agent(s) still running from the "
             f"previous session. They will not report into this one — check /agents --all once they finish.[/warning]"
+        )
+    if dropped_grant_mode is not None:
+        # Inside ``/plan`` the mode is still ``plan``; the saved mode applies on exit.
+        in_plan = getattr(getattr(cli, "_plan_session", None), "is_active", False) is True
+        label = "Permission mode after /plan" if in_plan else "Permission mode"
+        console.print(
+            f"[info]The full-access grant from the previous session ended. "
+            f"{label}: {dropped_grant_mode.value}.[/info]"
         )
     console.print()

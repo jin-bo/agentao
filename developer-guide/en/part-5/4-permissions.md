@@ -59,7 +59,7 @@ half the switch. `read-only` has **two** of them — the engine's preset and
 `PERMISSION_MODE_CHANGED`, leaving a replay file with the resulting denials
 and nothing saying when the posture changed. `set_permission_mode` moves
 both switches, emits both events (tagged `cause="host"`, or `"cli"` /
-`"cli-allow-all"` / `"cli-plan-implement"` / `"acp"` / `"run"` from those
+`"cli-allow-all"` / `"cli-plan-implement"` / `"cli-resume"` / `"acp"` / `"run"` from those
 entry points), and returns the mode that was active before — **as the `PermissionMode` enum**,
 not a string (`.value` gives the string).
 

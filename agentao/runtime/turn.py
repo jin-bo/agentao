@@ -241,8 +241,8 @@ def _run_turn(
         token.cancel("user-cancel")
         # Ctrl+C can land between recording the assistant message that
         # carries tool_calls and appending their results (the tool
-        # executor catches ``Exception``, so ``KeyboardInterrupt`` passes
-        # straight through it). Answer any call left hanging before the
+        # executor closes the call's events but re-raises ``KeyboardInterrupt``
+        # without a result). Answer any call left hanging before the
         # turn closes — otherwise the orphan rides along in history and
         # strict APIs reject every later request. Must run *before* the
         # ``[Interrupted]`` marker so the results still follow their own

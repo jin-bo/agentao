@@ -506,6 +506,19 @@ class ToolExecutor:
                     f"sandbox the user enabled would be worse than "
                     f"refusing to run them."
                 )
+            except KeyboardInterrupt:
+                # Ctrl+C inside the tool. ``TOOL_START`` (and, on this path,
+                # the host ``started``) already fired, so close the pair with
+                # ``cancelled`` before the interrupt goes on to ``turn.py``.
+                # Once only: the interrupt leaves this method, so no other
+                # branch here emits for the call (codex #51556).
+                # A failing emit must not replace the interrupt with another
+                # exception: ``turn.py`` would then report an error, not a cancel.
+                try:
+                    self._cancelled_result(fn, call_id, t0, host_started_at, "user-cancel")
+                except Exception:
+                    self._logger.warning("Tool %s: cancel events after Ctrl+C failed", fn, exc_info=True)
+                raise
             except Exception as exc:
                 errored, error_msg, error_type_name, result_text = (
                     self._error_fields(fn, exc)
