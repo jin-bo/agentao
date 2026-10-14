@@ -50,8 +50,8 @@ def _isolated_home(tmp_path, monkeypatch):
 @pytest.fixture
 def server(tmp_path):
     """Build ``(config, marks)`` for a stdio server whose calls take ``delay`` seconds."""
-    def make(delay=0.5):
-        return stdio_server(tmp_path, delay=delay)
+    def make(delay=0.5, read_only=False):
+        return stdio_server(tmp_path, delay=delay, read_only=read_only)
 
     return make
 
@@ -96,11 +96,13 @@ def _teardown_warnings(caplog):
     ]
 
 
-def test_two_mcp_calls_in_one_batch_run_at_the_same_time(tmp_path, server):
+@pytest.mark.parametrize("read_only", [True, False])
+def test_two_mcp_calls_in_one_batch(tmp_path, server, read_only):
     """The user-visible case, through the real ``ToolRunner``: one model
-    response with two MCP tool calls, which the executor runs on two threads.
-    Both come back, and the server saw them in flight together."""
-    config, marks = server()
+    response with two MCP tool calls. Both come back either way. Read-only
+    tools run on two threads, and the server saw them in flight together.
+    Others run one after the other (codex #52245), so it never did."""
+    config, marks = server(read_only=read_only)
     (tmp_path / ".agentao").mkdir()
     (tmp_path / ".agentao" / "mcp.json").write_text(json.dumps({"mcpServers": {"probe": config}}))
     agent = Agentao(
@@ -120,7 +122,7 @@ def test_two_mcp_calls_in_one_batch_run_at_the_same_time(tmp_path, server):
             "c-slow_a": "slow_a",
             "c-slow_b": "slow_b",
         }
-        assert (marks / "overlap").exists()
+        assert (marks / "overlap").exists() is read_only
     finally:
         agent.close()
 

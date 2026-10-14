@@ -127,6 +127,11 @@ class _BaseTool(ABC):
         writes the goal record (.agentao/goal.json), a status signal the
         host owns, never the user's files. Read-only mode denies every tool
         that returns False, before any permission rule is consulted.
+
+        It also decides batching: the calls of one model response run in
+        parallel only when every tool that runs answers ``True``; otherwise
+        the batch runs one call at a time, in order
+        (``runtime/tool_executor.py::_all_read_only``).
         """
         return False
 

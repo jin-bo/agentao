@@ -113,8 +113,9 @@ class ToolRunner:
         ``begin_batch(arguments) -> token`` / ``end_batch(token)`` bracket each
         batch, so an MCP skill activation in a batch gates the batch's other
         calls *before* it has run: phases 1-2 plan and confirm the whole batch,
-        and phase 3 runs it in parallel, so the activation can complete while
-        an unconfirmed shell call from the same batch is running.
+        and phase 3 runs it in parallel or in order, so the activation can
+        complete while, or before, an unconfirmed shell call from the same
+        batch runs.
         """
         self._planner.mcp_skill_gate = gate
         self._mcp_batch_hooks = (begin_batch, end_batch)

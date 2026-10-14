@@ -207,6 +207,12 @@ class _Interrupter(Tool):
         return "raises KeyboardInterrupt"
 
     @property
+    def is_read_only(self) -> bool:
+        # Read-only, as ``check_background_agent`` is, so the batch runs on
+        # the pool: a batch with any other tool runs serially.
+        return True
+
+    @property
     def parameters(self) -> Dict[str, Any]:
         return {"type": "object"}
 

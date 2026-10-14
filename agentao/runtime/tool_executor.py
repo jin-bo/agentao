@@ -1,4 +1,5 @@
-"""Phase 3 of the tool execution pipeline: parallel single-tool execution.
+"""Phase 3 of the tool execution pipeline: run a batch of single-tool calls,
+in parallel when every tool is read-only, else one at a time in order.
 
 Owns: per-tool-instance locks, sandbox profile injection, output_callback
 wiring, exception classification (TaskComplete, SandboxMisconfiguredError,
@@ -167,6 +168,25 @@ class _AsyncToolOutcome:
     cancel_result: Optional[ToolExecutionResult] = None
 
 
+def _all_read_only(plans: List[ToolCallPlan]) -> bool:
+    """True only when every plan's tool says, with a real ``True``, that it is read-only.
+
+    Fails closed: a property that raises, or answers anything but ``True``
+    (a ``MagicMock``, a truthy non-bool), counts as not read-only, and one
+    such plan makes the whole batch run serially. A denied or cancelled plan
+    never runs its tool, so it cannot race and does not count.
+    """
+    for plan in plans:
+        if plan.decision in (ToolCallDecision.DENY, ToolCallDecision.CANCELLED):
+            continue
+        try:
+            if plan.tool.is_read_only is not True:
+                return False
+        except Exception:
+            return False
+    return True
+
+
 class ToolExecutor:
     """Phase 3: run a batch of confirmed plans, return per-call results."""
 
@@ -200,11 +220,16 @@ class ToolExecutor:
         hook_cwd: Optional[Path] = None,
         hook_session_id: Optional[str] = None,
     ) -> Dict[str, ToolExecutionResult]:
-        """Execute a batch of plans in parallel; preserve fast-path for size 1.
+        """Execute a batch of plans; preserve fast-path for size 1.
+
+        The batch runs in parallel on a thread pool (max 8 workers) only
+        when every plan's tool is read-only (:func:`_all_read_only`).
+        Otherwise it runs one call at a time, in the order the model
+        returned them: a write and a read of the same file in one batch
+        must not race (codex #52245).
 
         Per-tool-instance locks serialize concurrent calls to the same tool
-        within this batch (protects ``output_callback`` state). Different
-        tool instances run in parallel on a thread pool (max 8 workers).
+        within a parallel batch (protects ``output_callback`` state).
         """
         # Build per-batch locks: same tool instance → same lock.
         tool_locks: Dict[int, threading.Lock] = {}
@@ -217,9 +242,9 @@ class ToolExecutor:
 
         # Fix #6 (preserved): skip ThreadPoolExecutor overhead for the
         # common single-tool case.
-        if len(plans) == 1:
-            call_id, info = self._execute_one(
-                plans[0],
+        def run_one(plan: ToolCallPlan) -> Tuple[str, ToolExecutionResult]:
+            return self._execute_one(
+                plan,
                 tool_locks,
                 cancellation_token=cancellation_token,
                 readonly_mode=readonly_mode,
@@ -227,7 +252,22 @@ class ToolExecutor:
                 hook_cwd=hook_cwd,
                 hook_session_id=hook_session_id,
             )
+
+        if len(plans) == 1:
+            call_id, info = run_one(plans[0])
             results[call_id] = info
+        elif not _all_read_only(plans):
+            # One call at a time, in plan order. Each call still gets a fresh
+            # ``Context``, so a tool's ContextVar writes stay out of the
+            # parent exactly as on the parallel path.
+            try:
+                for p in plans:
+                    call_id, info = contextvars.copy_context().run(run_one, p)
+                    results[call_id] = info
+            except KeyboardInterrupt:
+                if cancellation_token is not None:
+                    cancellation_token.cancel("user-cancel")
+                raise
         else:
             # Capture contextvars on the parent thread (calling it inside
             # the worker would copy the worker's empty context) and use
@@ -238,17 +278,7 @@ class ToolExecutor:
                     futures = {}
                     for p in plans:
                         ctx = contextvars.copy_context()
-                        futures[pool.submit(
-                            ctx.run,
-                            self._execute_one,
-                            p,
-                            tool_locks,
-                            cancellation_token=cancellation_token,
-                            readonly_mode=readonly_mode,
-                            hook_rules=hook_rules,
-                            hook_cwd=hook_cwd,
-                            hook_session_id=hook_session_id,
-                        )] = p
+                        futures[pool.submit(ctx.run, run_one, p)] = p
                     for future in as_completed(futures):
                         call_id, info = future.result()
                         results[call_id] = info
