@@ -63,6 +63,20 @@ _EDIT_SUFFIX_FLEXIBLE = " (flexible whitespace match)"
 _EDIT_SUFFIX_UNICODE = " (unicode-normalized match)"
 
 
+_BARE_LF = re.compile(r"(?<!\r)\n")
+
+
+def _is_pure_crlf(content: str) -> bool:
+    """True when ``content`` has line endings and every one of them is CRLF."""
+    lf = content.count("\n")
+    return lf > 0 and lf == content.count("\r\n")
+
+
+def _to_crlf(text: str) -> str:
+    """Turn every bare LF in ``text`` into CRLF; an existing CRLF stays as is."""
+    return _BARE_LF.sub("\r\n", text)
+
+
 def _ambiguous_edit_message(
     *,
     total: int,
@@ -464,6 +478,15 @@ class EditTool(Tool):
         try:
             content = fs.read_bytes(path).decode("utf-8")
 
+            # The model writes LF. In a file whose every line ends in CRLF,
+            # ``old_text`` would miss the exact tier and ``new_text`` would be
+            # spliced in with bare LFs, leaving mixed endings (codex #51203).
+            # Convert both to the file's ending. A file with mixed or LF-only
+            # endings is left alone: there is no single ending to follow.
+            hint_text = old_text
+            if _is_pure_crlf(content):
+                old_text, new_text = _to_crlf(old_text), _to_crlf(new_text)
+
             # 1. Exact match (original logic)
             if old_text in content:
                 count = content.count(old_text)
@@ -508,7 +531,9 @@ class EditTool(Tool):
                 )
 
             # 4. Not found — return hint with most similar snippet
-            return self._not_found_hint(content, old_text, file_path)
+            # The hint compares against LF-joined lines, so give it the
+            # model's own text, not the CRLF-converted copy.
+            return self._not_found_hint(content, hint_text, file_path)
         except Exception as e:
             return f"Error editing file: {str(e)}"
 

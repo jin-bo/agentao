@@ -36,6 +36,7 @@ SCRIPT = textwrap.dedent('''
 
     marks = Path(sys.argv[1])
     delay = float(sys.argv[2])
+    read_only = sys.argv[3:] == ["read-only"]
     marks.mkdir(parents=True, exist_ok=True)
     (marks / f"started-{os.getpid()}").touch()
     if (marks / "refuse").exists():
@@ -50,6 +51,9 @@ SCRIPT = textwrap.dedent('''
     write_lock = threading.Lock()
     active = [0]
     tools = [{"name": n, "inputSchema": {"type": "object"}} for n in ("slow_a", "slow_b", "slow_c")]
+    if read_only:
+        for tool in tools:
+            tool["annotations"] = {"readOnlyHint": True}
 
     def reply(msg_id, **body):
         with write_lock:
@@ -107,18 +111,22 @@ SCRIPT = textwrap.dedent('''
 ''')
 
 
-def stdio_server(directory: Path, *, delay: float = 0.5) -> Tuple[Dict[str, Any], Path]:
+def stdio_server(
+    directory: Path, *, delay: float = 0.5, read_only: bool = False,
+) -> Tuple[Dict[str, Any], Path]:
     """Write the server into ``directory``; return ``(config, marks)``.
 
     ``config`` is a trusted stdio server entry whose calls take ``delay``
     seconds; ``marks`` is the directory the server records into.
+    ``read_only`` annotates every tool ``readOnlyHint: true``, which makes a
+    batch of them run in parallel (a batch with any other tool runs serially).
     """
     script = directory / "stdio_probe_server.py"
     script.write_text(SCRIPT)
     marks = directory / "marks"
     config = {
         "command": sys.executable,
-        "args": [str(script), str(marks), str(delay)],
+        "args": [str(script), str(marks), str(delay)] + (["read-only"] if read_only else []),
         "trust": True,
     }
     return config, marks
