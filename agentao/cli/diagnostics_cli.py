@@ -20,6 +20,7 @@ from .diagnostics.collectors import (  # noqa: F401
     _collect_plugins,
     _collect_provider,
     _collect_replay,
+    _collect_sandbox,
     _collect_settings,
     _validate_mcp_server_fields,
 )

@@ -65,6 +65,19 @@ def _scrub_llm_env(monkeypatch):
         monkeypatch.delenv(key)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_credential_registry(monkeypatch):
+    """Give every test an empty ``note_credential_value`` registry.
+
+    The registry is process-wide by design, so every ``LLMClient`` built in
+    one test would otherwise strip its key from children in every later
+    test on the same worker.
+    """
+    from agentao.capabilities import process
+
+    monkeypatch.setattr(process, "_used_credential_values", set())
+
+
 @pytest.fixture
 def live_llm_env(monkeypatch, _stub_llm_credentials):
     """Put the shell's LLM settings back, for a test that calls a real provider.

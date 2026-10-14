@@ -188,7 +188,7 @@ agent = Agentao(
 | 参数 | `None` 时 |
 |------|----------|
 | `bg_store` | 后台任务工具（`check_background_agent` / `cancel_background_agent`）不注册；子 agent 的工具 schema 抠掉 `run_in_background` 字段；`/agent bg\|dashboard\|cancel\|delete\|logs\|result` 等 CLI 子命令 no-op + 警告 |
-| `sandbox_policy` | Shell 不套 macOS `sandbox-exec`。这个策略只包 `run_shell_command`，只在 macOS 上生效，而且只有 `sandbox.json`（先 `~/.agentao/`，再 `<wd>/.agentao/`）设了 `enabled: true` 才启用；它不限制文件工具（[`sandbox/policy.py`](https://github.com/jin-bo/agentao/blob/main/agentao/sandbox/policy.py)） |
+| `sandbox_policy` | Shell 不套 macOS `sandbox-exec`。这个策略只包 `run_shell_command`，只在 macOS 上生效，而且只有 `~/.agentao/sandbox.json` 设了 `enabled: true` 才启用（`<wd>/.agentao/sandbox.json` 会被忽略）；它不限制文件工具（[`sandbox/policy.py`](https://github.com/jin-bo/agentao/blob/main/agentao/sandbox/policy.py)） |
 | `enable_builtin_agents`（`False`） | 内置子代理（`codebase-investigator`、`generalist`）不注册为委派工具。工厂会读 `settings.json` 里的 `agents.enable_builtin` |
 | `replay_config` | 构造时不读 `<wd>/.agentao/settings.json` 里的 `replay` 块；在 `start_replay()` / `reload_replay_config()` 创建 `ReplayManager` 之前不挂它。单独调 `start_replay()` 创建的是关闭 replay 的管理器（返回 `None`）；`reload_replay_config()` 才读这个块，但它本身不开始记录：之后再调 `start_replay()`，且只有其中 `enabled` 为真时才记录 |
 

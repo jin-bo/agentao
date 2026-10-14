@@ -209,4 +209,4 @@ def test_sandbox_wrapper_reenters_the_same_shell(monkeypatch, tmp_path):
     wrapped = shell_tool._wrap_with_sandbox("echo hi", profile)
     expected = shell_cap.resolve_shell_executable() or "/bin/sh"
     assert f"{expected} -c " in wrapped, wrapped
-    assert wrapped.startswith("sandbox-exec "), wrapped
+    assert wrapped.startswith("/usr/bin/sandbox-exec "), wrapped

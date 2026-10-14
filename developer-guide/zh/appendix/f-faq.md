@@ -128,7 +128,7 @@ agent.memory.clear(scope="project")
 
 ### "生产上有人把沙箱关了——如何强制"
 
-沙箱配置是合并的：项目 `.agentao/sandbox.json` 覆盖用户。容器里把项目配置以只读挂载，LLM 改不了持久化。见 [7.4 陷阱表](/zh/part-7/4-data-workbench#⚠️-陷阱)。
+沙箱配置只来自 `~/.agentao/sandbox.json`。项目里的 `.agentao/sandbox.json` 会被忽略并记 warning，所以仓库带的或 agent 写的文件都关不掉沙箱。容器里让用户级文件对 agent 只读；用 `agentao doctor` 查看被忽略的项目文件。见 [7.4 陷阱表](/zh/part-7/4-data-workbench#⚠️-陷阱)。
 
 ### "Agent 试图抓 169.254.169.254"
 

@@ -126,6 +126,12 @@ def _format_grep_output(stdout: str, pattern: str, skip: FrozenSet[str]) -> str:
     return _format_match_lines(lines, pattern)
 
 
+
+# ``core.fsmonitor`` in the repo's own ``.git/config`` names a command that
+# git runs when it reads the index, which ``git grep`` does. The repo is the
+# agent's workspace, so that would run planted code from this read-only tool.
+_GIT = ("git", "-c", "core.fsmonitor=false")
+
 class FindFilesTool(Tool):
     """Tool for finding files using glob patterns."""
 
@@ -259,7 +265,7 @@ class SearchTextTool(Tool):
         """Check if directory is inside a git repository."""
         try:
             result = _run_capture(
-                ["git", "rev-parse", "--is-inside-work-tree"],
+                [*_GIT, "rev-parse", "--is-inside-work-tree"],
                 cwd=str(directory),
                 timeout=5,
             )
@@ -278,7 +284,7 @@ class SearchTextTool(Tool):
     ) -> Optional[str]:
         """Try searching with git grep. Returns formatted result string, or None if git grep fails."""
         try:
-            cmd = ["git", "grep", "-n", "--no-color"]
+            cmd = [*_GIT, "grep", "-n", "--no-color"]
             if not case_sensitive:
                 cmd.append("-i")
             if regex:
@@ -327,7 +333,10 @@ class SearchTextTool(Tool):
         to skip them at the source rather than post-filter rg's output.
         """
         try:
-            cmd = ["rg", "--line-number", "--no-heading", "--color=never"]
+            # ``--no-config``: ``RIPGREP_CONFIG_PATH`` (settable from a project
+            # ``.env``) could add ``--pre=<script>`` and run it from this
+            # read-only tool, or ``--quiet`` and hide every match.
+            cmd = ["rg", "--no-config", "--line-number", "--no-heading", "--color=never"]
             if not case_sensitive:
                 cmd.append("-i")
             if not regex:

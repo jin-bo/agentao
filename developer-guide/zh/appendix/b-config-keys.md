@@ -29,7 +29,7 @@ Agentao 读取的所有开关——先看环境变量，再看磁盘上的 JSON�
 | `LLM_PROMPT_CACHE_TTL` | `5m` | 上述标记的保留时长提示：`5m` 或 `1h`。`LLM_PROMPT_CACHE` 关闭时不读取 —— 连校验也不做。等价于构造参数 `prompt_cache_ttl=` |
 | `AGENTAO_CONTEXT_TOKENS` | `200000` | 上下文预算；超出触发压缩 |
 | `AGENTAO_WORKING_DIRECTORY` | — | 启动时覆盖工作目录（等价于构造器 `working_directory=`） |
-| `AGENTAO_SCRUB_CHILD_ENV` | 开启 | shell 与 MCP 子进程是否继承 agentao **自己的** provider 凭据。默认会把 `HARNESS_ENV_KEYS`（`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`LLM_EXTRA_BODY`……）从子进程环境剔除。设为 `0`/`false`/`no`/`off` 恢复完整继承——在 agent 自己的 shell 里跑 `agentao run` 或任何调用 provider 的脚本时需要。只剔除 agentao 自己的 key；`AWS_*`、`GITHUB_TOKEN`、`DATABASE_URL` 原样保留。见 `capabilities/process.py::build_child_env` |
+| `AGENTAO_SCRUB_CHILD_ENV` | 开启 | shell 与 MCP 子进程是否继承 agentao **自己的** provider 凭据。默认会把 `HARNESS_ENV_KEYS`（`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`LLM_EXTRA_BODY`……）、`{LLM_PROVIDER}_API_KEY`，以及值等于本进程用过的 key 的任何变量（`/provider`、`set_provider()` 之后，或 `api_key=` 取自你自己的变量时；短于 16 个字符的值不匹配）从子进程环境剔除。设为 `0`/`false`/`no`/`off` 恢复完整继承——在 agent 自己的 shell 里跑 `agentao run` 或任何调用 provider 的脚本时需要。只剔除 agentao 自己的 key；`AWS_*`、`GITHUB_TOKEN`、`DATABASE_URL` 原样保留。见 `capabilities/process.py::build_child_env` |
 
 ### 内置工具读取的第三方键
 
@@ -46,7 +46,7 @@ MCP 服务器和自定义工具通常有自己的 env 键——写在 `.agentao/
 
 磁盘 JSON 的合并规则因配置面而异：
 
-- **`sandbox.json`** — 项目文件覆盖用户文件中的同名键。
+- **`sandbox.json`** — **仅用户级**。`<cwd>/.agentao/sandbox.json` 会被忽略并记 warning（仓库带的或 agent 写的 `{"enabled": false}` 会关掉沙箱）。
 - **`mcp.json`** — 两个文件都加载；同名冲突时**用户胜**，项目级是**仅可新增**的（可声明新 server name，但不能覆盖用户级同名条目；冲突时打 warning 并跳过）。
 - **`permissions.json`** — **仅用户级**。`<cwd>/.agentao/permissions.json` 故意不加载（一条 checked-in `{"tool": "*", "action": "allow"}` 会因首个命中即返回而当场作废用户策略）。模式预设规则最后跑（在 `full-access` / `plan` 模式下预设最先跑且不可覆盖）。
 - **`memory.db`** — 项目与用户两个 store **独立**读取；prompt 渲染器同时可见两者；项目并不覆盖用户。
@@ -60,7 +60,7 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
 |------|--------|------|------|
 | `mcp.json` | 项目（仅可新增） + 用户 | [5.3](/zh/part-5/3-mcp) | MCP 服务器（stdio / Streamable HTTP / SSE） |
 | `permissions.json` | 仅用户 *（项目级文件被忽略）* | [5.4](/zh/part-5/4-permissions) | 单工具权限规则 |
-| `sandbox.json` | 项目 + 用户 | [6.2](/zh/part-6/2-shell-sandbox) | Shell 沙箱 profile |
+| `sandbox.json` | 仅用户 *（项目级文件被忽略）* | [6.2](/zh/part-6/2-shell-sandbox) | Shell 沙箱 profile |
 | `acp.json` | 仅项目 | [3.2](/zh/part-3/2-agentao-as-server) | ACP 子智能体注册表（Agentao 作为客户端时） |
 | `settings.json` | 仅项目 | [6.6](/zh/part-6/6-observability) | 持久化的权限模式、built-in agents 开关、replay 块 |
 | `skills_config.json` | 仅项目 | [5.2](/zh/part-5/2-skills) | 已禁用技能列表（用 `/skills disable` 管理） |
@@ -158,15 +158,16 @@ cmd。什么都不配置时，Windows 仍旧是 `%COMSPEC% /c`，与过去完全
 
 ### B.3.3 `sandbox.json`
 
+`~/.agentao/sandbox.json`：
+
 ```json
 {
-  "shell": {
-    "enabled": true,
-    "default_profile": "workspace-write",
-    "allow_network": true,
-    "allowed_commands_without_confirm": ["ls", "cat", "head", "git status"],
-    "profiles_dir": "~/.agentao/sandbox-profiles"
-  }
+  "enabled": true,
+  "platform": "darwin",
+  "default_profile": "workspace-write",
+  "rules": [],
+  "profiles_dir": "~/.agentao/sandbox-profiles",
+  "workspace_root": null
 }
 ```
 

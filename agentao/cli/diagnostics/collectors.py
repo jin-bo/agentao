@@ -246,6 +246,38 @@ def _collect_permissions(wd: Path, report: DiagnosticReport) -> None:
     report.sections["permissions"] = section
 
 
+def _collect_sandbox(wd: Path, report: DiagnosticReport) -> None:
+    """Flag a project-scope sandbox.json, which the runtime ignores.
+
+    Asks the loader's own helper, so a project root that is the home
+    directory (where the "project" file is the user file) is not flagged.
+    """
+    from ...paths import user_root
+    from ...sandbox.policy import ignored_project_sandbox_config
+
+    user_path = user_root() / "sandbox.json"
+    project_path = wd / ".agentao" / "sandbox.json"
+    section: Dict[str, Any] = {
+        "user_path": str(user_path),
+        "user_present": user_path.is_file(),
+        "project_path": str(project_path),
+        "project_status": "absent",
+    }
+    if ignored_project_sandbox_config(wd) is not None:
+        section["project_status"] = "ignored"
+        report.add(Finding(
+            level="warning",
+            area="sandbox",
+            message=(
+                "Project-scope sandbox.json is no longer honored (a "
+                "checked-in or agent-written file could switch the sandbox "
+                "off). Move settings to the user-scope file."
+            ),
+            source=str(project_path),
+        ))
+    report.sections["sandbox"] = section
+
+
 def _validate_mcp_server_fields(servers: Dict[str, Any]) -> List[str]:
     """Return error messages for any server with non-string env/headers/args.
 

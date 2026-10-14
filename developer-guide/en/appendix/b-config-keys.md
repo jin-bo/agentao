@@ -29,7 +29,7 @@ Every knob Agentao reads — environment variables first, then on-disk JSON. All
 | `LLM_PROMPT_CACHE_TTL` | `5m` | Retention hint for those markers: `5m` or `1h`. Unread — validation included — while `LLM_PROMPT_CACHE` is off. Equivalent to the constructor `prompt_cache_ttl=` |
 | `AGENTAO_CONTEXT_TOKENS` | `200000` | Context budget; triggers compression when exceeded |
 | `AGENTAO_WORKING_DIRECTORY` | — | Override working directory at startup (alternative to constructor `working_directory=`) |
-| `AGENTAO_SCRUB_CHILD_ENV` | on | Whether shell and MCP child processes inherit agentao's **own** provider credentials. Default drops `HARNESS_ENV_KEYS` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `LLM_EXTRA_BODY`, …) from the child env. Set to `0`/`false`/`no`/`off` to restore full inheritance — needed to run `agentao run`, or any provider-calling script, from inside the agent's own shell. Only agentao's keys are dropped; `AWS_*`, `GITHUB_TOKEN`, `DATABASE_URL` are untouched. See `capabilities/process.py::build_child_env` |
+| `AGENTAO_SCRUB_CHILD_ENV` | on | Whether shell and MCP child processes inherit agentao's **own** provider credentials. Default drops `HARNESS_ENV_KEYS` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `LLM_EXTRA_BODY`, …), `{LLM_PROVIDER}_API_KEY`, and any variable whose value is a key agentao has used this process (after `/provider`, `set_provider()`, or an `api_key=` read from your own variable; values under 16 characters are not matched) from the child env. Set to `0`/`false`/`no`/`off` to restore full inheritance — needed to run `agentao run`, or any provider-calling script, from inside the agent's own shell. Only agentao's keys are dropped; `AWS_*`, `GITHUB_TOKEN`, `DATABASE_URL` are untouched. See `capabilities/process.py::build_child_env` |
 
 ### Third-party keys consumed by built-in tools
 
@@ -46,7 +46,7 @@ For every setting: **constructor argument > environment variable > on-disk JSON 
 
 On-disk JSON layering varies by surface:
 
-- **`sandbox.json`** — project file overrides user file on the same key.
+- **`sandbox.json`** — **user-scope only**. A `<cwd>/.agentao/sandbox.json` is ignored with a warning (a checked-in or agent-written `{"enabled": false}` would switch the sandbox off).
 - **`mcp.json`** — both files are loaded; user wins on name collision and the project entry is **add-only** (it may declare new server names but cannot override a user-scope name; collisions warn and skip).
 - **`permissions.json`** — **user-scope only**. A `<cwd>/.agentao/permissions.json` is intentionally not loaded (a checked-in `{"tool": "*", "action": "allow"}` would defeat the user policy on first match). Mode preset rules run last (or first in `full-access` / `plan`, where they cannot be overridden).
 - **`memory.db`** — project and user stores are read **independently**; both are visible to the prompt renderer. Project does not override user.
@@ -60,7 +60,7 @@ JSON config files live in an `.agentao/` directory (project at `<working_directo
 |------|-------|---------|---------|
 | `mcp.json` | project (add-only) + user | [5.3](/en/part-5/3-mcp) | MCP servers (stdio / Streamable HTTP / SSE) |
 | `permissions.json` | user only *(project file is ignored)* | [5.4](/en/part-5/4-permissions) | Per-tool permission rules |
-| `sandbox.json` | project + user | [6.2](/en/part-6/2-shell-sandbox) | Shell sandbox profile selection |
+| `sandbox.json` | user only *(project file is ignored)* | [6.2](/en/part-6/2-shell-sandbox) | Shell sandbox profile selection |
 | `acp.json` | project only | [3.2](/en/part-3/2-agentao-as-server) | ACP subagent registry (when Agentao runs as client) |
 | `settings.json` | project only | [6.6](/en/part-6/6-observability) | Persisted permission mode, builtin-agents flag, replay block |
 | `skills_config.json` | project only | [5.2](/en/part-5/2-skills) | Disabled-skills list (managed via `/skills disable`) |
@@ -160,15 +160,16 @@ Project-scope `<cwd>/.agentao/permissions.json` is **not** loaded — see B.2.
 
 ### B.3.3 `sandbox.json`
 
+`~/.agentao/sandbox.json`:
+
 ```json
 {
-  "shell": {
-    "enabled": true,
-    "default_profile": "workspace-write",
-    "allow_network": true,
-    "allowed_commands_without_confirm": ["ls", "cat", "head", "git status"],
-    "profiles_dir": "~/.agentao/sandbox-profiles"
-  }
+  "enabled": true,
+  "platform": "darwin",
+  "default_profile": "workspace-write",
+  "rules": [],
+  "profiles_dir": "~/.agentao/sandbox-profiles",
+  "workspace_root": null
 }
 ```
 

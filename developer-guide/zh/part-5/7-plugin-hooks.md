@@ -343,6 +343,17 @@ Hook 调度也会被 replay 子系统记录。默认捕获 hook 元数据（事�
 "在平台侧管 hook"是个特定场景里才有意义的概念——SaaS 平台想做 tenant 级开关，IDE 想做"测试期禁用"。运行时无法预判你的语义，强行抽象只会做出一个谁都不愿用的中间层。所以这块自由留在你的 plugin 层，宿主合约不掺合。
 :::
 
+### 子代理里不跑 hook
+
+子代理构造时不带插件，所以**它的工具调用不会触发任何 hook**：`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`Stop`、`PreCompact` 都不会。子代理会继承父代理的权限规则（引擎快照），所以 `permissions.json` 里的 deny 在子代理里依然有效。
+
+这带来一个安全后果：如果某个操作**只**靠 `PreToolUse` hook 拦截，而父代理能启动一个 `tools:` 列表里含该工具的子代理，模型就可以把这次调用交给子代理，hook 看不到它。两种补法：
+
+- 把拦截写成 `permissions.json` 里的 `deny` 规则，子代理会继承。
+- 加一条 `"matcher": { "tool_name": "agent_*" }` 的 `PreToolUse` 规则，直接拦截或审查"委派"本身。
+
+这是已知限制的说明，不是修复：子代理的 hook 分发目前没有实现。
+
 ### 不执行的 hook 类型
 
 `http` / `agent` 在 `KNOWN_UNSUPPORTED_HOOK_TYPES` 里——解析认识、运行时不跑（详见 §5.7.3）。**给未来留的接口**，今天写了只会拿到一条 warning。
@@ -397,6 +408,8 @@ Hook 调度也会被 replay 子系统记录。默认捕获 hook 元数据（事�
 ```
 
 `shell-guardrail.py` 从 stdin 读 payload（含完整命令），如果命中黑名单（`rm -rf /`、`curl | sh` 等）就 stdout 输出 `hook_blocking_error`。chat-loop 见到 `blocking_error` 会终止本次工具调用，UI 侧看到 `[Blocked by hook] {message}`。
+
+这条规则管不到子代理的工具调用（见 [§5.7.7](#子代理里不跑-hook)）。要硬拦截，同时在 `permissions.json` 里加一条 `deny` 规则。
 
 ::: tip matcher timeout 给小一点
 PreToolUse hook 会**阻塞**工具调用——超时设到几秒级别，避免 hook 自己变成性能瓶颈。

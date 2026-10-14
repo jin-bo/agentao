@@ -1,6 +1,7 @@
 """Exercise the real git backend's common regular-expression operators."""
 
 import shutil
+import sys
 
 import pytest
 
@@ -43,3 +44,25 @@ def test_git_literal_mode_keeps_regex_characters_literal(git_search):
         git_search.working_directory, "foo|bar", "**/*", True, False, frozenset(),
     )
     assert result is not None and result.startswith("No matches")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell hook")
+def test_repo_fsmonitor_hook_does_not_run(git_search, tmp_path):
+    """``git grep`` reads the index, and a repo's own ``core.fsmonitor`` runs
+    on that read. The repo is the agent's workspace, so a sandboxed write (or
+    a cloned repo) could plant it and get code run outside the sandbox from
+    this read-only tool — the ``rg --pre`` class again."""
+    marker = tmp_path / "fsmonitor-ran"
+    hook = tmp_path / "hook.sh"
+    hook.write_text(f"#!/bin/sh\ntouch '{marker}'\n")
+    hook.chmod(0o755)
+    assert run_captured(
+        ["git", "config", "core.fsmonitor", str(hook)], cwd=str(tmp_path), timeout=5,
+    ).returncode == 0
+
+    result = git_search._git_grep(
+        git_search.working_directory, "foo", "**/*", True, False, frozenset(),
+    )
+
+    assert result is not None and result.startswith("Found"), result
+    assert not marker.exists()

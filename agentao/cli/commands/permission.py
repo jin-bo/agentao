@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rich.markup import escape
+
 from ...permissions import PermissionMode
 from .._globals import console, split_subcommand
 
@@ -99,6 +101,13 @@ def handle_sandbox_command(cli: AgentaoCLI, args: str) -> None:
                 f"  [dim]Note: a rule maps run_shell_command → "
                 f"[cyan]{rule_profile}[/cyan] (overrides default_profile)[/dim]"
             )
+        ignored = policy.ignored_project_config
+        if ignored is not None:
+            console.print(
+                f"  [warning]Ignored: {escape(str(ignored))} — project-scope sandbox "
+                f"config is not honored. Move settings to "
+                f"~/.agentao/sandbox.json.[/warning]"
+            )
         if policy.enabled and health is not None:
             console.print(
                 f"\n[warning]Shell commands will FAIL while the sandbox is "
@@ -127,7 +136,7 @@ def handle_sandbox_command(cli: AgentaoCLI, args: str) -> None:
         console.print(
             f"\n[green]✓ Sandbox enabled[/green] "
             f"(profile: [cyan]{policy.default_profile_name}[/cyan], session only — "
-            f"edit .agentao/sandbox.json to persist)\n"
+            f"edit ~/.agentao/sandbox.json to persist)\n"
         )
         return
 
@@ -158,7 +167,7 @@ def handle_sandbox_command(cli: AgentaoCLI, args: str) -> None:
         rule_profile = policy.rule_profile_for("run_shell_command")
         if rule_profile is not None and rule_profile != sub_arg:
             console.print(
-                f"[warning]⚠ A rule in .agentao/sandbox.json maps "
+                f"[warning]⚠ A rule in ~/.agentao/sandbox.json maps "
                 f"run_shell_command → '{rule_profile}' and takes precedence "
                 f"over default_profile. Shell commands will keep using "
                 f"'{rule_profile}'. Edit the rule to make this switch "

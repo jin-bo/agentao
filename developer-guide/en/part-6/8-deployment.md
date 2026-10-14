@@ -148,7 +148,7 @@ Agentao products have more canary dimensions than typical services:
 | **Code version** | Standard blue-green / canary | Medium — same as any service |
 | **Skills** | Fork `skills/` per tenant | Low |
 | **Permission rules** | Gradual tightening | High — tightening can block valid tools |
-| **Sandbox profile** | Change `default_profile` in sandbox.json | High — misconfig stops the shell tool |
+| **Sandbox profile** | Change `default_profile` in `~/.agentao/sandbox.json` | High — misconfig stops the shell tool |
 | **AGENTAO.md** | Project-level change | Medium — affects instruction-following |
 
 **Rhythm**: model and skills can canary **weekly**; rule / sandbox / AGENTAO.md changes need **full tests + canary + rollback plan**.

@@ -318,3 +318,36 @@ def test_execute_uses_ripgrep_outside_git_repo(tmp_path, search_tool):
 
     assert "f.txt" in out
     assert "the needle is here" in out
+
+
+def test_ripgrep_ignores_ripgrep_config_path(monkeypatch, tmp_path, capture_subprocess_run):
+    """``RIPGREP_CONFIG_PATH`` (a project ``.env`` can set it) must not add
+    flags: ``--pre=<script>`` would run code from a read-only tool, and
+    ``--quiet`` would hide every match (codex #51527)."""
+    _seed_tree(tmp_path)
+    tool = SearchTextTool()
+    tool._is_git_repo = lambda d: False  # type: ignore[assignment]
+    monkeypatch.setattr(search_mod, "_find_executable", lambda name: f"/usr/bin/{name}")
+
+    tool.execute(pattern="needle", directory=str(tmp_path))
+
+    assert capture_subprocess_run, "rg was not invoked"
+    assert capture_subprocess_run[0][:2] == ["rg", "--no-config"]
+
+
+@pytest.mark.skipif(shutil.which("rg") is None, reason="needs a real ripgrep")
+def test_a_quiet_ripgrep_config_does_not_hide_matches(monkeypatch, tmp_path):
+    """End to end through a real ``rg``: a config of ``--quiet`` used to make
+    the tool report "No matches"."""
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    _seed_tree(tree)
+    config = tmp_path / "rgrc"
+    config.write_text("--quiet\n", encoding="utf-8")
+    monkeypatch.setenv("RIPGREP_CONFIG_PATH", str(config))
+    tool = SearchTextTool()
+    tool._is_git_repo = lambda d: False  # type: ignore[assignment]
+
+    out = tool.execute(pattern="needle", directory=str(tree))
+
+    assert "a.txt" in out and "b.txt" in out, out

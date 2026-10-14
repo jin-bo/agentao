@@ -62,7 +62,7 @@ class SafeSaveMemoryTool(SaveMemoryTool):
 
 把 token 通过进程环境传入，不进 git。
 
-**现在 `env` 是 provider key 抵达 MCP server 的唯一途径。** 子进程的基础环境由 `capabilities/process.py::build_child_env()` 构造，它会剥掉 agentao 自己的 provider 凭据（`HARNESS_ENV_KEYS`：`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`LLM_EXTRA_BODY`……）——MCP server 是第三方二进制，没有理由继承那把给 LLM 付费的 key。原本靠继承跑通的 server 现在会拿到 401。请显式声明（`env` 在清洗**之后**才应用）：
+**现在 `env` 是 provider key 抵达 MCP server 的唯一途径。** 子进程的基础环境由 `capabilities/process.py::build_child_env()` 构造，它会剥掉 agentao 自己的 provider 凭据（`HARNESS_ENV_KEYS`：`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`LLM_EXTRA_BODY`……，以及存着 agentao 当前所用 key 的任何变量，不论变量名）——MCP server 是第三方二进制，没有理由继承那把给 LLM 付费的 key。原本靠继承跑通的 server 现在会拿到 401。请显式声明（`env` 在清洗**之后**才应用）：
 
 ```json
 {"mcpServers": {"gemini-thing": {"env": {"GEMINI_API_KEY": "${GEMINI_API_KEY}"}}}}

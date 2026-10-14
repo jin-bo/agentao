@@ -154,7 +154,7 @@ Agent 产品**可以独立灰度**的维度比普通服务多得多：
 | **代码版本** | 常规蓝绿/金丝雀 | 中——同普通服务 |
 | **技能** | `skills/` 目录按租户分叉 | 低 |
 | **权限规则** | `.agentao/permissions.json` 渐进收紧 | 高——规则松变紧可能挡掉合法工具 |
-| **沙箱 profile** | `.agentao/sandbox.json` 改 default | 高——错配全停 |
+| **沙箱 profile** | `~/.agentao/sandbox.json` 改 default | 高——错配全停 |
 | **AGENTAO.md** | 项目级改动 | 中——影响所有指令遵从性 |
 
 **建议节奏**：模型和技能可**周级**灰度；规则/沙箱/AGENTAO.md 改动必须**全面测试 + 灰度 + 回滚预案**。

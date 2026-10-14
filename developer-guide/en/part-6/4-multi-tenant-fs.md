@@ -46,8 +46,7 @@ The most common security incident in multi-tenant agent embeddings: **cross-tena
 │   ├── AGENTAO.md            ← acme's project doc
 │   ├── .agentao/
 │   │   ├── memory.db          ← memory
-│   │   ├── mcp.json           ← MCP config (add-only — see below)
-│   │   └── sandbox.json       ← sandbox rules
+│   │   └── mcp.json           ← MCP config (add-only — see below)
 │   ├── skills/                ← skills
 │   └── workspace/             ← agent-writable temp area
 ├── tenant-globex/
@@ -60,7 +59,7 @@ Construction:
 agent = Agentao(working_directory=Path(f"/data/tenant-{tenant.id}"))
 ```
 
-**Benefits**: directory-anchored config (memory, MCP add-on servers, skills, sandbox, project doc) is auto-isolated — no tenant_id filtering logic in code.
+**Benefits**: directory-anchored config (memory, MCP add-on servers, skills, project doc) is auto-isolated — no tenant_id filtering logic in code.
 
 ::: warning Permissions don't live here
 There is **no `permissions.json`** in the per-tenant directory. The engine deliberately ignores `<wd>/.agentao/permissions.json` (a checked-in allow-rule could escalate any tenant). For per-tenant policy, build a `PermissionEngine` programmatically and inject it:
@@ -79,6 +78,8 @@ agent = Agentao(
 ```
 
 Project `mcp.json` is loaded as **add-only**: a tenant directory may declare new MCP servers, but cannot override a user-scope entry with the same name (collisions warn and skip).
+
+A `<wd>/.agentao/sandbox.json` is ignored for the same reason as `permissions.json`. For a per-tenant sandbox, inject `sandbox_policy=SandboxPolicy(project_root=...)` and turn it on with `set_enabled(True)` ([6.2](/en/part-6/2-shell-sandbox#runtime-toggle)).
 :::
 
 ### Layout B · Ephemeral workdir

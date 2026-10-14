@@ -168,7 +168,7 @@ Sandbox: enabled
 - **确认 UI 看着卡住** — 弹确认时 spinner 会停。看着像冻住了，往上滚一下，菜单在那儿。
 - **`workspace-write` 也会拦 cwd 外的写** — 项目在 `/repo/foo` 但你要让 agent 改 `~/Documents/...`，会弹确认。这是有意的 — "workspace" = 启动目录。
 - **确认时按 `2` 整个会话翻车** — 没有 undo，只能 `/mode workspace-write` 或重启。把 `2` 当成"我不打算继续盯这个会话了"。
-- **沙箱 profile 切换是会话级** — 想跨重启保持，改 `.agentao/sandbox.json` 或 `~/.agentao/sandbox.json` 的 `default_profile`。
+- **沙箱 profile 切换是会话级** — 想跨重启保持，改 `~/.agentao/sandbox.json` 的 `default_profile`。项目里的 `.agentao/sandbox.json` 会被忽略，`/sandbox status` 会把它标成已忽略。
 
 ## 接下来读什么
 

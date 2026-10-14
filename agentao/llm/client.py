@@ -171,6 +171,14 @@ _log_owners: "List[weakref.ref[LLMClient]]" = []
 _log_owners_lock = threading.Lock()
 
 
+
+def _note_credential(api_key: Any) -> None:
+    # Deferred: ``agentao.capabilities``' package init loads the memory and
+    # MCP stacks, which ``agentao.llm`` must not pull in at import time.
+    from ..capabilities.process import note_credential_value
+
+    note_credential_value(api_key)
+
 class LLMClient(_LoggingMixin):
     """LLM client with comprehensive logging, over one configured wire protocol.
 
@@ -260,6 +268,9 @@ class LLMClient(_LoggingMixin):
         # without having opened a log file or an SDK client.
         self.api_format: str = resolve_api_format(api_format)
         self.api_key = api_key
+        # Scrubbed from child environments by value: a host may have read it
+        # from a variable whose name nothing here can derive.
+        _note_credential(api_key)
         self.base_url = base_url
         self.model = model
         self.temperature: Optional[float] = temperature
@@ -575,6 +586,7 @@ class LLMClient(_LoggingMixin):
         _old_base: Any,
     ) -> None:
         self.api_key = api_key
+        _note_credential(api_key)
         if base_url is not KEEP_BASE_URL:
             self.base_url = base_url
         if model is not None:

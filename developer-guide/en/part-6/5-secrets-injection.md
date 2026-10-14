@@ -62,7 +62,7 @@ Don't write tokens into `.agentao/mcp.json` — use `${VAR}`:
 
 Tokens come from the process environment, stay out of git.
 
-**`env` is now the only way a provider key reaches an MCP server.** The child's base environment is built by `capabilities/process.py::build_child_env()`, which strips agentao's own provider credentials (`HARNESS_ENV_KEYS`: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `LLM_EXTRA_BODY`, …) — an MCP server is a third-party binary and has no business inheriting the key that pays for the LLM. A server that used to work by inheritance now gets a 401. Declare it explicitly (`env` is applied *after* the scrub):
+**`env` is now the only way a provider key reaches an MCP server.** The child's base environment is built by `capabilities/process.py::build_child_env()`, which strips agentao's own provider credentials (`HARNESS_ENV_KEYS`: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `LLM_EXTRA_BODY`, …, plus any variable holding the key agentao is using, whatever its name) — an MCP server is a third-party binary and has no business inheriting the key that pays for the LLM. A server that used to work by inheritance now gets a 401. Declare it explicitly (`env` is applied *after* the scrub):
 
 ```json
 {"mcpServers": {"gemini-thing": {"env": {"GEMINI_API_KEY": "${GEMINI_API_KEY}"}}}}

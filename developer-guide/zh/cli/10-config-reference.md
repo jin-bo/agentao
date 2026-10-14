@@ -9,7 +9,7 @@
 | **LLM 凭证** | `.env`（cwd） | shell env | `/model` `/provider` `/temperature` | [§2](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#2-env--llm-provider-配置) |
 | **运行时设置** | `.agentao/settings.json` | — | `/mode` 持久化、`/replay on/off` | [§3](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#3-agentaosettingsjson--运行时模式--内置子代理) |
 | **权限规则** | — *（项目文件被忽略）* | `~/.agentao/permissions.json` | `/mode` `/permission`、工具确认 UI | [§4](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#4-permissionsjson--工具权限规则) |
-| **Shell 沙箱** | `.agentao/sandbox.json` | `~/.agentao/sandbox.json` | `/sandbox` | [Part 6.2](/zh/part-6/2-shell-sandbox) |
+| **Shell 沙箱** | — *（项目文件被忽略）* | `~/.agentao/sandbox.json` | `/sandbox` | [Part 6.2](/zh/part-6/2-shell-sandbox) |
 | **MCP 服务器** | `.agentao/mcp.json` | `~/.agentao/mcp.json` | `/mcp` | [§5](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#5-mcpjson--mcp-服务器注册表) |
 | **ACP 服务器** | `.agentao/acp.json` | — | `/acp` | [§6](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#6-acpjson--acp-子代理注册表) |
 | **Skill 启停** | `.agentao/skills_config.json` | — | `/skills enable` `/skills disable` | [§7](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.zh.md#7-skills_configjson--每个项目的-skill-启停) |
@@ -27,7 +27,7 @@
 | 加放行 / 拒绝的 shell 命令 | `~/.agentao/permissions.json` |
 | 加放行 / 拒绝的 web 域名 | `~/.agentao/permissions.json` |
 | Windows 上改用 PowerShell 而不是 cmd | `~/.agentao/permissions.json` → `shell` |
-| 默认沙箱 profile（macOS） | `.agentao/sandbox.json` 或 `~/.agentao/sandbox.json` → `default_profile` |
+| 默认沙箱 profile（macOS） | `~/.agentao/sandbox.json` → `default_profile` |
 | 默认上下文窗口大小 | 环境变量 `AGENTAO_CONTEXT_TOKENS` |
 | 默认是否录 replay | `.agentao/settings.json` → `replay.enabled` |
 | Replay 保留实例上限 | `.agentao/settings.json` → `replay.max_instances` |
@@ -47,7 +47,7 @@
 | `/temperature <n>` | 否 | `.env`（`LLM_TEMPERATURE`） |
 | `/mode <mode>` | 否 | `.agentao/settings.json`（"上次记住的"） |
 | `/context limit <n>` | 否 | —（仅当前进程；重启后读 `AGENTAO_CONTEXT_TOKENS`） |
-| `/sandbox profile <name>` | 否 | —（要持久化，改 `sandbox.json`） |
+| `/sandbox profile <name>` | 否 | —（要持久化，改 `~/.agentao/sandbox.json`） |
 | `/replay on` / `/replay off` | **是** | `.agentao/settings.json`（`replay.enabled`） |
 | `/skills disable <name>` / `/skills enable <name>` | **是** | `.agentao/skills_config.json` |
 | `/skills activate` / `/skills deactivate` | 否 | — |

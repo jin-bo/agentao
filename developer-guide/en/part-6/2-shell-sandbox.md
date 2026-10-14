@@ -32,7 +32,7 @@ macOS ships with `sandbox-exec`, a kernel-level isolator for file writes and net
 ### How a command is wrapped
 
 1. The tool executor asks the policy for a profile after the call was allowed ([`runtime/tool_executor.py`](https://github.com/jin-bo/agentao/blob/main/agentao/runtime/tool_executor.py)). It passes the profile to the shell tool in a private argument. The model and the plugin hooks never see that argument.
-2. The shell tool rewrites the command as `sandbox-exec -D _RW1=<workspace_root> -f <profile.sb> <shell> -c '<command>'` ([`tools/shell.py::_wrap_with_sandbox`](https://github.com/jin-bo/agentao/blob/main/agentao/tools/shell.py)). Background commands are wrapped the same way.
+2. The shell tool rewrites the command as `/usr/bin/sandbox-exec -D _RW1=<workspace_root> -f <profile.sb> <shell> -c '<command>'` ([`tools/shell.py::_wrap_with_sandbox`](https://github.com/jin-bo/agentao/blob/main/agentao/tools/shell.py)). Background commands are wrapped the same way. The absolute path is deliberate: a sandboxed command can write a directory on `PATH` (such as `.venv/bin`), and a `sandbox-exec` placed there must not run the next command.
 3. The inner `<shell>` is the same shell that runs an unsandboxed command (`resolve_shell_executable()`: bash, else `/bin/sh`). Thus a command parses the same way with and without the sandbox.
 
 stdout, stderr and the exit code pass through unchanged.
@@ -53,7 +53,7 @@ stdout, stderr and the exit code pass through unchanged.
 
 ### Minimum config
 
-In `~/.agentao/sandbox.json` or `<project>/.agentao/sandbox.json`:
+In `~/.agentao/sandbox.json`:
 
 ```json
 {
@@ -66,7 +66,7 @@ After restart, every `run_shell_command` runs through sandbox-exec. On non-macOS
 
 ### Config fields
 
-Agentao reads `~/.agentao/sandbox.json` first, then `<project>/.agentao/sandbox.json`. The project file overrides the home file key by key. An explicit `null` in the project file resets an inherited value to the default.
+Agentao reads only `~/.agentao/sandbox.json`. **It ignores `<project>/.agentao/sandbox.json`**, logs a warning, and shows the ignored path in `/sandbox status` and `agentao doctor`. A file in the project can come from a cloned repository, or from a sandboxed command, which can write the whole workspace. Such a file must not switch the sandbox off or change its profile. A project `permissions.json` is ignored for the same reason.
 
 ```json
 {
@@ -88,7 +88,7 @@ Agentao reads `~/.agentao/sandbox.json` first, then `<project>/.agentao/sandbox.
 | `profiles_dir` | A directory of your own `.sb` files. Agentao searches it before the built-in profiles. |
 | `workspace_root` | The writable path passed as `_RW1`. Default: the project root. |
 
-A relative `profiles_dir` or `workspace_root` resolves against the file that sets it. In the home file, the base is `~/.agentao/`. In the project file, the base is the project root. The loader is [`sandbox/policy.py::load_sandbox_config`](https://github.com/jin-bo/agentao/blob/main/agentao/sandbox/policy.py). It type-checks every field. A wrong type fails closed, like a JSON error.
+A relative `profiles_dir` or `workspace_root` in the file resolves against `~/.agentao/`. The loader is [`sandbox/policy.py::load_sandbox_config`](https://github.com/jin-bo/agentao/blob/main/agentao/sandbox/policy.py). It type-checks every field. A wrong type fails closed, like a JSON error.
 
 ### Different profiles per tool
 
@@ -131,9 +131,9 @@ Drop `.sb` files under `profiles_dir`:
 }
 ```
 
-A relative `profiles_dir` in a project file resolves against the project root, so this one is `<project>/sandbox-profiles/`. A file with the same name as a built-in profile replaces that built-in.
+A relative `profiles_dir` resolves against `~/.agentao/`, so this one is `~/.agentao/sandbox-profiles/`. A file with the same name as a built-in profile replaces that built-in.
 
-Start from a copy of a built-in profile and narrow it. This skeleton has the same structure as the built-ins. `./sandbox-profiles/my-strict.sb`:
+Start from a copy of a built-in profile and narrow it. This skeleton has the same structure as the built-ins. `~/.agentao/sandbox-profiles/my-strict.sb`:
 
 ```scheme
 (version 1)
@@ -170,7 +170,7 @@ Keep the `(import "system.sb")` line and the process rules. Without them, the sh
 
 Check a profile on macOS before you rely on it:
 
-1. Create `.agentao/sandbox.json` with `{"enabled": true, "default_profile": "workspace-write-no-network"}`.
+1. Create `~/.agentao/sandbox.json` with `{"enabled": true, "default_profile": "workspace-write-no-network"}`.
 2. Run `uv run agentao` and check that `/sandbox status` shows `enabled` and the profile.
 3. Ask the agent to run `echo hello > /tmp/ok.txt`. It succeeds.
 4. Ask it to run `echo bad > ~/sandbox-test.txt`. It fails with `Operation not permitted`.
@@ -180,7 +180,7 @@ Check a profile on macOS before you rely on it:
 To test a profile without the agent, run `sandbox-exec` directly:
 
 ```bash
-sandbox-exec -D _RW1="$PWD" -f sandbox-profiles/my-strict.sb /bin/bash -c 'touch build/x && echo ok'
+/usr/bin/sandbox-exec -D _RW1="$PWD" -f ~/.agentao/sandbox-profiles/my-strict.sb /bin/bash -c 'touch build/x && echo ok'
 ```
 
 On Linux and Windows, `uv run agentao` must start without errors, and shell commands run unwrapped.
@@ -191,9 +191,9 @@ Agentao's sandbox policy is **strictly fail-closed** — misconfiguration refuse
 
 | Error | Behavior |
 |-------|----------|
-| `sandbox.json` JSON parse error or wrong field type | On macOS: every shell call fails with `SandboxMisconfiguredError`, even if the file never set `enabled`. Off macOS: sandbox not applied |
+| `~/.agentao/sandbox.json` JSON parse error or wrong field type | On macOS: every shell call fails with `SandboxMisconfiguredError`, even if the file never set `enabled`. Off macOS: sandbox not applied |
 | Referenced profile name not found | Raises `SandboxMisconfiguredError`; command refuses |
-| `sandbox-exec` not on PATH (macOS) | `/sandbox status` reports it. The wrapped command fails. It never runs unwrapped |
+| `/usr/bin/sandbox-exec` missing (macOS) | `/sandbox status` reports it. The wrapped command fails. It never runs unwrapped |
 | Profile syntax error (Scheme) | `/sandbox status`, `/sandbox on` and `/sandbox profile <name>` load the profile with `sandbox-exec` and report the error (`health_error()` / `profile_health_error()`). Nothing checks it at construction. At call time, `sandbox-exec` exits non-zero and the model sees its error |
 
 **Meaning**: with `enabled=true`, any misconfig **fully disables** the shell tool — intentional, better than silently stripping protection. `/sandbox off` always works as the escape hatch, also when the config is broken.
