@@ -264,6 +264,12 @@ def confirm_tool_execution(cli: AgentaoCLI, tool_name: str, tool_description: st
                 elif key == "2" and gate_note is None:
                     from ..permissions import PermissionMode
                     from ..runtime.permission_mode import apply_permission_mode
+                    if getattr(cli, "_pre_grant_mode", None) is None:
+                        # What ``/sessions resume`` restores when it ends the
+                        # grant (``commands/sessions.py::_drop_session_grant``).
+                        # Once per grant: a second "2" (inside ``/plan``) would
+                        # record the grant's own full-access.
+                        cli._pre_grant_mode = cli.current_mode
                     cli.allow_all_tools = True
                     cli.current_mode = PermissionMode.FULL_ACCESS
                     # Deliberately not ``_apply_mode``: that resets

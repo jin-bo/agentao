@@ -58,7 +58,7 @@ agent.set_permission_mode("read-only")                   # 返回 PermissionMode
 `PERMISSION_MODE_CHANGED`，回放文件里只剩下由此产生的拒绝，没有任何一条说明姿态是
 什么时候变的。`set_permission_mode` 会同时拨动两个开关、发出两个事件（标记
 `cause="host"`，从其他入口进来则是 `"cli"` / `"cli-allow-all"` /
-`"cli-plan-implement"` / `"acp"` / `"run"`），并返回切换前的模式——**类型是 `PermissionMode` 枚举**，不是字符串
+`"cli-plan-implement"` / `"cli-resume"` / `"acp"` / `"run"`），并返回切换前的模式——**类型是 `PermissionMode` 枚举**，不是字符串
 （`.value` 才是字符串）。
 
 **权限模式需要引擎。** `build_from_environment` 总会建一个，除非 `permission_mode=` 另行指定，它以 `workspace-write` 启动。既没传 `permission_mode=` 也没传 `permission_engine=` 的裸 `Agentao(...)` 没有引擎：不执行任何规则，调用 `set_permission_mode` 会抛 `ValueError`。`permission_mode=` 接受 `"read-only"`、`"workspace-write"` 或 `"full-access"`；不接受 `"plan"`，因为 plan 模式要通过 plan 会话进入。agent 会静默地以该模式启动——起始状态不是一次切换，所以不发事件；构造之后的切换照上文记录。需要 `rules=` 时，自己构造引擎并改传 `permission_engine=`。对调用方只有一条规则：**你传入的引擎与模式互斥**（抛 `ValueError`）。`Agentao(permission_mode=)` 构造 `PermissionEngine(project_root=working_directory, rules=[])`，不读取任何规则文件；`build_from_environment(permission_mode=)` 把模式应用到工厂从权限文件加载的那个引擎上——那是工厂内部的引擎，不是你传入的——所以用户的规则保留。

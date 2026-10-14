@@ -112,7 +112,7 @@ Press 1, 2, or 3 (single key, no Enter needed) · Esc to cancel
 | 键 | 效果 |
 |---|---|
 | `1` | 跑**这一次**调用，下一次危险调用还会再问。 |
-| `2` | 整个会话切到 `full-access`。**之后所有工具调用一律不再问**，直到你 `/mode workspace-write` 或重启。MCP Skills 闸门确认除外：它仍会询问，且不提供 `2`。 |
+| `2` | 整个会话切到 `full-access`。**之后所有工具调用一律不再问**，直到你 `/mode workspace-write`、`/clear`、`/new`、`/sessions resume`（恢复你按 `2` 之前的模式）或重启。MCP Skills 闸门确认除外：它仍会询问，且不提供 `2`。 |
 | `3` | 取消本次调用。Agent 收到 `Tool execution declined` 的结果继续，通常会调整方向。 |
 | `Esc` / `Ctrl+C` | 同 `3`。 |
 | 其他键 | 静默忽略。 |
@@ -167,7 +167,7 @@ Sandbox: enabled
 
 - **确认 UI 看着卡住** — 弹确认时 spinner 会停。看着像冻住了，往上滚一下，菜单在那儿。
 - **`workspace-write` 也会拦 cwd 外的写** — 项目在 `/repo/foo` 但你要让 agent 改 `~/Documents/...`，会弹确认。这是有意的 — "workspace" = 启动目录。
-- **确认时按 `2` 整个会话翻车** — 没有 undo，只能 `/mode workspace-write` 或重启。把 `2` 当成"我不打算继续盯这个会话了"。
+- **确认时按 `2` 整个会话翻车** — 要回退只能 `/mode workspace-write`、`/clear`、`/new`、`/sessions resume` 或重启。把 `2` 当成"我不打算继续盯这个会话了"。
 - **沙箱 profile 切换是会话级** — 想跨重启保持，改 `~/.agentao/sandbox.json` 的 `default_profile`。项目里的 `.agentao/sandbox.json` 会被忽略，`/sandbox status` 会把它标成已忽略。
 
 ## 接下来读什么

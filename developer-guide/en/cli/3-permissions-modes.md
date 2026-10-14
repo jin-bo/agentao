@@ -112,7 +112,7 @@ Single-key input. No Enter needed. Behavior:
 | Key | Effect |
 |-----|--------|
 | `1` | Run **this** tool call. Next risky call asks again. |
-| `2` | Switch session to `full-access`. **Every subsequent tool call runs without asking** until you `/mode workspace-write` or restart — except an MCP Skills gated call, which still asks and does not offer `2`. |
+| `2` | Switch session to `full-access`. **Every subsequent tool call runs without asking** until you `/mode workspace-write`, `/clear`, `/new`, `/sessions resume` (which restores the mode you had before pressing `2`) or restart — except an MCP Skills gated call, which still asks and does not offer `2`. |
 | `3` | Cancel this tool call. The agent gets `Tool execution declined` as the result and continues — usually it adapts. |
 | `Esc` / `Ctrl+C` | Same as `3`. |
 | Other keys | Silently ignored. |
@@ -167,7 +167,7 @@ There's also a `/permission` command for inspecting the currently effective rule
 
 - **Confirmation UI hangs** — the spinner stops on confirmation. If the prompt seems frozen, you might be looking at the spinner-stopped state and missed the menu. Scroll up.
 - **`workspace-write` and writes outside cwd** — overwriting `~/Documents/...` from a project at `/repo/foo` triggers a confirmation, even though you're in workspace-write. That's by design; the "workspace" is the launch dir.
-- **Picking `2` in confirmation flips the whole session** — there's no undo other than `/mode workspace-write` or restart. Treat option 2 as "I'm done supervising this session".
+- **Picking `2` in confirmation flips the whole session** — the only ways back are `/mode workspace-write`, `/clear`, `/new`, `/sessions resume` or restart. Treat option 2 as "I'm done supervising this session".
 - **Sandbox profile change is session-only** — to make the change stick across restarts, edit `default_profile` in `~/.agentao/sandbox.json`. A project `.agentao/sandbox.json` is ignored, and `/sandbox status` shows it as ignored.
 
 ## Where to go next

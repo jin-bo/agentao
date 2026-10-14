@@ -130,7 +130,7 @@ Use `/mode read-only | workspace-write | full-access` to change modes. To enter 
 - It emits `READONLY_MODE_CHANGED` (only on a real flip), then `PERMISSION_MODE_CHANGED`.
 - A new entry path must call this helper. Never call `engine.set_mode` alone, because it records nothing.
 
-Callers and their `cause`: `/mode` (`cli/app.py::_apply_mode`, `"cli"`), ACP `session/set_mode` (`"acp"`), `agentao run` (`"run"`), the answer "2" at a confirmation prompt (`"cli-allow-all"`), `/plan implement` (`"cli-plan-implement"`). The last two do not use `_apply_mode`, because their grants are for this session only.
+Callers and their `cause`: `/mode` (`cli/app.py::_apply_mode`, `"cli"`), ACP `session/set_mode` (`"acp"`), `agentao run` (`"run"`), the answer "2" at a confirmation prompt (`"cli-allow-all"`), `/plan implement` (`"cli-plan-implement"`), `/sessions resume` ending that grant (`"cli-resume"`). The last three do not use `_apply_mode`, because they must not write `settings.json`.
 
 **Exception: a starting state emits nothing.**
 - `Agentao(permission_mode=...)` and `build_from_environment(permission_mode=...)` go through `_set_initial_permission_mode`.
