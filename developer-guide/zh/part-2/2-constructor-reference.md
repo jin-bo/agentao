@@ -194,7 +194,7 @@ agent = Agentao(
 
 传了值时：
 
-- **`bg_store`** 启用后台子代理。`BackgroundTaskStore(persistence_dir=wd)` 把记录存在 `<wd>/.agentao/background_tasks.json`。重启后，仍在运行的任务会被标成 `failed`：记录还在，工作没了。同时最多跑 `max_concurrent` 个（默认 6，`None` 表示不设上限），超出的启动请求直接拒绝，不排队。一次性进程里保持 `None`，`agentao run` 就是这么做的，因为工作线程是守护线程，进程退出时会被切断。细节见 [附录 A.1](/zh/appendix/a-api-reference#构造器)。
+- **`bg_store`** 启用后台子代理。`BackgroundTaskStore(persistence_dir=wd)` 把记录存在 `<wd>/.agentao/background_tasks.json`。重启后，仍在运行的任务会被标成 `failed`：记录还在，工作没了。同时最多跑 `max_concurrent` 个（默认 6，`None` 表示不设上限），超出的启动请求直接拒绝，不排队。一次性进程里保持 `None`，`agentao run` 就是这么做的，因为工作线程是守护线程，进程退出时会被切断。`close()` 会取消这个 agent 启动的任务。细节见 [附录 A.1](/zh/appendix/a-api-reference#构造器)。
 - **`replay_config`** 只有在宿主调用 `agent.start_replay()` 之后才往 `<wd>/.agentao/replays/*.jsonl` 写记录。CLI 和 ACP 每个会话都会调一次，工厂和 `Agentao(...)` 都不会。replay 只记录会话，不会重跑会话（[6.6](/zh/part-6/6-observability#维度三-session-replay)）。
 :::
 

@@ -141,6 +141,7 @@ class AgentToolWrapper(Tool):
         tool_origin_getter: Optional[Callable[[str], str]] = None,
         skill_manager_getter: Optional[Callable[[], Any]] = None,
         usage_sink: Optional[Callable[..., None]] = None,
+        bg_owner: Any = None,
     ):
         self._definition = definition
         # The parent's live registry: tools it adds or removes between turns
@@ -156,6 +157,9 @@ class AgentToolWrapper(Tool):
         # construction; matches the static-value idiom used for sandbox_policy.
         self._working_directory = working_directory
         self._bg_store = bg_store
+        # The parent agent's key on ``bg_store``: its ``close()`` cancels the
+        # background tasks launched under it, and only those.
+        self._bg_owner = bg_owner
         # The parent's side of a foreground run: where its events go, who
         # answers its confirmations and questions. Each reads the parent's
         # transport per call, since replay swaps that transport after the
@@ -1158,7 +1162,7 @@ class AgentToolWrapper(Tool):
         # leaves nothing behind: no record, no token, no ``spawned`` event
         # without a terminal one. The executor reports the raise as a failed
         # tool call whose text tells the model what to do instead.
-        self._bg_store.register(agent_id, agent_name, task[:80])
+        self._bg_store.register(agent_id, agent_name, task[:80], owner=self._bg_owner)
 
         token = CancellationToken()
         self._bg_store.register_token(agent_id, token)

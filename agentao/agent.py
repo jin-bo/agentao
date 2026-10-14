@@ -845,6 +845,11 @@ class Agentao:
         ``None``.
         """
         self.bg_store: Optional["BackgroundTaskStore"] = bg_store
+        # This agent's key on ``bg_store``. The store is shared with sub-agents
+        # (and maybe with other agents of the host), so ``close()`` cancels
+        # only the tasks launched under this key.
+        from .agents.bg_store import BackgroundOwner
+        self._bg_owner = BackgroundOwner()
         # Whether this runtime's chat loop consumes the store's notification
         # queue. A sub-agent shares its parent's store so the check / cancel
         # tools resolve, but the queue is drained, not read: whichever loop
@@ -1352,7 +1357,11 @@ class Agentao:
         return init_mcp(self)
 
     def close(self) -> None:
-        """Clean up resources (MCP connections, event loops).
+        """Clean up resources (background sub-agents, MCP connections, event loops).
+
+        First cancels the background sub-agents this agent launched and waits
+        up to ``DEFAULT_CLOSE_TIMEOUT_S`` for them; one still running then is
+        named in a warning, not reported stopped (``_close_background_agents``).
 
         NOTE: SessionEnd hooks are dispatched by the CLI layer
         (on_session_end / _dispatch_session_end_hooks), which runs them
@@ -1383,6 +1392,9 @@ class Agentao:
                 # the set and the ``try`` would leave the flag stuck, and every
                 # later ``close()`` would return without closing.
                 self._closing = True
+                # First: a background sub-agent still running uses this agent's
+                # MCP connections, memory, replay and log, all released below.
+                self._close_background_agents()
                 if self.replay_manager is not None:
                     try:
                         self.replay_manager.end()
@@ -1418,6 +1430,27 @@ class Agentao:
                 self._close_built_llm_client()
             finally:
                 self._closing = False
+
+    def _close_background_agents(self) -> None:
+        """Cancel the background sub-agents this agent launched, and wait briefly.
+
+        A task that has not settled after the wait is still running: it is
+        named in a warning, never reported as stopped.
+        """
+        store = getattr(self, "bg_store", None)
+        owner = getattr(self, "_bg_owner", None)
+        if store is None or owner is None:
+            return
+        try:
+            still_running = store.close_owner(owner)
+        except Exception as e:
+            self.llm.logger.warning(f"Error cancelling background agents: {e}")
+            return
+        if still_running:
+            self.llm.logger.warning(
+                "Background agents still running after close() cancelled them "
+                f"(they stop at their next safe point): {', '.join(still_running)}"
+            )
 
     async def aclose(self) -> None:
         """Async :meth:`close`: runs it on a worker thread so the loop keeps going.

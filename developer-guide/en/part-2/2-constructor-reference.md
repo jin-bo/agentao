@@ -194,7 +194,7 @@ Inject pre-built managers when you don't want Agentao to construct them from def
 
 With a value set:
 
-- **`bg_store`** enables background sub-agents. `BackgroundTaskStore(persistence_dir=wd)` keeps its records in `<wd>/.agentao/background_tasks.json`. After a restart, a task that was still running is marked `failed`: the record survives, the work does not. At most `max_concurrent` run at once (default 6, `None` for no cap), and a launch past that is refused, not queued. Leave it `None` in a one-shot process, as `agentao run` does, because the workers are daemon threads that die at exit. Details: [Appendix A.1](/en/appendix/a-api-reference#constructor).
+- **`bg_store`** enables background sub-agents. `BackgroundTaskStore(persistence_dir=wd)` keeps its records in `<wd>/.agentao/background_tasks.json`. After a restart, a task that was still running is marked `failed`: the record survives, the work does not. At most `max_concurrent` run at once (default 6, `None` for no cap), and a launch past that is refused, not queued. Leave it `None` in a one-shot process, as `agentao run` does, because the workers are daemon threads that die at exit. `close()` cancels the tasks this agent launched. Details: [Appendix A.1](/en/appendix/a-api-reference#constructor).
 - **`replay_config`** records to `<wd>/.agentao/replays/*.jsonl` only after the host calls `agent.start_replay()`. The CLI and ACP do this per session. Neither the factory nor `Agentao(...)` does. Replay records a session; it does not re-run one ([6.6](/en/part-6/6-observability#axis-three-session-replay)).
 :::
 

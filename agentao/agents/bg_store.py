@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 import time
+import weakref
 from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Literal, Optional, Tuple, get_args
@@ -56,6 +57,34 @@ class BackgroundCapacityError(RuntimeError):
             f"finish (check_background_agent with wait_seconds), cancel one, "
             f"or run this task in the foreground (run_in_background=false)."
         )
+
+class BackgroundOwnerClosedError(RuntimeError):
+    """``register`` refused a launch: the agent that would own it is closed.
+
+    Raised before anything is recorded, like ``BackgroundCapacityError``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Background agent not started: this agent is closed, so it "
+            "cannot start new background agents."
+        )
+
+
+class BackgroundOwner:
+    """An opaque ``owner=`` key for ``register`` / ``close_owner``.
+
+    Weakly referenceable, so the store's record that it is closed goes away
+    with the agent that held it.
+    """
+
+    __slots__ = ("__weakref__",)
+
+
+# How long ``Agentao.close()`` waits for its cancelled background agents to
+# settle. The same budget as ``tool_executor._ASYNC_CANCEL_ACK_TIMEOUT_S``.
+DEFAULT_CLOSE_TIMEOUT_S = 5.0
+
 
 # Per-process guard: two Agentao instances anchored to the same project
 # share one persistence file. If both ran recover(), the second would
@@ -171,6 +200,18 @@ class BackgroundTaskStore:
         # present in _owned_ids represents a delete waiting to flush.
         self._owned_ids: set = set()
 
+        # Task → the opaque key of the agent that launched it (``owner=`` on
+        # ``register``), and the keys ``close_owner`` has closed. Process-local
+        # and never persisted. A sub-agent shares its parent's store, so
+        # "every task in the store" is not "every task this agent started":
+        # the key is what lets a closing agent cancel only its own.
+        self._launched_by: Dict[str, Any] = {}
+        # Weak, so a closed agent's key goes with the agent: every sub-agent
+        # gets this store and is closed when it finishes. An owner that cannot
+        # be weakly referenced (a bare ``object()``) is held strongly instead.
+        self._closed_owners: "weakref.WeakSet[Any]" = weakref.WeakSet()
+        self._closed_owners_strong: set = set()
+
         # Owned IDs we have successfully written to disk. If one of these
         # later disappears from on-disk, a sibling store deleted it — we
         # then drop ownership locally so a subsequent flush cannot
@@ -282,6 +323,11 @@ class BackgroundTaskStore:
             with self._lock:
                 in_flight_owned = self._in_flight_owned_ids_locked()
                 self._tasks = {aid: self._tasks[aid] for aid in in_flight_owned}
+                self._launched_by = {
+                    aid: launcher
+                    for aid, launcher in self._launched_by.items()
+                    if aid in in_flight_owned
+                }
                 self._owned_ids = set(in_flight_owned)
                 self._known_persisted_ids &= in_flight_owned
                 self._owner_path = {
@@ -401,8 +447,14 @@ class BackgroundTaskStore:
     # Task lifecycle
     # ------------------------------------------------------------------
 
-    def register(self, agent_id: str, agent_name: str, task_summary: str) -> None:
+    def register(
+        self, agent_id: str, agent_name: str, task_summary: str, *, owner: Any = None,
+    ) -> None:
         """Record a new pending task.
+
+        ``owner`` is the opaque key of the launching agent, for
+        :meth:`close_owner`. Raises ``BackgroundOwnerClosedError`` when that
+        owner is already closed.
 
         Raises ``BackgroundCapacityError`` when ``max_concurrent`` of this
         store's own tasks are already pending or running. The count and the
@@ -416,6 +468,8 @@ class BackgroundTaskStore:
         self._check_persistence_rebind()
         persistence_path = self._resolve_persistence_path()
         with self._lock:
+            if owner is not None and self._owner_closed_locked(owner):
+                raise BackgroundOwnerClosedError()
             if (
                 self.max_concurrent is not None
                 and len(self._in_flight_owned_ids_locked()) >= self.max_concurrent
@@ -450,6 +504,8 @@ class BackgroundTaskStore:
                 "usage": None,
             }
             self._owned_ids.add(agent_id)
+            if owner is not None:
+                self._launched_by[agent_id] = owner
             if persistence_path is not None:
                 self._owner_path[agent_id] = persistence_path
         with self._notify_lock:
@@ -624,6 +680,7 @@ class BackgroundTaskStore:
             pruned = candidates[_MAX_FINISHED_RECORDS:]
             for agent_id in pruned:
                 del self._tasks[agent_id]
+                self._launched_by.pop(agent_id, None)
                 # No pinned path means no persistence file (in-memory
                 # store): no flush will ever release the id, so release it
                 # here or ``_owned_ids`` grows by one per pruned launch.
@@ -761,6 +818,7 @@ class BackgroundTaskStore:
                 )
 
             del self._tasks[agent_id]
+            self._launched_by.pop(agent_id, None)
             # Keep agent_id in _owned_ids so the next flush removes it
             # from disk. If the store didn't already own it (e.g. it was
             # loaded as an orphan via recover()), mark ownership now so
@@ -781,6 +839,52 @@ class BackgroundTaskStore:
 
         self._flush_to_disk()
         return f"Deleted background agent '{agent_name}' ({agent_id}) from history."
+
+    def close_owner(self, owner: Any, timeout: float = DEFAULT_CLOSE_TIMEOUT_S) -> List[str]:
+        """Stop the background tasks ``owner`` launched; refuse its new launches.
+
+        Marks ``owner`` closed first, so a launch racing this call is refused
+        rather than started after the sweep. Then cancels each of its pending
+        or running tasks through :meth:`cancel` and waits, up to ``timeout``
+        seconds in all, for them to settle.
+
+        Returns the ids still pending or running when the wait ends. A cancel
+        is a request: a worker stops at its next safe point, and one inside a
+        blocking call that ignores the token keeps going. The caller must not
+        report those as stopped. Tasks of other owners, and tasks registered
+        without one, are left alone.
+        """
+        with self._lock:
+            try:
+                self._closed_owners.add(owner)
+            except TypeError:
+                self._closed_owners_strong.add(owner)
+            ids = [
+                agent_id
+                for agent_id, launcher in self._launched_by.items()
+                if launcher is owner
+                and self._tasks.get(agent_id, {}).get("status") in ("pending", "running")
+            ]
+        for agent_id in ids:
+            self.cancel(agent_id)
+        # Read the records directly, not through ``get()``: that hides an owned
+        # task pinned to another project after a cwd rebind, and such a task
+        # still running must be named, not counted as stopped.
+        deadline = time.monotonic() + max(0.0, timeout)
+        with self._settled:
+            while True:
+                still_running = [
+                    agent_id for agent_id in ids
+                    if self._tasks.get(agent_id, {}).get("status") in ("pending", "running")
+                ]
+                remaining = deadline - time.monotonic()
+                if not still_running or remaining <= 0:
+                    return still_running
+                self._settled.wait(min(0.5, remaining))
+
+    def _owner_closed_locked(self, owner: Any) -> bool:
+        # ``WeakSet`` answers ``False`` for an owner it cannot reference.
+        return owner in self._closed_owners or owner in self._closed_owners_strong
 
     # ------------------------------------------------------------------
     # Cancellation tokens
@@ -893,6 +997,7 @@ class BackgroundTaskStore:
             ]
             for agent_id in sibling_deleted:
                 self._tasks.pop(agent_id, None)
+                self._launched_by.pop(agent_id, None)
                 self._owned_ids.discard(agent_id)
                 self._known_persisted_ids.discard(agent_id)
                 self._owner_path.pop(agent_id, None)
