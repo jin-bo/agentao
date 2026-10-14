@@ -543,7 +543,11 @@ def test_wrap_with_sandbox_produces_correct_shell_string(tmp_path):
     # dir would otherwise run every later command unsandboxed (codex #51211).
     assert wrapped.startswith("/usr/bin/sandbox-exec ")
     assert f"-D _RW1={tmp_path.resolve()}" in wrapped
-    assert str(profile.path) in wrapped
+    # A built-in profile runs from its import-time snapshot, passed inline.
+    import shlex
+    argv = shlex.split(wrapped)
+    assert "-f" not in argv
+    assert argv[argv.index("-p") + 1].startswith(profile.text.rstrip("\n"))
     assert f"{_inner_shell()} -c" in wrapped
     # The original command must be shell-quoted so && doesn't leak out.
     assert "'echo hello && ls -la'" in wrapped
@@ -1143,8 +1147,14 @@ def test_preflight_runs_sandbox_exec_by_absolute_path(tmp_path, monkeypatch):
         return SimpleNamespace(returncode=0, stderr="")
 
     monkeypatch.setattr(policy_mod.subprocess, "run", fake_run)
-    assert policy_mod._preflight_profile(tmp_path / "p.sb", tmp_path) is None
+    profile = SandboxProfile(
+        name="p", path=tmp_path / "p.sb", workspace_root=tmp_path,
+        params={"_RW1": str(tmp_path)},
+    )
+    assert policy_mod._preflight_profile(profile) is None
     assert seen[0][0] == "/usr/bin/sandbox-exec"
+    # The preflight runs the argv a command would get, plus a no-op.
+    assert seen[0] == profile.as_args() + ["/bin/sh", "-c", ":"]
 
 
 @MACOS_ONLY

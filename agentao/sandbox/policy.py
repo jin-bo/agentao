@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import platform
 import re
 import subprocess
@@ -48,6 +49,28 @@ from .. import json_parse
 _logger = logging.getLogger(__name__)
 
 _BUILTIN_PROFILES_DIR = Path(__file__).parent / "profiles"
+
+
+def _load_builtin_profiles() -> Tuple[Dict[str, str], Optional[str]]:
+    """Read every built-in ``.sb`` once; return ``(name -> text, error)``."""
+    try:
+        texts = {
+            f.stem: f.read_text(encoding="utf-8")
+            for f in sorted(_BUILTIN_PROFILES_DIR.glob("*.sb"))
+        }
+    except (OSError, UnicodeDecodeError) as e:
+        return {}, f"the built-in sandbox profiles could not be read: {e}"
+    if not texts:
+        return {}, f"no built-in sandbox profiles found in {_BUILTIN_PROFILES_DIR}"
+    return texts, None
+
+
+# The built-in profiles, read once at import and never again. A sandboxed
+# command can write the installed package (a project ``.venv`` is inside the
+# workspace), so a profile read from disk per command could be rewritten by
+# the command before it. The snapshot is passed inline (``-p``), and nothing
+# falls back to the files: a failed read is an error, not a disk lookup.
+_BUILTIN_PROFILES, _BUILTIN_PROFILES_ERROR = _load_builtin_profiles()
 
 # macOS ships sandbox-exec here. Never resolve it through PATH: a sandboxed
 # command can write a directory that is on PATH (``.venv/bin``,
@@ -95,33 +118,106 @@ def profile_denies_network(path: Path) -> bool:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return False
+    return _text_denies_network(text)
+
+
+def _text_denies_network(text: str) -> bool:
+    """:func:`profile_denies_network`, over the profile's text."""
     text = _SB_COMMENT.sub("", text)
     if _SB_DENY_NETWORK.search(text):
         return True
     return bool(_SB_DENY_DEFAULT.search(text)) and not _SB_ALLOW_NETWORK.search(text)
 
 
+def _sbpl_string(value: str) -> str:
+    """Quote ``value`` as an SBPL string literal."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _path_forms(path: Path) -> List[str]:
+    """``path`` as written and with symlinks resolved, deduplicated.
+
+    The sandbox matches the real path (``/private/tmp``, not ``/tmp``), and the
+    workspace parameter is passed as written, so a deny rule names both.
+    """
+    forms = [str(path)]
+    real = os.path.realpath(path)
+    if real not in forms:
+        forms.append(real)
+    return forms
+
+
+_SBPL_REGEX_SPECIAL = set(".^$*+?()[]{}|\\")
+
+def _sb_files_regex(directory: str) -> str:
+    """An SBPL regex for any ``*.sb`` file directly in ``directory``."""
+    escaped = "".join("\\" + c if c in _SBPL_REGEX_SPECIAL else c for c in directory)
+    return f"^{escaped}/[^/]*\\.sb$"
+
+
+def _location(path: Path) -> Path:
+    """``path`` with its parent resolved but its last component kept.
+
+    For a symlink this is where the link itself lives, which a command can
+    unlink and replace even when the link's target is out of reach.
+    """
+    return Path(os.path.realpath(path.parent)) / path.name
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
 @dataclass(frozen=True)
 class SandboxProfile:
     """Resolved sandbox profile ready to be applied to a subprocess."""
     name: str
+    #: The profile file. For a built-in profile this is display only: what
+    #: runs is ``text``, the snapshot taken at import.
     path: Path
     workspace_root: Path
     params: Dict[str, str] = field(default_factory=dict)
     # Read from the profile when it is resolved; see ``profile_denies_network``.
     denies_network: bool = False
+    #: Paths no sandboxed write may touch, even inside the workspace: directory
+    #: trees (``subpath``) and single paths (``literal``). See
+    #: ``SandboxPolicy._protected_paths``.
+    protected_subpaths: Tuple[str, ...] = ()
+    protected_literals: Tuple[str, ...] = ()
+    #: SBPL regexes (``regex``), for files that may not exist yet.
+    protected_regexes: Tuple[str, ...] = ()
+    #: A built-in profile's text, passed inline instead of ``path``.
+    text: Optional[str] = None
 
     def as_args(self) -> List[str]:
         """Return argv *prefix* for sandbox-exec (without the wrapped command).
 
         Example output::
 
-            ["/usr/bin/sandbox-exec", "-D", "_RW1=/Users/me/proj", "-f", "/abs/p.sb"]
+            ["/usr/bin/sandbox-exec", "-D", "_RW1=/Users/me/proj", "-p", "<profile>"]
+
+        The profile is always passed inline (``-p``): a built-in profile as its
+        snapshot ``text``, a user profile as an ``(import "<path>")``. Then a
+        ``(deny file-write* …)`` rule covers the protected paths. A later rule
+        wins in SBPL, so the deny holds over the profile's own ``allow``.
         """
         out: List[str] = [SANDBOX_EXEC]
         for k, v in self.params.items():
             out.extend(["-D", f"{k}={v}"])
-        out.extend(["-f", str(self.path)])
+        if self.text is not None:
+            body = self.text.rstrip("\n") + "\n"
+        else:
+            body = f"(version 1)\n(import {_sbpl_string(str(self.path))})\n"
+        filters = [f"(subpath {_sbpl_string(p)})" for p in self.protected_subpaths]
+        filters += [f"(literal {_sbpl_string(p)})" for p in self.protected_literals]
+        filters += [f"(regex {_sbpl_string(p)})" for p in self.protected_regexes]
+        if filters:
+            body += f"(deny file-write* {' '.join(filters)})\n"
+        out.extend(["-p", body])
         return out
 
 
@@ -199,15 +295,16 @@ def _absolutize_path_fields(cfg: Dict[str, Any], anchor: Path) -> None:
         cfg[field_name] = str(p)
 
 
-def _preflight_profile(profile_path: Path, workspace_root: Path) -> Optional[str]:
+def _preflight_profile(profile: SandboxProfile) -> Optional[str]:
     """Ask sandbox-exec to actually load the profile; surface parse errors.
 
-    Checking ``profile_path.is_file()`` only proves the file exists — a
-    profile with invalid TinyScheme syntax would still slip through and then
-    blow up on every real ``run_shell_command`` with ``Invalid sandbox
-    profile``. This runs sandbox-exec against the profile with a trivial
-    no-op command (``/bin/sh -c :``) so malformed profiles surface in
-    ``/sandbox status`` / ``/sandbox on`` before the LLM can hit them.
+    Checking that the profile exists proves nothing about its syntax — a
+    profile with invalid TinyScheme would still slip through and then blow
+    up on every real ``run_shell_command`` with ``Invalid sandbox profile``.
+    This runs the exact argv a command would get (:meth:`SandboxProfile.as_args`,
+    deny rule included) with a no-op command (``/bin/sh -c :``), so a
+    malformed profile surfaces in ``/sandbox status`` / ``/sandbox on`` before
+    the LLM can hit it.
 
     Returns ``None`` on clean load, otherwise a short human-readable reason.
     Callers must gate this behind ``platform_supported`` — sandbox-exec
@@ -215,12 +312,7 @@ def _preflight_profile(profile_path: Path, workspace_root: Path) -> Optional[str
     """
     try:
         r = subprocess.run(
-            [
-                SANDBOX_EXEC,
-                "-D", f"_RW1={workspace_root}",
-                "-f", str(profile_path),
-                "/bin/sh", "-c", ":",
-            ],
+            profile.as_args() + ["/bin/sh", "-c", ":"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -561,22 +653,109 @@ class SandboxPolicy:
             )
 
         profile_name = self._profile_name_for(tool_name, args)
-        profile_path = self._locate_profile(profile_name)
-        if profile_path is None:
-            avail = ", ".join(self.list_profiles()) or "(none)"
-            raise SandboxMisconfiguredError(
-                f"Sandbox is enabled but profile {profile_name!r} could not "
-                f"be located. Available: {avail}. Fix `default_profile` / "
-                f"`rules` / `profiles_dir` in ~/.agentao/sandbox.json, or run "
-                f"/sandbox off to proceed unsandboxed."
-            )
+        profile = self._build_profile(profile_name)
+        if profile is None:
+            raise SandboxMisconfiguredError(self._not_found_message(profile_name))
+        return profile
 
+    def _not_found_message(self, name: str) -> str:
+        if _BUILTIN_PROFILES_ERROR is not None and self._user_profile(name) is None:
+            return f"Sandbox is enabled but {_BUILTIN_PROFILES_ERROR}."
+        avail = ", ".join(self.list_profiles()) or "(none)"
+        return (
+            f"Sandbox is enabled but profile {name!r} could not "
+            f"be located. Available: {avail}. Fix `default_profile` / "
+            f"`rules` / `profiles_dir` in ~/.agentao/sandbox.json, or run "
+            f"/sandbox off to proceed unsandboxed."
+        )
+
+    def _build_profile(self, name: str) -> Optional[SandboxProfile]:
+        """The profile ``name`` as a command would run it, or None if not found."""
+        user_path = self._user_profile(name)
+        if user_path is not None:
+            path, text = user_path, None
+            denies_network = profile_denies_network(user_path)
+        else:
+            stem = name[:-3] if name.endswith(".sb") else name
+            text = _BUILTIN_PROFILES.get(stem)
+            if text is None:
+                return None
+            path = _BUILTIN_PROFILES_DIR / f"{stem}.sb"
+            denies_network = _text_denies_network(text)
+        workspace = self.workspace_root
+        subpaths, literals, regexes = self._protected_paths(workspace)
         return SandboxProfile(
-            name=profile_name,
-            path=profile_path,
-            workspace_root=self.workspace_root,
-            params={"_RW1": str(self.workspace_root)},
-            denies_network=profile_denies_network(profile_path),
+            name=name,
+            path=path,
+            workspace_root=workspace,
+            params={"_RW1": str(workspace)},
+            denies_network=denies_network,
+            protected_subpaths=subpaths,
+            protected_literals=literals,
+            protected_regexes=regexes,
+            text=text,
+        )
+
+    def _protected_paths(
+        self, workspace: Path
+    ) -> Tuple[Tuple[str, ...], Tuple[str, ...], Tuple[str, ...]]:
+        """What a sandboxed write must never touch.
+
+        The sandbox's own configuration: the user config directory
+        (``~/.agentao``, which holds ``sandbox.json`` and also
+        ``permissions.json`` and ``mcp.json``, read unsandboxed later) and a
+        user ``profiles_dir``. A command that can rewrite them can turn the
+        sandbox off, or weaken a profile, for every later command. Denied
+        whatever the workspace, so it does not matter which paths a profile
+        allows (``/tmp``, a custom profile's own subpaths).
+
+        - The directory is denied whole (``subpath``). Inside the workspace,
+          so is each directory between it and the workspace (``literal``),
+          so it cannot be renamed away and replaced.
+        - When the workspace is the directory or lies inside it, denying the
+          tree would deny the workspace itself, so only the files that
+          configure the sandbox are denied: ``sandbox.json`` and any ``.sb``
+          file there, including one not yet written (a new ``.sb`` in a
+          ``profiles_dir`` would shadow a built-in profile).
+        - A symlinked directory is also denied where the link lives, so the
+          link cannot be replaced by a directory the command controls.
+
+        The built-in profiles are not on the list: they run from the snapshot
+        taken at import, so rewriting their files changes nothing in this
+        process, and denying them would make a project ``.venv`` that holds
+        agentao impossible to delete or upgrade under the sandbox.
+        """
+        ws = Path(os.path.realpath(workspace))
+        subpaths: List[str] = []
+        literals: List[str] = []
+        regexes: List[str] = []
+
+        def deny_ancestors(path: Path) -> None:
+            for parent in path.parents:
+                if parent == ws or not _is_within(parent, ws):
+                    break
+                literals.extend(_path_forms(parent))
+
+        roots = [user_root()]
+        user_dir = self._user_profiles_dir()
+        if user_dir is not None:
+            roots.append(user_dir)
+        for root in roots:
+            real_root = Path(os.path.realpath(root))
+            link = _location(root)
+            if link != real_root and link != ws:
+                literals.append(str(link))
+                deny_ancestors(link)
+            if _is_within(ws, real_root):
+                literals.extend(_path_forms(root / "sandbox.json"))
+                regexes.extend(_sb_files_regex(f) for f in _path_forms(root))
+            else:
+                subpaths.extend(_path_forms(root))
+                deny_ancestors(real_root)
+        return (
+            tuple(dict.fromkeys(subpaths)),
+            tuple(dict.fromkeys(literals)),
+            tuple(dict.fromkeys(regexes)),
         )
 
     # ------------------------------------------------------------------
@@ -618,13 +797,15 @@ class SandboxPolicy:
         exist there, and we can't sandbox anyway, so file-existence is
         the most we can verify.
         """
-        path = self._locate_profile(name)
-        if path is None:
+        profile = self._build_profile(name)
+        if profile is None:
+            if _BUILTIN_PROFILES_ERROR is not None and self._user_profile(name) is None:
+                return _BUILTIN_PROFILES_ERROR
             avail = ", ".join(self.list_profiles()) or "(none)"
             return f"profile '{name}' not found (available: {avail})"
         if not self.platform_supported:
             return None
-        compile_error = _preflight_profile(path, self.workspace_root)
+        compile_error = _preflight_profile(profile)
         if compile_error is not None:
             return f"profile '{name}' failed to load: {compile_error}"
         return None
@@ -660,41 +841,39 @@ class SandboxPolicy:
                     return str(rule["profile"])
         return self.default_profile_name
 
-    def _search_dirs(self) -> List[Path]:
-        """Profile search path: user-configured dir first, then built-ins.
+    def _user_profiles_dir(self) -> Optional[Path]:
+        """The configured ``profiles_dir``, searched before the built-ins.
 
         A relative configured path is resolved against the project root,
         never the host process's cwd.
         """
-        out: List[Path] = []
         user_dir = self._config.get("profiles_dir")
-        if user_dir:
-            resolved = self._resolve_config_path(user_dir)
-            if resolved is not None:
-                out.append(resolved)
-            # else: wrong type in config — ignore rather than crash;
-            # the type error is already surfaced via health_error().
-        out.append(_BUILTIN_PROFILES_DIR)
-        return out
+        if not user_dir:
+            return None
+        # ``None`` for a wrong type in config — ignored rather than crashing;
+        # the type error is already surfaced via health_error().
+        return self._resolve_config_path(user_dir)
+
+    def _user_profile(self, name: str) -> Optional[Path]:
+        """``<name>.sb`` in the user ``profiles_dir``, else None."""
+        user_dir = self._user_profiles_dir()
+        if user_dir is None:
+            return None
+        filename = name if name.endswith(".sb") else f"{name}.sb"
+        candidate = user_dir / filename
+        return candidate.resolve() if candidate.is_file() else None
 
     def _locate_profile(self, name: str) -> Optional[Path]:
-        """Find <name>.sb in user profiles_dir (first) then built-in dir."""
-        filename = name if name.endswith(".sb") else f"{name}.sb"
-        for d in self._search_dirs():
-            candidate = d / filename
-            if candidate.is_file():
-                return candidate.resolve()
-        return None
+        """Where ``<name>.sb`` comes from: the user ``profiles_dir`` first, then
+        the built-in snapshot (shown as its file path, never read again)."""
+        profile = self._build_profile(name)
+        return profile.path if profile is not None else None
 
     def list_profiles(self) -> List[str]:
         """List profile names available to this policy (for `/sandbox` CLI)."""
         names: List[str] = []
-        seen = set()
-        for d in self._search_dirs():
-            if not d.is_dir():
-                continue
-            for f in sorted(d.glob("*.sb")):
-                if f.stem not in seen:
-                    names.append(f.stem)
-                    seen.add(f.stem)
+        user_dir = self._user_profiles_dir()
+        if user_dir is not None and user_dir.is_dir():
+            names.extend(f.stem for f in sorted(user_dir.glob("*.sb")))
+        names.extend(n for n in _BUILTIN_PROFILES if n not in names)
         return names

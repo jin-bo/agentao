@@ -32,8 +32,9 @@ macOS 自带 `sandbox-exec` 工具，内核级隔离文件写入和网络访问�
 ### 命令是怎么被包起来的
 
 1. 调用被放行后，工具执行器向策略要一个 profile（[`runtime/tool_executor.py`](https://github.com/jin-bo/agentao/blob/main/agentao/runtime/tool_executor.py)），通过一个私有参数交给 shell 工具。模型和插件 hook 都看不到这个参数。
-2. shell 工具把命令改写成 `/usr/bin/sandbox-exec -D _RW1=<workspace_root> -f <profile.sb> <shell> -c '<command>'`（[`tools/shell.py::_wrap_with_sandbox`](https://github.com/jin-bo/agentao/blob/main/agentao/tools/shell.py)）。后台命令也一样被包。这里特意用绝对路径：沙箱内的命令能写 `PATH` 上的目录（比如 `.venv/bin`），放在那里的 `sandbox-exec` 不能接管下一条命令。
+2. shell 工具把命令改写成 `/usr/bin/sandbox-exec -D _RW1=<workspace_root> -p <profile> <shell> -c '<command>'`（[`tools/shell.py::_wrap_with_sandbox`](https://github.com/jin-bo/agentao/blob/main/agentao/tools/shell.py)）。后台命令也一样被包。这里特意用绝对路径：沙箱内的命令能写 `PATH` 上的目录（比如 `.venv/bin`），放在那里的 `sandbox-exec` 不能接管下一条命令。
 3. 内层的 `<shell>` 和不开沙箱时用的是同一个 shell（`resolve_shell_executable()`：有 bash 用 bash，否则 `/bin/sh`）。所以同一条命令开不开沙箱，解析方式都一样。
+4. **沙箱自己的配置，在沙箱内永远写不了。** profile 以内联方式（`-p`）传入。内置 profile 传的是它的文本，在 agentao 被导入时读取一次：改写或删除已安装的 `.sb` 文件，影响不到正在运行的进程，所以装有 agentao 的项目 `.venv` 照样可写、可删。来自 `profiles_dir` 的用户 profile 以 `(import "<路径>")` 传入。profile 之后跟一条 `(deny file-write* …)`；后出现的规则优先，所以它压过 profile 里的 `allow`。不管工作区在哪，它都覆盖 `~/.agentao`（含 `sandbox.json`，以及之后会在沙箱外被读取的 `permissions.json` 和 `mcp.json`）和用户的 `profiles_dir`，因此 profile 允许写哪里都无关紧要。在工作区内，它还覆盖这些目录和工作区之间的每一级目录，以及软链接本身所在的位置，让它们没法被改名挪走再替换。工作区就是 `~/.agentao` 或某个 `profiles_dir`，或位于其中时，只禁写 `sandbox.json` 和那里的 `.sb` 文件（包括新建的）。否则一条命令就能往 `sandbox.json` 写 `{"enabled": false}`，或新增、改写 profile，影响之后的每一条命令（[`sandbox/policy.py::_protected_paths`](https://github.com/jin-bo/agentao/blob/main/agentao/sandbox/policy.py)）。`/sandbox status` 的预检查用的就是这同一组参数，外加一个空操作命令。
 
 stdout、stderr 和退出码原样透传。
 
