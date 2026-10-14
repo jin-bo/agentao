@@ -35,6 +35,7 @@ from xml.sax.saxutils import quoteattr
 
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...compaction.coordinator import CompactionRequest
+from ...context_manager import _LENGTH_FINISH_REASONS as _CM_LENGTH_FINISH_REASONS
 from ...context_manager import is_context_too_long_error
 from ...llm._retry import (
     _is_image_rejection,
@@ -59,12 +60,10 @@ if TYPE_CHECKING:  # pragma: no cover - import-time only
     from ...agent import Agentao
 
 
-# ``finish_reason`` spellings (matched case-insensitively) that mean "output was
-# truncated at the token limit". OpenAI says ``"length"``; other providers /
-# gateways surface the same condition differently (Gemini ``"MAX_TOKENS"``, some
-# proxies ``"max_tokens"`` / ``"model_length"``). agentao is provider-neutral, so
-# the truncation guard must not couple to a single vendor's exact string.
-_LENGTH_FINISH_REASONS = frozenset({"length", "max_tokens", "model_length"})
+# ``finish_reason`` spellings that mean "output was truncated at the token
+# limit". One set, shared with the compaction summarizer; see
+# ``context_manager._LENGTH_FINISH_REASONS``.
+_LENGTH_FINISH_REASONS = _CM_LENGTH_FINISH_REASONS
 
 # Refuse to keep re-issuing after this many *consecutive* length-truncated
 # tool-call turns. Because the truncation path never runs ``execute()`` (so the

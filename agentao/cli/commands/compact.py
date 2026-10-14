@@ -48,6 +48,9 @@ _FAILURE_HINTS = {
         "result"
     ),
     "summary_empty": "the summarization call returned nothing",
+    "summary_truncated": (
+        "the summary was cut off at the token limit, so it was not used"
+    ),
     "summary_input_error": (
         "the conversation history could not be rendered into a transcript "
         "for the summarizer (see agentao.log)"

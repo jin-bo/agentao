@@ -91,6 +91,18 @@ SQLiteMemoryStore.open_or_memory(<cwd>/.agentao/memory.db)
 
 The user-scope store uses `SQLiteMemoryStore.open(...)` (strict), with no `:memory:` fallback. If it fails, the factory logs a warning and builds the manager without a user store. Existing user memories are then not read this session, and a new user-scope write is saved to the **project** store, with a log entry ([below](#disable-user-level-memory)). **Memory never crashes agent construction** — worst case is loss of cross-session persistence.
 
+A store can also open and then fail: a `memory.db` with a valid header and corrupt pages opens fine, and every query on it raises `sqlite3.DatabaseError`. The reads on the turn path (the `<memory-stable>` block and recall) catch a database error, log one warning, and return nothing from that store, so the turn goes on without its memories. Any other exception still propagates. Writes to a broken store still fail: `save_memory` returns the error to the model.
+
+None of these cases stop the session, so a log line is the only trace unless you show it. `MemoryManager.take_store_problems()` returns one message per store that could not be opened or read, each message once. The CLI prints them before the prompt and after each `/goal` turn. A host that embeds Agentao can call it after each turn:
+
+```python
+reply = agent.chat(message)
+for problem in agent.memory_manager.take_store_problems():
+    ui.warn(problem)
+```
+
+To recover a corrupt store, move `memory.db` aside. The next session creates a fresh one.
+
 ## How to use it while embedding
 
 You usually **don't touch MemoryManager directly** — Agentao handles:
@@ -341,7 +353,7 @@ A user clicks "new conversation" → `agent.clear_history()` — that clears ses
 
 - Memory ≠ conversation history. Memory persists across sessions in SQLite; history lives on `agent.messages`.
 - Two scopes / two DBs: **project** (`<wd>/.agentao/memory.db`) and **user** (`~/.agentao/memory.db`). Multi-tenant deployments must key user scope by `tenant_id+user_id` or disable it.
-- Read-only / restricted FS auto-degrades to in-memory store with a warning — agent keeps starting.
+- Read-only / restricted FS auto-degrades to in-memory store with a warning — agent keeps starting. A corrupt store is skipped on read. `take_store_problems()` gives you the notices to show.
 - `clear_history()` does **not** clear memory; that's intentional. Wipe both explicitly with `MemoryManager.wipe_all()` when "new conversation" should forget everything — and check `result.ok`, because the counts cannot tell a failed wipe from an empty store.
 
 → Next: [5.6 System Prompt Customization](./6-system-prompt)

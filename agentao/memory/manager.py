@@ -13,7 +13,7 @@ import logging
 import threading
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, TypeVar
 
 from .guards import MemoryGuard, SensitiveMemoryError
 from .models import (
@@ -31,6 +31,8 @@ if TYPE_CHECKING:
     from ..capabilities.memory import MemoryStore
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 def _now() -> str:
@@ -80,6 +82,100 @@ class MemoryManager:
         self._write_version_lock = threading.Lock()
         # Stores whose ``change_version()`` failure has been warned about once.
         self._change_version_warned: set = set()
+        # One notice per store that could not be read (or was never opened),
+        # in report order; ``_store_problems_taken`` counts the ones a host
+        # has already shown. See :meth:`take_store_problems`.
+        self._store_problems: Dict[str, str] = {}
+        self._store_problems_taken = 0
+        # Every guarded read that failed, notice or not. A cache built from a
+        # failed read (the recall index) compares this before and after, so
+        # it does not keep an empty answer once the store reads again.
+        self._read_failures = 0
+        self._store_problems_lock = threading.Lock()
+        fallback = getattr(project_store, "fallback_reason", None)
+        if isinstance(fallback, str) and fallback:
+            self.note_store_problem("project", fallback)
+
+    # =========================================================================
+    # Store health
+    # =========================================================================
+
+    def note_store_problem(self, label: str, message: str) -> bool:
+        """Record that the ``label`` store (``"project"`` / ``"user"``) is unusable.
+
+        The first message per store is kept; later ones are dropped, so a store
+        that fails every turn produces one notice. The embedding factory calls
+        this for a user store it could not open. Returns ``True`` when this
+        call recorded the store's first notice.
+        """
+        with self._store_problems_lock:
+            if label in self._store_problems:
+                return False
+            self._store_problems[label] = message
+            return True
+
+    def take_store_problems(self) -> List[str]:
+        """Notices about unusable stores that no caller has taken yet.
+
+        A host shows these to the user: a store that cannot be read means the
+        session runs without those memories, and the log alone is easy to miss.
+        Each notice is returned once.
+        """
+        with self._store_problems_lock:
+            problems = list(self._store_problems.values())
+            new = problems[self._store_problems_taken:]
+            self._store_problems_taken = len(problems)
+        return new
+
+    def _read_store(self, label: str, store: Any, read: Callable[[Any], _T], default: _T) -> _T:
+        """Run ``read(store)``; on a database error return ``default`` and note it.
+
+        A ``memory.db`` with a valid header and corrupt pages opens fine and
+        then fails every query. Reads on the turn path (the stable block, the
+        recall index) went through here unguarded, so every ``chat()`` raised
+        before the model was called. The session now runs without that store's
+        memories instead. The manager does not import ``sqlite3`` (see the
+        module docstring), so the class is matched by its module.
+        """
+        try:
+            return read(store)
+        except Exception as exc:
+            if not _is_database_error(exc):
+                raise
+            with self._store_problems_lock:
+                self._read_failures += 1
+            path = getattr(store, "db_path", None)
+            where = f" at {path}" if isinstance(path, str) else ""
+            # ``OperationalError`` ("database is locked", an I/O error) says
+            # nothing about the file's contents: advising a user to move a
+            # healthy store aside that another session is writing would lose
+            # its memories. Only the other database errors point at corruption.
+            if _is_sqlite_error(exc, "OperationalError"):
+                advice = (
+                    "The file may be locked by another process or unavailable; "
+                    "do not move it aside unless the error persists."
+                )
+            else:
+                advice = "The file may be corrupt: move it aside to start a fresh one."
+            first = self.note_store_problem(
+                label,
+                f"The {label} memory store{where} cannot be read "
+                f"({type(exc).__name__}: {exc}). This session runs without "
+                f"its memories. {advice}",
+            )
+            if first:
+                logger.warning(
+                    "%s memory store%s cannot be read (%s: %s); continuing without it",
+                    label, where, type(exc).__name__, exc,
+                )
+            else:
+                logger.debug("%s memory store read failed", label, exc_info=True)
+            return default
+
+    @property
+    def read_failures(self) -> int:
+        """How many guarded store reads have failed. Moves on every failure."""
+        return self._read_failures
 
     @property
     def write_version(self) -> int:
@@ -275,13 +371,19 @@ class MemoryManager:
     ) -> List[MemoryRecord]:
         """Return all entries, optionally filtered by scope. Pinned first, then by created_at."""
         if scope == "user":
-            return self.user_store.list_memories(scope="user") if self.user_store else []
+            if not self.user_store:
+                return []
+            return self._read_store(
+                "user", self.user_store, lambda s: s.list_memories(scope="user"), [],
+            )
         if scope == "project":
-            return self.project_store.list_memories(scope="project")
+            return self._read_store(
+                "project", self.project_store, lambda s: s.list_memories(scope="project"), [],
+            )
 
-        result = self.project_store.list_memories()
+        result = self._read_store("project", self.project_store, lambda s: s.list_memories(), [])
         if self.user_store:
-            result += self.user_store.list_memories()
+            result += self._read_store("user", self.user_store, lambda s: s.list_memories(), [])
         result.sort(key=lambda e: e.created_at)
         return result
 
@@ -648,7 +750,10 @@ class MemoryManager:
         Returns empty string when there are no prior-session summaries.
         """
         try:
-            all_recent = self.project_store.list_session_summaries(session_id=None, limit=10)
+            all_recent = self._read_store(
+                "project", self.project_store,
+                lambda s: s.list_session_summaries(session_id=None, limit=10), [],
+            )
             cross = [s for s in all_recent if s.session_id != self._session_id]
             if not cross:
                 return ""
@@ -673,3 +778,16 @@ class MemoryManager:
             to_remove = auto[: len(auto) - MAX_AUTO_ENTRIES_PER_SCOPE]
             for r in to_remove:
                 store.soft_delete_memory(r.id)
+
+
+def _is_sqlite_error(exc: BaseException, name: str) -> bool:
+    """``sqlite3.<name>`` or a subclass, without importing ``sqlite3``."""
+    return any(
+        cls.__module__ == "sqlite3" and cls.__name__ == name
+        for cls in type(exc).__mro__
+    )
+
+
+def _is_database_error(exc: BaseException) -> bool:
+    """``sqlite3.DatabaseError`` or a subclass, without importing ``sqlite3``."""
+    return _is_sqlite_error(exc, "DatabaseError")

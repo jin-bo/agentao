@@ -235,9 +235,10 @@ sqlite3 .agentao/memory.db ".restore .agentao/memory.db.bak"
 ### 记忆没进 prompt
 
 1. 跑 `/memory status`，确认条目数不是 0、`Recall errors` 为 0。召回出错会以 warning 记进 `agentao.log`。
-2. 确认 `.agentao/memory.db` 可写。不可写时 Agentao 会退回内存 store，退出后所有记忆都会丢。
-3. `Recall hits` 一直不涨，说明没有条目得分。只有你的消息和条目的标签、标题、关键词或内容有共同的词，它才会被召回。换更贴切的标签或标题重新存一次。
-4. 想让某条每轮都出现，就给它一个结构化类型：打上 `decision`、`constraint`、`workflow` 或 `preference` 标签，它就会进 `<memory-stable>`。注意 `preference` 标签同时会让它成为用户作用域条目。
+2. 确认 `.agentao/memory.db` 可写。不可写时 Agentao 会退回内存 store，退出后所有记忆都会丢。发生这种情况时，CLI 会打印一条带文件路径的 warning。
+3. 如果 CLI 打印了 `The project memory store at … cannot be read`，会话会在没有这个库的情况下继续。提示说文件可能损坏时，把 `memory.db` 移走即可新建一个；想尝试 `sqlite3 memory.db .recover` 的话，保留旧文件。提示说文件可能被锁住时，是别的进程正占用它：不要移走，等那个进程结束后重启。
+4. `Recall hits` 一直不涨，说明没有条目得分。只有你的消息和条目的标签、标题、关键词或内容有共同的词，它才会被召回。换更贴切的标签或标题重新存一次。
+5. 想让某条每轮都出现，就给它一个结构化类型：打上 `decision`、`constraint`、`workflow` 或 `preference` 标签，它就会进 `<memory-stable>`。注意 `preference` 标签同时会让它成为用户作用域条目。
 
 ### `/memory delete` 找不到条目
 
@@ -248,6 +249,7 @@ sqlite3 .agentao/memory.db ".restore .agentao/memory.db.bak"
 ### 会话摘要不见了
 
 - 只有一次完整压缩**成功**时才会写摘要。短会话根本不压缩，自然没有摘要。
+- 在 token 上限处被截断的摘要不会被采用：这次压缩以 `summary_truncated` 失败，历史保持原样。它和空摘要一样计入熔断器。例外是 API 报上下文溢出后的那次压缩：这时会保留被截断的摘要，并在 `agentao.log` 记一条 warning，因为下一步根本不保留摘要。
 - 自动压缩连续失败三次后，熔断器会暂停自动压缩。这时 `/context` 显示 `Compact breaker: open (3/3 consecutive failures, last: …)`。跑一次 `/compact`：它以探针身份运行，成功即复位熔断器。`/clear` 同样会复位。
 - 压缩也可能被有意**取消**：`PreCompact` 命令钩子返回 `{"hookSpecificOutput": {"compactionDecision": "cancel"}}`，或宿主的 `compaction_controller=` 返回取消。取消不计入熔断器，`/context` 里也看不到，去 `agentao.log` 里找 `Compaction cancelled:`。
 - `/clear` 和 `/memory clear` 会删掉**所有**会话的摘要。`/new` 不删，以往会话的摘要照样进入 `<memory-stable>`。

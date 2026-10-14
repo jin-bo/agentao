@@ -13,6 +13,16 @@ from .compaction.types import (
 )
 from .llm._stream_response import ANTHROPIC_THINKING_BLOCKS, OPENAI_REASONING_ITEMS
 
+# ``finish_reason`` spellings (matched case-insensitively) that mean "output was
+# truncated at the token limit". OpenAI says ``"length"``; other providers /
+# gateways surface the same condition differently (Gemini ``"MAX_TOKENS"``, some
+# proxies ``"max_tokens"`` / ``"model_length"``). agentao is provider-neutral, so
+# the truncation guards must not couple to a single vendor's exact string.
+# Defined here, not in the chat loop: ``runtime/chat_loop/_runner.py`` already
+# imports this module, while importing ``agentao.runtime`` from here would load
+# the chat loop. Both the summarizer and the chat loop read this one set.
+_LENGTH_FINISH_REASONS = frozenset({"length", "max_tokens", "model_length"})
+
 try:
     import tiktoken as _tiktoken
     _TIKTOKEN_AVAILABLE = True
@@ -271,6 +281,13 @@ class ContextManager:
         # ``memory_tool``). The compaction call sites in
         # ``runtime/chat_loop/_compaction.py`` own turn state and fold it in.
         self.last_summary_finish_reason_missing: bool = False
+
+        # True when the most recent summarization was cut off at the token
+        # limit (codex #53451). Refused on every path but API overflow, where
+        # it is kept (see ``_summarize_formatted``). Read by the compaction
+        # failure path so the breaker records ``summary_truncated`` rather than
+        # ``summary_empty``: the two need different fixes.
+        self.last_summary_truncated: bool = False
 
         # True when the most recent ``microcompact_messages`` call actually
         # shortened something. It always returns a fresh list, so identity
@@ -1663,6 +1680,7 @@ class ContextManager:
                 on_summarize()
             summary = self._summarize_formatted(
                 prep.summary_input, cancellation_token=cancellation_token,
+                accept_truncated=(reason == "api_overflow"),
             )
 
         # Ahead of both the failure count and the commit, on either summary
@@ -1672,8 +1690,9 @@ class ContextManager:
             cancellation_token.check()
 
         if not summary:
+            _why = "summary_truncated" if self.last_summary_truncated else "summary_empty"
             internal_reason = (
-                f"{internal_reason}+summary_empty" if internal_reason else "summary_empty"
+                f"{internal_reason}+{_why}" if internal_reason else _why
             )
             # Same exemption the structural failure above has, and for the
             # same reason: a user-driven compaction does not loop, so there
@@ -1918,11 +1937,17 @@ class ContextManager:
         formatted: str,
         *,
         cancellation_token: Optional[CancellationToken] = None,
+        accept_truncated: bool = False,
     ) -> str:
         """The LLM half of summarization, over an already-assembled transcript.
 
         ``cancellation_token`` is handed to ``chat()`` so its retry backoff —
         up to a minute per wait — ends when the turn is cancelled.
+
+        ``accept_truncated`` keeps a summary cut off at the token limit
+        instead of refusing it. API overflow passes it: the rung after a
+        failed full compaction is ``minimal_history``, which keeps no summary
+        at all, so a partial one still loses less.
 
         Returns:
             Formatted summary text, or empty string on failure.
@@ -1932,6 +1957,7 @@ class ContextManager:
         # turn, for the case where a compaction returns without ever reaching
         # this method.
         self.last_summary_finish_reason_missing = False
+        self.last_summary_truncated = False
         try:
             recall_messages = [
                 {"role": "system", "content": self._SUMMARIZE_SYSTEM_PROMPT},
@@ -1947,6 +1973,31 @@ class ContextManager:
             _fr = getattr(response.choices[0], "finish_reason", None)
             if not _fr or not getattr(response, "finish_reason_reported", True):
                 self.last_summary_finish_reason_missing = True
+            # A summary cut off at the token limit is refused, not committed:
+            # it replaces history for good, so a half-written one (often still
+            # inside ``<analysis>``, which ``_format_summary`` then keeps as the
+            # whole summary) loses everything after the cut. Refused through the
+            # empty-summary failure path, which history and the breaker
+            # already handle. API overflow keeps it (``accept_truncated``).
+            if isinstance(_fr, str) and _fr.strip().lower() in _LENGTH_FINISH_REASONS:
+                self.last_summary_truncated = True
+                if not accept_truncated:
+                    try:
+                        self.llm_client.logger.warning(
+                            f"Summarization refused: output cut off at the token limit "
+                            f"(finish_reason={_fr!r})"
+                        )
+                    except Exception:
+                        pass
+                    return ""
+                try:
+                    self.llm_client.logger.warning(
+                        f"Summarization cut off at the token limit "
+                        f"(finish_reason={_fr!r}); kept on the API-overflow path, "
+                        f"where the next rung keeps no summary at all"
+                    )
+                except Exception:
+                    pass
             raw = response.choices[0].message.content or ""
             return self._format_summary(raw)
         except Exception as e:

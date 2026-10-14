@@ -321,7 +321,9 @@ class MemoryRetriever:
         ):
             return
         self._index_built = False
+        failures_before = getattr(self._manager, "read_failures", None)
         records = self._manager.get_all_entries()
+        failures_after = getattr(self._manager, "read_failures", None)
         self._inverted.clear()
         self._bundles_by_id.clear()
         self._records_by_id.clear()
@@ -332,7 +334,16 @@ class MemoryRetriever:
             for tok in bundle.all_tokens:
                 self._inverted.setdefault(tok, set()).add(r.id)
         self._index_version = current
-        self._index_built = True
+        # A store that failed to read gave no records, which is not the same
+        # as having none: cached, that empty (or one-store) index would stand
+        # until the next write, long after a lock cleared. Use it this turn and
+        # read again on the next.
+        read_failed = (
+            isinstance(failures_before, int)
+            and isinstance(failures_after, int)
+            and failures_after != failures_before
+        )
+        self._index_built = not read_failed
 
     def tokenize(self, text: str) -> set:
         """Tokenize *text* with jieba CJK segmentation and light normalization.

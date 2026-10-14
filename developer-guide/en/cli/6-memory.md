@@ -235,9 +235,10 @@ To move memory to another machine, copy the backup files to the same paths there
 ### Memory doesn't reach the prompt
 
 1. Run `/memory status`. Check that the entry count is not zero and that `Recall errors` is 0. Recall errors are logged as warnings in `agentao.log`.
-2. Check that `.agentao/memory.db` is writable. If it is not, Agentao falls back to an in-memory store, and every memory is lost on exit.
-3. If `Recall hits` stays flat, no entry scored. An entry is recalled only when your message shares words with its tags, title, keywords or content. Save it again with better tags or title.
-4. To show an entry on every turn, give it a structural type: tag it `decision`, `constraint`, `workflow` or `preference`. It then goes into `<memory-stable>`. A `preference` tag also makes it a user-scope entry.
+2. Check that `.agentao/memory.db` is writable. If it is not, Agentao falls back to an in-memory store, and every memory is lost on exit. The CLI prints a warning naming the file when this happens.
+3. If the CLI printed `The project memory store at … cannot be read`, the session runs without that store. When the message says the file may be corrupt, move `memory.db` aside to start a fresh one, and keep the old file if you want to try `sqlite3 memory.db .recover`. When it says the file may be locked, another process holds it: don't move it, and restart once that process is done.
+4. If `Recall hits` stays flat, no entry scored. An entry is recalled only when your message shares words with its tags, title, keywords or content. Save it again with better tags or title.
+5. To show an entry on every turn, give it a structural type: tag it `decision`, `constraint`, `workflow` or `preference`. It then goes into `<memory-stable>`. A `preference` tag also makes it a user-scope entry.
 
 ### `/memory delete` finds nothing
 
@@ -248,6 +249,7 @@ To move memory to another machine, copy the backup files to the same paths there
 ### Session summaries are missing
 
 - A summary is written only when a full compaction **succeeds**. A short session never compacts, so it has no summary.
+- A summary cut off at the token limit is not used: the compaction fails with `summary_truncated`, and history stays as it was. It counts toward the breaker like an empty summary. The exception is a compaction after the API reports a context overflow: there the cut-off summary is kept and `agentao.log` gets a warning, because the next step keeps no summary at all.
 - After three failed automatic compactions in a row, the breaker pauses automatic compaction. `/context` then shows `Compact breaker: open (3/3 consecutive failures, last: …)`. Run `/compact`: it runs as a probe, and a success closes the breaker. `/clear` also closes it.
 - A compaction can be **cancelled** on purpose: by a `PreCompact` command hook that returns `{"hookSpecificOutput": {"compactionDecision": "cancel"}}`, or by a host's `compaction_controller=`. A cancel does not count toward the breaker and does not show in `/context`. Look for `Compaction cancelled:` in `agentao.log`.
 - `/clear` and `/memory clear` delete the summaries of **every** session. `/new` keeps them, and earlier sessions' summaries still reach `<memory-stable>`.
