@@ -41,7 +41,7 @@ def chat(
 **Special returns**:
 - `"[Interrupted by user]"` — `KeyboardInterrupt` caught. History gets one assistant message: the text the model had streamed before the interrupt, then `[Interrupted]` — or `[Interrupted]` alone when the interrupt did not land in a stream (the text of an earlier call in the turn is already in history)
 - `"[Cancelled: <reason>]"` — cancellation token fired
-- `"[Blocked by hook] ..."` / `"[Hook stopped] ..."` — plugin hook intercepted
+- `"[Blocked by hook] ..."` / `"[Hook stopped] ..."` — plugin hook intercepted. `agent.last_turn.incomplete_reason` is `"hook_stop"` and `is_answer` is `False`
 
 `chat()` does **not** raise on these — it returns gracefully. Your caller must recognize the prefixes.
 

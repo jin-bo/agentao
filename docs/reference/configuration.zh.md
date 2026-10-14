@@ -505,7 +505,7 @@ prompt 组成规则与约定见 [开发者指南 5.6](../../developer-guide/zh/p
 | `empty_response` | `reasoning_only` | 只有推理，没有答案正文。 |
 | `length_truncated` | `length_truncated` | 输出在 token 上限处被截断——要么是工具调用的参数被截断（harness 随即中止该 turn），要么是最终答案在半句处被切断。 |
 | `doom_loop` | `doom_loop` | 模型重复同一个调用，直至检测器 halt 了该 turn。 |
-| `hook_stop` | `hook_stop` | 某个插件 hook 返回了 `continue: false`，把这个 turn 结束了。`PreToolUse` 与 `PostToolUse` / `PostToolUseFailure` 都会走到这里。 |
+| `hook_stop` | `hook_stop` | 某个插件 hook 把这个 turn 结束了。`PreToolUse` 与 `PostToolUse` / `PostToolUseFailure` 经由 `continue: false` 走到这里；`UserPromptSubmit` 拦截或停止提示时也走到这里，此时模型还没被调用。 |
 | `runtime_error` | `llm_error` | LLM API 调用失败（provider 错误 / 限流 / 认证）且重试后仍失败；message 里带 provider 的真实报错。 |
 
 `empty_response` 表示模型什么都没说；`length_truncated` / `doom_loop` 表示 harness 停掉了一个不收敛的 turn；`hook_stop` 表示是你自己的配置主动把它停了；`llm_error` 表示 provider 调用失败。它们都在最后判定，因此权限拒绝、max-iterations、取消或抛出的错误都会保留各自更具体的退出码。

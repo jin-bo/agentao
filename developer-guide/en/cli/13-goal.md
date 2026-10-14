@@ -47,11 +47,12 @@ The loop checks the goal after each turn. It stops when:
 A turn counts as **no progress** in two cases:
 
 - it produced no answer (`no_output` or `reasoning_only`) and called no tools.
+- a plugin hook ended it (`hook_stop`) and it called no tools. This is a `UserPromptSubmit` hook that blocks or stops the continuation prompt, so the model is never called.
 - it failed at the provider (`llm_error`). Tool calls earlier in the same turn do not change this. A provider that keeps failing is not doing useful work.
 
-Every other turn resets the count to zero. That includes a turn that gave an answer, a turn that called a tool, and a turn that the harness halted at a ceiling (`max_iterations`, `doom_loop`, `length_truncated`, `hook_stop`). A halted turn did work, so it is not idle.
+Every other turn resets the count to zero. That includes a turn that gave an answer, a turn that called a tool, and a turn that the harness halted at a ceiling (`max_iterations`, `doom_loop`, `length_truncated`). A halted turn did work, so it is not idle. A `hook_stop` turn whose tools ran (a `PostToolUse` hook returned `continue: false`) also resets the count.
 
-The budgets limit how much a goal can *do*. This stop limits how long it can do *nothing*. It is the only stop that still applies with `--unbounded`. When it fires, the CLI tells you that the turns made no progress and names the reason. It does not say "it needs your input", because the agent asked nothing. Check the model or the provider, then `/goal resume`.
+The budgets limit how much a goal can *do*. This stop limits how long it can do *nothing*. It is the only stop that still applies with `--unbounded`. When it fires, the CLI tells you that the turns made no progress and names the reason. It does not say "it needs your input", because the agent asked nothing. Check the model or the provider (for `hook_stop`, your `UserPromptSubmit` hooks), then `/goal resume`.
 
 ## Budgets
 

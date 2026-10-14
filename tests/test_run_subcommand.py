@@ -605,6 +605,29 @@ def test_llm_error_turn_exits_non_zero_and_surfaces_provider_message(
     assert payload.get("final_text") is None
 
 
+def test_hook_stop_turn_surfaces_the_hooks_reason(
+    monkeypatch, tmp_path, stub_pipeline, capsys,
+):
+    """A ``UserPromptSubmit`` block returns ``[Blocked by hook] <reason>``.
+    ``final_text`` is nulled on the error envelope, so the message must carry
+    the reason or a pipeline cannot see why the run stopped."""
+    captured, StubAgent = stub_pipeline
+    monkeypatch.setattr(
+        StubAgent, "chat",
+        _emit_incomplete_turn("hook_stop", "[Blocked by hook] not this prompt"),
+    )
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == run.EXIT_RUNTIME_ERROR
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["reason"] == "hook_stop"
+    assert "not this prompt" in payload["error"]["message"]
+    assert payload.get("final_text") is None
+
+
 def test_incomplete_outcomes_covers_every_runtime_reason():
     """The CLI outcome table must key on exactly the runtime's wire vocabulary.
 

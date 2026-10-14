@@ -569,7 +569,7 @@ carries the exact variant — branch on `reason`, not on `message`:
 | `empty_response` | `reasoning_only` | Reasoning, but no answer text. |
 | `length_truncated` | `length_truncated` | Output cut off at the token limit — a tool call whose arguments were truncated (the harness then halts the turn), or a final answer cut off mid-sentence. |
 | `doom_loop` | `doom_loop` | The model repeated one call until the detector halted the turn. |
-| `hook_stop` | `hook_stop` | A plugin hook returned `continue: false` and ended the turn. `PreToolUse` and `PostToolUse` / `PostToolUseFailure` both reach this. |
+| `hook_stop` | `hook_stop` | A plugin hook ended the turn. `PreToolUse` and `PostToolUse` / `PostToolUseFailure` reach this with `continue: false`; `UserPromptSubmit` reaches it by blocking or stopping the prompt, before the model is called. |
 | `runtime_error` | `llm_error` | The LLM API call failed (provider error / rate limit / auth) after retries; the message carries the provider's actual error. |
 
 `empty_response` means the model said nothing; `length_truncated` / `doom_loop`
