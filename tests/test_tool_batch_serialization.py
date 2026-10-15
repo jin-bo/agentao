@@ -170,3 +170,130 @@ def test_ctrl_c_in_a_serial_batch_cancels_the_turn():
 
     assert token.is_cancelled
     assert log == []  # the call after the interrupt never started
+
+
+# ---------------------------------------------------------------------------
+# Sub-agent calls make the batch serial (their is_read_only is a permission
+# answer: read-only mode may delegate; the child can still write elsewhere)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def parent(tmp_path, monkeypatch):
+    from agentao.agents.bg_store import BackgroundTaskStore
+    from agentao.permissions import PermissionEngine
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    (tmp_path / "user").mkdir()
+    agent = Agentao(
+        working_directory=tmp_path, api_key="k",
+        base_url="https://test.local/v1", model="m",
+        enable_builtin_agents=True, bg_store=BackgroundTaskStore(persistence_dir=None),
+        logger=logging.getLogger("test.batch.parent"),
+        permission_engine=PermissionEngine(project_root=tmp_path, user_root=tmp_path / "user"),
+    )
+    yield agent
+    agent.close()
+
+
+def test_a_sub_agent_call_makes_the_batch_serial(parent):
+    wrapper = parent.tools.tools["agent_generalist"]
+    assert wrapper.is_read_only is True                 # the permission answer is unchanged
+
+    plans = [make_plan(wrapper, call_id="a"), make_plan(_Probe("r", [], read_only=True), call_id="r")]
+
+    assert _all_read_only(plans) is False
+
+
+def test_check_background_agent_still_batches_in_parallel(parent):
+    checker = parent.tools.tools["check_background_agent"]
+    plans = [make_plan(checker, call_id="c"), make_plan(_Probe("r", [], read_only=True), call_id="r")]
+
+    assert _all_read_only(plans) is True
+
+
+def test_a_read_after_a_sub_agent_sees_what_it_wrote(parent, tmp_path, monkeypatch):
+    """The race itself: the sub-agent's write lands before the read runs."""
+    wrapper = parent.tools.tools["agent_generalist"]
+    target = tmp_path / "out.txt"
+
+    def child_writes(**_kwargs):
+        time.sleep(0.2)
+        target.write_text("written by the sub-agent")
+        return "done"
+
+    monkeypatch.setattr(wrapper, "execute", child_writes)
+
+    class _ReadsTarget(_Probe):
+        def execute(self, **_kwargs) -> str:
+            return target.read_text() if target.exists() else "missing"
+
+    executor = ToolExecutor(NullTransport(), logging.getLogger("test.batch"))
+    results = executor.execute_batch([
+        make_plan(wrapper, call_id="a"),
+        make_plan(_ReadsTarget("r", [], read_only=True), call_id="r"),
+    ])
+
+    assert results["r"].result == "written by the sub-agent"
+
+
+def test_read_only_mode_keeps_a_sub_agent_batch_parallel(parent):
+    """Under read-only mode the child cannot write, so nothing can race."""
+    wrapper = parent.tools.tools["agent_generalist"]
+    plans = [make_plan(wrapper, call_id="a"), make_plan(_Probe("r", [], read_only=True), call_id="r")]
+
+    assert _all_read_only(plans, readonly_mode=True) is True
+
+
+def test_a_background_launch_does_not_make_the_batch_serial(parent):
+    """Serial order could not put a still-running child's writes before a read."""
+    wrapper = parent.tools.tools["agent_generalist"]
+    reader = make_plan(_Probe("r", [], read_only=True), call_id="r")
+
+    launch = make_plan(wrapper, call_id="a", args={"task": "t", "run_in_background": True})
+    assert _all_read_only([launch, reader]) is True
+
+    # Only a real ``True`` exempts it; anything else stays serial.
+    truthy = make_plan(wrapper, call_id="a", args={"task": "t", "run_in_background": "yes"})
+    assert _all_read_only([truthy, reader]) is False
+
+    # The rest of the batch is still checked: a write keeps it serial.
+    writer = make_plan(_Probe("w", []), call_id="w")
+    assert _all_read_only([launch, reader, writer]) is False
+
+
+def test_the_runner_passes_read_only_mode_to_the_batch_decision(parent, tmp_path, monkeypatch):
+    """Through the real ``ToolRunner``: a dropped ``readonly_mode`` would
+    default to False and silently make this batch serial."""
+    import agentao.runtime.tool_executor as executor_module
+
+    parent.set_permission_mode("read-only")
+    (tmp_path / "in.txt").write_text("hello")
+    monkeypatch.setattr(parent.tools.tools["agent_generalist"], "execute", lambda **_kw: "done")
+
+    pooled: List[str] = []
+    real_pool = executor_module.ThreadPoolExecutor
+
+    class _RecordingPool(real_pool):
+        def submit(self, fn, *args, **kwargs):
+            pooled.append(args[1].function_name)        # ctx.run(run_one, plan)
+            return super().submit(fn, *args, **kwargs)
+
+    monkeypatch.setattr(executor_module, "ThreadPoolExecutor", _RecordingPool)
+    calls = [
+        ChatCompletionMessageToolCall(
+            id="c-agent", type="function",
+            function={"name": "agent_generalist", "arguments": '{"task": "look"}'},
+        ),
+        ChatCompletionMessageToolCall(
+            id="c-read", type="function",
+            function={"name": "read_file", "arguments": '{"file_path": "in.txt"}'},
+        ),
+    ]
+
+    parent.tool_runner.execute(calls)
+
+    assert sorted(pooled) == ["agent_generalist", "read_file"]

@@ -61,7 +61,7 @@ class MyTool(Tool):
 | `parameters` | ✅ | JSON Schema; anything OpenAI function-calling supports |
 | `execute(**kwargs) -> str` | ✅ | Returns a plain string; no dicts, no bytes |
 | `requires_confirmation` | ❌ | True for side-effecting tools → routes through `confirm_tool` |
-| `is_read_only` | ❌ | True if read-only mode may run it: no file writes, no commands, no state outside the session. Read-only mode denies every tool that returns False. It also decides batching: the calls of one model response run in parallel only when every tool returns True, otherwise one at a time, in order |
+| `is_read_only` | ❌ | True if read-only mode may run it: no file writes, no commands, no state outside the session. Read-only mode denies every tool that returns False. It also decides batching: the calls of one model response run in parallel only when every tool returns True, otherwise one at a time, in order. A sub-agent call (`agent_*`) makes the batch serial outside read-only mode, because the sub-agent can write files. A background launch does not: its launch returning does not mean the sub-agent has finished, so a read that depends on its writes must wait for the task |
 | `copies_to_subagents` | ❌ | True lets sub-agents use the tool, as a copy — see below. Default False: your tool reaches no sub-agent |
 
 ## Letting a sub-agent use your tool

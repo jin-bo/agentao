@@ -54,7 +54,7 @@ pi-mono 的动机是 `structured-output.ts`——返回值**就是**这次 run �
 
 剩下的 gap 是**跨工具串行**（"shell 在跑时连 write_file 也不能起"），而这不是已声明的需求。等到有人提再说。
 
-**更新（0.5.14）：** 这个 gap 是真的：同一批里的 shell 写文件和对该文件的 `read_file` 会竞争（codex #52245）。执行器现在只在每个工具的 `is_read_only` 都是 `True` 时才并行，否则按顺序逐个执行（`tool_executor.py::_all_read_only`）。并行时仍由 per-instance 锁保护。
+**更新（0.5.14）：** 这个 gap 是真的：同一批里的 shell 写文件和对该文件的 `read_file` 会竞争（codex #52245）。执行器现在只在每个工具的 `is_read_only` 都是 `True` 时才并行，否则按顺序逐个执行（`tool_executor.py::_all_read_only`）。并行时仍由 per-instance 锁保护。只读模式之外，前台子代理调用（`agent_*`）也会让这一批逐个执行，因为子代理能写文件。
 
 #### Bash 增量流式输出 + `OutputAccumulator`（pi-coding-agent v0.73.0）
 **结论：** 等待。还没消费者需要。

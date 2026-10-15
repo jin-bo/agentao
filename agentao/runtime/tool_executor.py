@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING, Tuple
 
-from ..agents import TaskComplete
+from ..agents import AgentToolWrapper, TaskComplete
 from ..cancellation import (
     AgentCancelledError,
     bind_cancellation_token,
@@ -168,17 +168,36 @@ class _AsyncToolOutcome:
     cancel_result: Optional[ToolExecutionResult] = None
 
 
-def _all_read_only(plans: List[ToolCallPlan]) -> bool:
+def _all_read_only(plans: List[ToolCallPlan], *, readonly_mode: bool = False) -> bool:
     """True only when every plan's tool says, with a real ``True``, that it is read-only.
 
     Fails closed: a property that raises, or answers anything but ``True``
     (a ``MagicMock``, a truthy non-bool), counts as not read-only, and one
     such plan makes the whole batch run serially. A denied or cancelled plan
     never runs its tool, so it cannot race and does not count.
+
+    A sub-agent call (``AgentToolWrapper``) makes the batch serial too. Its
+    ``is_read_only`` is ``True`` so that read-only mode can delegate (the
+    child's own runner enforces read-only), but in any other mode the child
+    can write files, so it would race a read in the same batch. Under
+    ``readonly_mode`` the child cannot write, so the call batches like any
+    other read-only tool. Only this decision changes; the permission meaning
+    of ``is_read_only`` stays.
+
+    A background launch (``run_in_background`` is ``True``) is exempt from
+    that rule. The launch returning does not mean the child has finished,
+    so a serial batch would not order its writes before a later read
+    anyway; a read that depends on them must wait for the task to complete.
     """
     for plan in plans:
         if plan.decision in (ToolCallDecision.DENY, ToolCallDecision.CANCELLED):
             continue
+        if (
+            not readonly_mode
+            and isinstance(plan.tool, AgentToolWrapper)
+            and plan.function_args.get("run_in_background") is not True
+        ):
+            return False
         try:
             if plan.tool.is_read_only is not True:
                 return False
@@ -256,7 +275,7 @@ class ToolExecutor:
         if len(plans) == 1:
             call_id, info = run_one(plans[0])
             results[call_id] = info
-        elif not _all_read_only(plans):
+        elif not _all_read_only(plans, readonly_mode=readonly_mode):
             # One call at a time, in plan order. Each call still gets a fresh
             # ``Context``, so a tool's ContextVar writes stay out of the
             # parent exactly as on the parallel path.
