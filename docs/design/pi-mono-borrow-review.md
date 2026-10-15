@@ -54,7 +54,7 @@ The real candidates would be `complete_task` / `final_answer` / `submit_for_revi
 
 The remaining gap would be **cross-tool serialization** ("when shell is running, don't let write_file start either"), which is not a stated requirement. Skip until requested.
 
-**Update (0.5.14):** that gap was real: a shell write and a `read_file` of the same file in one batch raced (codex #52245). The executor now runs a batch in parallel only when every tool's `is_read_only` is `True`, and otherwise runs it one call at a time, in order (`tool_executor.py::_all_read_only`). The per-instance lock still guards the parallel case.
+**Update (0.5.14):** that gap was real: a shell write and a `read_file` of the same file in one batch raced (codex #52245). The executor now runs a batch in parallel only when every tool's `is_read_only` is `True`, and otherwise runs it one call at a time, in order (`tool_executor.py::_all_read_only`). The per-instance lock still guards the parallel case. A foreground sub-agent call (`agent_*`) also makes the batch serial outside read-only mode, because the sub-agent can write files.
 
 #### Bash incremental streaming + `OutputAccumulator` (pi-coding-agent v0.73.0)
 **Verdict:** Wait. No consumer needs it yet.
