@@ -61,7 +61,7 @@ class MyTool(Tool):
 | `parameters` | ✅ | JSON Schema；任何 OpenAI function calling 支持的 schema 都能用 |
 | `execute(**kwargs) -> str` | ✅ | 返回纯字符串；不能返回 dict/bytes |
 | `requires_confirmation` | ❌ | 写/网络/危险操作应 True，走 confirm_tool 流程 |
-| `is_read_only` | ❌ | 只读模式可以运行它时为 True：不写文件、不跑命令、不改会话之外的状态。只读模式会拒绝所有返回 False 的工具。它还决定一批调用怎么跑：模型一次回复里的调用，只有每个工具都返回 True 时才并行，否则按顺序逐个执行 |
+| `is_read_only` | ❌ | 只读模式可以运行它时为 True：不写文件、不跑命令、不改会话之外的状态。只读模式会拒绝所有返回 False 的工具。它还决定一批调用怎么跑：模型一次回复里的调用，只有每个工具都返回 True 时才并行，否则按顺序逐个执行。只读模式之外，子代理调用（`agent_*`）会让这一批逐个执行，因为子代理能写文件。后台启动不会：启动返回不代表子代理已经完成，依赖其写入的读取要等任务完成 |
 | `copies_to_subagents` | ❌ | True 表示允许子代理使用该工具，且以副本形式——见下文。默认 False：你的工具不会进入任何子代理 |
 
 ## 让子代理能用你的工具

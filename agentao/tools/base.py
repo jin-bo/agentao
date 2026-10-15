@@ -131,7 +131,10 @@ class _BaseTool(ABC):
         It also decides batching: the calls of one model response run in
         parallel only when every tool that runs answers ``True``; otherwise
         the batch runs one call at a time, in order
-        (``runtime/tool_executor.py::_all_read_only``).
+        (``runtime/tool_executor.py::_all_read_only``). A sub-agent call
+        (``agent_*``) answers ``True`` but still makes the batch serial,
+        except in read-only mode or for a background launch, because the
+        sub-agent can write files.
         """
         return False
 
