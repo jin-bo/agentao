@@ -5,11 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.5.14. Add entries under the relevant heading as work lands._
+## [0.5.14] — 2026-10-17
 
 ### Added
+
+- **`MemoryManager.take_store_problems()`** returns one notice per memory store that could not be opened or read, each notice once, so a host can show the user that a session is running without those memories. See the corrupt-`memory.db` entry under Fixed.
+- **`agentao.agents.bg_store.BackgroundOwner`, `BackgroundOwnerClosedError` and `BackgroundTaskStore.close_owner(owner, timeout=5.0)`**, plus a keyword-only `owner=` on `BackgroundTaskStore.register()`. `close_owner()` cancels the pending and running tasks of one owner, refuses its later launches, and returns the ids still running when the wait ends. `Agentao.close()` uses them; see the background sub-agent entry under Fixed.
 
 ### Changed
 
@@ -45,6 +46,7 @@ _Targeting 0.5.14. Add entries under the relevant heading as work lands._
 ### Documentation
 
 - **Hooks don't run inside sub-agents, and the guide now says what that means for a `PreToolUse` block.** If a `PreToolUse` hook is the only thing that blocks an operation, and the parent can start a sub-agent whose `tools:` list includes that tool, the model can delegate the call and the hook never sees it. Developer guide §5.7.7 explains the limit and the two ways to close it: a `permissions.json` `deny` rule (sub-agents inherit those), or a `PreToolUse` rule on `agent_*`. Hook dispatch inside sub-agents is still not implemented.
+- The non-interactive chapter (CLI §12) lists the `hook_stop` error type, its row in the no-answer table and its exit code `1`, as `docs/reference/configuration.md` already did.
 - The `sandbox.json` example in appendix B.3.3 and in the data-workbench blueprint (7.4) used a schema that never existed (`shell`, `allow_network`, `allowed_commands_without_confirm`). Both now show the real fields; the blueprint builds its `SandboxPolicy` in code.
 
 ---
