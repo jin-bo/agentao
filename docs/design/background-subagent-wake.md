@@ -62,7 +62,7 @@ existing tool, with no new wait-for-any/all surface.
   model to call `check_background_agent` for the result.
 - Repeating any identical tool call, including the observed shell sleep, trips the
   doom-loop check on the **third** call (`agentao/runtime/tool_planning.py:36`, `:487-501`).
-  The counter spans the whole `chat()`, so the calls need not be consecutive. Varying
+  The counter spans the whole `chat()`, so the calls need not be consecutive. Since #543 a potential write that is new this turn clears the other counts; the repeated `sleep` here is new only on its first call, so this case still trips. Varying
   arguments can instead use up `max_iterations`, after which the CLI asks the user whether
   to continue (`agentao/cli/transport.py:234`).
 

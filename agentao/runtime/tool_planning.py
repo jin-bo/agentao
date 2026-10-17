@@ -33,6 +33,7 @@ _planning_logger = logging.getLogger(__name__)
 
 
 # Repeating identical (name, args_raw) this many times trips doom-loop.
+# A potential write that is new this turn clears the other counts (#543).
 DOOM_LOOP_THRESHOLD = 3
 
 # Per-tool consecutive parse failures (with *different* malformed strings
@@ -417,6 +418,9 @@ class ToolCallPlanner:
         #: consulted only after every DENY path, so it never loosens one.
         self.mcp_skill_gate: Optional[Callable[[str, Dict[str, Any], Any], Optional[str]]] = None
         self._doom_counter: Counter = Counter()
+        # Keys of the potential writes planned this turn. Cleared only by
+        # ``reset()``, so a repeated write never clears the counts again.
+        self._seen_writes: set = set()
         # Counts *consecutive* parse failures per tool name; reset on the
         # first successful parse for that tool. Distinct from
         # ``_doom_counter`` (which keys on identical-args repeats).
@@ -431,6 +435,7 @@ class ToolCallPlanner:
     def reset(self) -> None:
         """Clear the doom-loop counter. Call between ``chat()`` invocations."""
         self._doom_counter.clear()
+        self._seen_writes.clear()
         self._consecutive_parse_failures.clear()
         self._empty_name_calls = 0
 
@@ -597,8 +602,38 @@ class ToolCallPlanner:
                 permission_detail=permission_detail,
                 decided=_denied(decided) if decision is ToolCallDecision.DENY else decided,
             ))
+            if decision is not ToolCallDecision.DENY:
+                self._note_potential_write(doom_key, tool)
 
         return result
+
+    def _note_potential_write(self, doom_key: tuple, tool: RegistrableTool) -> None:
+        """Clear the other identical-args counts when *doom_key* is a new potential write.
+
+        A call whose tool is not read-only may change what a repeated call
+        returns: ``read_file(X)`` after ``replace(X)``, or the same ``pytest``
+        after an edit (#543). Such a repeat is not a loop, so the first
+        occurrence of a potential write this turn clears every count except
+        its own. A repeated write does not clear them again.
+
+        This is a potential state change, not confirmed progress. The rule
+        runs at planning time, so it also applies to a shell query, a
+        ``sleep``, an MCP tool that does not declare ``is_read_only``, a
+        write that the user or a hook refuses later, and a write that fails.
+        The key is the raw argument string, so a write that differs only in
+        JSON spacing or key order is also new. A loop whose arguments keep
+        changing is left to ``max_iterations``.
+        """
+        try:
+            read_only = tool.is_read_only is True
+        except Exception:
+            return  # Unknown: keep the counts, so the guard stays as strong as before.
+        if read_only or doom_key in self._seen_writes:
+            return
+        self._seen_writes.add(doom_key)
+        own = self._doom_counter[doom_key]
+        self._doom_counter.clear()
+        self._doom_counter[doom_key] = own
 
     def _mcp_skill_note(
         self, tool: RegistrableTool, function_name: str, function_args: Dict[str, Any],
