@@ -51,7 +51,7 @@
 - `run_in_background` 的描述明确说要轮询（`agentao/agents/tools/_wrapper.py:658`）；启动消息
   （`:1545`）也让模型调用 `check_background_agent` 取结果。
 - 任何相同工具调用重复到**第 3 次**都会触发死循环检测，这次的 shell `sleep` 也一样
-  （`agentao/runtime/tool_planning.py:36`、`:487-501`）。计数在整个 `chat()` 内累计，不要求连续。
+  （`agentao/runtime/tool_planning.py:38`、`:521-536`）。计数在整个 `chat()` 内累计，不要求连续。#543 起，本轮新出现的潜在写调用会清空其他调用的计数；这里重复的 `sleep` 只有第一次算新，所以本案仍会触发。
   如果换着参数重复调用，则可能耗尽 `max_iterations`，CLI 随后询问用户是否继续
   （`agentao/cli/transport.py:234`）。
 

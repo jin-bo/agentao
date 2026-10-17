@@ -45,7 +45,7 @@ reply = agent.chat(msg, max_iterations=50)   # default 100
 
 Pair with `SdkTransport(on_max_iterations=...)` ([4.6](/en/part-4/6-max-iterations)) for bailout.
 
-Agentao also tracks repeated tool-call failures inside a turn. Identical repeated tool calls trip doom-loop protection, and repeated unparseable argument payloads for the same tool are answered with a `role:tool` halt message so the next LLM request remains protocol-valid instead of spinning forever.
+Agentao also tracks repeated tool-call failures inside a turn. The third identical tool call (same name, same raw arguments) trips doom-loop protection. A potential write that is new this turn (a call whose tool is not read-only, not denied, with arguments not seen before this turn; a foreground sub-agent call also counts outside read-only mode) clears the other counts, so `read_file` or the same `pytest` after an edit is not a loop. A repeated identical write does not clear them again. Repeated unparseable argument payloads for the same tool are answered with a `role:tool` halt message so the next LLM request remains protocol-valid instead of spinning forever.
 
 Tune by scenario:
 
