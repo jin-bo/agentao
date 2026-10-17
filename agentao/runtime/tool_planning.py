@@ -402,6 +402,24 @@ def _denied(decided: Optional[DecidedCall]) -> Optional[DecidedCall]:
     return _replace(decided, verdict=Deny("permission:denied"))
 
 
+def is_foreground_subagent_call(
+    tool: Any, function_args: Dict[str, Any], readonly_mode: bool,
+) -> bool:
+    """True for a sub-agent call that can write files before it returns.
+
+    ``AgentToolWrapper.is_read_only`` is ``True`` so that read-only mode can
+    delegate, but outside read-only mode the child can edit files. A
+    background launch (``run_in_background`` is ``True``) returns before the
+    child does, so it does not count. Shared by batch serialization
+    (``tool_executor._all_read_only``) and the doom-loop write rule (#543).
+    """
+    return (
+        not readonly_mode
+        and isinstance(tool, AgentToolWrapper)
+        and function_args.get("run_in_background") is not True
+    )
+
+
 class ToolCallPlanner:
     """Phase 1: classify each ``tool_call`` from the LLM into a plan."""
 
@@ -641,11 +659,7 @@ class ToolCallPlanner:
             read_only = tool.is_read_only is True
         except Exception:
             return  # Unknown: keep the counts, so the guard stays as strong as before.
-        if (
-            not readonly_mode
-            and isinstance(tool, AgentToolWrapper)
-            and function_args.get("run_in_background") is not True
-        ):
+        if is_foreground_subagent_call(tool, function_args, readonly_mode):
             read_only = False
         if read_only or doom_key in self._seen_writes:
             return

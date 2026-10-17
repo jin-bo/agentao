@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING, Tuple
 
-from ..agents import AgentToolWrapper, TaskComplete
+from ..agents import TaskComplete
 from ..cancellation import (
     AgentCancelledError,
     bind_cancellation_token,
@@ -41,6 +41,7 @@ from . import identity as _identity
 from .tool_planning import (
     ToolCallDecision,
     ToolCallPlan,
+    is_foreground_subagent_call,
     is_pre_tool_hook_reason,
     pre_tool_hook_detail,
 )
@@ -192,11 +193,7 @@ def _all_read_only(plans: List[ToolCallPlan], *, readonly_mode: bool = False) ->
     for plan in plans:
         if plan.decision in (ToolCallDecision.DENY, ToolCallDecision.CANCELLED):
             continue
-        if (
-            not readonly_mode
-            and isinstance(plan.tool, AgentToolWrapper)
-            and plan.function_args.get("run_in_background") is not True
-        ):
+        if is_foreground_subagent_call(plan.tool, plan.function_args, readonly_mode):
             return False
         try:
             if plan.tool.is_read_only is not True:
