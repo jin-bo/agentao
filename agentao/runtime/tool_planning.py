@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
+from ..agents import AgentToolWrapper
 from ..capabilities.shell_spec import PASS, AbsPath, DecidedCall, Deny, Exhausted
 from ..permissions import PermissionDecision, PermissionDecisionDetail, PermissionEngine
 from ..tools import RegistrableTool, ToolRegistry
@@ -603,11 +604,17 @@ class ToolCallPlanner:
                 decided=_denied(decided) if decision is ToolCallDecision.DENY else decided,
             ))
             if decision is not ToolCallDecision.DENY:
-                self._note_potential_write(doom_key, tool)
+                self._note_potential_write(doom_key, tool, function_args, readonly_mode)
 
         return result
 
-    def _note_potential_write(self, doom_key: tuple, tool: RegistrableTool) -> None:
+    def _note_potential_write(
+        self,
+        doom_key: tuple,
+        tool: RegistrableTool,
+        function_args: Dict[str, Any],
+        readonly_mode: bool,
+    ) -> None:
         """Clear the other identical-args counts when *doom_key* is a new potential write.
 
         A call whose tool is not read-only may change what a repeated call
@@ -615,6 +622,12 @@ class ToolCallPlanner:
         after an edit (#543). Such a repeat is not a loop, so the first
         occurrence of a potential write this turn clears every count except
         its own. A repeated write does not clear them again.
+
+        A foreground sub-agent call counts as a potential write outside
+        read-only mode, as in ``tool_executor._all_read_only``: its
+        ``is_read_only`` is ``True`` so that read-only mode can delegate, but
+        the child can edit files. A background launch does not count, since
+        its writes land after the launch returns.
 
         This is a potential state change, not confirmed progress. The rule
         runs at planning time, so it also applies to a shell query, a
@@ -628,6 +641,12 @@ class ToolCallPlanner:
             read_only = tool.is_read_only is True
         except Exception:
             return  # Unknown: keep the counts, so the guard stays as strong as before.
+        if (
+            not readonly_mode
+            and isinstance(tool, AgentToolWrapper)
+            and function_args.get("run_in_background") is not True
+        ):
+            read_only = False
         if read_only or doom_key in self._seen_writes:
             return
         self._seen_writes.add(doom_key)

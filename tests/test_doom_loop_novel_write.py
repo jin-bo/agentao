@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 import pytest
 
+from agentao.agents import AgentToolWrapper
 from agentao.runtime.tool_planning import DOOM_LOOP_THRESHOLD, ToolCallPlanner
 from agentao.tools import EditTool, ReadFileTool, ShellTool
 from agentao.tools.base import ToolRegistry
@@ -28,7 +30,13 @@ X = "/kb/wiki/page.md"
 @pytest.fixture
 def planner():
     registry = ToolRegistry()
-    for tool in (ReadFileTool(), EditTool(), ShellTool()):
+    sub_agent = AgentToolWrapper(
+        definition={"name": "fixer", "description": "d"},
+        all_tools={},
+        llm_config_getter=lambda: {},
+        working_directory=Path("."),
+    )
+    for tool in (ReadFileTool(), EditTool(), ShellTool(), sub_agent):
         registry.register(tool)
     return ToolCallPlanner(registry, None, logging.getLogger("test.doom_novel_write"))
 
@@ -60,6 +68,10 @@ def run(planner, calls, **kw):
         if planner.plan([tc], **kw).doom_loop_triggered:
             return i
     return None
+
+
+def delegate(task, **extra):
+    return _call("agent_fixer", {"task": task, **extra})
 
 
 def test_the_real_tools_carry_the_flags_the_rule_reads():
@@ -107,6 +119,23 @@ def test_two_alternating_repeated_writes_still_trip(planner):
     # If every write cleared the counts, A and B would clear each other forever.
     a, b = shell("sleep 30"), shell("ls /tmp/agent-output")
     assert run(planner, [a, b, a, b, a, b]) == 5
+
+
+def test_a_foreground_sub_agent_call_counts_as_a_write(planner):
+    # Its is_read_only is True so read-only mode can delegate, but the child
+    # can edit X, as in tool_executor._all_read_only.
+    calls = [read(), delegate("fix X"), read(), delegate("fix X again"), read()]
+    assert run(planner, calls) is None
+
+
+def test_a_background_sub_agent_launch_does_not_count(planner):
+    calls = [read(), read(), delegate("fix X", run_in_background=True), read()]
+    assert run(planner, calls) == 3
+
+
+def test_a_sub_agent_call_in_read_only_mode_does_not_count(planner):
+    calls = [read(), read(), delegate("look at X"), read()]
+    assert run(planner, calls, readonly_mode=True) == 3
 
 
 def test_a_denied_write_does_not_clear_the_counts(planner):
