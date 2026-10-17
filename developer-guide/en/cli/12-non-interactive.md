@@ -163,9 +163,9 @@ For the full design rationale — including v1 scope, deferred typing (`number` 
 
 `usage` is what the run's LLM requests reported, summed: the agent's own calls, its compaction summaries, and — since 0.5.1 — every **foreground sub-agent** it delegated to (before that a sub-agent's requests were counted nowhere, so a delegating run under-reported). **`usage` is a snapshot, read when the envelope is written**, and nothing revises it afterwards. Since 0.5.6 `agentao run` offers no background sub-agents at all (its factory passes `bg_store=None`, so `run_in_background` is not in the schema): the process exits when the turn ends, and a background worker is a daemon thread that would have been cut off with it. Every sub-agent a run delegates to is therefore a foreground one, finished and counted before the envelope is written. A host that needs a per-sub-agent figure reads `SubagentLifecycleEvent.usage` instead. `prompt_tokens` includes cached input, which providers bill at a different rate; `cache_read_tokens` and `cache_creation_tokens` (0.5.1) say how much of it that was — they are parts **of** `prompt_tokens`, not additions to it, and are not in `total_tokens` a second time. Agentao reports the four quantities and applies no prices. A request that failed mid-stream is counted for what the server had **reported** by then (0.5.2): on the `anthropic-messages` wire that is the whole input, stated in the stream's first event; on Chat Completions usage arrives only in the last chunk, so a stream that dies before it adds nothing. A failed attempt and the retry after it are two requests and both count. Reported is not billed — treat `usage` as usage, not as an invoice.
 
-On failure, `final_text` is `null` and `error` carries `{ type, message, reason?, tool_name?, tool_call_id?, question?, matched_rule? }`. Error `type` is one of `permission_required`, `permission_denied`, `interaction_required`, `max_iterations`, `runtime_error`, `invalid_spec`, `interrupted`, `empty_response`, `length_truncated`, `doom_loop`. Consumers should treat the envelope as forward-compatible (extra fields ignored).
+On failure, `final_text` is `null` and `error` carries `{ type, message, reason?, tool_name?, tool_call_id?, question?, matched_rule? }`. Error `type` is one of `permission_required`, `permission_denied`, `interaction_required`, `max_iterations`, `runtime_error`, `invalid_spec`, `interrupted`, `empty_response`, `length_truncated`, `doom_loop`, `hook_stop`. Consumers should treat the envelope as forward-compatible (extra fields ignored).
 
-Three types mean the turn completed with no answer to hand back, and `reason` carries the runtime's exact classification for all of them — branch on `reason`, not on `message`:
+These types mean the turn completed with no answer to hand back, and `reason` carries the runtime's exact classification for all of them — branch on `reason`, not on `message`:
 
 | `type` | `reason` | Meaning |
 |---|---|---|
@@ -173,9 +173,10 @@ Three types mean the turn completed with no answer to hand back, and `reason` ca
 | `empty_response` | `reasoning_only` | The model emitted reasoning but no answer text. |
 | `length_truncated` | `length_truncated` | Output cut off at the token limit — a tool call whose arguments were truncated (the harness then halts the turn), or a final answer cut off mid-sentence. |
 | `doom_loop` | `doom_loop` | The model repeated the same call until the detector halted the turn. |
+| `hook_stop` | `hook_stop` | A plugin hook ended the turn. `PreToolUse` and `PostToolUse` / `PostToolUseFailure` reach this with `continue: false`; `UserPromptSubmit` reaches it by blocking or stopping the prompt, before the model is called. The message carries the hook's reason. |
 | `runtime_error` | `llm_error` | The LLM API call failed (provider 5xx / rate limit / auth) after retries; the message carries the provider's actual error. |
 
-The split is deliberate: `empty_response` means the model said nothing, `length_truncated` / `doom_loop` mean the harness halted a non-converging turn (often worth retrying with a smaller task, which "the model said nothing" usually is not), and `llm_error` means the provider call failed. All exit `1`, and the set is closed — every turn that ends without a complete answer classifies, so a pipeline never reads one as success at exit `0`.
+The split is deliberate: `empty_response` means the model said nothing, `length_truncated` / `doom_loop` mean the harness halted a non-converging turn (often worth retrying with a smaller task, which "the model said nothing" usually is not), `hook_stop` means your own configuration stopped it deliberately, and `llm_error` means the provider call failed. All exit `1`, and the set is closed — every turn that ends without a complete answer classifies, so a pipeline never reads one as success at exit `0`.
 
 Note that a turn can end this way *after* running tools: the model may do the work and then fail to summarize it. `tool_calls` on the same envelope reports how many ran, and their side effects have already landed — an `empty_response` failure does **not** mean the workspace is untouched.
 
@@ -184,7 +185,7 @@ Note that a turn can end this way *after* running tools: the model may do the wo
 | Code  | Meaning |
 |-------|---------|
 | `0`   | Completed normally |
-| `1`   | Runtime error, or a turn that produced no answer (`runtime_error`, `empty_response`, `length_truncated`, `doom_loop`) |
+| `1`   | Runtime error, or a turn that produced no answer (`runtime_error`, `empty_response`, `length_truncated`, `doom_loop`, `hook_stop`) |
 | `2`   | Invalid usage / spec validation failed / unknown spec field |
 | `3`   | Permission or interaction required (no interactive approval available) |
 | `4`   | Max tool iterations reached; answer may be incomplete |

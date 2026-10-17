@@ -163,9 +163,9 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 
 `usage` 是本次运行各个 LLM 请求上报用量的总和：agent 自己的调用、它的压缩摘要请求，以及——自 0.5.1 起——它委派出去的每个**前台子代理**（此前子代理的请求不计入任何地方，所以有委派的运行会少报）。**`usage` 是一份快照，在写出 envelope 的那一刻读取**，写出之后不会再修订。自 0.5.6 起，`agentao run` 完全不提供后台子代理（它的工厂传入 `bg_store=None`，schema 里没有 `run_in_background`）：这一轮结束进程就退出，而后台 worker 是 daemon 线程，会随之被截断。因此一次运行委派出去的子代理都是前台的，在写出 envelope 之前就已结束并计入。需要按子代理拆分的数字时，宿主应改读 `SubagentLifecycleEvent.usage`。`prompt_tokens` 含缓存命中的输入，而 provider 对这部分按另一个价格计费；`cache_read_tokens` 与 `cache_creation_tokens`（0.5.1）说明其中有多少 —— 它们是 `prompt_tokens` **之中**的一部分，不是额外相加的量，也不会在 `total_tokens` 里再算一次。Agentao 只报这四个量，不套任何价格。流中失败的请求按服务端当时**已上报**的量计入（0.5.2）：在 `anthropic-messages` 线路上那是完整的输入量，流的第一个事件里就给了；Chat Completions 的 usage 只在最后一个 chunk 里，流在那之前断掉就什么也加不上。一次失败的尝试和随后的重试是两个请求，都会计入。上报不等于计费 —— 请把 `usage` 当用量，不要当账单。
 
-失败时 `final_text` 为 `null`，`error` 字段携带 `{ type, message, reason?, tool_name?, tool_call_id?, question?, matched_rule? }`。`type` 取值：`permission_required`、`permission_denied`、`interaction_required`、`max_iterations`、`runtime_error`、`invalid_spec`、`interrupted`、`empty_response`、`length_truncated`、`doom_loop`。消费方应把 envelope 视为前向兼容（多余字段直接忽略）。
+失败时 `final_text` 为 `null`，`error` 字段携带 `{ type, message, reason?, tool_name?, tool_call_id?, question?, matched_rule? }`。`type` 取值：`permission_required`、`permission_denied`、`interaction_required`、`max_iterations`、`runtime_error`、`invalid_spec`、`interrupted`、`empty_response`、`length_truncated`、`doom_loop`、`hook_stop`。消费方应把 envelope 视为前向兼容（多余字段直接忽略）。
 
-有三种 type 表示 turn 结束但没有可交回的答案，且它们的 `reason` 都携带运行时的精确分类——请基于 `reason` 分支，而不是 `message`：
+下面这些 type 表示 turn 结束但没有可交回的答案，且它们的 `reason` 都携带运行时的精确分类——请基于 `reason` 分支，而不是 `message`：
 
 | `type` | `reason` | 含义 |
 |---|---|---|
@@ -173,9 +173,10 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 | `empty_response` | `reasoning_only` | 只有推理内容，没有答案正文。 |
 | `length_truncated` | `length_truncated` | 输出在 token 上限处被截断——要么是工具调用的参数被截断（harness 随即中止该 turn），要么是最终答案在半句处被切断。 |
 | `doom_loop` | `doom_loop` | 模型重复同一个调用，直至检测器 halt 了该 turn。 |
+| `hook_stop` | `hook_stop` | 插件 hook 结束了该 turn。`PreToolUse` 与 `PostToolUse` / `PostToolUseFailure` 经由 `continue: false` 走到这里；`UserPromptSubmit` 在调用模型之前拦下或停止提示词时也走到这里。message 里带 hook 给出的原因。 |
 | `runtime_error` | `llm_error` | LLM API 调用失败（provider 5xx / 限流 / 认证）且重试后仍失败；message 里带 provider 的真实报错。 |
 
-这样拆分是刻意的：`empty_response` 表示模型什么都没说，`length_truncated` / `doom_loop` 表示 harness 停掉了一个不收敛的 turn（往往值得用更小的任务重试，而前者通常不值得），`llm_error` 表示 provider 调用失败。四者退出码均为 `1`，且这套词表是封闭的——每一个没有完整答案就结束的 turn 都会被分类，流水线绝不会在退出码 `0` 处把它读成成功。
+这样拆分是刻意的：`empty_response` 表示模型什么都没说，`length_truncated` / `doom_loop` 表示 harness 停掉了一个不收敛的 turn（往往值得用更小的任务重试，而前者通常不值得），`hook_stop` 表示你自己的配置有意停止了它，`llm_error` 表示 provider 调用失败。它们的退出码均为 `1`，且这套词表是封闭的——每一个没有完整答案就结束的 turn 都会被分类，流水线绝不会在退出码 `0` 处把它读成成功。
 
 注意：turn 可能在**执行过工具之后**以这种方式结束——模型可能已经完成了工作，只是没有做总结。同一 envelope 上的 `tool_calls` 会报告实际执行了多少次工具调用，其副作用**已经落盘**——`empty_response` 失败**不**代表工作区未被改动。
 
@@ -184,7 +185,7 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 | 退出码 | 含义 |
 |--------|------|
 | `0`    | 正常完成 |
-| `1`    | 运行时错误，或 turn 没有产出答案（`runtime_error`、`empty_response`、`length_truncated`、`doom_loop`） |
+| `1`    | 运行时错误，或 turn 没有产出答案（`runtime_error`、`empty_response`、`length_truncated`、`doom_loop`、`hook_stop`） |
 | `2`    | 用法错误 / spec 校验失败 / 未知 spec 字段 |
 | `3`    | 需要权限或交互（非交互环境无人审批） |
 | `4`    | 达到最大工具迭代数，回答可能不完整 |
