@@ -266,25 +266,26 @@ class OpenAICompletionsAdapter:
             choice = chunk.choices[0]
             delta = choice.delta
 
+            # Accumulate the thinking text. DeepSeek, MiniMax, Kimi and older
+            # vLLM name the field ``reasoning_content``; Ollama, newer vLLM and
+            # OpenRouter name it ``reasoning``. Some vLLM versions send both
+            # with the same text, so ``reasoning`` is read only when
+            # ``reasoning_content`` is absent. Either way it is kept as
+            # ``reasoning_content``. Read before ``content``: a chunk that carries
+            # both reaches the host as reasoning first, the order it was written.
+            if delta:
+                reasoning = getattr(delta, "reasoning_content", None) or getattr(
+                    delta, "reasoning", None
+                )
+                if isinstance(reasoning, str) and reasoning:
+                    acc.add_reasoning(reasoning)
+
             # Accumulate text content and fire callback
             if delta and delta.content:
                 acc.content_parts.append(delta.content)
                 if on_text_chunk:
                     on_text_chunk(delta.content)
                     acc.progress_made = True
-
-            # Accumulate the thinking text. DeepSeek, MiniMax, Kimi and older
-            # vLLM name the field ``reasoning_content``; Ollama, newer vLLM and
-            # OpenRouter name it ``reasoning``. Some vLLM versions send both
-            # with the same text, so ``reasoning`` is read only when
-            # ``reasoning_content`` is absent. Either way it is kept as
-            # ``reasoning_content``.
-            if delta:
-                reasoning = getattr(delta, "reasoning_content", None) or getattr(
-                    delta, "reasoning", None
-                )
-                if isinstance(reasoning, str) and reasoning:
-                    acc.reasoning_parts.append(reasoning)
 
             # Accumulate tool call deltas. ``acc.tool_call_key`` resolves the
             # stream-stable key for this delta, tolerating providers that omit

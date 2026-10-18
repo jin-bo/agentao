@@ -871,7 +871,7 @@ class AnthropicMessagesAdapter:
                 call["arguments"] += delta.partial_json
         elif kind == "thinking_delta":
             if delta.thinking:
-                acc.reasoning_parts.append(delta.thinking)
+                acc.add_reasoning(delta.thinking)
                 if index not in acc.tool_calls_data and isinstance(pending.get(index), dict):
                     pending[index]["thinking"] += delta.thinking
         elif kind == "signature_delta":

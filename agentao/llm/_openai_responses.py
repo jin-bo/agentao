@@ -603,12 +603,12 @@ class OpenAIResponsesAdapter:
                     "response.reasoning_text.delta",
                 ):
                     if event.delta:
-                        acc.reasoning_parts.append(event.delta)
+                        acc.add_reasoning(event.delta)
                 elif kind == "response.reasoning_summary_part.added":
                     # A summary is several parts; run together they read as
                     # one sentence ending mid-word into the next heading.
                     if acc.reasoning_parts:
-                        acc.reasoning_parts.append("\n\n")
+                        acc.add_reasoning("\n\n")
                 elif kind == "response.output_item.added":
                     if _is_function_call(event.item):
                         unfinished[_output_index(event)] = event.item.name

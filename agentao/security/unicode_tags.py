@@ -130,11 +130,30 @@ def strip_unicode_tags(text: str) -> str:
     """
     if not text or not has_unicode_tags(text):
         return text
+    result, _ = _strip_counted(text, 0)
+    return text if result == text else result
 
+
+def strip_unicode_tags_counted(text: str, kept: int) -> tuple[str, int]:
+    """:func:`strip_unicode_tags` with the sequence count carried in and out.
+
+    *kept* is how many sequences earlier pieces of the same text already
+    kept, so a text that arrives in pieces is held to one
+    :data:`_MAX_TAG_SEQUENCES` budget, not one per piece. Returns the stripped
+    piece and the new count. A piece must not end inside an unfinished
+    sequence; :class:`~agentao.security.stream_text.StreamTextSanitizer` holds
+    such a tail back.
+    """
+    if not text or not has_unicode_tags(text):
+        return text, kept
+    return _strip_counted(text, kept)
+
+
+def _strip_counted(text: str, kept: int) -> tuple[str, int]:
+    """The strip itself; the callers have already found a tag character."""
     out: list[str] = []
     i = 0
     n = len(text)
-    kept = 0
     while i < n:
         ch = text[i]
         if ch == _TAG_BASE:
@@ -149,8 +168,22 @@ def strip_unicode_tags(text: str) -> str:
             continue
         out.append(ch)
         i += 1
-    result = "".join(out)
-    return text if result == text else result
+    return "".join(out), kept
+
+
+def unfinished_tag_sequence_start(text: str) -> int | None:
+    """Index of a trailing tag sequence that the next piece could complete.
+
+    A ``U+1F3F4`` base followed only by payload characters, fewer than the
+    cap allows a terminator after, at the very end of *text*. ``None`` when
+    the tail cannot become a well-formed sequence, so nothing need wait.
+    """
+    base = text.rfind(_TAG_BASE, max(0, len(text) - _MAX_TAG_PAYLOAD - 1))
+    if base < 0:
+        return None
+    if all(_is_tag_payload(ord(ch)) for ch in text[base + 1:]):
+        return base
+    return None
 
 
 def count_unicode_tags(text: str) -> int:

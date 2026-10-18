@@ -454,11 +454,12 @@ See [docs/guides/adding-components.md](docs/guides/adding-components.md). Tools 
   - The reasoning is in the docstring of `_get_arun_pool`. `tests/test_web_fetch_async_tool.py` pins it.
 - **`agentao/compaction/__init__.py` must not re-export `coordinator`.** `types.py` must import only the standard library. **Review holds this rule, not a test.** Import-layering rule 5 does not reach this file.
 - **Unicode tag stripping is structural, not a range filter. Do not simplify it** (`security/unicode_tags.py`. The docstring has the reasoning).
-  - It applies at four named boundaries:
+  - It applies at five named boundaries:
     1. tool results (`tool_result_formatter.py::_format_one`, *after* the replay emit).
     2. model output (`sanitize.py::sanitize_text_field`).
     3. server text in `acp_client/render.py`, through `security/terminal_text.py::sanitize_terminal_text`.
     4. model text in `cli/transport.py::_display`, through the same function.
+    5. streamed reasoning (`runtime/llm_call.py::run_llm_call`), through `security/stream_text.py::StreamTextSanitizer`. This is the only sanitize point. `LLMClient` passes the pieces raw. The sanitizer holds back a tail that could still become a flag sequence, and carries the sequence count across pieces. Thus the joined pieces equal `sanitize_text_field` of the whole.
   - At a Rich boundary, also apply `rich.markup.escape`. `[black on black]` hides text without a control byte.
   - `terminal_text.py` stays a leaf and does not import `rich` (`tests/test_import_layering.py` rule 3).
   - The strip is not ambient. Skill and MCP descriptions in the system prompt do not go through it.

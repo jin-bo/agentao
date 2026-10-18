@@ -720,8 +720,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         length-truncation path (:meth:`_handle_length_truncated_tool_calls`)
         so both record byte-identical history — the assistant message and its
         answering tool results must agree on ids/names regardless of whether
-        the calls ran. Emits the reasoning/content ``THINKING`` events,
-        appends the message to ``agent.messages``, and returns
+        the calls ran. Emits nothing: the reasoning streamed as ``THINKING``
+        and the text as ``LLM_TEXT`` (``runtime/llm_call.py``). Appends the
+        message to ``agent.messages``, and returns
         ``(assistant_msg, clean_tool_calls, reasoning_content)``.
         """
         agent = self._agent
@@ -733,13 +734,8 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             agent.tool_runner.normalize_tool_calls(assistant_message.tool_calls)
         )
 
+        # The reasoning already streamed as ``THINKING`` (``llm_call.py``).
         reasoning_content = getattr(assistant_message, "reasoning_content", None)
-        if reasoning_content:
-            agent.transport.emit(AgentEvent(EventType.THINKING, {"text": reasoning_content}))
-
-        reasoning = (assistant_message.content or "").strip()
-        if reasoning:
-            agent.transport.emit(AgentEvent(EventType.THINKING, {"text": reasoning}))
 
         assistant_msg: Dict[str, Any] = {
             "role": "assistant",
@@ -1071,15 +1067,6 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 "Sanitised final assistant message (lone surrogates and/or invisible "
                 "Unicode tag characters) (iteration %d)", iteration,
             )
-        # The tool-call path emits it in
-        # ``_serialize_and_record_assistant_tool_message``; a turn
-        # that answers without a call has to emit its own, or the reasoning
-        # behind the answer reaches only ``agentao.log``. Only the reasoning:
-        # the answer text already went out as ``LLM_TEXT``. Emitted from the
-        # sanitized copy, so replay and ACP get what history holds.
-        shown_reasoning = final_msg.get("reasoning_content")
-        if isinstance(shown_reasoning, str) and shown_reasoning:
-            agent.transport.emit(AgentEvent(EventType.THINKING, {"text": shown_reasoning}))
         return self._resolve_stop_hook(
             turn_end_reason="final_response",
             assistant_content=assistant_content,

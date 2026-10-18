@@ -329,7 +329,7 @@ One turn is one `Agentao.chat()` call. The kinds, grouped (full list: [`agentao/
 |-------|-------|-------|
 | File and session | `replay_header`, `replay_footer`, `session_started`, `session_ended` | `session_started` has `cwd` and `model` |
 | Turn | `turn_started`, `user_message`, `turn_completed` | `turn_completed` has `final_text`, `status` (`ok` / `cancelled` / `error`) and an optional `incomplete_reason` |
-| Model output | `assistant_text_chunk`, `assistant_thought_chunk` | Streamed text and reasoning |
+| Model output | `assistant_text_chunk`, `assistant_thought_chunk` | Streamed text and reasoning. A thought chunk is one stretch of reasoning (up to 64,000 characters), joined before the secret scan so a key split across pieces is still redacted |
 | LLM calls | `llm_call_started`, `llm_call_completed`, `llm_call_delta`, `llm_call_io` | `llm_call_completed` has token counts and latency. `llm_call_delta` needs `capture_llm_delta`, `llm_call_io` needs `capture_full_llm_io` |
 | Tools | `tool_confirmation_requested`, `tool_confirmation_resolved`, `tool_started`, `tool_output_chunk`, `tool_completed`, `tool_result` | `tool_started.tool_source` is `mcp` for an `mcp_*` tool, else `builtin` |
 | Host projections | `tool_lifecycle`, `subagent_lifecycle`, `permission_decision` | Same shapes as the [`agentao.host`](/en/part-4/7-host-contract) models |

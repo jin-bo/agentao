@@ -277,7 +277,7 @@ class AgentBridge:
 
     def _turn(self, d): pass
     def _text(self, d): print(d["chunk"], end="", flush=True)
-    def _thinking(self, d): print(f"\n[💭 {d['text']}]", flush=True)
+    def _thinking(self, d): print(d["text"], end="", flush=True)  # 一个流式分片
     def _tool_start(self, d): print(f"\n[🔧 {d['tool']}]")
     def _tool_out(self, d): pass
     def _tool_done(self, d): print(f" ✓ ({d['duration_ms']}ms)")

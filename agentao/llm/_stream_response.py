@@ -22,7 +22,7 @@ protocol.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 #: The attribute on the duck-type message **and** the key on the history dict
 #: that carries Anthropic's signed thinking blocks. One spelling for both, so
@@ -99,6 +99,26 @@ class _StreamAccumulator:
         # iterations without exposing anything to the host, so they must NOT
         # block the pre-output retry path.
         self.progress_made: bool = False
+        # Told each piece of reasoning as it arrives (``chat_stream``'s
+        # ``on_reasoning_chunk``), raw: ``run_llm_call`` sanitizes the stream.
+        # Reasoning never sets ``progress_made``: a stream that drops while
+        # the model is still thinking stays retryable, and a host that saw the
+        # failed attempt's reasoning sees the next attempt's after it.
+        self.on_reasoning_chunk: Optional[Callable[[str], None]] = None
+        # True once a piece has gone to ``on_reasoning_chunk``. A request that
+        # is sent again then needs the ``on_retry`` reset, even on the paths
+        # that do not otherwise report one.
+        self.reasoning_shown: bool = False
+
+    def add_reasoning(self, text: str) -> None:
+        """Record a piece of reasoning and pass it on.
+
+        Every adapter appends reasoning here and nowhere else.
+        """
+        self.reasoning_parts.append(text)
+        if self.on_reasoning_chunk is not None:
+            self.reasoning_shown = True
+            self.on_reasoning_chunk(text)
 
     def tool_call_key(self, tc_delta: Any) -> int:
         """Stream-stable accumulation key for one streaming tool_call delta.

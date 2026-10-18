@@ -373,7 +373,7 @@ ACP interactions: 1 pending
 
 - **`/acp send` 会阻塞 REPL** — 这一轮结束或 `requestTimeoutMs` 用完之前，你没法跟本地 agent 对话。按 Ctrl+C 取消这一轮。路由出去的 `@name` 消息同样会阻塞。
 - **`waiting_for_user` 表示服务器在问你** — CLI 会内联显示问题，不需要用 `/acp send` 回答。
-- **Inbox 有上限** — 最多存 256 条，满了会丢掉最旧的。消息在空闲点显示：提示符出现前、斜杠命令之后、agent 回复之后。
+- **Inbox 有上限** — 最多存 256 条，满了会丢掉最旧的。推理最先被丢：同一会话相邻的 thought chunk 会合并成一条，满了时先丢最旧的推理，再轮到回复、错误或提示。消息在空闲点显示：提示符出现前、斜杠命令之后、agent 回复之后。
 - **反复崩溃后服务器会停在 `failed`** — 自动重建到 `maxRecoverableRestarts` 次就停止。先看 `/acp logs <name>`，排除原因后再 `/acp restart <name>`。
 
 ### 排错

@@ -570,3 +570,55 @@ class TestMultiServerOrdering:
         drained = inbox.drain()
         assert [m.text for m in drained] == ["a1", "b1", "a2"]
         assert [m.server for m in drained] == ["alpha", "beta", "alpha"]
+
+
+# ---------------------------------------------------------------------------
+# Streamed thoughts (#548): one agent_thought_chunk per piece
+# ---------------------------------------------------------------------------
+
+
+def _msg(text: str, update_kind: str, session: str = "s") -> InboxMessage:
+    return InboxMessage(server="srv", session_id=session,
+                        kind=MessageKind.NOTIFICATION, text=text, update_kind=update_kind)
+
+
+class TestStreamedThoughts:
+    def test_adjacent_thoughts_of_one_session_merge(self) -> None:
+        inbox = Inbox()
+        for piece in ("weigh ", "it"):
+            inbox.push(_msg(piece, "agent_thought_chunk"))
+        inbox.push(_msg("other", "agent_thought_chunk", session="t"))
+        inbox.push(_msg("ok", "agent_message_chunk"))
+        inbox.push(_msg("again", "agent_thought_chunk"))
+        assert [(m.session_id, m.text) for m in inbox.drain()] == [
+            ("s", "weigh it"), ("t", "other"), ("s", "ok"), ("s", "again")]
+
+    def test_a_merged_thought_is_bounded(self, monkeypatch) -> None:
+        from agentao.acp_client import inbox as inbox_mod
+
+        monkeypatch.setattr(inbox_mod, "THOUGHT_MERGE_MAX_CHARS", 5)
+        inbox = Inbox()
+        for piece in ("abc", "de", "f"):
+            inbox.push(_msg(piece, "agent_thought_chunk"))
+        assert [m.text for m in inbox.drain()] == ["abcde", "f"]
+
+    def test_a_reply_outlives_a_flood_of_thoughts(self, monkeypatch) -> None:
+        from agentao.acp_client import inbox as inbox_mod
+
+        monkeypatch.setattr(inbox_mod, "THOUGHT_MERGE_MAX_CHARS", 1)
+        inbox = Inbox(capacity=4)
+        inbox.push(_msg("answer", "agent_message_chunk"))
+        for _ in range(300):
+            inbox.push(_msg("x", "agent_thought_chunk"))
+        drained = inbox.drain()
+        assert drained[0].text == "answer" and len(drained) == 4
+        assert inbox.dropped_count == 297
+
+    def test_a_thought_never_evicts_a_pending_prompt(self) -> None:
+        inbox = Inbox(capacity=2)
+        inbox.push(InboxMessage(server="srv", session_id="s",
+                                kind=MessageKind.PERMISSION, text="allow?"))
+        inbox.push(_msg("reply", "agent_message_chunk"))
+        inbox.push(_msg("thinking", "agent_thought_chunk"))
+        assert [m.text for m in inbox.drain()] == ["allow?", "reply"]
+        assert inbox.dropped_count == 1

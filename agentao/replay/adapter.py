@@ -26,6 +26,14 @@ def _short_id() -> str:
     return _uuid.uuid4().hex[:12]
 
 
+#: How much streamed reasoning the adapter holds before it writes it anyway.
+#: ``THINKING`` arrives in pieces, and the recorder scans each event for
+#: secrets on its own, so a key split across two pieces would reach disk
+#: unredacted. The adapter joins one stretch of pieces into one event; the
+#: cap bounds the memory a stretch with no other event can hold.
+_THOUGHT_BUFFER_MAX_CHARS = 64_000
+
+
 class ReplayAdapter:
     """Wrap a Transport and mirror its events to a ReplayRecorder."""
 
@@ -52,6 +60,7 @@ class ReplayAdapter:
 
     def begin_turn(self, user_message: str) -> str:
         """Start a new replay turn and return its ``turn_id``."""
+        self._flush_thought()
         turn_id = _short_id()
         self._turn_id = turn_id
         self._recorder.record(
@@ -76,6 +85,7 @@ class ReplayAdapter:
         incomplete_reason: Optional[str] = None,
         finish_reason_missing: bool = False,
     ) -> None:
+        self._flush_thought()
         turn_id = self._turn_id
         if turn_id is None:
             return
@@ -129,6 +139,39 @@ class ReplayAdapter:
             return stack[-2]["turn_id"]
         return None
 
+    # -- streamed reasoning -------------------------------------------------
+
+    def _buffer_thought(self, text: str) -> None:
+        # Per thread, like the sub-agent stack: two sub-agents may stream at
+        # once. The turn ids are taken at the first piece of the stretch.
+        buf = getattr(self._tls, "thought", None)
+        if buf is None:
+            buf = self._tls.thought = {
+                "parts": [], "size": 0,
+                "turn_id": self._current_turn_id(),
+                "parent_turn_id": self._current_parent_turn(),
+            }
+        buf["parts"].append(text)
+        buf["size"] += len(text)
+        if buf["size"] >= _THOUGHT_BUFFER_MAX_CHARS:
+            self._flush_thought()
+
+    def _flush_thought(self) -> None:
+        """Write this thread's buffered reasoning as one event, if any."""
+        buf = getattr(self._tls, "thought", None)
+        if buf is None:
+            return
+        self._tls.thought = None
+        try:
+            self._recorder.record(
+                EventKind.ASSISTANT_THOUGHT_CHUNK,
+                turn_id=buf["turn_id"],
+                parent_turn_id=buf["parent_turn_id"],
+                payload={"text": "".join(buf["parts"])},
+            )
+        except Exception:
+            pass
+
     # -- Transport protocol -------------------------------------------------
 
     def emit(self, event: AgentEvent) -> None:
@@ -142,6 +185,7 @@ class ReplayAdapter:
         # The matching request event is emitted by ToolRunner through
         # ``emit(TOOL_CONFIRMATION)``; this method only needs to record
         # the user's response.
+        self._flush_thought()
         result = self._inner.confirm_tool(tool_name, description, args)
         try:
             self._recorder.record(
@@ -185,6 +229,7 @@ class ReplayAdapter:
         if not allow_custom:
             fwd["allow_custom"] = False
         req_payload = {"question": question or "", **fwd}
+        self._flush_thought()
         try:
             self._recorder.record(
                 EventKind.ASK_USER_REQUESTED,
@@ -251,6 +296,10 @@ class ReplayAdapter:
     def _mirror(self, event: AgentEvent) -> None:
         data = event.data or {}
         kind = event.type
+        if kind != EventType.THINKING:
+            # Any other event ends a stretch of reasoning (text, a tool, a
+            # retry, an error, the turn's end): write it, before this event.
+            self._flush_thought()
 
         # Per-turn state — runtime emits TURN_BEGIN/TURN_END on the
         # transport once per user-driven turn; the adapter translates
@@ -297,13 +346,8 @@ class ReplayAdapter:
 
         if kind == EventType.THINKING:
             text = data.get("text", "")
-            if text:
-                self._recorder.record(
-                    EventKind.ASSISTANT_THOUGHT_CHUNK,
-                    turn_id=self._current_turn_id(),
-                    parent_turn_id=self._current_parent_turn(),
-                    payload={"text": text},
-                )
+            if isinstance(text, str) and text:
+                self._buffer_thought(text)
             return
 
         if kind == EventType.TOOL_CONFIRMATION:

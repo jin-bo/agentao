@@ -833,3 +833,61 @@ def test_reader_does_not_accept_non_utf8_encoded_records(tmp_path):
         fp.write(json.dumps({"kind": "user_message", "payload": {"content": "wrong encoding"}}).encode("utf-16") + b"\n")
     assert ReplayReader(rec.path).events() == expected
     assert list_replays(tmp_path)[0].event_count == len(expected)
+
+
+# -- streamed reasoning (#548) ---------------------------------------------------
+
+_KEY = "sk-proj-" + "A1b2C3d4E5f6G7h8I9j0K1l2"
+
+
+def _thoughts(rec) -> list:
+    return [e for e in ReplayReader(rec.path).events()
+            if e["kind"] == "assistant_thought_chunk"]
+
+
+def test_a_key_split_across_reasoning_pieces_is_redacted(tmp_path):
+    adapter, rec = _make_adapter(tmp_path)
+    adapter.begin_turn("hi")
+    adapter.emit(AgentEvent(EventType.THINKING, {"text": f"use {_KEY[:10]}"}))
+    adapter.emit(AgentEvent(EventType.THINKING, {"text": f"{_KEY[10:]} here"}))
+    adapter.emit(AgentEvent(EventType.LLM_TEXT, {"chunk": "ok"}))
+    adapter.end_turn("ok")
+    rec.close()
+    thoughts = _thoughts(rec)
+    assert len(thoughts) == 1
+    assert _KEY not in thoughts[0]["payload"]["text"]
+    assert _KEY[10:] not in json.dumps(thoughts[0])
+
+
+def test_a_stretch_of_reasoning_is_written_before_the_event_that_ends_it(tmp_path):
+    adapter, rec = _make_adapter(tmp_path)
+    adapter.begin_turn("hi")
+    adapter.emit(AgentEvent(EventType.THINKING, {"text": "first "}))
+    adapter.emit(AgentEvent(EventType.LLM_RETRY, {"attempt": 1}))
+    adapter.emit(AgentEvent(EventType.THINKING, {"text": "second"}))
+    adapter.emit(AgentEvent(EventType.LLM_TEXT, {"chunk": "ok"}))
+    adapter.emit(AgentEvent(EventType.THINKING, {"text": "never closed"}))
+    adapter.end_turn("ok")  # the turn's end writes what is still held
+    rec.close()
+    kinds = [(e["kind"], e["payload"].get("text"))
+             for e in ReplayReader(rec.path).events()
+             if e["kind"] in ("assistant_thought_chunk", "assistant_text_chunk",
+                              "turn_completed")]
+    assert kinds == [("assistant_thought_chunk", "first "),
+                     ("assistant_thought_chunk", "second"),
+                     ("assistant_text_chunk", None),
+                     ("assistant_thought_chunk", "never closed"),
+                     ("turn_completed", None)]
+
+
+def test_a_long_stretch_is_written_in_bounded_events(tmp_path, monkeypatch):
+    from agentao.replay import adapter as adapter_mod
+
+    monkeypatch.setattr(adapter_mod, "_THOUGHT_BUFFER_MAX_CHARS", 10)
+    adapter, rec = _make_adapter(tmp_path)
+    adapter.begin_turn("hi")
+    for _ in range(5):
+        adapter.emit(AgentEvent(EventType.THINKING, {"text": "abcd"}))
+    adapter.end_turn("")
+    rec.close()
+    assert [e["payload"]["text"] for e in _thoughts(rec)] == ["abcdabcdabcd", "abcdabcd"]

@@ -326,7 +326,7 @@ JSON Schema 在 [`schemas/`](https://github.com/jin-bo/agentao/tree/main/schemas
 |------|------|------|
 | 文件与 session | `replay_header`、`replay_footer`、`session_started`、`session_ended` | `session_started` 带 `cwd` 和 `model` |
 | Turn | `turn_started`、`user_message`、`turn_completed` | `turn_completed` 带 `final_text`、`status`（`ok` / `cancelled` / `error`），可能还有 `incomplete_reason` |
-| 模型输出 | `assistant_text_chunk`、`assistant_thought_chunk` | 流式正文与推理 |
+| 模型输出 | `assistant_text_chunk`、`assistant_thought_chunk` | 流式正文与推理。一个 thought chunk 是一段连续推理（至多 64,000 字符），先拼接再做密钥扫描，跨分片的密钥同样会被遮盖 |
 | LLM 调用 | `llm_call_started`、`llm_call_completed`、`llm_call_delta`、`llm_call_io` | `llm_call_completed` 带 token 数和耗时；`llm_call_delta` 需要 `capture_llm_delta`，`llm_call_io` 需要 `capture_full_llm_io` |
 | 工具 | `tool_confirmation_requested`、`tool_confirmation_resolved`、`tool_started`、`tool_output_chunk`、`tool_completed`、`tool_result` | `tool_started.tool_source`：`mcp_*` 工具为 `mcp`，其余为 `builtin` |
 | 宿主投影 | `tool_lifecycle`、`subagent_lifecycle`、`permission_decision` | 结构与 [`agentao.host`](/zh/part-4/7-host-contract) 的模型一致 |

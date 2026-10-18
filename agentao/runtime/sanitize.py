@@ -42,17 +42,15 @@ Two concerns, both about *what we ship back to the API on the next turn*:
 from __future__ import annotations
 
 import json
-import re
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from ..security.stream_text import SURROGATE_RE, SURROGATE_REPLACEMENT
 from ..security.unicode_tags import strip_unicode_tags
 from .arg_repair import parse_tool_arguments
 from .tool_planning import make_tool_result_message
 from .. import json_parse
 
-
-SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
 
 
 def sanitize_surrogates(text: str) -> str:
@@ -61,7 +59,7 @@ def sanitize_surrogates(text: str) -> str:
         return text
     if SURROGATE_RE.search(text) is None:
         return text
-    return SURROGATE_RE.sub("�", text)
+    return SURROGATE_RE.sub(SURROGATE_REPLACEMENT, text)
 
 
 def sanitize_text_field(text: str) -> str:
