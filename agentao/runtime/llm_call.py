@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..cancellation import CancellationToken
 from ..llm._usage import cache_token_counts
+from ..security.stream_text import StreamTextSanitizer
 from ..transport import AgentEvent, EventType
 
 if TYPE_CHECKING:  # pragma: no cover - import-time only
@@ -140,21 +141,60 @@ def run_llm_call(
     first_token_at: Optional[float] = None
     # The text this call has shown the host, kept only so a Ctrl+C mid-stream
     # can hand it to ``runtime/turn.py`` — see the ``KeyboardInterrupt``
-    # handler below. Retries happen only while nothing has been shown, so this
+    # handler below. Retries happen only while no text has been shown, so this
     # is one attempt's text, never two.
     shown_text: list[str] = []
 
     def _on_text_chunk(chunk: str) -> None:
         nonlocal first_token_at
+        # Text ends a stretch of reasoning: no reasoning may arrive after it.
+        _flush_reasoning()
         if first_token_at is None:
             first_token_at = time.monotonic()
         shown_text.append(chunk)
         agent.transport.emit(AgentEvent(EventType.LLM_TEXT, {"chunk": chunk}))
 
+    # Whether any reasoning reached the host through ``on_reasoning_chunk``.
+    # A client that accepts it but never calls it (a host's ``llm_client=``
+    # whose ``chat_stream`` takes ``**kwargs``) still gets its reasoning shown,
+    # whole, after the call. A ``chat_stream`` with a closed signature raises
+    # ``TypeError`` on the new keyword, as it did when ``on_retry`` came.
+    reasoning_streamed = False
+
+    # The one place streamed reasoning is sanitized (``LLMClient`` and a
+    # host's ``llm_client=`` both send raw pieces). One stream sanitizer per
+    # attempt, not ``sanitize_text_field`` per piece: a per-piece strip would
+    # reset the ``_MAX_TAG_SEQUENCES`` budget on every piece and mangle a
+    # flag split across two.
+    reasoning_sanitizer = StreamTextSanitizer()
+
+    def _emit_reasoning(clean: str) -> None:
+        if clean:
+            agent.transport.emit(AgentEvent(EventType.THINKING, {"text": clean}))
+
+    def _flush_reasoning() -> None:
+        _emit_reasoning(reasoning_sanitizer.flush())
+
+    def _on_reasoning_chunk(chunk: str) -> None:
+        # A lone surrogate would make replay drop the event. The whole text
+        # is never sent again afterwards; this is the only ``THINKING`` for
+        # the model's reasoning.
+        nonlocal reasoning_streamed
+        if not isinstance(chunk, str):
+            return
+        reasoning_streamed = True
+        _emit_reasoning(reasoning_sanitizer.feed(chunk))
+
     def _on_retry(info: Dict[str, Any]) -> None:
         # Before the backoff sleep: the only moment a UI can say why the
-        # screen went still. Retries happen only while nothing has been
-        # shown, so this never interleaves with ``LLM_TEXT``.
+        # screen went still. Retries happen only while no text has been
+        # shown, so this never interleaves with ``LLM_TEXT``. Reasoning may
+        # have been shown: the next attempt's ``THINKING`` follows the failed
+        # one's, and a UI that wants a clean panel may reset here.
+        # The failed attempt's held-back tail is dropped with it, and the
+        # next attempt starts a fresh budget.
+        nonlocal reasoning_sanitizer
+        reasoning_sanitizer = StreamTextSanitizer()
         agent.transport.emit(AgentEvent(EventType.LLM_RETRY, dict(info)))
 
     def _first_token_ms() -> Optional[int]:
@@ -177,6 +217,7 @@ def run_llm_call(
             # for a prefix nothing reads back.
             cache_boundary=tail_count,
             on_retry=_on_retry,
+            on_reasoning_chunk=_on_reasoning_chunk,
         )
     except KeyboardInterrupt:
         # The interactive CLI's Ctrl+C: a ``KeyboardInterrupt`` raised inside
@@ -212,6 +253,17 @@ def run_llm_call(
             "cache_creation_tokens": None,
         }))
         raise
+
+    _flush_reasoning()
+    if not reasoning_streamed:
+        try:
+            whole = getattr(response.choices[0].message, "reasoning_content", None)
+        except Exception:
+            whole = None
+        if isinstance(whole, str) and whole:
+            from .sanitize import sanitize_text_field
+
+            _emit_reasoning(sanitize_text_field(whole))
 
     finish_reason: Optional[str] = None
     # False when the value above is agentao's "stop" fallback rather than

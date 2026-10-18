@@ -373,7 +373,7 @@ ACP interactions: 1 pending
 
 - **`/acp send` blocks the REPL** — you can't talk to your local agent until the turn finishes or `requestTimeoutMs` runs out. Press Ctrl+C to cancel the turn. A routed `@name` message blocks the same way.
 - **`waiting_for_user` means the server is asking you something** — the CLI shows the question inline. You don't answer it with `/acp send`.
-- **The inbox is bounded** — it holds 256 messages, and the oldest is dropped when it is full. Messages appear at idle points: before the prompt, after a slash command, and after an agent reply.
+- **The inbox is bounded** — it holds 256 messages, and the oldest is dropped when it is full. Reasoning is dropped first: adjacent thought chunks from one session merge into one message, and when the inbox is full the oldest thought goes before any reply, error or prompt. Messages appear at idle points: before the prompt, after a slash command, and after an agent reply.
 - **A server is `failed` after repeated crashes** — automatic rebuilds stop at `maxRecoverableRestarts`. Read `/acp logs <name>`, fix the cause, then `/acp restart <name>`.
 
 ### Troubleshooting

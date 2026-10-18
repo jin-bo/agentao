@@ -813,6 +813,7 @@ class LLMClient(_LoggingMixin):
         *,
         cache_boundary: Optional[int] = None,
         on_retry: Optional[Callable[[Dict[str, Any]], None]] = None,
+        on_reasoning_chunk: Optional[Callable[[str], None]] = None,
     ) -> Any:
         """Streaming variant of chat(). Calls on_text_chunk(chunk) for each text delta.
 
@@ -831,6 +832,12 @@ class LLMClient(_LoggingMixin):
             tools: Optional list of tool definitions
             max_tokens: Maximum tokens to generate
             on_text_chunk: Optional callable(str) invoked for each text delta
+            on_reasoning_chunk: Optional callable(str) told each piece of
+                reasoning as it arrives, raw (``run_llm_call`` sanitizes the
+                stream). Pieces are never retracted: a
+                retried attempt streams its reasoning again after the failed
+                one's. On the non-streaming paths it is called once with the
+                whole reasoning, before ``on_text_chunk``.
             cache_boundary: Opt this call into explicit prompt-cache
                 breakpoints, and say how many trailing messages are
                 request-only. See :meth:`_build_request_kwargs`.
@@ -848,6 +855,7 @@ class LLMClient(_LoggingMixin):
                 messages, tools, max_tokens, on_text_chunk,
                 cache_boundary=cache_boundary, on_retry=on_retry,
                 cancellation_token=cancellation_token,
+                on_reasoning_chunk=on_reasoning_chunk,
             )
 
         self.request_count += 1
@@ -880,6 +888,7 @@ class LLMClient(_LoggingMixin):
         attempt = 0  # number of retries performed; first try is attempt 0
         while True:
             acc = self._adapter.new_accumulator()
+            acc.on_reasoning_chunk = on_reasoning_chunk
             try:
                 response = self._consume_stream(
                     kwargs, acc, on_text_chunk, cancellation_token,
@@ -901,6 +910,10 @@ class LLMClient(_LoggingMixin):
                 if not acc.progress_made and self._adapter.repair_request(
                     err_str, kwargs, stream=True,
                 ):
+                    # No wait and no retry count, but reasoning the host saw
+                    # is followed by the next request's: say so.
+                    if acc.reasoning_shown:
+                        self._notify_retry(on_retry, attempt + 1, 0.0, "parameter_repair")
                     continue
 
                 # Status-based retry classification — done up front so a
@@ -927,11 +940,16 @@ class LLMClient(_LoggingMixin):
                         f"[{request_id}] Streaming not supported by provider; "
                         "falling back to non-streaming"
                     )
+                    if acc.reasoning_shown:
+                        self._notify_retry(
+                            on_retry, attempt + 1, 0.0, "streaming_unsupported",
+                        )
                     try:
                         return self._emit_nonstreaming(
                             messages, tools, max_tokens, on_text_chunk,
                             cache_boundary=cache_boundary, on_retry=on_retry,
                             cancellation_token=cancellation_token,
+                            on_reasoning_chunk=on_reasoning_chunk,
                         )
                     except Exception as fallback_e:
                         import traceback
@@ -1114,9 +1132,11 @@ class LLMClient(_LoggingMixin):
         cache_boundary: Optional[int] = None,
         on_retry: Optional[Callable[[Dict[str, Any]], None]] = None,
         cancellation_token: Optional[Any] = None,
+        on_reasoning_chunk: Optional[Callable[[str], None]] = None,
     ) -> Any:
         """Run the non-streaming ``chat()`` and replay its full content
         through ``on_text_chunk`` so streaming callers behave identically.
+        Its reasoning goes first, whole, through ``on_reasoning_chunk``.
 
         Shared by the Gemini bypass and the streaming-unsupported fallback.
         """
@@ -1125,8 +1145,14 @@ class LLMClient(_LoggingMixin):
             cache_boundary=cache_boundary, on_retry=on_retry,
             cancellation_token=cancellation_token,
         )
+        if not (on_text_chunk or on_reasoning_chunk):
+            return response
+        message = response.choices[0].message
+        reasoning = getattr(message, "reasoning_content", None)
+        if on_reasoning_chunk and isinstance(reasoning, str) and reasoning:
+            on_reasoning_chunk(reasoning)
         if on_text_chunk:
-            content = response.choices[0].message.content
+            content = message.content
             if content:
                 on_text_chunk(content)
         return response

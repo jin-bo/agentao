@@ -39,10 +39,10 @@ TURN_BEGIN -> (user message arrives — turn begins; carries the user text)
 └── TURN_START -> (LLM call starts; resets streaming UI)
     ├── LLM_CALL_STARTED        (metadata before the provider call)
     ├── LLM_RETRY *             (optional: a failed call is about to be retried)
+    ├── THINKING *              (optional: reasoning pieces, as they stream)
     ├── LLM_TEXT *              (visible streaming chunks)
     ├── LLM_CALL_DELTA          (new messages since previous call)
     ├── LLM_CALL_COMPLETED      (usage + finish reason)
-    ├── THINKING *              (optional: whole reasoning, after the stream)
     ├── TOOL_START              (tool begins)
     │   ├── TOOL_CONFIRMATION   (optional, mirrors confirm prompt)
     │   ├── TOOL_OUTPUT *       (streaming chunks)
@@ -115,7 +115,7 @@ if event.type == EventType.TURN_START:
 
 | Field | Description |
 |-------|-------------|
-| Trigger | LLM emits reasoning/thought content (o1, Claude thinking, etc.), on a tool-call turn and on a final answer alike. A call's whole reasoning is emitted as one event **after** that call's stream ends — so after its `LLM_TEXT` chunks, not before. A tool-call turn also emits its text content as a second `THINKING` |
+| Trigger | LLM emits reasoning/thought content (o1, Claude thinking, etc.), on a tool-call turn and on a final answer alike. Reasoning **streams**: each event is one piece, already sanitized, in the order the provider sent it, so a call's reasoning arrives before the text it precedes. (A host `llm_client=` that never calls `on_reasoning_chunk` gets the whole reasoning once, after the call, so after its text.) Append the pieces; within one successful attempt they join to the reasoning stored in history (one rare exception: with interleaved thinking, a flag emoji split by a text block loses its tag characters in the pieces). Pieces are never retracted: after a retry (`LLM_RETRY`, which a UI may treat as a reset; a parameter fix-up or the non-streaming fallback sends one too, with `delay_s` 0, once reasoning has been shown) the next attempt's reasoning follows the failed one's. Text is never sent as `THINKING`: a tool-call turn's text goes out only as `LLM_TEXT` |
 | `data` | `{"text": "Let me think..."}` |
 | Typical use | Render into a collapsible "thinking" panel |
 
@@ -202,14 +202,14 @@ For normal UI spinners, prefer `TOOL_COMPLETE`. Use `TOOL_RESULT` for replay, au
 | Field | Description |
 |-------|-------------|
 | Trigger | Around each provider call |
-| `data` | Provider-call metadata before the call; usage / finish metadata after the call. `LLM_CALL_COMPLETED` carries `duration_ms`, `model_latency_ms` (a stable intent-named alias of `duration_ms`), `first_token_ms` (time-to-first-token in ms, or `null` when the call streamed no text — e.g. a tool-only response or a failure before the first delta), `prompt_tokens`, `completion_tokens`, `finish_reason`, plus `status` / `error_class` / `error_message` / `streamed` on the error path. Since 0.5.1 also `cache_read_tokens` / `cache_creation_tokens`: the parts **of** `prompt_tokens` the provider bills at its cache rates (`cache_read_input_tokens` / `cache_creation_input_tokens` on the Anthropic wire; `prompt_tokens_details.cached_tokens` / `.cache_write_tokens` on Chat Completions, and the same two under `input_tokens_details` on `openai-responses` — the write count only where the SDK states it, `openai` 3.x on). `None` when the response carried no usage, `0` when the provider did not state one |
+| `data` | Provider-call metadata before the call; usage / finish metadata after the call. `LLM_CALL_COMPLETED` carries `duration_ms`, `model_latency_ms` (a stable intent-named alias of `duration_ms`), `first_token_ms` (time-to-first-token in ms, or `null` when the call streamed no text — e.g. a tool-only response or a failure before the first delta), `prompt_tokens`, `completion_tokens`, `finish_reason`, plus `status` / `error_class` / `error_message` / `streamed` on the error path (`streamed` says whether answer **text** reached the host; reasoning pieces may have streamed even when it is `false`). Since 0.5.1 also `cache_read_tokens` / `cache_creation_tokens`: the parts **of** `prompt_tokens` the provider bills at its cache rates (`cache_read_input_tokens` / `cache_creation_input_tokens` on the Anthropic wire; `prompt_tokens_details.cached_tokens` / `.cache_write_tokens` on Chat Completions, and the same two under `input_tokens_details` on `openai-responses` — the write count only where the SDK states it, `openai` 3.x on). `None` when the response carried no usage, `0` when the provider did not state one |
 | Typical use | Metrics, cost tracking, debugging model behavior — `first_token_ms` vs `model_latency_ms` separates queueing/TTFT from total generation time |
 
 ### `LLM_RETRY`
 
 | Field | Description |
 |-------|-------------|
-| Trigger | A provider call failed with a retryable error and the client is about to wait before trying again — emitted **before** the backoff sleep. Only while nothing has been shown: a call that already streamed text is never retried, so this never interleaves with `LLM_TEXT` |
+| Trigger | A provider call failed with a retryable error and the client is about to wait before trying again — emitted **before** the backoff sleep. Only while no text has been shown: a call that already streamed text is never retried, so this never interleaves with `LLM_TEXT`. Reasoning may already have streamed; since #548 a parameter fix-up or the non-streaming fallback that re-sends a request after reasoning was shown emits one too, with `delay_s` 0 and `reason` `parameter_repair` / `streaming_unsupported` |
 | `data` | `{"retry": 1, "max_retries": 4, "delay_s": 1.62, "reason": "status=503"}` — `retry` counts from 1 (the first request is not a retry); `reason` is `status=<code>` or the exception class name (`RemoteProtocolError`, `ReadTimeout`, `StreamEndedEarlyError`, …), never the provider's message |
 | Typical use | Tell the user why the screen went still — the CLI prints `⟳ Reconnecting… 1/4`. Since 0.5.4 |
 

@@ -21,6 +21,7 @@ from rich.markup import escape as markup_escape
 from ..capabilities.process import build_child_env, kill_process_tree
 from ._globals import console, split_subcommand
 from .session import checkpoint_session
+from .transport import end_thinking
 
 if TYPE_CHECKING:
     from .app import AgentaoCLI
@@ -469,6 +470,7 @@ def run_loop(cli: "AgentaoCLI") -> None:
                 cli._streaming_started = False
                 raise
             finally:
+                end_thinking(cli, restart_status=False)
                 if cli.current_status:
                     cli.current_status.stop()
                 cli.current_status = None
@@ -503,6 +505,7 @@ def run_loop(cli: "AgentaoCLI") -> None:
                 _handle_plan_approval(cli)
 
         except KeyboardInterrupt:
+            end_thinking(cli, restart_status=False)
             if cli.current_status:
                 cli.current_status.stop()
                 cli.current_status = None
@@ -680,6 +683,7 @@ def _handle_plan_approval(cli: "AgentaoCLI") -> None:
                 _exec_response = cli.agent.chat("Now implement the plan. Follow the steps you outlined above.")
                 cli.last_response = _exec_response
             finally:
+                end_thinking(cli, restart_status=False)
                 if cli.current_status:
                     cli.current_status.stop()
                 cli.current_status = None
@@ -806,6 +810,7 @@ def _run_agent_turn(cli: "AgentaoCLI", message: str, images=None) -> str:
         cli._streaming_started = False
         raise
     finally:
+        end_thinking(cli, restart_status=False)
         if cli.current_status:
             cli.current_status.stop()
         cli.current_status = None

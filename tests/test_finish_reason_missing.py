@@ -478,11 +478,10 @@ class TestDownstreamCoverage:
         adapter_mod = __import__(
             "agentao.replay.adapter", fromlist=["ReplayAdapter"]
         )
-        adapter = adapter_mod.ReplayAdapter.__new__(adapter_mod.ReplayAdapter)
-        adapter._turn_id = "turn-1"
-        adapter._recorder = SimpleNamespace(
+        adapter = adapter_mod.ReplayAdapter(None, SimpleNamespace(
             record=lambda kind, turn_id, payload: recorded.append(payload)
-        )
+        ))
+        adapter._turn_id = "turn-1"
 
         adapter.end_turn(
             "a truncated answer",
@@ -500,11 +499,10 @@ class TestDownstreamCoverage:
         adapter_mod = __import__(
             "agentao.replay.adapter", fromlist=["ReplayAdapter"]
         )
-        adapter = adapter_mod.ReplayAdapter.__new__(adapter_mod.ReplayAdapter)
-        adapter._turn_id = "turn-2"
-        adapter._recorder = SimpleNamespace(
+        adapter = adapter_mod.ReplayAdapter(None, SimpleNamespace(
             record=lambda kind, turn_id, payload: recorded.append(payload)
-        )
+        ))
+        adapter._turn_id = "turn-2"
 
         adapter.end_turn("fine", status="ok", error=None, tool_count=0)
 

@@ -39,10 +39,10 @@ TURN_BEGIN -> (用户消息到达——turn 开始；携带 user 文本)
 └── TURN_START -> (LLM 调用开始；重置流式 UI)
     ├── LLM_CALL_STARTED        (调用 provider 前的元数据)
     ├── LLM_RETRY *             (可选：一次失败的调用即将重试)
+    ├── THINKING *              (可选：推理分片，随流到达)
     ├── LLM_TEXT *              (用户可见的流式 chunk)
     ├── LLM_CALL_DELTA          (本次调用新增的 messages)
     ├── LLM_CALL_COMPLETED      (usage + finish reason)
-    ├── THINKING *              (可选：完整推理，在流结束之后)
     ├── TOOL_START              (工具开始)
     │   ├── TOOL_CONFIRMATION   (可选，确认弹窗镜像事件)
     │   ├── TOOL_OUTPUT *       (流式 chunk)
@@ -115,7 +115,7 @@ if event.type == EventType.TURN_START:
 
 | 字段 | 说明 |
 |------|------|
-| 触发时机 | LLM 返回 reasoning/thought 内容时（如 o1、Claude thinking），工具调用轮和最终回答都会触发。一次调用的完整推理作为一个事件，在该调用的流结束**之后**发出——所以在它的 `LLM_TEXT` 分片之后，而不是之前。工具调用轮还会把它的文本内容作为第二个 `THINKING` 发出 |
+| 触发时机 | LLM 返回 reasoning/thought 内容时（如 o1、Claude thinking），工具调用轮和最终回答都会触发。推理是**流式**的：每个事件是一个已清洗的分片，按提供方发送的顺序到达，所以推理会先于它后面的文本。（宿主自带的 `llm_client=` 若从不调用 `on_reasoning_chunk`，整段推理会在调用结束后发一次，也就在正文之后。）把分片依次追加即可；在一次成功的尝试内，它们拼起来等于历史里保存的推理（唯一的罕见例外：交错思考时，被文本块隔开的旗帜 emoji 在分片里会丢掉 tag 字符）。分片发出后不撤回：重试后（`LLM_RETRY`，UI 可以把它当作重置信号；推理已经显示时，参数修正和非流式回退也会发一个，`delay_s` 为 0），下一次尝试的推理接在失败尝试的推理之后。正文从不作为 `THINKING` 发出：工具调用轮的正文只以 `LLM_TEXT` 发出 |
 | `data` | `{"text": "Let me think..."}` |
 | 典型用法 | 渲染到折叠的 "思考过程" 面板 |
 
@@ -202,14 +202,14 @@ if event.type == EventType.TOOL_COMPLETE:
 | 字段 | 说明 |
 |------|------|
 | 触发时机 | 每次 provider 调用前后 |
-| `data` | 调用前元数据；调用后的 usage / finish 元数据。`LLM_CALL_COMPLETED` 携带 `duration_ms`、`model_latency_ms`（`duration_ms` 的稳定别名，命名更贴合意图）、`first_token_ms`（首 token 时延，毫秒；当本次调用没有流式文本——例如纯工具调用响应、或首个 delta 之前就失败——为 `null`）、`prompt_tokens`、`completion_tokens`、`finish_reason`，错误路径上还有 `status` / `error_class` / `error_message` / `streamed`。自 0.5.1 起还有 `cache_read_tokens` / `cache_creation_tokens`：`prompt_tokens` **之中** provider 按缓存价格计费的那部分（Anthropic 线路取 `cache_read_input_tokens` / `cache_creation_input_tokens`；Chat Completions 取 `prompt_tokens_details.cached_tokens` / `.cache_write_tokens`，`openai-responses` 取 `input_tokens_details` 下的同名两项 —— 写入计数只在 SDK 给出时才有，即 `openai` 3.x 起）。响应不带 usage 时为 `None`，provider 没给出时为 `0` |
+| `data` | 调用前元数据；调用后的 usage / finish 元数据。`LLM_CALL_COMPLETED` 携带 `duration_ms`、`model_latency_ms`（`duration_ms` 的稳定别名，命名更贴合意图）、`first_token_ms`（首 token 时延，毫秒；当本次调用没有流式文本——例如纯工具调用响应、或首个 delta 之前就失败——为 `null`）、`prompt_tokens`、`completion_tokens`、`finish_reason`，错误路径上还有 `status` / `error_class` / `error_message` / `streamed`（`streamed` 表示是否已有回答**正文**发给宿主；即使为 `false`，推理分片也可能已经流出）。自 0.5.1 起还有 `cache_read_tokens` / `cache_creation_tokens`：`prompt_tokens` **之中** provider 按缓存价格计费的那部分（Anthropic 线路取 `cache_read_input_tokens` / `cache_creation_input_tokens`；Chat Completions 取 `prompt_tokens_details.cached_tokens` / `.cache_write_tokens`，`openai-responses` 取 `input_tokens_details` 下的同名两项 —— 写入计数只在 SDK 给出时才有，即 `openai` 3.x 起）。响应不带 usage 时为 `None`，provider 没给出时为 `0` |
 | 典型用法 | 指标、成本统计、调试模型行为 —— `first_token_ms` 与 `model_latency_ms` 把排队/TTFT 与总生成时间区分开 |
 
 ### `LLM_RETRY`
 
 | 字段 | 说明 |
 |------|------|
-| 触发时机 | provider 调用以可重试错误失败、客户端即将等待后再试 —— 在退避等待**之前**发出。只在尚无任何内容显示时发生：已经流出文本的调用不会重试，所以它不会与 `LLM_TEXT` 交错 |
+| 触发时机 | provider 调用以可重试错误失败、客户端即将等待后再试 —— 在退避等待**之前**发出。只在尚未显示正文时发生：已经流出文本的调用不会重试，所以它不会与 `LLM_TEXT` 交错。推理可能已经流出；自 #548 起，推理已显示后，参数修正或非流式回退重新发送请求时也会发一个，`delay_s` 为 0，`reason` 为 `parameter_repair` / `streaming_unsupported` |
 | `data` | `{"retry": 1, "max_retries": 4, "delay_s": 1.62, "reason": "status=503"}` —— `retry` 从 1 起算（首次请求不算重试）；`reason` 是 `status=<code>` 或异常类名（`RemoteProtocolError`、`ReadTimeout`、`StreamEndedEarlyError` 等），从不含 provider 的报错原文 |
 | 典型用法 | 告诉用户屏幕为什么停住了 —— CLI 打印 `⟳ Reconnecting… 1/4`。自 0.5.4 起 |
 

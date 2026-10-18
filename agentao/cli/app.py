@@ -314,6 +314,10 @@ class AgentaoCLI:
         self.readonly_mode = False
         self._cached_ctx_pct: float = 0.0
         self._streaming_started: bool = False
+        # A stretch of streamed reasoning is open (``cli/transport.py``).
+        self._thinking_open: bool = False
+        # Markdown mode: this LLM call's text, rendered if a tool call follows.
+        self._pending_text: list[str] = []
 
         from ..permissions import PermissionMode as _PM
 

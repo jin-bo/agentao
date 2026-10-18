@@ -12,12 +12,21 @@ from __future__ import annotations
 import time
 import threading
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
 # Default maximum messages before back-pressure drops the oldest.
 DEFAULT_CAPACITY = 256
+
+# A server may stream its reasoning one ``agent_thought_chunk`` per token.
+# Adjacent pieces from one session merge into one message up to this size,
+# and at capacity a thought is dropped before anything else, so a long
+# thinking phase cannot push the reply, an error or a pending interaction out.
+# Thoughts are log-only (``render.py`` logs the first 200 chars), so a small
+# cap loses nothing shown and keeps each merge's copy short.
+_THOUGHT = "agent_thought_chunk"
+THOUGHT_MERGE_MAX_CHARS = 8_000
 
 
 class MessageKind(str, Enum):
@@ -63,12 +72,14 @@ class Inbox:
     to atomically retrieve and remove all queued messages.
 
     When the queue reaches ``capacity``, the oldest message is silently
-    dropped to keep memory bounded.
+    dropped to keep memory bounded: the oldest thought if there is one, else
+    the oldest message. An incoming thought never evicts anything else: with
+    no thought queued, it is the one dropped.
     """
 
     def __init__(self, capacity: int = DEFAULT_CAPACITY) -> None:
         self._capacity = capacity
-        self._queue: deque[InboxMessage] = deque(maxlen=capacity)
+        self._queue: deque[InboxMessage] = deque()
         self._lock = threading.Lock()
         self._dropped = 0
 
@@ -77,10 +88,32 @@ class Inbox:
     # ------------------------------------------------------------------
 
     def push(self, msg: InboxMessage) -> None:
-        """Enqueue a message.  Drops the oldest if at capacity."""
+        """Enqueue a message.  Drops the oldest if at capacity.
+
+        A thought that follows a thought from the same session is appended
+        to it (``raw`` stays the first piece's).
+        """
         with self._lock:
-            if len(self._queue) == self._capacity:
+            last = self._queue[-1] if self._queue else None
+            if (
+                msg.update_kind == _THOUGHT
+                and last is not None
+                and last.update_kind == _THOUGHT
+                and (last.server, last.session_id) == (msg.server, msg.session_id)
+                and len(last.text) + len(msg.text) <= THOUGHT_MERGE_MAX_CHARS
+            ):
+                self._queue[-1] = replace(last, text=last.text + msg.text)
+                return
+            if len(self._queue) >= self._capacity:
                 self._dropped += 1
+                for i, queued in enumerate(self._queue):
+                    if queued.update_kind == _THOUGHT:
+                        del self._queue[i]
+                        break
+                else:
+                    if msg.update_kind == _THOUGHT:
+                        return
+                    self._queue.popleft()
             self._queue.append(msg)
 
     # ------------------------------------------------------------------

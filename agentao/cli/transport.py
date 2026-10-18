@@ -180,7 +180,21 @@ def emit_event(cli: AgentaoCLI, event: AgentEvent) -> None:
     """Dispatch a runtime event to the appropriate handler."""
     try:
         t = event.type
+        if t != EventType.THINKING:
+            # Streamed text drops the spinner itself (``on_llm_text``), so a
+            # restart here would only flash it for one frame.
+            end_thinking(
+                cli,
+                restart_status=not (
+                    t == EventType.LLM_TEXT and cli.markdown_mode is not True
+                ),
+            )
+        if t in (EventType.TOOL_START, EventType.TOOL_CONFIRMATION):
+            show_pending_text(cli)
         if t == EventType.TURN_START:
+            # A new LLM call: the last one's text was its final answer,
+            # which the turn renders itself, or was shown before its tools.
+            cli._pending_text = []
             if cli.current_status:
                 cli.current_status.update("[bold yellow]Thinking…[/bold yellow]")
         elif t == EventType.TOOL_CONFIRMATION:
@@ -224,6 +238,7 @@ def confirm_tool_execution(cli: AgentaoCLI, tool_name: str, tool_description: st
     ):
         return True
 
+    end_thinking(cli, restart_status=False)
     if cli.current_status:
         cli.current_status.stop()
 
@@ -308,26 +323,53 @@ def confirm_tool_execution(cli: AgentaoCLI, tool_name: str, tool_description: st
 
 
 def on_llm_thinking(cli: AgentaoCLI, reasoning: str) -> None:
-    """Display LLM reasoning text produced before tool calls."""
-    if not reasoning.strip():
+    """Display reasoning as it streams, one header per stretch.
+
+    ``THINKING`` arrives in pieces (``runtime/llm_call.py``), so a stretch of
+    uninterrupted reasoning gets one "Thinking" rule and its pieces are
+    written inline. Whitespace-only pieces are printed: they are the line
+    breaks between paragraphs. :func:`end_thinking` closes the stretch.
+    """
+    if not reasoning:
         return
+    if getattr(cli, "_thinking_open", False) is not True:
+        # Leading whitespace opens nothing: a model with thinking off may
+        # send ``"\n\n"`` as its whole reasoning on every call.
+        reasoning = reasoning.lstrip()
+        if not reasoning:
+            return
+        if cli.current_status:
+            cli.current_status.stop()
+        # Streamed text ends without a newline, and interleaved thinking can
+        # follow it, so start on a fresh line.
+        if getattr(cli, "_streaming_started", False) is True:
+            import sys
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        console.rule("[dim]Thinking[/dim]", style="dim blue")
+        console.print("  ", end="", soft_wrap=True)
+        cli._thinking_open = True
+    text = _display(reasoning).replace("\n", "\n  ")
+    # ``soft_wrap``: Rich cannot know the column a piece starts at, so it must
+    # not hard-wrap one; the terminal wraps the running line.
+    console.print(f"[dim italic]{text}[/dim italic]", end="", soft_wrap=True)
 
-    if cli.current_status:
-        cli.current_status.stop()
 
-    # Streamed answer text ends without a newline; a final answer's
-    # reasoning arrives after it, so start the panel on a line of its own.
-    if getattr(cli, "_streaming_started", False) is True:
-        import sys
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+def end_thinking(cli: AgentaoCLI, *, restart_status: bool = True) -> None:
+    """Close an open stretch of reasoning: end its line, restart the spinner.
 
-    console.rule("[dim]Thinking[/dim]", style="dim blue")
-    for line in reasoning.strip().splitlines():
-        console.print(f"  [dim italic]{_display(line)}[/dim italic]")
+    Called for every event that is not ``THINKING`` (``emit_event``: answer
+    text, a tool, a hook notice, a compaction, a retry notice, an error, …),
+    before a confirmation prompt, and when the turn ends, whether it
+    finished, failed or was cancelled. A no-op when none is open.
+    ``restart_status=False`` is for a caller that stops the spinner next.
+    """
+    if getattr(cli, "_thinking_open", False) is not True:
+        return
+    cli._thinking_open = False
     console.print()
-
-    if cli.current_status:
+    console.print()
+    if restart_status and cli.current_status:
         cli.current_status.start()
 
 
@@ -383,10 +425,31 @@ def on_max_iterations(cli: AgentaoCLI, max_iterations: int, pending_tools: list)
             cli.current_status.start()
 
 
+def show_pending_text(cli: AgentaoCLI) -> None:
+    """Render, in markdown mode, the text a call wrote before its tool calls.
+
+    Markdown mode does not stream text: the turn renders its final answer
+    at the end. Text that comes before a tool call is not the answer, so it
+    is rendered here, when the first tool of that call starts.
+    """
+    text = "".join(getattr(cli, "_pending_text", None) or []).strip()
+    cli._pending_text = []
+    if not text:
+        return
+    from rich.markdown import Markdown
+
+    # No ``markup_escape``: ``Markdown`` does not parse Rich markup.
+    console.print(Markdown(sanitize_terminal_text(text)))
+    console.print()
+
+
 def on_llm_text(cli: AgentaoCLI, chunk: str) -> None:
     """Handle LLM text chunk (streaming mode)."""
     if cli.markdown_mode:
-        return  # batch-render at end; streaming raw markup is unreadable
+        # Batch-rendered: streaming raw markup is unreadable. Kept in case
+        # a tool call follows (``show_pending_text``).
+        cli._pending_text.append(chunk)
+        return
     import sys
     if not cli._streaming_started:
         if cli.current_status:
