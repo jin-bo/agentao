@@ -139,6 +139,12 @@ def run_llm_call(
     # value as ``duration_ms`` — a stable, intent-named alias for host
     # telemetry consumers.
     first_token_at: Optional[float] = None
+    # The same stamp for the first streamed reasoning piece (``None`` when the
+    # reasoning only came whole, after the call). A thinking model sends
+    # its reasoning first, so ``first_token_ms`` there is the wait for the
+    # answer, not for the first output (#550). Not reset on a retry: like
+    # ``first_token_ms``, it is measured from the start of the call.
+    first_reasoning_at: Optional[float] = None
     # The text this call has shown the host, kept only so a Ctrl+C mid-stream
     # can hand it to ``runtime/turn.py`` — see the ``KeyboardInterrupt``
     # handler below. Retries happen only while no text has been shown, so this
@@ -179,10 +185,15 @@ def run_llm_call(
         # A lone surrogate would make replay drop the event. The whole text
         # is never sent again afterwards; this is the only ``THINKING`` for
         # the model's reasoning.
-        nonlocal reasoning_streamed
+        nonlocal reasoning_streamed, first_reasoning_at
         if not isinstance(chunk, str):
             return
         reasoning_streamed = True
+        # Stamped on arrival, not on emit: the sanitizer may hold a piece
+        # back until a later one or the flush, and the whole-text fallback
+        # after the call is not a streamed first piece at all.
+        if chunk and first_reasoning_at is None:
+            first_reasoning_at = time.monotonic()
         _emit_reasoning(reasoning_sanitizer.feed(chunk))
 
     def _on_retry(info: Dict[str, Any]) -> None:
@@ -201,6 +212,11 @@ def run_llm_call(
         if first_token_at is None:
             return None
         return round((first_token_at - t0) * 1000)
+
+    def _first_reasoning_ms() -> Optional[int]:
+        if first_reasoning_at is None:
+            return None
+        return round((first_reasoning_at - t0) * 1000)
 
     try:
         response = agent.llm.chat_stream(
@@ -243,6 +259,7 @@ def run_llm_call(
             "duration_ms": elapsed_ms,
             "model_latency_ms": elapsed_ms,
             "first_token_ms": _first_token_ms(),
+            "first_reasoning_ms": _first_reasoning_ms(),
             "error_class": type(exc).__name__,
             "error_message": str(exc)[:500],
             "streamed": streamed,
@@ -303,6 +320,7 @@ def run_llm_call(
         "duration_ms": elapsed_ms,
         "model_latency_ms": elapsed_ms,
         "first_token_ms": _first_token_ms(),
+        "first_reasoning_ms": _first_reasoning_ms(),
         "error_class": None,
         "error_message": None,
         "finish_reason": finish_reason,
