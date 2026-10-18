@@ -23,7 +23,12 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agentao.replay.schema import SUPPORTED_VERSIONS, render  # noqa: E402
+from agentao.replay.schema import (  # noqa: E402 — sys.path is set up above
+    FROZEN_SCHEMAS,
+    LIVE_VERSIONS,
+    render,
+    schema_digest,
+)
 
 
 def _schema_path(version: str) -> Path:
@@ -32,17 +37,30 @@ def _schema_path(version: str) -> Path:
 
 def _check() -> int:
     drift = []
-    for version in SUPPORTED_VERSIONS:
+    for version in LIVE_VERSIONS:
         path = _schema_path(version)
         expected = render(version)
         actual = path.read_text(encoding="utf-8") if path.exists() else ""
         if expected != actual:
             drift.append(path)
+    # A published file never changes: regenerating cannot fix this one.
+    changed = []
+    for version, digest in FROZEN_SCHEMAS.items():
+        path = _schema_path(version)
+        actual = path.read_text(encoding="utf-8") if path.exists() else ""
+        if schema_digest(actual) != digest:
+            changed.append(path)
+    if changed:
+        print("A frozen replay schema was changed. Restore it from git; a "
+              "new payload field needs a new SCHEMA_VERSION:", file=sys.stderr)
+        for path in changed:
+            print(f"  - {path.relative_to(ROOT)}", file=sys.stderr)
     if drift:
         print("Replay schema drift detected. Regenerate with:", file=sys.stderr)
         print("    uv run python scripts/write_replay_schema.py", file=sys.stderr)
         for path in drift:
             print(f"  - {path.relative_to(ROOT)}", file=sys.stderr)
+    if drift or changed:
         return 1
     print("Replay schemas up to date.")
     return 0
@@ -51,7 +69,7 @@ def _check() -> int:
 def _write() -> int:
     out_dir = ROOT / "schemas"
     out_dir.mkdir(parents=True, exist_ok=True)
-    for version in SUPPORTED_VERSIONS:
+    for version in LIVE_VERSIONS:
         path = _schema_path(version)
         path.write_text(render(version), encoding="utf-8")
         print(f"wrote {path.relative_to(ROOT)}")

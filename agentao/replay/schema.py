@@ -23,10 +23,17 @@ Design notes:
   validating against ``schemas/replay-event-1.0.json`` forever — that
   is the backward-compatibility promise documented in
   ``docs/reference/replay-schema-policy.md``.
+- Only the current version is generated. Every earlier file is frozen:
+  :data:`FROZEN_SCHEMAS` pins its digest, and nothing rewrites it. The
+  typed payloads come from the live host models, so regenerating an old
+  version would put a field it never had into its closed payload — a
+  host that saved the published file would then see the same version
+  name two contracts.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional
@@ -50,6 +57,8 @@ def _kinds_for_version(version: str) -> FrozenSet[str]:
         return EventKind.V1_3
     if version == "1.4":
         return EventKind.V1_4
+    if version == "1.5":
+        return EventKind.V1_5
     raise ValueError(f"unknown replay schema version: {version!r}")
 
 
@@ -212,7 +221,16 @@ def build_event_schema(version: str) -> dict:
     The returned dict is JSON-serializable and deterministic — repeated
     calls produce structurally identical output (kinds are enumerated in
     sorted order).
+
+    Raises ``ValueError`` for a frozen version (:data:`FROZEN_SCHEMAS`):
+    the live host models would give it fields it never had. Read its
+    published file, ``schemas/replay-event-<version>.json``, instead.
     """
+    if version in FROZEN_SCHEMAS:
+        raise ValueError(
+            f"replay schema {version} is frozen; read "
+            f"schemas/replay-event-{version}.json, not a rebuild"
+        )
     kinds = sorted(_kinds_for_version(version))
     envelope = _envelope_properties()
     return {
@@ -246,7 +264,29 @@ def build_event_schema(version: str) -> dict:
     }
 
 
-SUPPORTED_VERSIONS: tuple = ("1.0", "1.1", "1.2", "1.3", "1.4")
+SUPPORTED_VERSIONS: tuple = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5")
+
+#: The published files that never change again, by SHA-256 of their text
+#: with ``\n`` line ends (:func:`schema_digest`). Freeze the current
+#: version here when ``SCHEMA_VERSION`` moves past it.
+FROZEN_SCHEMAS: Dict[str, str] = {
+    "1.0": "2690b24e1d76ac780a3d908c2630015d3fd7624e7f9206981e31ac0cba3470f0",
+    "1.1": "49354cb6becbc791d8a102689a19c91b495282d10f82d8127b75aab06f47c636",
+    "1.2": "35512d43b823766e3a904c6b1f215bd7726dada8b191a24eaec1a564b0a3dbac",
+    "1.3": "5a3cb1181c1a4afd1c4d50a038679d77d0d1007130df0595bf9b6229546c0e35",
+    "1.4": "bab0a46e09961b55f43d71b33412f29439d350a65141fb9b15a3f67a952bac35",
+}
+
+#: The versions the generator writes: those not frozen.
+LIVE_VERSIONS: tuple = tuple(v for v in SUPPORTED_VERSIONS if v not in FROZEN_SCHEMAS)
+
+
+def schema_digest(text: str) -> str:
+    """SHA-256 of a schema file's text, line ends normalized to ``\n``.
+
+    Normalized so a Windows checkout with CRLF line ends hashes the same.
+    """
+    return hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
 
 
 def render(version: str) -> str:
@@ -258,7 +298,7 @@ def render(version: str) -> str:
     return json.dumps(build_event_schema(version), indent=2, sort_keys=True) + "\n"
 
 
-def write_all(out_dir: Path, versions: Iterable[str] = SUPPORTED_VERSIONS) -> Dict[str, Path]:
+def write_all(out_dir: Path, versions: Iterable[str] = LIVE_VERSIONS) -> Dict[str, Path]:
     """Write one schema file per version under ``out_dir``.
 
     Returns a ``{version: path}`` map of files written, in declaration

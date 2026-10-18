@@ -87,9 +87,12 @@ Token Usage:
 17:18:53   Prompt Tokens: 1400
 17:18:53   Completion Tokens: 6
 17:18:53   Total Tokens: 1406
+17:18:53   Reasoning Tokens: 0
 17:18:53 Assistant Response (13 chars):
   It prints hi.
 ```
+
+`Reasoning Tokens` 是 `Completion Tokens` **之中**的部分：模型用于思考的输出。provider 没给出时为 0，在 `anthropic-messages` 上恒为 0，因为它的输出计数已含思考。
 
 日志是增量记录的。要还原完整对话，从第一次请求起按顺序读各个块。内联图片只记大小摘要，不会把 base64 倒进日志。版式定义在 [`llm/_logging.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/_logging.py)。
 
@@ -312,7 +315,7 @@ Replay 文件和保存的 session 是两套东西：`save_session` / `load_sessi
 
 - **路径：** `.agentao/replays/<session_id>.<instance_id>.jsonl`。session id 里字母、数字、`_`、`-` 以外的字符会换成 `_`。
 - **一行一个事件。** 每个事件都有 `event_id`、`session_id`、`instance_id`、`seq`、`ts`、`kind`、`turn_id`、`parent_turn_id` 和 `payload`。
-- **第一行**是 `replay_header`：`schema_version`（当前为 `1.4`）、`session_id`、`instance_id`、`created_at`，设置了 capture flag 时还有 `capture_flags`。
+- **第一行**是 `replay_header`：`schema_version`（当前为 `1.5`）、`session_id`、`instance_id`、`created_at`，设置了 capture flag 时还有 `capture_flags`。
 - **最后一行**是正常关闭时写的 `replay_footer`：`event_count`，以及按类别累计的 `redaction_hits`、`dropped_field_hits`、`truncated_field_hits`。
 - **每次 session 诞生都开新 instance。** `/clear`、`/new`、`/sessions resume`、ACP `session/new` 和 ACP `session/load` 都会新开一个文件，一个文件不会跨越这些边界。
 

@@ -5,14 +5,22 @@ Pydantic models. Tests assert that the generated schema matches the
 checked-in snapshot using normalized JSON, so a model change that
 shifts the wire form is caught at PR review.
 
-Snapshots live under ``docs/schema/host.events.v1.json`` and
-``docs/schema/host.acp.v1.json``. The ``v1`` designation is wire
-lineage — adding optional fields stays in v1; removing or renaming a
-field requires a v2 bump and a release note.
+Snapshots live under ``docs/schema/host.events.v2.json`` and
+``docs/schema/host.acp.v1.json``. The models are closed
+(``extra="forbid"``, so ``additionalProperties: false``), so a JSON
+validator built from a snapshot rejects any field the snapshot does not
+list. Adding a field to an event model is therefore a new snapshot
+version, as removing or renaming one is. A published snapshot is never
+rewritten: :data:`FROZEN_SNAPSHOTS` pins its digest, and it keeps
+describing the events of the releases that wrote it.
+
+- ``host.events.v1.json``: frozen. Up to 0.5.14.
+- ``host.events.v2.json``: ``SubagentUsage.reasoning_tokens`` (#550).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Dict
 
@@ -84,8 +92,30 @@ def normalized_schema_json(schema: Dict[str, Any]) -> str:
     return json.dumps(schema, sort_keys=True, indent=2) + "\n"
 
 
+#: The published snapshots that never change again, by SHA-256 of their text
+#: with ``\n`` line ends (:func:`snapshot_digest`).
+FROZEN_SNAPSHOTS: Dict[str, str] = {
+    "host.events.v1.json": "2d86de8fbe893d86065094f8ca4a5aa661f666310acf9c558af9a6aa9e9325ad",
+}
+
+#: The current host event snapshot: what :func:`export_host_event_json_schema`
+#: produces.
+HOST_EVENTS_SNAPSHOT = "host.events.v2.json"
+
+
+def snapshot_digest(text: str) -> str:
+    """SHA-256 of a snapshot's text, line ends normalized to ``\n``.
+
+    Normalized so a Windows checkout with CRLF line ends hashes the same.
+    """
+    return hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
+
+
 __all__ = [
+    "FROZEN_SNAPSHOTS",
+    "HOST_EVENTS_SNAPSHOT",
     "export_host_acp_json_schema",
     "export_host_event_json_schema",
     "normalized_schema_json",
+    "snapshot_digest",
 ]

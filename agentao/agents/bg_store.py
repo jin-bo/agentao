@@ -496,7 +496,7 @@ class BackgroundTaskStore:
                 "tool_calls": 0,
                 "tokens": 0,
                 "duration_ms": 0,
-                # What the run's LLM requests *reported*, summed — the four
+                # What the run's LLM requests *reported*, summed — the five
                 # quantities of ``agentao run``'s ``usage``. ``tokens`` above
                 # is something else: a local estimate of how large the
                 # sub-agent's history ended up. ``None`` until the run ends,

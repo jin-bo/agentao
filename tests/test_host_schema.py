@@ -2,8 +2,8 @@
 
 These tests guard the host-facing wire shape: any model change that
 shifts the JSON schema must be reflected in the checked-in snapshot at
-``docs/schema/host.events.v1.json``. Hosts depend on that file as
-the compatibility contract.
+``docs/schema/host.events.v2.json``. Hosts depend on that file as
+the compatibility contract. ``host.events.v1.json`` is frozen as published.
 """
 
 from __future__ import annotations
@@ -22,13 +22,18 @@ from agentao.host import (
     ToolLifecycleEvent,
     export_host_event_json_schema,
 )
-from agentao.host.schema import normalized_schema_json
+from agentao.host.schema import (
+    FROZEN_SNAPSHOTS,
+    HOST_EVENTS_SNAPSHOT,
+    normalized_schema_json,
+    snapshot_digest,
+)
 from agentao.runtime import identity as runtime_identity
 
 
 SNAPSHOT_PATH = (
     Path(__file__).resolve().parents[1]
-    / "docs" / "schema" / "host.events.v1.json"
+    / "docs" / "schema" / HOST_EVENTS_SNAPSHOT
 )
 
 
@@ -38,7 +43,7 @@ SNAPSHOT_PATH = (
 
 
 def test_event_schema_matches_snapshot():
-    """The generated JSON schema must match docs/schema/host.events.v1.json.
+    """The generated JSON schema must match docs/schema/host.events.v2.json.
 
     Comparison uses canonical JSON (sort_keys=True) so a Pydantic patch
     release that only reorders ``$defs`` keys does not flap the test.
@@ -55,6 +60,26 @@ def test_event_schema_matches_snapshot():
         "If the change is intentional, regenerate the snapshot via "
         "agentao.host.schema.export_host_event_json_schema() and re-run."
     )
+
+
+@pytest.mark.parametrize("name", sorted(FROZEN_SNAPSHOTS))
+def test_a_published_snapshot_never_changes(name):
+    """The models are closed, so a regenerated old snapshot would list a
+    field its validators never accepted. A host that saved the published
+    file must keep getting that contract (#550)."""
+    path = SNAPSHOT_PATH.parent / name
+    assert snapshot_digest(path.read_text(encoding="utf-8")) == FROZEN_SNAPSHOTS[name]
+
+
+def test_v1_rejects_reasoning_tokens_and_v2_lists_it():
+    def usage(schema):
+        definition = schema["$defs"]["SubagentUsage"]
+        assert definition["additionalProperties"] is False
+        return definition["properties"]
+
+    v1 = json.loads((SNAPSHOT_PATH.parent / "host.events.v1.json").read_text(encoding="utf-8"))
+    assert "reasoning_tokens" not in usage(v1)
+    assert "reasoning_tokens" in usage(export_host_event_json_schema())
 
 
 # ---------------------------------------------------------------------------

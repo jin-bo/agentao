@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...cancellation import AgentCancelledError, CancellationToken
-from ...llm._usage import positive_int
+from ...llm._usage import USAGE_KEYS as _USAGE_KEYS, accepts_keyword, positive_int
 from ...tools.base import SHELL_TOOL_NAME, RegistrableTool, Tool
 from ...transport.events import AgentEvent, EventType
 from ...transport.sdk import SdkTransport
@@ -47,11 +47,6 @@ from ._outcome import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-_USAGE_KEYS = (
-    "prompt_tokens", "completion_tokens", "cache_read_tokens", "cache_creation_tokens",
-)
 
 
 _READ_RESOURCE_TOOL = "read_mcp_resource"
@@ -908,6 +903,7 @@ class AgentToolWrapper(Tool):
                     "completion_tokens": llm.total_completion_tokens,
                     "cache_read_tokens": getattr(llm, "total_cache_read_tokens", 0),
                     "cache_creation_tokens": getattr(llm, "total_cache_creation_tokens", 0),
+                    "reasoning_tokens": getattr(llm, "total_reasoning_tokens", 0),
                 }
             usage = {key: positive_int(counts.get(key)) for key in _USAGE_KEYS}
         except Exception:
@@ -917,11 +913,22 @@ class AgentToolWrapper(Tool):
             )
             return None
         if self._usage_sink is not None:
+            # ``reasoning_tokens`` only when there are some and the sink takes
+            # the keyword: a sink written before it would raise ``TypeError``
+            # and lose the whole roll-up, prompt and completion counts included.
             try:
+                # Inside the ``try``: a sink's ``__signature__`` is host code.
+                extra = (
+                    {"reasoning_tokens": usage["reasoning_tokens"]}
+                    if usage["reasoning_tokens"]
+                    and accepts_keyword(self._usage_sink, "reasoning_tokens")
+                    else {}
+                )
                 self._usage_sink(
                     usage["prompt_tokens"], usage["completion_tokens"],
                     cache_read_tokens=usage["cache_read_tokens"],
                     cache_creation_tokens=usage["cache_creation_tokens"],
+                    **extra,
                 )
             except Exception:
                 logger.warning(

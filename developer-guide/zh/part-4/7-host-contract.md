@@ -20,7 +20,7 @@
 **嵌入式 Harness 合约**就是答案：`agentao.host` 下一组刻意的小表面，它的特征是：
 
 - **以 Pydantic 模型冻结** —— 字段和类型是公开合约的一部分
-- **schema 已快照**到 `docs/schema/host.events.v1.json` —— CI 强制字节级一致
+- **schema 已快照**到 `docs/schema/host.events.v2.json` —— CI 强制字节级一致
 - **是内部事件的红线投影** —— 比如用户 prompt 文本不会出现在审计 body 里
 - **有版本号** —— 加可选字段向后兼容；删字段或改名要 schema 版本号升级
 
@@ -69,7 +69,7 @@
 |------|------|---------|
 | `ToolLifecycleEvent` | `started` · `completed` · `failed` | 任何工具调用（内置或自定义）。取消会以 `phase="failed", outcome="cancelled"` 形式出现。 |
 | `PermissionDecisionEvent` | （单次决策，无阶段） | 每次权限决策：`allow` / `deny` / `prompt`。**消费方必须把 allow 也消化掉**——审计行需要它。 |
-| `SubagentLifecycleEvent` | `spawned` · `completed` · `failed` · `cancelled` | 子 agent 任务的生命周期。注意：这里 `cancelled` 是**独立阶段**（与工具事件不同）。`failed` 覆盖**两种**形态——见下。终态阶段带 `usage`（0.5.2）：子 agent 的请求上报的四项 token 计数，事件触发时已计入父级的会话累计。 |
+| `SubagentLifecycleEvent` | `spawned` · `completed` · `failed` · `cancelled` | 子 agent 任务的生命周期。注意：这里 `cancelled` 是**独立阶段**（与工具事件不同）。`failed` 覆盖**两种**形态——见下。终态阶段带 `usage`（0.5.2）：子 agent 的请求上报的各项 token 计数，事件触发时已计入父级的会话累计。 |
 
 :::warning `failed` 不只是"它崩了"
 `SubagentLifecycleEvent(phase="failed")` 既会在子 agent **抛异常**时触发，也会在它**跑完却始终没给出答案**时触发（空 turn、只有 reasoning、被长度截断、doom-loop 被拦停、LLM 调用失败、turn 预算耗尽）。把后者报成 `completed` 会让契约陈述一件不真实的事。
@@ -101,7 +101,7 @@ async for ev in agent.events():
         ...
 ```
 
-完整字段表：[附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-host-合约)。schema 文件：[`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json)。
+完整字段表：[附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-host-合约)。schema 文件：[`docs/schema/host.events.v2.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v2.json)。
 
 ## 4.7.4 `agent.events()` vs `Transport(on_event=…)` —— 怎么选
 
@@ -141,7 +141,7 @@ async with aclosing(agent.astream(prompt)) as stream:
 - **一次只跑一轮。** 同一个 agent 上并发的第二轮在 worker 开始执行时从迭代器抛出 `TurnInProgressError`；被拒绝的流不会收到正在运行那一轮的任何内容；它没有开始任何一轮，所以 `agent.last_turn` 不会为它更新。
 - `cancellation_token=` 会关联到流自己的 token——取消它就结束本轮。关联是单向的：关闭流而取消的一轮不会取消你的 token，所以要看结果的 `status`。队列和 `events()` 一样有界：消费方慢，本轮就变慢，内存不会增长。
 - **不要为了抓文本而替换 `agent.transport`。** `astream()` 通过*订阅* agent 的 transport 接入，从不替换它（`NullTransport` 和 `SdkTransport` 都支持 `subscribe()`；没有它的 transport 会让 `astream()` 在本轮开始前抛 `TypeError`）。按请求替换 transport 行不通：工具执行器持有自己的 transport 引用，工具事件和确认仍会发到旧 transport，replay 也会丢掉它的适配器。
-- **流里没有的：** reasoning 文本、工具和权限事件（仍在 `agent.events()` 上），以及子 agent 的文本（子 agent 运行在自己的 transport 上）。`TextDelta` 和 `TurnOutcome` **不是** `HostEvent` 成员，不投影进 replay，也不在 `host.events.v1.json` 里。
+- **流里没有的：** reasoning 文本、工具和权限事件（仍在 `agent.events()` 上），以及子 agent 的文本（子 agent 运行在自己的 transport 上）。`TextDelta` 和 `TurnOutcome` **不是** `HostEvent` 成员，不投影进 replay，也不在 `host.events.v2.json` 里。
 
 ## 4.7.5 端到端：租户级审计流水线
 
@@ -269,8 +269,9 @@ snap.loaded_sources   # list[str] —— 来源标签
 
 `agentao.host` 承诺什么：
 
-- **加字段** = 向后兼容，你的代码继续工作。
-- **删字段或改名**要 schema 版本号升级（`host.events.v1.json` → `v2`），并在 changelog 给出明确迁移指南。
+- **加字段**：读取这些模型的代码继续工作。
+- **JSON 快照是封闭的。** 模型是 `extra="forbid"`，所以快照写的是 `additionalProperties: false`，用它构建的校验器会拒绝它没有列出的字段。因此给事件模型加字段，和删字段、改名一样，都是一个新的快照版本。已发布的快照永远不会重写：它继续描述写出它的那些版本，CI 会检查它的摘要。
+- **迁移校验器：** `host.events.v1.json` 描述到 0.5.14 为止的事件。自 0.5.15（#550）起 `SubagentUsage` 有 `reasoning_tokens`，并且总会发送，所以 v1 校验器会拒绝每个带 `usage` 的终态 `SubagentLifecycleEvent`。请改用 `host.events.v2.json` 校验。读取模型、或忽略未知键的代码不用改。
 - **内部类型**（`agentao.transport.AgentEvent` / `agentao.tools.ToolExecutionResult` / `agentao.permissions.PermissionEngine`）任何版本都可能变。**不要直接 import 进生产代码路径**。
 - **schema 快照由 CI 强制**：`tests/test_host_schema.py` 会从 Pydantic 模型重生成 schema，做字节级断言——一个改动同时改了模型和 wire 形状但忘了更新 schema 时，CI 会失败。
 
@@ -331,7 +332,7 @@ Q: 我要消费 Agent 事件，用哪个表面？
 - **30 行 + 一张数据库表**就能落出能扛住版本升级的租户审计流水线。
 
 → 参考速查：[附录 A.10 · 嵌入 Harness 合约](/zh/appendix/a-api-reference#a-10-嵌入-host-合约)
-→ Schema：[`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json)
+→ Schema：[`docs/schema/host.events.v2.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v2.json)
 → 设计文档：[`docs/design/embedded-host-contract.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/embedded-host-contract.md)
 
 → 下一节：[第 5 部分 · 扩展 Agent 行为](/zh/part-5/)

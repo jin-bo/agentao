@@ -1,7 +1,7 @@
 # Replay schema versioning policy
 
 This document defines how the JSON Schema files under `schemas/` evolve.
-It exists so that "what does `SCHEMA_VERSION = "1.4"` mean?" has a
+It exists so that "what does `SCHEMA_VERSION = "1.5"` mean?" has a
 machine-checkable answer instead of living in a dataclass docstring.
 
 ## Source of truth
@@ -55,11 +55,26 @@ Required when:
 - Tightening a payload schema in a way that existing on-disk replays
   would fail validation.
 
-Major bumps freeze the previous schema file. `schemas/replay-event-1.0.json`,
-`schemas/replay-event-1.1.json`, `schemas/replay-event-1.2.json`,
-`schemas/replay-event-1.3.json`, and `schemas/replay-event-1.4.json` each
-keep validating every replay file written under their respective minor,
-indefinitely.
+Every bump, minor or major, freezes the previous schema file.
+`schemas/replay-event-1.0.json` through `schemas/replay-event-1.4.json`
+each keep validating every replay file written under their respective
+minor, indefinitely.
+
+### Published files are frozen
+
+A published schema file is never rewritten, not even to add a field.
+The typed payloads come from the live host models and are closed
+(`additionalProperties: false`), so regenerating an old version would
+put a field into it that its replays never had, and a host that saved
+the published file would see one version name two contracts. A new
+payload field is therefore a new minor version (1.5 adds
+`reasoning_tokens` to `subagent_lifecycle`'s `usage`).
+
+- The generator writes only the current version (`LIVE_VERSIONS`).
+- `FROZEN_SCHEMAS` in `agentao/replay/schema.py` pins the SHA-256 of
+  each earlier file. `--check` fails when one changes, and
+  `tests/test_replay_schema.py` fails when `SCHEMA_VERSION` moves on
+  without freezing the version it leaves.
 
 ### Deprecation
 
@@ -173,3 +188,10 @@ belongs in `agentao/replay/schema.py` so it is unit-testable.
   otherwise absent from the replay: the file would keep showing an image
   that was no longer being sent. Backward-compatible with 1.3 — older
   readers skip the new kind.
+- **1.5** — no new kind. `subagent_lifecycle`'s `usage` gains
+  `reasoning_tokens`, the part of `completion_tokens` a thinking model
+  spent reasoning (#550). The payload is closed, so the 1.4 file rejects
+  a 1.5 line that carries it: validate 1.5 replays against
+  `replay-event-1.5.json`. From 1.5 on, published files are frozen (see
+  above). Earlier, 1.2 and 1.3 were regenerated in place when `usage`
+  was added; their committed text is what is frozen now.

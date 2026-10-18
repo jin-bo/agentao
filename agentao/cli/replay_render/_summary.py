@@ -182,6 +182,9 @@ def _summarize_replay_event(event: dict) -> str:
             usage.append(f"cached={payload['cache_read_tokens']}")
         if payload.get("cache_creation_tokens"):
             usage.append(f"cache-write={payload['cache_creation_tokens']}")
+        # A part of ``c``, likewise.
+        if payload.get("reasoning_tokens"):
+            usage.append(f"reasoning={payload['reasoning_tokens']}")
         return (
             f"[{color}]{status}[/{color}] [dim]"
             f"finish={markup_escape(str(payload.get('finish_reason')))} "

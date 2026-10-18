@@ -97,9 +97,10 @@ class ToolLifecycleEvent(BaseModel):
 class SubagentUsage(BaseModel):
     """What one sub-agent's LLM requests reported, summed over its run.
 
-    Same four quantities and the same names as ``agentao run``'s ``usage``.
+    Same five quantities and the same names as ``agentao run``'s ``usage``.
     ``prompt_tokens`` is the **whole** input; the two cache counts are parts
-    *of* it, not additions to it. Reported by the provider, not billed, and
+    *of* it, not additions to it. ``reasoning_tokens`` is likewise a part of
+    ``completion_tokens``, and 0 on a wire that does not state it. Reported by the provider, not billed, and
     agentao applies no prices.
     """
 
@@ -107,6 +108,7 @@ class SubagentUsage(BaseModel):
     completion_tokens: int = Field(default=0, ge=0)
     cache_read_tokens: int = Field(default=0, ge=0)
     cache_creation_tokens: int = Field(default=0, ge=0)
+    reasoning_tokens: int = Field(default=0, ge=0)
 
     model_config = ConfigDict(extra="forbid")
 

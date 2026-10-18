@@ -10,7 +10,7 @@ of two parallel streams. This test asserts:
 2. Reading the JSONL back and routing the payload through
    ``replay_payload_to_host_event(kind, payload)`` reproduces the
    original Pydantic model byte-for-byte.
-3. The generated v1.2 schema validates the produced payloads (catches
+3. The current generated schema validates the produced payloads (catches
    schema drift the same day a model changes).
 """
 
@@ -32,7 +32,7 @@ from agentao.host.replay_projection import (
     host_event_to_replay_payload,
     replay_payload_to_host_event,
 )
-from agentao.replay.events import EventKind
+from agentao.replay.events import SCHEMA_VERSION, EventKind
 from agentao.replay.recorder import ReplayRecorder
 from agentao.replay.schema import build_event_schema
 from agentao.runtime import identity as runtime_identity
@@ -196,7 +196,7 @@ def test_sink_attach_then_record(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Schema validation: the produced payload must match the v1.2 schema
+# Schema validation: the produced payload must match the current schema
 # ---------------------------------------------------------------------------
 
 
@@ -211,17 +211,17 @@ def _strip_unsupported_validator_keys(schema: dict) -> dict:
     return s
 
 
-def test_v1_2_schema_validates_each_projected_payload() -> None:
-    """The v1.2 schema's per-kind variant must accept the model's JSON dump.
+def test_the_current_schema_validates_each_projected_payload() -> None:
+    """The current schema's per-kind variant must accept the model's JSON dump.
 
     This is the drift tripwire: a Pydantic field rename / removal that
-    is not also reflected in the regenerated ``replay-event-1.2.json``
+    is not also reflected in the regenerated current schema file
     fails this test loudly.
     """
     pytest.importorskip("jsonschema", reason="jsonschema not installed")
     import jsonschema
 
-    schema = build_event_schema("1.2")
+    schema = build_event_schema(SCHEMA_VERSION)
     variants = {
         v["properties"]["kind"]["const"]: v for v in schema["oneOf"]
     }
@@ -317,8 +317,8 @@ def test_v1_2_schema_validates_redacted_projected_payload(tmp_path: Path) -> Non
     )
     assert secret not in json.dumps(payload), "raw secret must not be on disk"
 
-    # And the resulting line still validates against the v1.2 schema.
-    schema = build_event_schema("1.2")
+    # And the resulting line still validates against the current schema.
+    schema = build_event_schema(SCHEMA_VERSION)
     variants = {v["properties"]["kind"]["const"]: v for v in schema["oneOf"]}
     payload_schema = _strip_unsupported_validator_keys(
         variants[EventKind.TOOL_LIFECYCLE]["properties"]["payload"]

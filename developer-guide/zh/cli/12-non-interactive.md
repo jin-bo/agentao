@@ -154,14 +154,15 @@ agentao run --spec .agentao/runs/review-pr.yaml \
     "completion_tokens": 900,
     "total_tokens": 12900,
     "cache_read_tokens": 9500,
-    "cache_creation_tokens": 0
+    "cache_creation_tokens": 0,
+    "reasoning_tokens": 600
   },
   "tool_calls": 7,
   "warnings": []
 }
 ```
 
-`usage` 是本次运行各个 LLM 请求上报用量的总和：agent 自己的调用、它的压缩摘要请求，以及——自 0.5.1 起——它委派出去的每个**前台子代理**（此前子代理的请求不计入任何地方，所以有委派的运行会少报）。**`usage` 是一份快照，在写出 envelope 的那一刻读取**，写出之后不会再修订。自 0.5.6 起，`agentao run` 完全不提供后台子代理（它的工厂传入 `bg_store=None`，schema 里没有 `run_in_background`）：这一轮结束进程就退出，而后台 worker 是 daemon 线程，会随之被截断。因此一次运行委派出去的子代理都是前台的，在写出 envelope 之前就已结束并计入。需要按子代理拆分的数字时，宿主应改读 `SubagentLifecycleEvent.usage`。`prompt_tokens` 含缓存命中的输入，而 provider 对这部分按另一个价格计费；`cache_read_tokens` 与 `cache_creation_tokens`（0.5.1）说明其中有多少 —— 它们是 `prompt_tokens` **之中**的一部分，不是额外相加的量，也不会在 `total_tokens` 里再算一次。Agentao 只报这四个量，不套任何价格。流中失败的请求按服务端当时**已上报**的量计入（0.5.2）：在 `anthropic-messages` 线路上那是完整的输入量，流的第一个事件里就给了；Chat Completions 的 usage 只在最后一个 chunk 里，流在那之前断掉就什么也加不上。一次失败的尝试和随后的重试是两个请求，都会计入。上报不等于计费 —— 请把 `usage` 当用量，不要当账单。
+`usage` 是本次运行各个 LLM 请求上报用量的总和：agent 自己的调用、它的压缩摘要请求，以及——自 0.5.1 起——它委派出去的每个**前台子代理**（此前子代理的请求不计入任何地方，所以有委派的运行会少报）。**`usage` 是一份快照，在写出 envelope 的那一刻读取**，写出之后不会再修订。自 0.5.6 起，`agentao run` 完全不提供后台子代理（它的工厂传入 `bg_store=None`，schema 里没有 `run_in_background`）：这一轮结束进程就退出，而后台 worker 是 daemon 线程，会随之被截断。因此一次运行委派出去的子代理都是前台的，在写出 envelope 之前就已结束并计入。需要按子代理拆分的数字时，宿主应改读 `SubagentLifecycleEvent.usage`。`prompt_tokens` 含缓存命中的输入，而 provider 对这部分按另一个价格计费；`cache_read_tokens` 与 `cache_creation_tokens`（0.5.1）说明其中有多少 —— 它们是 `prompt_tokens` **之中**的一部分，不是额外相加的量，也不会在 `total_tokens` 里再算一次。`reasoning_tokens`（0.5.15）同样是 `completion_tokens` **之中**的一部分：模型用于思考的输出，推理模式的 provider 按输出计费但不显示。Chat Completions（`completion_tokens_details.reasoning_tokens`）和 `openai-responses`（`output_tokens_details.reasoning_tokens`）会给出它。`anthropic-messages` 上为 0，因为 `output_tokens` 已含思考部分，没有单独的计数。Agentao 只报这些量，不套任何价格。流中失败的请求按服务端当时**已上报**的量计入（0.5.2）：在 `anthropic-messages` 线路上那是完整的输入量，流的第一个事件里就给了；Chat Completions 的 usage 只在最后一个 chunk 里，流在那之前断掉就什么也加不上。一次失败的尝试和随后的重试是两个请求，都会计入。上报不等于计费 —— 请把 `usage` 当用量，不要当账单。
 
 失败时 `final_text` 为 `null`，`error` 字段携带 `{ type, message, reason?, tool_name?, tool_call_id?, question?, matched_rule? }`。`type` 取值：`permission_required`、`permission_denied`、`interaction_required`、`max_iterations`、`runtime_error`、`invalid_spec`、`interrupted`、`empty_response`、`length_truncated`、`doom_loop`、`hook_stop`。消费方应把 envelope 视为前向兼容（多余字段直接忽略）。
 

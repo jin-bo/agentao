@@ -16,9 +16,12 @@ import pytest
 
 from agentao.replay.events import EventKind, SCHEMA_VERSION
 from agentao.replay.schema import (
+    FROZEN_SCHEMAS,
+    LIVE_VERSIONS,
     SUPPORTED_VERSIONS,
     build_event_schema,
     render,
+    schema_digest,
 )
 
 
@@ -26,12 +29,20 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS_DIR = REPO_ROOT / "schemas"
 
 
+def _schema(version: str) -> dict:
+    """The schema at ``version``: the published file once it is frozen."""
+    if version in FROZEN_SCHEMAS:
+        path = SCHEMAS_DIR / f"replay-event-{version}.json"
+        return json.loads(path.read_text(encoding="utf-8"))
+    return build_event_schema(version)
+
+
 # ---------------------------------------------------------------------------
 # Drift detection: committed files must equal the generator output.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("version", SUPPORTED_VERSIONS)
+@pytest.mark.parametrize("version", LIVE_VERSIONS)
 def test_committed_schema_matches_generator(version: str) -> None:
     path = SCHEMAS_DIR / f"replay-event-{version}.json"
     assert path.exists(), (
@@ -46,8 +57,45 @@ def test_committed_schema_matches_generator(version: str) -> None:
     )
 
 
+@pytest.mark.parametrize("version", sorted(FROZEN_SCHEMAS))
+def test_a_published_schema_never_changes(version: str) -> None:
+    """The typed payloads are closed and come from the live host models, so
+    regenerating an old version would add fields it never had. A host that
+    saved the published file must keep getting that contract (#550)."""
+    path = SCHEMAS_DIR / f"replay-event-{version}.json"
+    assert schema_digest(path.read_text(encoding="utf-8")) == FROZEN_SCHEMAS[version]
+
+
+@pytest.mark.parametrize("version", sorted(FROZEN_SCHEMAS))
+def test_a_frozen_version_is_not_rebuilt(version: str) -> None:
+    """A rebuild would hand out a second contract under the same name."""
+    with pytest.raises(ValueError, match="frozen"):
+        build_event_schema(version)
+
+
+def test_only_the_current_version_is_live() -> None:
+    """Moving ``SCHEMA_VERSION`` on must freeze the version it leaves."""
+    assert LIVE_VERSIONS == (SCHEMA_VERSION,)
+
+
+def test_the_current_usage_payload_has_reasoning_tokens() -> None:
+    """1.5 adds it. 1.4, as published, rejects it."""
+    def usage_props(schema: dict) -> dict:
+        variant = next(
+            v for v in schema["oneOf"]
+            if v["properties"]["kind"]["const"] == EventKind.SUBAGENT_LIFECYCLE
+        )
+        usage = variant["properties"]["payload"]["properties"]["usage"]["anyOf"][0]
+        assert usage["additionalProperties"] is False
+        return usage["properties"]
+
+    assert "reasoning_tokens" in usage_props(build_event_schema("1.5"))
+    published = json.loads((SCHEMAS_DIR / "replay-event-1.4.json").read_text(encoding="utf-8"))
+    assert "reasoning_tokens" not in usage_props(published)
+
+
 def test_render_is_deterministic() -> None:
-    for version in SUPPORTED_VERSIONS:
+    for version in LIVE_VERSIONS:
         first = render(version)
         second = render(version)
         assert first == second
@@ -64,12 +112,13 @@ _VERSION_KINDS = {
     "1.2": EventKind.V1_2,
     "1.3": EventKind.V1_3,
     "1.4": EventKind.V1_4,
+    "1.5": EventKind.V1_5,
 }
 
 
 @pytest.mark.parametrize("version", SUPPORTED_VERSIONS)
 def test_kind_enum_matches_eventkind(version: str) -> None:
-    schema = build_event_schema(version)
+    schema = _schema(version)
     enum_kinds = set(schema["properties"]["kind"]["enum"])
     expected = _VERSION_KINDS[version]
     assert enum_kinds == set(expected)
@@ -77,7 +126,7 @@ def test_kind_enum_matches_eventkind(version: str) -> None:
 
 @pytest.mark.parametrize("version", SUPPORTED_VERSIONS)
 def test_oneof_covers_every_kind(version: str) -> None:
-    schema = build_event_schema(version)
+    schema = _schema(version)
     enum_kinds = set(schema["properties"]["kind"]["enum"])
     variant_kinds = {
         variant["properties"]["kind"]["const"] for variant in schema["oneOf"]
@@ -87,7 +136,7 @@ def test_oneof_covers_every_kind(version: str) -> None:
 
 @pytest.mark.parametrize("version", SUPPORTED_VERSIONS)
 def test_envelope_is_strict(version: str) -> None:
-    schema = build_event_schema(version)
+    schema = _schema(version)
     assert schema["additionalProperties"] is False
     required = set(schema["required"])
     assert required == {
@@ -110,7 +159,7 @@ def test_payload_remains_lenient_until_per_kind_modeling(version: str) -> None:
     notice that explicitly than to silently regress to a free-form
     payload everywhere.
     """
-    schema = build_event_schema(version)
+    schema = _schema(version)
     payload = schema["properties"]["payload"]
     assert payload == {"type": "object", "additionalProperties": True}
 
@@ -142,7 +191,7 @@ def test_v12_kinds_have_typed_payloads() -> None:
     too — silently regressing the payload to ``{}`` would defeat the
     schema as an audit-validation contract.
     """
-    schema = build_event_schema("1.2")
+    schema = _schema("1.2")
     variants = {
         v["properties"]["kind"]["const"]: v for v in schema["oneOf"]
     }

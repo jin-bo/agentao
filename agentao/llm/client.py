@@ -56,7 +56,7 @@ from ._retry import (
     _parse_retry_after,
 )
 from ._stream_response import _StreamAccumulator, _StreamResponse
-from ._usage import cache_token_counts, positive_int
+from ._usage import cache_token_counts, positive_int, reasoning_token_count
 from ._logging import _LoggingMixin
 from ..paths import user_root
 from ..security.secret_scan import redact
@@ -355,6 +355,8 @@ class LLMClient(_LoggingMixin):
         # a provider bills at its cache rates (see ``_usage.py``).
         self.total_cache_read_tokens: int = 0
         self.total_cache_creation_tokens: int = 0
+        # A part *of* ``total_completion_tokens``: the output spent thinking.
+        self.total_reasoning_tokens: int = 0
         # ``+=`` on an attribute is a read and a write. A background sub-agent
         # adds its usage from its own thread (``add_usage``) while this
         # client's turn adds its own, so every writer goes through the lock.
@@ -1049,15 +1051,17 @@ class LLMClient(_LoggingMixin):
         self.add_usage(
             getattr(usage, "prompt_tokens", 0), getattr(usage, "completion_tokens", 0),
             cache_read_tokens=cache_read, cache_creation_tokens=cache_creation,
+            reasoning_tokens=reasoning_token_count(usage),
         )
 
     def add_usage(
         self, prompt_tokens: int, completion_tokens: int, *,
         cache_read_tokens: int = 0, cache_creation_tokens: int = 0,
+        reasoning_tokens: int = 0,
     ) -> None:
         """Add to the session totals. Safe from any thread.
 
-        The one writer of the four ``total_*_tokens`` counters besides
+        The one writer of the five ``total_*_tokens`` counters besides
         ``reset_usage``: this client's own requests, and a sub-agent's usage
         rolled up when it finishes (``agents/tools/_wrapper.py``) — a
         sub-agent has its own client, so without that its requests were in
@@ -1069,6 +1073,7 @@ class LLMClient(_LoggingMixin):
             self.total_completion_tokens += positive_int(completion_tokens)
             self.total_cache_read_tokens += positive_int(cache_read_tokens)
             self.total_cache_creation_tokens += positive_int(cache_creation_tokens)
+            self.total_reasoning_tokens += positive_int(reasoning_tokens)
 
     def reset_usage(self) -> None:
         """Zero the session totals (a new conversation). Same lock as the adds."""
@@ -1077,9 +1082,10 @@ class LLMClient(_LoggingMixin):
             self.total_completion_tokens = 0
             self.total_cache_read_tokens = 0
             self.total_cache_creation_tokens = 0
+            self.total_reasoning_tokens = 0
 
     def usage_snapshot(self) -> Dict[str, int]:
-        """The four session totals, read together under the lock the adds take.
+        """The five session totals, read together under the lock the adds take.
 
         Read one attribute at a time and an ``add_usage`` on another thread
         can land between two of the reads: a prompt count from after it beside
@@ -1092,6 +1098,7 @@ class LLMClient(_LoggingMixin):
                 "completion_tokens": self.total_completion_tokens,
                 "cache_read_tokens": self.total_cache_read_tokens,
                 "cache_creation_tokens": self.total_cache_creation_tokens,
+                "reasoning_tokens": self.total_reasoning_tokens,
             }
 
     def _cancelled_before_send(self, cancellation_token: Optional[Any], request_id: str) -> bool:

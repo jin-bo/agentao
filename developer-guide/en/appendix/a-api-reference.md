@@ -619,13 +619,13 @@ from agentao.host import (
 | `ActivePermissions` | Read-only snapshot of the active permission policy (`mode`, `rules`, `loaded_sources`). |
 | `ToolLifecycleEvent` | Public envelope for one tool call. `phase ∈ {started, completed, failed}`; cancellation surfaces as `phase="failed", outcome="cancelled"`. |
 | `SubagentLifecycleEvent` | Lineage fact for a sub-agent task/session. `phase ∈ {spawned, completed, failed, cancelled}` — `cancelled` is a distinct phase here. `failed` means either "the sub-agent raised" (`error_type` = exception class name) **or** "it returned without ever answering" (`error_type = "incomplete:<reason>"`, `<reason>` ∈ `no_output`, `reasoning_only`, `length_truncated`, `doom_loop`, `llm_error`, `max_iterations`). Branch on `error_type` before escalating — see [4.7](/en/part-4/7-host-contract). |
-| `SubagentUsage` | The four token counts on a terminal `SubagentLifecycleEvent.usage` (0.5.2): `prompt_tokens` (the whole input), `completion_tokens`, `cache_read_tokens`, `cache_creation_tokens` — the last two are parts *of* `prompt_tokens`. `None` on `spawned` and wherever no sub-agent was built. Already included in the parent's session totals when the event fires. |
+| `SubagentUsage` | The token counts on a terminal `SubagentLifecycleEvent.usage` (0.5.2): `prompt_tokens` (the whole input), `completion_tokens`, `cache_read_tokens`, `cache_creation_tokens` — the last two are parts *of* `prompt_tokens` — and, since 0.5.15, `reasoning_tokens`, a part *of* `completion_tokens` (0 on a wire that does not state it). `None` on `spawned` and wherever no sub-agent was built. Already included in the parent's session totals when the event fires. |
 | `PermissionDecisionEvent` | Per-decision projection. Fires on `allow` / `deny` / `prompt`; consumers must drain even allow events. |
 | `HostEvent` | Discriminated union of the three event models (Pydantic discriminator: `event_type`). |
 | `RFC3339UTCString` | Constrained timestamp type. Canonical `Z` suffix only — `+00:00` offsets are rejected. |
 | `EventStream` | Runtime side of `Agentao.events()`. Reference only: `Agentao` keeps its stream private, so a host reads it through `agent.events()` or `agent.add_host_event_observer()`, never by calling `publish()` / `subscribe()` itself. |
 | `StreamSubscribeError` | Raised when a second concurrent subscriber for the same `session_id` filter is iterated while the first is open — raised on its first iteration, not when `agent.events()` is called (MVP supports one consumer per filter; close the first with `aclosing`, or fan out with synchronous observers). |
-| `export_host_event_json_schema()` | Emit the canonical JSON schema for events + permissions. Used by `tests/test_host_schema.py` for byte-equality against `docs/schema/host.events.v1.json`. |
+| `export_host_event_json_schema()` | Emit the canonical JSON schema for events + permissions. Used by `tests/test_host_schema.py` for byte-equality against `docs/schema/host.events.v2.json`. |
 | `export_host_acp_json_schema()` | Emit the canonical JSON schema for host-facing ACP payloads. Snapshot lives at `docs/schema/host.acp.v1.json`. |
 | `CancellationToken` | The token `chat()` / `arun()` accept as `cancellation_token=`. Re-export of `agentao.cancellation.CancellationToken` (the same class). |
 | `Tool`, `AsyncToolBase` | Base classes for host-supplied tools (`extra_tools=` / `add_tool`). Re-export of the canonical types in `agentao.tools.base`. |
@@ -679,7 +679,7 @@ Hosts that layer policy on top of the engine call `agent.permission_engine.add_l
 
 Each release ships checked-in JSON schema snapshots:
 
-- [`docs/schema/host.events.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v1.json) — events + permissions surface
+- [`docs/schema/host.events.v2.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v2.json) — events + permissions surface
 - [`docs/schema/host.acp.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.acp.v1.json) — host-facing ACP payloads
 
 `tests/test_host_schema.py` regenerates the schemas from the Pydantic models and asserts byte-equality. A model change that shifts the wire form must update both the model and the snapshot in the same PR. Adding an optional field is backwards-compatible; removing or renaming requires a schema version bump.

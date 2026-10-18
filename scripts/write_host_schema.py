@@ -24,17 +24,22 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agentao.host.schema import (  # noqa: E402
+from agentao.host.schema import (  # noqa: E402 — sys.path is set up above
+    FROZEN_SNAPSHOTS,
+    HOST_EVENTS_SNAPSHOT,
     export_host_acp_json_schema,
     export_host_event_json_schema,
     normalized_schema_json,
+    snapshot_digest,
 )
 
 
 # (snapshot-name, exporter) pairs. Add new entries here when a new
 # host schema surface is frozen for release.
+# A published snapshot is frozen instead (``FROZEN_SNAPSHOTS``): it is checked
+# against its digest and never rewritten.
 _SNAPSHOTS = (
-    ("host.events.v1.json", export_host_event_json_schema),
+    (HOST_EVENTS_SNAPSHOT, export_host_event_json_schema),
     ("host.acp.v1.json", export_host_acp_json_schema),
 )
 
@@ -51,11 +56,23 @@ def _check() -> int:
         actual = path.read_text(encoding="utf-8") if path.exists() else ""
         if expected != actual:
             drift.append(path)
+    changed = []
+    for name, digest in FROZEN_SNAPSHOTS.items():
+        path = _schema_path(name)
+        actual = path.read_text(encoding="utf-8") if path.exists() else ""
+        if snapshot_digest(actual) != digest:
+            changed.append(path)
+    if changed:
+        print("A frozen host schema snapshot was changed. Restore it from git; "
+              "a changed model needs a new snapshot version:", file=sys.stderr)
+        for path in changed:
+            print(f"  - {path.relative_to(ROOT)}", file=sys.stderr)
     if drift:
         print("Host schema drift detected. Regenerate with:", file=sys.stderr)
         print("    uv run python scripts/write_host_schema.py", file=sys.stderr)
         for path in drift:
             print(f"  - {path.relative_to(ROOT)}", file=sys.stderr)
+    if drift or changed:
         return 1
     print("Host schemas up to date.")
     return 0
