@@ -476,6 +476,33 @@ def _emit_invalid_usage(
     return EXIT_INVALID_USAGE
 
 
+def _fail_built(
+    agent: Any, cwd: Any, warnings: List[str], output_format: str,
+    error_type: str, message: str, exit_code: int,
+) -> int:
+    """End a run whose agent is built but which never ran a turn.
+
+    Emits the error envelope with the agent's session, closes the agent and
+    returns ``exit_code``. The agent is closed even when the envelope cannot
+    be written (a closed stdout pipe), so its log and MCP connections do not
+    outlive the run.
+    """
+    try:
+        _emit(RunResult(
+            status="error",
+            session_id=agent._session_id or "",
+            turn_id=agent._current_turn_id,
+            cwd=str(cwd),
+            model=agent.llm.model,
+            error=RunErrorEnvelope(type=error_type, message=message),
+            tool_calls=0,
+            warnings=warnings,
+        ), output_format)
+    finally:
+        agent.close()
+    return exit_code
+
+
 def _execute_with_args(args: argparse.Namespace) -> int:
     """Pipeline body — argparse-parsed ``args`` is the only input."""
     # ``--format`` may live on either the CLI or the spec. We need a
@@ -711,21 +738,11 @@ def _run_pipeline(
                 # ``_run_pipeline`` directly. Kept because the envelope
                 # is still the right answer if that happens: a traceback
                 # here would give a JSON caller nothing to parse.
-                _emit(RunResult(
-                    status="error",
-                    session_id=agent._session_id or "",
-                    turn_id=agent._current_turn_id,
-                    cwd=str(cwd),
-                    model=agent.llm.model,
-                    error=RunErrorEnvelope(
-                        type="invalid_spec",
-                        message=f"invalid permissions rule: {exc}",
-                    ),
-                    tool_calls=0,
-                    warnings=warnings,
-                ), output_format)
-                agent.close()
-                return EXIT_INVALID_USAGE
+                return _fail_built(
+                    agent, cwd, warnings, output_format,
+                    "invalid_spec", f"invalid permissions rule: {exc}",
+                    EXIT_INVALID_USAGE,
+                )
 
     if spec.thinking is not None:
         from ..llm.thinking import ThinkingUnsupported
@@ -735,23 +752,16 @@ def _run_pipeline(
         except ValueError as exc:
             # A client with nowhere to write a level is the runtime's
             # problem, not the spec's: exit 1, like a failed construction.
-            unsupported = isinstance(exc, ThinkingUnsupported)
-            _emit(RunResult(
-                status="error",
-                session_id=agent._session_id or "",
-                turn_id=agent._current_turn_id,
-                cwd=str(cwd),
-                model=agent.llm.model,
-                error=RunErrorEnvelope(
-                    type="runtime_error" if unsupported else "invalid_spec",
-                    message=f"cannot set thinking: {exc}" if unsupported
-                    else f"invalid thinking: {exc}",
-                ),
-                tool_calls=0,
-                warnings=warnings,
-            ), output_format)
-            agent.close()
-            return EXIT_RUNTIME_ERROR if unsupported else EXIT_INVALID_USAGE
+            if isinstance(exc, ThinkingUnsupported):
+                return _fail_built(
+                    agent, cwd, warnings, output_format,
+                    "runtime_error", f"cannot set thinking: {exc}",
+                    EXIT_RUNTIME_ERROR,
+                )
+            return _fail_built(
+                agent, cwd, warnings, output_format,
+                "invalid_spec", f"invalid thinking: {exc}", EXIT_INVALID_USAGE,
+            )
 
     try:
         _load_and_register_plugins(agent)
@@ -762,21 +772,12 @@ def _run_pipeline(
         available = set(agent.skill_manager.list_available_skills())
         missing = [s for s in spec.skills if s not in available]
         if missing:
-            _emit(RunResult(
-                status="error",
-                session_id=agent._session_id or "",
-                turn_id=agent._current_turn_id,
-                cwd=str(cwd),
-                model=agent.llm.model,
-                error=RunErrorEnvelope(
-                    type="invalid_spec",
-                    message="missing skill(s): " + ", ".join(repr(s) for s in missing),
-                ),
-                tool_calls=0,
-                warnings=warnings,
-            ), output_format)
-            agent.close()
-            return EXIT_INVALID_USAGE
+            return _fail_built(
+                agent, cwd, warnings, output_format,
+                "invalid_spec",
+                "missing skill(s): " + ", ".join(repr(s) for s in missing),
+                EXIT_INVALID_USAGE,
+            )
         # The task is a pointer, not ``spec.prompt``. The active-skills block
         # renders it as ``Task:`` in the volatile tail, which is re-sent on
         # every request and never cached. The prompt is already the

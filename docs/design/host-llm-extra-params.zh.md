@@ -148,6 +148,8 @@ if llm_client is not None and any(
 
 `reconfigure()`（`client.py:251`）**保留 `self.extra_body`**——它是实例级 host 配置，而非模型探测出的怪癖（后者是 `reset_capability_latches()` 重置的 latch）。
 
+**按来源的一个例外（0.5.15）：** agentao 自己写入的思考档位（`/thinking`、`agentao run` 的 `thinking`）不是 host 配置。**线路**变化时，`llm/thinking.py::carry_over_wire_switch` 把它移到新线路读取的字段；新线路不接受该档位时则丢弃。决定是否移动的是 client 上"写过什么"的记录，而不是字段名，所以 host 设置的字段（或之后改过的）按本节所述保持不动，host 已写在新线路字段里的值也优先于移过来的档位。同一线路上切模型不移动任何东西。
+
 **已载明的注意事项——无自动恢复（如实写出不对称）：** 不同于 `temperature`——它在模型拒绝时经一次性 `omit_temperature` latch **自动恢复**——残留的 `extra_body` 字段（如切到不支持的模型后仍带 `reasoning_effort`）**没有 latch**：之后**每次**调用都硬 400，host 不清除就不恢复。所以这**并不**完全对标 temperature 先例，而是严格更不宽容。v1 把切换时丢弃模型专有 `extra_body` 键定为 **host 的责任**。未来可加一个针对 `extra_body` 键的"被拒即丢" latch，对标 `omit_temperature`——不在 v1 范围（gap≠need），但点出以免低估严重性。
 
 ## 6. 优先级小结

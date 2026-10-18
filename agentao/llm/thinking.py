@@ -120,7 +120,7 @@ class ThinkingUnsupported(ValueError):
     """The client has nowhere to write a level: a fact about it, not the level."""
 
 
-def _extra_body(llm: Any) -> dict:
+def writable_extra_body(llm: Any) -> dict:
     """The client's ``extra_body``, made a dict when it is ``None``.
 
     Raises :class:`ThinkingUnsupported` when the client has no
@@ -176,7 +176,7 @@ def _write(llm: Any, api_format: Any, level: str, *, drop_stale: bool = True) ->
                 f"{level!r} is not a thinking depth for this model "
                 f"({' | '.join(levels)})"
             )
-        extra_body = _extra_body(llm)
+        extra_body = writable_extra_body(llm)
         output_config = extra_body.get("output_config")
         if not isinstance(output_config, dict):
             output_config = {}
@@ -186,7 +186,7 @@ def _write(llm: Any, api_format: Any, level: str, *, drop_stale: bool = True) ->
             extra_body.pop("reasoning_effort", None)
         return lowered
     value = lowered if lowered in REASONING_LEVELS else level
-    extra_body = _extra_body(llm)
+    extra_body = writable_extra_body(llm)
     if api_format == "openai-responses":
         reasoning = extra_body.get("reasoning")
         if not isinstance(reasoning, dict):

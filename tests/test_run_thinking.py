@@ -302,3 +302,21 @@ def test_a_read_only_extra_body_is_not_told_to_run_a_command_it_refuses(capsys):
     out = " ".join(capsys.readouterr().out.split())
     assert "/thinking off or a new level" not in out
     assert "read-only" in out
+
+
+def test_a_failed_envelope_write_still_closes_the_agent(monkeypatch):
+    from agentao.cli import run
+
+    closed = []
+    agent = SimpleNamespace(
+        _session_id="s", _current_turn_id=None, llm=SimpleNamespace(model="m"),
+        close=lambda: closed.append(True),
+    )
+
+    def broken_emit(result, output_format):
+        raise BrokenPipeError
+
+    monkeypatch.setattr(run, "_emit", broken_emit)
+    with pytest.raises(BrokenPipeError):
+        run._fail_built(agent, "/w", [], "json", "invalid_spec", "x", run.EXIT_INVALID_USAGE)
+    assert closed == [True]
