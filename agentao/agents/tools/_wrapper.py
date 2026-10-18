@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...cancellation import AgentCancelledError, CancellationToken
-from ...llm._usage import USAGE_KEYS as _USAGE_KEYS, accepts_keyword, positive_int
+from ...llm._usage import accepts_keyword, usage_totals
 from ...tools.base import SHELL_TOOL_NAME, RegistrableTool, Tool
 from ...transport.events import AgentEvent, EventType
 from ...transport.sdk import SdkTransport
@@ -905,7 +905,8 @@ class AgentToolWrapper(Tool):
                     "cache_creation_tokens": getattr(llm, "total_cache_creation_tokens", 0),
                     "reasoning_tokens": getattr(llm, "total_reasoning_tokens", 0),
                 }
-            usage = {key: positive_int(counts.get(key)) for key in _USAGE_KEYS}
+            # A key a host's snapshot lacks is read from its attribute.
+            usage = usage_totals(counts, llm)
         except Exception:
             logger.warning(
                 "Reading a sub-agent's token usage failed (%s)",

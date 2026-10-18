@@ -17,7 +17,7 @@ provider, a gateway or a test handed back.
 """
 
 import inspect
-from typing import Any, Tuple
+from typing import Any, Dict, Tuple
 
 
 #: The five session totals, by the names ``LLMClient.usage_snapshot()``,
@@ -32,6 +32,23 @@ def positive_int(value: Any) -> int:
     """``value`` if it is a positive ``int``, else 0. A ``bool`` is an ``int``."""
     ok = isinstance(value, int) and not isinstance(value, bool) and value > 0
     return value if ok else 0
+
+
+def usage_totals(counts: Any, llm: Any) -> Dict[str, int]:
+    """The five totals from a ``usage_snapshot()`` result, attributes filling gaps.
+
+    A key the snapshot lacks (a host's from before ``reasoning_tokens``), or
+    a snapshot that is not a dict, is read from ``llm.total_<key>``, so a
+    count the client keeps is not lost. Each value goes through
+    :func:`positive_int`, because ``llm`` may be a mock that answers any
+    attribute.
+    """
+    if not isinstance(counts, dict):
+        counts = {}
+    return {
+        key: positive_int(counts[key] if key in counts else getattr(llm, f"total_{key}", None))
+        for key in USAGE_KEYS
+    }
 
 
 def cache_token_counts(usage: Any) -> Tuple[int, int]:
