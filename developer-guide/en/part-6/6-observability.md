@@ -41,7 +41,7 @@ Size and location:
 
 - **Rotation is built in.** The handler is a `RotatingFileHandler` with 10 MB per file and 5 backups (`agentao.log.1` … `agentao.log.5`). So one working directory holds at most about 60 MB of log. Older records are deleted.
 - **A fallback exists.** If the file cannot be opened, Agentao writes to `~/.agentao/agentao.log` and prints the reason to stderr. If that fails too, it runs without a file.
-- Every line starts with `HH:MM:SS` (no date, no level, no logger name). A multi-line record has the time on its first line only.
+- Every line starts with `HH:MM:SS.mmm`, to the millisecond (no date, no level, no logger name). A multi-line record has the time on its first line only.
 
 This is your most important **debugging tool**. In production:
 
@@ -55,44 +55,47 @@ This is your most important **debugging tool**. In production:
 Each model call writes one request block and one response block. Both carry the same `req_N` id. The counter belongs to the `LLMClient` and starts at `req_1`. A sub-agent builds its own client, so one file can hold `req_1` more than once. A retry of the same call does not write a new request block. An excerpt, with annotations:
 
 ```text
-17:18:52 ================================================================================
-17:18:52 [req_2] LLM REQUEST                     ← 80 "=" above and below each header
-17:18:52 ================================================================================
-17:18:52 Model: gpt-5
-17:18:52 Temperature: (not sent)
-17:18:52 Max Tokens: 65536
-17:18:52 Extra Body: {'reasoning_effort': 'high', 'api_key': '***'}
-17:18:52 Messages (4 total, logging 2 new):     ← only messages since req_1
-17:18:52   Message 1 [system]:
-17:18:52     [system prompt unchanged: 9214 chars]  ← in full on first send, then a diff
-17:18:52   Message 3 [assistant]:
-17:18:52     Content: None
-17:18:52     Tool Calls: 1
-17:18:52       Tool Call 1: read_file (id=call_abc)
+17:18:52.031 ================================================================================
+17:18:52.031 [req_2] LLM REQUEST                     ← 80 "=" above and below each header
+17:18:52.031 ================================================================================
+17:18:52.031 Model: gpt-5
+17:18:52.031 Temperature: (not sent)
+17:18:52.031 Max Tokens: 65536
+17:18:52.031 Extra Body: {'reasoning_effort': 'high', 'api_key': '***'}
+17:18:52.031 Messages (4 total, logging 2 new):     ← only messages since req_1
+17:18:52.031   Message 1 [system]:
+17:18:52.031     [system prompt unchanged: 9214 chars]  ← in full on first send, then a diff
+17:18:52.031   Message 3 [assistant]:
+17:18:52.031     Content: None
+17:18:52.031     Tool Calls: 1
+17:18:52.031       Tool Call 1: read_file (id=call_abc)
           {
                     "file_path": "main.py"
           }
-17:18:52   Message 4 [tool]:
-17:18:52     Tool: read_file (call_id=call_abc)
-17:18:52     Content (53 chars):
+17:18:52.031   Message 4 [tool]:
+17:18:52.031     Tool: read_file (call_id=call_abc)
+17:18:52.031     Content (53 chars):
       print('hi')
       KEY=[REDACTED:openai_api_key]
-17:18:52 Tools (14 available, unchanged)        ← names listed only when the set changes
-17:18:53 ================================================================================
-17:18:53 [req_2] LLM RESPONSE
-17:18:53 ================================================================================
-17:18:53 Model: gpt-5
-17:18:53 Finish Reason: stop
+17:18:52.031 Tools (14 available, unchanged)        ← names listed only when the set changes
+17:18:53.874 ================================================================================
+17:18:53.874 [req_2] LLM RESPONSE
+17:18:53.874 ================================================================================
+17:18:53.874 Duration: 1802 ms
+17:18:53.874 Model: gpt-5
+17:18:53.874 Finish Reason: stop
 Token Usage:
-17:18:53   Prompt Tokens: 1400
-17:18:53   Completion Tokens: 6
-17:18:53   Total Tokens: 1406
-17:18:53   Reasoning Tokens: 0
-17:18:53 Assistant Response (13 chars):
+17:18:53.874   Prompt Tokens: 1400
+17:18:53.874   Completion Tokens: 6
+17:18:53.874   Total Tokens: 1406
+17:18:53.874   Cache Read Tokens: 1152
+17:18:53.874   Cache Creation Tokens: 0
+17:18:53.874   Reasoning Tokens: 0
+17:18:53.874 Assistant Response (13 chars):
   It prints hi.
 ```
 
-`Reasoning Tokens` is a part of `Completion Tokens`: the output the model spent thinking. It is 0 when the provider states none, and always 0 on `anthropic-messages`, whose output count includes thinking.
+`Duration` is the time of the attempt that produced the response, from send to its last chunk. A retried call's earlier attempts are not in it: each failed attempt's line (`retryable error`, `API call failed`, `mid-stream failure`) ends its own time with `after N ms`. The two cache counts are parts of `Prompt Tokens`, not additions to it. `Reasoning Tokens` is likewise a part of `Completion Tokens`, and always 0 on `anthropic-messages`. All three are 0 when the provider states none. The wait for the first piece of reasoning or text is not in the log. It is on the `llm_call_completed` replay event (`first_reasoning_ms`, `first_token_ms`).
 
 The logging is incremental. To rebuild a full conversation, read the blocks in order from the first request. Inline images are summarized by size and never dumped as base64. The layout is in [`llm/_logging.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/_logging.py).
 
@@ -106,6 +109,9 @@ grep -nE '\[req_[0-9]+\] LLM (REQUEST|RESPONSE)' agentao.log
 
 # Print one call, from its request up to the next request
 sed -n '/\[req_5\] LLM REQUEST/,/\[req_6\] LLM REQUEST/p' agentao.log
+
+# Find the requests that read nothing from the prompt cache
+grep -n 'Cache Read Tokens: 0$' agentao.log
 
 # Sum the tokens (add the rotated files for a longer window)
 grep 'Total Tokens' agentao.log | awk '{sum += $NF} END {print sum}'

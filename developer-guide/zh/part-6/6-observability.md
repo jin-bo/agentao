@@ -41,7 +41,7 @@ Agent 是"长尾出 bug"的典型——90% 时间好好的，10% 出现让你无
 
 - **自带轮转。** handler 是 `RotatingFileHandler`，单文件 10 MB，保留 5 个备份（`agentao.log.1` … `agentao.log.5`）。所以一个工作目录最多约 60 MB 日志，更早的记录会被删掉。
 - **有兜底路径。** 文件打不开时，Agentao 改写 `~/.agentao/agentao.log`，并把原因打到 stderr。兜底也失败，就不写文件继续运行。
-- 每行以 `HH:MM:SS` 开头（没有日期、级别和 logger 名）。多行记录只有第一行带时间。
+- 每行以精确到毫秒的 `HH:MM:SS.mmm` 开头（没有日期、级别和 logger 名）。多行记录只有第一行带时间。
 
 这是你**调试 Agent 行为**的最重要工具。生产上：
 
@@ -55,44 +55,47 @@ Agent 是"长尾出 bug"的典型——90% 时间好好的，10% 出现让你无
 每次模型调用写一个请求块和一个响应块，两者带同一个 `req_N`。计数器属于 `LLMClient`，从 `req_1` 开始。子代理会构造自己的 client，所以同一个文件里可能出现不止一个 `req_1`。同一次调用的重试不会再写请求块。下面是一段加了注释的节选：
 
 ```text
-17:18:52 ================================================================================
-17:18:52 [req_2] LLM REQUEST                     ← 标题上下各一行 80 个 "="
-17:18:52 ================================================================================
-17:18:52 Model: gpt-5
-17:18:52 Temperature: (not sent)
-17:18:52 Max Tokens: 65536
-17:18:52 Extra Body: {'reasoning_effort': 'high', 'api_key': '***'}
-17:18:52 Messages (4 total, logging 2 new):     ← 只记 req_1 之后新增的消息
-17:18:52   Message 1 [system]:
-17:18:52     [system prompt unchanged: 9214 chars]  ← 首次全文，之后只记 diff
-17:18:52   Message 3 [assistant]:
-17:18:52     Content: None
-17:18:52     Tool Calls: 1
-17:18:52       Tool Call 1: read_file (id=call_abc)
+17:18:52.031 ================================================================================
+17:18:52.031 [req_2] LLM REQUEST                     ← 标题上下各一行 80 个 "="
+17:18:52.031 ================================================================================
+17:18:52.031 Model: gpt-5
+17:18:52.031 Temperature: (not sent)
+17:18:52.031 Max Tokens: 65536
+17:18:52.031 Extra Body: {'reasoning_effort': 'high', 'api_key': '***'}
+17:18:52.031 Messages (4 total, logging 2 new):     ← 只记 req_1 之后新增的消息
+17:18:52.031   Message 1 [system]:
+17:18:52.031     [system prompt unchanged: 9214 chars]  ← 首次全文，之后只记 diff
+17:18:52.031   Message 3 [assistant]:
+17:18:52.031     Content: None
+17:18:52.031     Tool Calls: 1
+17:18:52.031       Tool Call 1: read_file (id=call_abc)
           {
                     "file_path": "main.py"
           }
-17:18:52   Message 4 [tool]:
-17:18:52     Tool: read_file (call_id=call_abc)
-17:18:52     Content (53 chars):
+17:18:52.031   Message 4 [tool]:
+17:18:52.031     Tool: read_file (call_id=call_abc)
+17:18:52.031     Content (53 chars):
       print('hi')
       KEY=[REDACTED:openai_api_key]
-17:18:52 Tools (14 available, unchanged)        ← 工具集变化时才列出名字
-17:18:53 ================================================================================
-17:18:53 [req_2] LLM RESPONSE
-17:18:53 ================================================================================
-17:18:53 Model: gpt-5
-17:18:53 Finish Reason: stop
+17:18:52.031 Tools (14 available, unchanged)        ← 工具集变化时才列出名字
+17:18:53.874 ================================================================================
+17:18:53.874 [req_2] LLM RESPONSE
+17:18:53.874 ================================================================================
+17:18:53.874 Duration: 1802 ms
+17:18:53.874 Model: gpt-5
+17:18:53.874 Finish Reason: stop
 Token Usage:
-17:18:53   Prompt Tokens: 1400
-17:18:53   Completion Tokens: 6
-17:18:53   Total Tokens: 1406
-17:18:53   Reasoning Tokens: 0
-17:18:53 Assistant Response (13 chars):
+17:18:53.874   Prompt Tokens: 1400
+17:18:53.874   Completion Tokens: 6
+17:18:53.874   Total Tokens: 1406
+17:18:53.874   Cache Read Tokens: 1152
+17:18:53.874   Cache Creation Tokens: 0
+17:18:53.874   Reasoning Tokens: 0
+17:18:53.874 Assistant Response (13 chars):
   It prints hi.
 ```
 
-`Reasoning Tokens` 是 `Completion Tokens` **之中**的部分：模型用于思考的输出。provider 没给出时为 0，在 `anthropic-messages` 上恒为 0，因为它的输出计数已含思考。
+`Duration` 是产生这个响应的那次尝试所用的时间，从发出请求到最后一个分片。一次重试过的调用，之前那几次尝试不算在内：每次失败尝试的那一行（`retryable error`、`API call failed`、`mid-stream failure`）用 `after N ms` 标出它自己的耗时。两个缓存计数是 `Prompt Tokens` **之中**的部分，不是额外加上的。`Reasoning Tokens` 同样是 `Completion Tokens` 之中的部分，在 `anthropic-messages` 上恒为 0。三项在 provider 没给出时都为 0。到第一段推理或正文的等待时间不在日志里，在 replay 的 `llm_call_completed` 事件上（`first_reasoning_ms`、`first_token_ms`）。
 
 日志是增量记录的。要还原完整对话，从第一次请求起按顺序读各个块。内联图片只记大小摘要，不会把 base64 倒进日志。版式定义在 [`llm/_logging.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/_logging.py)。
 
@@ -106,6 +109,9 @@ grep -nE '\[req_[0-9]+\] LLM (REQUEST|RESPONSE)' agentao.log
 
 # 打印一次调用：从它的请求到下一次请求
 sed -n '/\[req_5\] LLM REQUEST/,/\[req_6\] LLM REQUEST/p' agentao.log
+
+# 找出完全没有命中提示缓存的请求
+grep -n 'Cache Read Tokens: 0$' agentao.log
 
 # 累计 token（要更长的窗口，把轮转出的文件也带上）
 grep 'Total Tokens' agentao.log | awk '{sum += $NF} END {print sum}'

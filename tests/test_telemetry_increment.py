@@ -89,6 +89,54 @@ def test_llm_call_completed_ttft_none_when_no_text_streamed():
     assert isinstance(data["model_latency_ms"], int)
 
 
+def test_first_reasoning_ms_times_the_first_thinking_piece():
+    """A thinking model sends reasoning first. ``first_token_ms`` then times
+    the answer, and ``first_reasoning_ms`` times the first output (#550)."""
+    def chat_stream(
+        *, messages, tools, max_tokens, on_text_chunk, cancellation_token,
+        cache_boundary=None, on_retry=None, on_reasoning_chunk=None,
+    ):
+        on_reasoning_chunk("thinking about it")
+        on_text_chunk("answer")
+        message = SimpleNamespace(reasoning_content="thinking about it")
+        choice = SimpleNamespace(finish_reason="stop", message=message)
+        return SimpleNamespace(choices=[choice], usage=None)
+
+    llm = SimpleNamespace(
+        model="test-model", temperature=0.0, max_tokens=256, chat_stream=chat_stream
+    )
+    agent = _make_agent(llm)
+    run_llm_call(agent, messages=[{"role": "user", "content": "hi"}], tools=[])
+
+    data = _completed(agent.transport)
+    assert isinstance(data["first_reasoning_ms"], int)
+    assert 0 <= data["first_reasoning_ms"] <= data["first_token_ms"]
+
+
+def test_reasoning_shown_only_after_the_call_has_no_first_reasoning_ms():
+    """A client that never streams reasoning has it shown whole after the
+    call. That is not a time to the first reasoning piece."""
+    def chat_stream(**kwargs):
+        message = SimpleNamespace(content="ok", reasoning_content="thought it through")
+        choice = SimpleNamespace(finish_reason="stop", message=message)
+        return SimpleNamespace(choices=[choice], usage=None)
+
+    llm = SimpleNamespace(
+        model="test-model", temperature=0.0, max_tokens=256, chat_stream=chat_stream
+    )
+    agent = _make_agent(llm)
+    run_llm_call(agent, messages=[{"role": "user", "content": "hi"}], tools=[])
+
+    assert _completed(agent.transport)["first_reasoning_ms"] is None
+
+
+def test_first_reasoning_ms_is_none_without_reasoning():
+    agent = _make_agent(_make_llm(["Hel", "lo"]))
+    run_llm_call(agent, messages=[{"role": "user", "content": "hi"}], tools=[])
+
+    assert _completed(agent.transport)["first_reasoning_ms"] is None
+
+
 def test_llm_call_completed_error_path_still_reports_latency():
     def chat_stream(
         *, messages, tools, max_tokens, on_text_chunk, cancellation_token,

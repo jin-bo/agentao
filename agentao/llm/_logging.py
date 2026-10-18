@@ -17,7 +17,7 @@ import json
 from typing import Any, Dict
 
 from .. import json_parse
-from ._usage import reasoning_token_count
+from ._usage import cache_token_counts, reasoning_token_count
 
 
 #: Keys whose values are redacted before logging ``extra_body``. ``extra_body``
@@ -226,16 +226,25 @@ class _LoggingMixin:
             else:
                 self.logger.info(f"Tools ({len(tools)} available, unchanged)")
 
-    def _log_response(self, request_id: str, response: Any) -> None:
+    def _log_response(
+        self, request_id: str, response: Any, *, duration_ms: int | None = None,
+    ) -> None:
         """Log LLM response details.
 
         Args:
             request_id: Unique request identifier
             response: API response object
+            duration_ms: How long the attempt that produced ``response``
+                took, from send to the last chunk. A retried request's
+                earlier attempts are not in it.
         """
         self.logger.info("=" * 80)
         self.logger.info(f"[{request_id}] LLM RESPONSE")
         self.logger.info("=" * 80)
+        # Before the no-choices return: an empty response is the one a
+        # duration most often has to explain.
+        if duration_ms is not None:
+            self.logger.info(f"Duration: {duration_ms} ms")
 
         # Extract response data
         choice = response.choices[0] if response.choices else None
@@ -269,6 +278,12 @@ class _LoggingMixin:
             self.logger.info(f"  Prompt Tokens: {usage.prompt_tokens}")
             self.logger.info(f"  Completion Tokens: {usage.completion_tokens}")
             self.logger.info(f"  Total Tokens: {usage.total_tokens}")
+            # Parts of the prompt count, stated per request so a log shows
+            # which requests missed the cache (#550). The rule that reads
+            # them is the one the session totals use.
+            cache_read, cache_creation = cache_token_counts(usage)
+            self.logger.info(f"  Cache Read Tokens: {cache_read}")
+            self.logger.info(f"  Cache Creation Tokens: {cache_creation}")
             # A part of the completion count. 0 on a wire that does not
             # state it (Anthropic counts thinking in ``output_tokens``).
             self.logger.info(f"  Reasoning Tokens: {reasoning_token_count(usage)}")

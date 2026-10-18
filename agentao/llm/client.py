@@ -95,6 +95,11 @@ def __getattr__(name: str):
 KEEP_BASE_URL: Any = object()
 
 
+def _elapsed_ms(started: float) -> int:
+    """Milliseconds since ``started``, a ``time.monotonic()`` stamp."""
+    return round((time.monotonic() - started) * 1000)
+
+
 class _RedactingFormatter(logging.Formatter):
     """Formatter that strips credential-shaped strings from log records.
 
@@ -476,7 +481,11 @@ class LLMClient(_LoggingMixin):
             return None
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(
-            _RedactingFormatter("%(asctime)s %(message)s", datefmt="%H:%M:%S")
+            # Milliseconds: a request is often well under a second, and at
+            # ``HH:MM:SS`` the gaps between log lines cannot time one (#550).
+            _RedactingFormatter(
+                "%(asctime)s.%(msecs)03d %(message)s", datefmt="%H:%M:%S",
+            )
         )
         file_handler._agentao_llm_file_handler = True  # type: ignore[attr-defined]
         pkg_logger.addHandler(file_handler)
@@ -751,13 +760,16 @@ class LLMClient(_LoggingMixin):
             # Fresh per attempt, like ``chat_stream``'s: it is what the
             # attempt is counted from.
             acc = self._adapter.new_accumulator()
+            started = time.monotonic()
             try:
                 try:
                     response = self._adapter.send(kwargs, acc)
                 finally:
                     self._count_attempt(acc)
 
-                self._log_response(request_id, response)
+                self._log_response(
+                    request_id, response, duration_ms=_elapsed_ms(started),
+                )
                 return response
 
             except Exception as e:
@@ -772,15 +784,16 @@ class LLMClient(_LoggingMixin):
                 if not retryable or attempt >= MAX_RETRY_ATTEMPTS - 1:
                     import traceback
                     self.logger.error(
-                        f"[{request_id}] API call failed: {str(e)}\n{traceback.format_exc()}"
+                        f"[{request_id}] API call failed after {_elapsed_ms(started)} ms: "
+                        f"{str(e)}\n{traceback.format_exc()}"
                     )
                     raise
 
                 delay = _compute_backoff_delay(attempt, retry_after)
                 label = f"status={status}" if status is not None else type(e).__name__
                 self.logger.info(
-                    f"[{request_id}] retryable error ({label}); "
-                    f"attempt {attempt + 1} sleeping {delay:.2f}s"
+                    f"[{request_id}] retryable error ({label}) after "
+                    f"{_elapsed_ms(started)} ms; attempt {attempt + 1} sleeping {delay:.2f}s"
                 )
                 self._notify_retry(on_retry, attempt + 1, delay, label)
                 if not _interruptible_sleep(delay, cancellation_token):
@@ -891,11 +904,14 @@ class LLMClient(_LoggingMixin):
         while True:
             acc = self._adapter.new_accumulator()
             acc.on_reasoning_chunk = on_reasoning_chunk
+            started = time.monotonic()
             try:
                 response = self._consume_stream(
                     kwargs, acc, on_text_chunk, cancellation_token,
                 )
-                self._log_response(request_id, response)
+                self._log_response(
+                    request_id, response, duration_ms=_elapsed_ms(started),
+                )
                 return response
 
             except Exception as e:
@@ -939,7 +955,8 @@ class LLMClient(_LoggingMixin):
                     and _is_streaming_unsupported(err_str)
                 ):
                     self.logger.info(
-                        f"[{request_id}] Streaming not supported by provider; "
+                        f"[{request_id}] Streaming not supported by provider "
+                        f"(after {_elapsed_ms(started)} ms); "
                         "falling back to non-streaming"
                     )
                     if acc.reasoning_shown:
@@ -977,12 +994,14 @@ class LLMClient(_LoggingMixin):
                     import traceback
                     if acc.progress_made and retryable:
                         self.logger.error(
-                            f"[{request_id}] mid-stream failure (cannot retry safely): "
+                            f"[{request_id}] mid-stream failure (cannot retry safely) "
+                            f"after {_elapsed_ms(started)} ms: "
                             f"{str(e)}\n{traceback.format_exc()}"
                         )
                     else:
                         self.logger.error(
-                            f"[{request_id}] Streaming API call failed: "
+                            f"[{request_id}] Streaming API call failed after "
+                            f"{_elapsed_ms(started)} ms: "
                             f"{str(e)}\n{traceback.format_exc()}"
                         )
                     raise
@@ -990,8 +1009,8 @@ class LLMClient(_LoggingMixin):
                 delay = _compute_backoff_delay(attempt, retry_after)
                 label = f"status={status}" if status is not None else type(e).__name__
                 self.logger.info(
-                    f"[{request_id}] retryable streaming error ({label}); "
-                    f"attempt {attempt + 1} sleeping {delay:.2f}s"
+                    f"[{request_id}] retryable streaming error ({label}) after "
+                    f"{_elapsed_ms(started)} ms; attempt {attempt + 1} sleeping {delay:.2f}s"
                 )
                 self._notify_retry(on_retry, attempt + 1, delay, label)
                 if not _interruptible_sleep(delay, cancellation_token):
