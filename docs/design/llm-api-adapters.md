@@ -115,7 +115,8 @@ reading the protocol:
    finals (max-iterations, length abort, hook stop, doom loop) are a *second*
    assistant message built from a response whose blocks are already on the
    first; repeating a signed block there records one model output twice. They
-   keep the truncated display copy, as before.
+   keep a 500-character echo of `reasoning_content` (`_attach_reasoning_echo`),
+   as before; since 0.5.15 the recorded messages keep it whole.
 4. **Thinking leads its turn; interleaving with text is not preserved.** An
    OpenAI-shaped dict has one `content` string and one `tool_calls` list, so
    `[thinking, text, thinking, tool_use]` has no representation. Blocks go out
@@ -620,7 +621,7 @@ detail.
 | Want | Chat Completions today | Needs `anthropic-messages` | Needs `openai-responses` | `gemini-api` |
 |---|---|---|---|---|
 | Explicit prompt-cache breakpoints (`cache_control`, 1h retention) | not exposed by Anthropic's OpenAI-compat endpoint | yes — native | n/a | n/a |
-| Signed thinking blocks round-tripped intact | agentao truncates `reasoning_content` to 500 chars (`_serialize.py:20`) and purges on switch | yes | n/a | n/a |
+| Signed thinking blocks round-tripped intact | agentao truncated `reasoning_content` to 500 chars (`_serialize.py:20`; stored whole since 0.5.15) and purges on switch | yes | n/a | n/a |
 | Reasoning **preserved** across turns, without server-side state (`reasoning.encrypted_content`) | no equivalent — dropped | n/a | yes | n/a |
 | Thinking budget / effort as a first-class param | only via `extra_body` `reasoning_effort`, no auto-recovery | yes (`thinking.budget_tokens` / effort) | yes (`reasoning.effort`) | pending §3 transport choice |
 | `prompt_cache_key`, server-side conversation state | `extra_body` can set the key; no state | n/a | yes | n/a |
@@ -963,7 +964,7 @@ in request copies; the two must not share a lifecycle.
 
 | Protocol needs | Carried on the OpenAI dict as | Must also be added to |
 |---|---|---|
-| Anthropic thinking block + `signature` | separate ordered native-block list with per-block signatures (§5.1); `reasoning_content` remains the display copy | `purge_thinking_artifacts`, sanitize allowlist |
+| Anthropic thinking block + `signature` | separate ordered native-block list with per-block signatures (§5.1); `reasoning_content` stays as the plain copy (whole since 0.5.15; this wire drops it) | `purge_thinking_artifacts`, sanitize allowlist |
 | Responses `reasoning` item + `encrypted_content` | a `reasoning_item` key on the assistant message | same |
 | Responses dual ids (`call_id` **and** item `id`) | see appendix A.2 — **do not invent a second id field** | — |
 
@@ -1049,6 +1050,10 @@ are corroboration that the rule is real, not a spec citation.
    round-trip** and must be bypassed for this adapter, with the untruncated text
    carried separately from the display copy. A truncated signed block is worse
    than no block: the provider rejects it.
+   *As implemented:* the blocks ride whole on their own carrier key. Since
+   0.5.15 `reasoning_content` is stored whole too, because `openai-completions`
+   sends it back as it is and a cut copy gave thinking backends a chain of
+   thought that stopped mid-sentence; this wire drops it.
 
 8. **`temperature` is incompatible with extended thinking** (corroborated at
    `anthropic-messages.ts:1104`). agentao already has an `omit_temperature` latch

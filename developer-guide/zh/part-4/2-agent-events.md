@@ -39,10 +39,10 @@ TURN_BEGIN -> (用户消息到达——turn 开始；携带 user 文本)
 └── TURN_START -> (LLM 调用开始；重置流式 UI)
     ├── LLM_CALL_STARTED        (调用 provider 前的元数据)
     ├── LLM_RETRY *             (可选：一次失败的调用即将重试)
-    ├── THINKING *              (可选，0 或多次)
     ├── LLM_TEXT *              (用户可见的流式 chunk)
     ├── LLM_CALL_DELTA          (本次调用新增的 messages)
     ├── LLM_CALL_COMPLETED      (usage + finish reason)
+    ├── THINKING *              (可选：完整推理，在流结束之后)
     ├── TOOL_START              (工具开始)
     │   ├── TOOL_CONFIRMATION   (可选，确认弹窗镜像事件)
     │   ├── TOOL_OUTPUT *       (流式 chunk)
@@ -115,7 +115,7 @@ if event.type == EventType.TURN_START:
 
 | 字段 | 说明 |
 |------|------|
-| 触发时机 | LLM 返回 reasoning/thought 内容时（如 o1、Claude thinking） |
+| 触发时机 | LLM 返回 reasoning/thought 内容时（如 o1、Claude thinking），工具调用轮和最终回答都会触发。一次调用的完整推理作为一个事件，在该调用的流结束**之后**发出——所以在它的 `LLM_TEXT` 分片之后，而不是之前。工具调用轮还会把它的文本内容作为第二个 `THINKING` 发出 |
 | `data` | `{"text": "Let me think..."}` |
 | 典型用法 | 渲染到折叠的 "思考过程" 面板 |
 

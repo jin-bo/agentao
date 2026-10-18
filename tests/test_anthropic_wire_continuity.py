@@ -181,7 +181,7 @@ def test_signed_thinking_the_compaction_kept_goes_back_whole_and_the_rest_is_gon
     }
     assert kept and set(sent) == kept          # exactly what history still holds
     assert "SIG-tool-0==" not in sent          # summarized away with its turn
-    assert sent["SIG-tool-8=="] == THOUGHT     # whole, not the 500-char display copy
+    assert sent["SIG-tool-8=="] == THOUGHT     # whole, from the signed block
 
 
 def test_the_token_anchor_is_re_established_by_the_first_response_after(compacted):

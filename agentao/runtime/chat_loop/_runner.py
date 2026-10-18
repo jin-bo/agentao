@@ -52,6 +52,7 @@ from ...plugins.hooks._profile import PROFILE_ID
 from ._outcomes import _HookOutcome
 from ._serialize import (
     _attach_reasoning,
+    _attach_reasoning_echo,
     _attach_thinking_blocks,
     _serialize_tool_call,
 )
@@ -694,7 +695,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             "role": "assistant",
             "content": assistant_content_max,
         }
-        _attach_reasoning(final_msg_max, reasoning_content_max)
+        _attach_reasoning_echo(final_msg_max, reasoning_content_max)
         if sanitize_assistant_message(final_msg_max):
             agent.llm.logger.warning(
                 "Sanitised max-iteration assistant message (lone surrogates and/or "
@@ -857,7 +858,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 "role": "assistant",
                 "content": assistant_content,
             }
-            _attach_reasoning(final_msg, reasoning_content)
+            _attach_reasoning_echo(final_msg, reasoning_content)
             if sanitize_assistant_message(final_msg):
                 agent.llm.logger.warning(
                     "Sanitised length-truncation abort message (lone surrogates and/or "
@@ -942,7 +943,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 "role": "assistant",
                 "content": stop_content,
             }
-            _attach_reasoning(final_msg_hook, reasoning_content)
+            _attach_reasoning_echo(final_msg_hook, reasoning_content)
             sanitize_assistant_message(final_msg_hook)
             return self._resolve_stop_hook(
                 turn_end_reason="hook_stop",
@@ -961,7 +962,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 "role": "assistant",
                 "content": assistant_content_doom,
             }
-            _attach_reasoning(final_msg_doom, reasoning_content)
+            _attach_reasoning_echo(final_msg_doom, reasoning_content)
             if sanitize_assistant_message(final_msg_doom):
                 agent.llm.logger.warning(
                     "Sanitised doom-loop assistant message (lone surrogates and/or "
@@ -1070,6 +1071,15 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 "Sanitised final assistant message (lone surrogates and/or invisible "
                 "Unicode tag characters) (iteration %d)", iteration,
             )
+        # The tool-call path emits it in
+        # ``_serialize_and_record_assistant_tool_message``; a turn
+        # that answers without a call has to emit its own, or the reasoning
+        # behind the answer reaches only ``agentao.log``. Only the reasoning:
+        # the answer text already went out as ``LLM_TEXT``. Emitted from the
+        # sanitized copy, so replay and ACP get what history holds.
+        shown_reasoning = final_msg.get("reasoning_content")
+        if isinstance(shown_reasoning, str) and shown_reasoning:
+            agent.transport.emit(AgentEvent(EventType.THINKING, {"text": shown_reasoning}))
         return self._resolve_stop_hook(
             turn_end_reason="final_response",
             assistant_content=assistant_content,

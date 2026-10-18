@@ -39,10 +39,10 @@ TURN_BEGIN -> (user message arrives — turn begins; carries the user text)
 └── TURN_START -> (LLM call starts; resets streaming UI)
     ├── LLM_CALL_STARTED        (metadata before the provider call)
     ├── LLM_RETRY *             (optional: a failed call is about to be retried)
-    ├── THINKING *              (optional, 0 or more)
     ├── LLM_TEXT *              (visible streaming chunks)
     ├── LLM_CALL_DELTA          (new messages since previous call)
     ├── LLM_CALL_COMPLETED      (usage + finish reason)
+    ├── THINKING *              (optional: whole reasoning, after the stream)
     ├── TOOL_START              (tool begins)
     │   ├── TOOL_CONFIRMATION   (optional, mirrors confirm prompt)
     │   ├── TOOL_OUTPUT *       (streaming chunks)
@@ -115,7 +115,7 @@ if event.type == EventType.TURN_START:
 
 | Field | Description |
 |-------|-------------|
-| Trigger | LLM emits reasoning/thought content (o1, Claude thinking, etc.) |
+| Trigger | LLM emits reasoning/thought content (o1, Claude thinking, etc.), on a tool-call turn and on a final answer alike. A call's whole reasoning is emitted as one event **after** that call's stream ends — so after its `LLM_TEXT` chunks, not before. A tool-call turn also emits its text content as a second `THINKING` |
 | `data` | `{"text": "Let me think..."}` |
 | Typical use | Render into a collapsible "thinking" panel |
 
