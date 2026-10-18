@@ -151,7 +151,7 @@ def test_a_reasoning_item_is_kept_whole_wherever_the_server_stated_it(on_item_ev
         "id": "rs_3", "summary": [{"type": "summary_text", "text": "weigh it"}],
         "encrypted_content": "ENC-3",
     }]
-    assert message.reasoning_content == "weigh it"   # the display copy, as before
+    assert message.reasoning_content == "weigh it"   # the plain copy, as before
 
 
 def test_reasoning_with_nothing_to_send_back_is_not_carried():

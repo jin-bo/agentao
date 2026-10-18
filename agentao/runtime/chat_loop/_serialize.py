@@ -19,20 +19,40 @@ from ...llm._stream_response import WIRE_CARRIER_KEYS
 from ..sanitize import canonicalize_tool_arguments
 
 
-MAX_REASONING_HISTORY_CHARS = 500  # Truncate reasoning_content in history to ~125 tokens
-
-
 def _attach_reasoning(msg: Dict[str, Any], reasoning_content: Optional[str]) -> None:
-    """Attach a truncated copy of ``reasoning_content`` to ``msg`` (in place).
+    """Attach ``reasoning_content`` to ``msg`` (in place), whole.
 
-    No-op when ``reasoning_content`` is ``None``. Truncation cap matches
-    the prompt-budget assumption that reasoning shouldn't dominate
-    history. The trailing ellipsis flags the truncation to the model.
+    No-op when ``reasoning_content`` is ``None``. The text is **not cut**. On
+    the ``openai-completions`` wire history goes out as it is, so this copy is
+    the reasoning the model gets back: DeepSeek, Kimi and similar thinking
+    backends read it inside a tool loop, and a cut copy hands them a chain of
+    thought that stops mid-sentence. It used to be cut to 500 characters. The
+    other two wires drop this key and send their own carrier
+    (:func:`_attach_thinking_blocks`); the budget for it is compaction's job.
     """
     if reasoning_content is None:
         return
-    stored = reasoning_content[:MAX_REASONING_HISTORY_CHARS]
-    if len(reasoning_content) > MAX_REASONING_HISTORY_CHARS:
+    msg["reasoning_content"] = reasoning_content
+
+
+SYNTHETIC_REASONING_ECHO_CHARS = 500
+
+
+def _attach_reasoning_echo(
+    msg: Dict[str, Any], reasoning_content: Optional[str]
+) -> None:
+    """Attach a short echo of ``reasoning_content`` to a synthetic final.
+
+    The four synthetic finals (max-iterations, length abort, hook stop, doom
+    loop) are a second assistant message built from a response that is
+    already recorded, with its reasoning whole, on the tool-call message. A
+    second whole copy would send and count the same text twice; the echo
+    keeps the old 500-character cut, which is all these messages ever had.
+    """
+    if reasoning_content is None:
+        return
+    stored = reasoning_content[:SYNTHETIC_REASONING_ECHO_CHARS]
+    if len(reasoning_content) > SYNTHETIC_REASONING_ECHO_CHARS:
         stored += "..."
     msg["reasoning_content"] = stored
 
@@ -40,11 +60,11 @@ def _attach_reasoning(msg: Dict[str, Any], reasoning_content: Optional[str]) -> 
 def _attach_thinking_blocks(msg: Dict[str, Any], assistant_message: Any) -> None:
     """Carry the response's signed thinking blocks onto ``msg`` (in place).
 
-    The second, **untruncated** carrier beside ``reasoning_content``. That one
-    is a display copy cut to 500 characters; a signed block has to go back to
-    the provider whole, and a truncated one is worse than none — it is
-    rejected. Only the ``anthropic-messages`` adapter sets the attribute, so
-    this is a no-op on every other wire.
+    The wire's own carrier beside ``reasoning_content``. That one is plain
+    text, which this wire does not send; a signed block has to go back to the
+    provider whole, and a truncated one is worse than none — it is rejected.
+    Only the ``anthropic-messages`` adapter sets the attribute, so this is a
+    no-op on every other wire.
 
     Called for the two messages that record the model's **own** output: the
     tool-call message and the final response. The four synthetic finals

@@ -315,6 +315,13 @@ def on_llm_thinking(cli: AgentaoCLI, reasoning: str) -> None:
     if cli.current_status:
         cli.current_status.stop()
 
+    # Streamed answer text ends without a newline; a final answer's
+    # reasoning arrives after it, so start the panel on a line of its own.
+    if getattr(cli, "_streaming_started", False) is True:
+        import sys
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
     console.rule("[dim]Thinking[/dim]", style="dim blue")
     for line in reasoning.strip().splitlines():
         console.print(f"  [dim italic]{_display(line)}[/dim italic]")

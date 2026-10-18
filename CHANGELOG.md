@@ -13,7 +13,11 @@ _Targeting 0.5.15. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **`reasoning_content` is stored whole in history.** It used to be cut to 500 characters plus `...`. On `openai-completions` history goes out as it is, so DeepSeek, Kimi and similar thinking backends got back a chain of thought that stopped mid-sentence inside their own tool loop. Session files and the history token estimate now carry the whole text. The four synthetic finals (max-iterations, length abort, hook stop, doom loop) repeat a response already recorded whole on its tool-call message, so they keep a 500-character echo. The local estimate counts a message's reasoning once: on `anthropic-messages` and `openai-responses` it counts the wire's carrier, which is what those wires send.
+
 ### Fixed
+
+- **A final answer's reasoning is shown.** Only a tool-call turn emitted `THINKING`. A turn that answered without a call kept its reasoning in `agentao.log` only: not in the CLI, not as an ACP `agent_thought_chunk`, not in replay. A call's reasoning arrives as one `THINKING`, as whole text, after that call's stream ends (a tool-call turn also sends its text content as a second `THINKING`, as before); the developer guide's event tree now says so.
 
 ---
 

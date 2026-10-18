@@ -81,8 +81,8 @@
 3. **块载体只写在六处中的两处，§5.1 的元组没有变长。** 工具调用消息和最终回复记录的是模型
    **自己**的输出，带 `anthropic_thinking_blocks`。四条合成的收尾消息（max-iterations、长度
    中止、hook stop、doom loop）是用同一个响应拼出来的**第二条** assistant 消息，那个响应的块
-   已经在第一条上了；在那里再放一遍带签名的块，等于把一次模型输出记了两遍。它们照旧只带截断
-   的展示副本。
+   已经在第一条上了；在那里再放一遍带签名的块，等于把一次模型输出记了两遍。它们照旧只带 500 字符的
+   `reasoning_content` 回显（`_attach_reasoning_echo`）；0.5.15 起，记录模型输出的那两条完整保存。
 4. **thinking 排在所属轮次的最前；与 text 的交错不保留。** OpenAI 形状的 dict 只有一个
    `content` 字符串和一个 `tool_calls` 列表，`[thinking, text, thinking, tool_use]` 没有表示
    方式。发出时先按序放块，再放 text，再放调用 —— 这正是 API 自己的规则点名的位置（开着
@@ -460,7 +460,7 @@ ACP 边界，而且 `docs/reference/host-api.md`（"Vetoing or replacing a compa
 | 想要的能力 | 今天的 Chat Completions | 需要 `anthropic-messages` | 需要 `openai-responses` | `gemini-api` |
 |---|---|---|---|---|
 | 显式 prompt 缓存断点（`cache_control`、1h 保留） | Anthropic 的 OpenAI 兼容端点不暴露 | 是 —— 原生 | 不适用 | 不适用 |
-| 签名 thinking 块完整往返 | agentao 把 `reasoning_content` 截到 500 字符（`_serialize.py:20`），切换时清洗 | 是 | 不适用 | 不适用 |
+| 签名 thinking 块完整往返 | agentao 曾把 `reasoning_content` 截到 500 字符（`_serialize.py:20`；0.5.15 起完整保存），切换时清洗 | 是 | 不适用 | 不适用 |
 | 跨 turn **保留** reasoning，且不依赖服务端状态（`reasoning.encrypted_content`） | 无对应物 —— 直接丢弃 | 不适用 | 是 | 不适用 |
 | thinking 预算/力度作为一等参数 | 只能经 `extra_body` 的 `reasoning_effort`，且无自动恢复 | 是（`thinking.budget_tokens` / effort） | 是（`reasoning.effort`） | 待 §3 线路选择确认 |
 | `prompt_cache_key`、服务端会话状态 | `extra_body` 能设 key；没有状态 | 不适用 | 是 | 不适用 |
@@ -727,7 +727,7 @@ runner 在**六处**手工构造 assistant dict（`_runner.py:573、623、735、
 
 | 协议需要 | 挂在 OpenAI dict 上的形式 | 还必须同步加入 |
 |---|---|---|
-| Anthropic thinking 块 + `signature` | 独立的按序原生块列表，保留逐块签名（§5.1）；`reasoning_content` 仍作展示副本 | `purge_thinking_artifacts`、sanitize 白名单 |
+| Anthropic thinking 块 + `signature` | 独立的按序原生块列表，保留逐块签名（§5.1）；`reasoning_content` 仍作纯文本副本（0.5.15 起完整保存；本线路丢弃它） | `purge_thinking_artifacts`、sanitize 白名单 |
 | Responses `reasoning` item + `encrypted_content` | assistant 消息上的 `reasoning_item` 键 | 同上 |
 | Responses 的双 id（`call_id` **和** item `id`） | 见附录 A.2 —— **不要发明第二个 id 字段** | —— |
 
@@ -794,6 +794,9 @@ parts；同一持久化和清洗契约适用，原生载荷须区分线路，不
    下次请求必须原样送回。agentao 为历史把 `reasoning_content` 截到 500 字符
    （`_serialize.py:20`）—— **那个截断与签名往返不兼容**，本适配器必须绕过它，把未截断
    文本与展示副本分开携带。一个被截断的签名块比没有块更糟：provider 会直接拒绝。
+   *实际实现：* 签名块完整放在自己的 carrier 键上。0.5.15 起 `reasoning_content` 也完整
+   保存，因为 `openai-completions` 会原样把它发回，截断副本让思考型后端拿到一条断在半句的
+   思维链；本线路丢弃它。
 
 8. **`temperature` 与扩展思考不兼容**（佐证见 `anthropic-messages.ts:1104`）。
    agentao 已有 `omit_temperature` latch（`client.py:375-387`）—— 复用它，别再加一个

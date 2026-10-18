@@ -20,10 +20,7 @@ from agentao.agents.bg_store import BackgroundTaskStore
 from agentao.embedding.factory import discover_llm_kwargs
 from agentao.llm._stream_response import ANTHROPIC_THINKING_BLOCKS
 from agentao.llm.client import LLMClient
-from agentao.runtime.chat_loop._serialize import (
-    MAX_REASONING_HISTORY_CHARS,
-    _attach_thinking_blocks,
-)
+from agentao.runtime.chat_loop._serialize import _attach_thinking_blocks
 from agentao.runtime.model import purge_thinking_artifacts
 from agentao.runtime.sanitize import sanitize_assistant_message
 from tests.support.anthropic_wire import (
@@ -41,7 +38,7 @@ from tests.support.anthropic_wire import (
 # Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
-LONG_THOUGHT = "weigh the options. " * 80  # ~1500 chars, 3x the display cap
+LONG_THOUGHT = "weigh the options. " * 80  # ~1500 chars, 3x the old 500-char cap
 SIGNED = {"type": "thinking", "thinking": LONG_THOUGHT, "signature": "SIG-abc=="}
 REDACTED = {"type": "redacted_thinking", "data": "OPAQUE"}
 
@@ -107,15 +104,15 @@ def test_signed_thinking_goes_back_whole_at_the_head_of_its_turn(turn):
     result = second["messages"][2]["content"][0]
     assert result["type"] == "tool_result" and result["tool_use_id"] == "toolu_1"
     assert "hello from disk" in json.dumps(result)
-    # The 500-character display copy is agentao's, not the provider's.
+    # ``reasoning_content`` is agentao's plain copy; this wire never sends it.
     assert "reasoning_content" not in json.dumps(second)
 
 
-def test_history_holds_the_whole_blocks_beside_the_truncated_display_copy(turn):
+def test_history_holds_the_whole_blocks_beside_the_plain_copy(turn):
     tool_msg = turn.agent.messages[1]
     final_msg = turn.agent.messages[-1]
     assert tool_msg[ANTHROPIC_THINKING_BLOCKS] == [SIGNED, REDACTED]
-    assert len(tool_msg["reasoning_content"]) == MAX_REASONING_HISTORY_CHARS + 3
+    assert tool_msg["reasoning_content"] == LONG_THOUGHT
     assert final_msg[ANTHROPIC_THINKING_BLOCKS] == [
         {"type": "thinking", "thinking": "wrap up", "signature": "SIG-final=="},
     ]
@@ -140,7 +137,11 @@ def test_the_local_estimate_counts_thinking_that_will_be_sent_back(turn):
     manager = turn.agent.context_manager
     message = dict(turn.agent.messages[1])
     with_blocks = manager._count_message_tokens(message)
+    # The plain copy is the same text, and this wire does not send it: once.
+    plain_dropped = {k: v for k, v in message.items() if k != "reasoning_content"}
+    assert manager._count_message_tokens(plain_dropped) == with_blocks
     message.pop(ANTHROPIC_THINKING_BLOCKS)
+    message.pop("reasoning_content")
     assert with_blocks > manager._count_message_tokens(message) + 100
 
 

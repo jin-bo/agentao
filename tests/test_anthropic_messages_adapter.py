@@ -144,7 +144,7 @@ HISTORY = [
         {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{PNG}"}},
     ]},
     {"role": "assistant", "content": "Reading three files.",
-     "reasoning_content": "display copy, cut to 500 chars...",
+     "reasoning_content": "the plain copy, which this wire drops",
      "tool_calls": [
          {"id": "toolu_a", "type": "function",
           "function": {"name": "read_file", "arguments": "{\"file_path\": \"a\"}"}},
@@ -445,7 +445,7 @@ def test_a_call_that_does_not_opt_in_is_not_marked():
 # Response — stream events into the shared duck-type
 # ---------------------------------------------------------------------------
 
-LONG_THOUGHT = "step " * 300  # 1500 chars: three times the display copy's cap
+LONG_THOUGHT = "step " * 300  # 1500 chars: three times the old 500-char cap
 
 
 def _rich_response() -> bytes:

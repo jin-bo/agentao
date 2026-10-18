@@ -21,7 +21,8 @@ format (§6 of the design):
   steps back to the assistant that made the calls. A synthetic user turn is
   put in front rather than relying on the endpoint accepting that.
 - **Signed thinking goes back verbatim or not at all.** ``reasoning_content``
-  is a 500-character display copy; a truncated signed block is rejected. The
+  is plain text without the signature, and this wire drops it; a truncated
+  signed block is rejected. The
   whole blocks ride on the assistant dict under
   :data:`~._stream_response.ANTHROPIC_THINKING_BLOCKS` and lead the turn.
 - **Usage folds the cache fields in.** Anthropic's ``input_tokens`` is the
@@ -901,7 +902,7 @@ class AnthropicMessagesAdapter:
             return
         block = pending.pop(index, None)
         # The signature arrives last. A block cut off before it is unsigned,
-        # and an unsigned block is rejected — the display copy in
+        # and an unsigned block is rejected — the plain text in
         # ``reasoning_content`` is all that survives of it.
         if block is not None and block["signature"]:
             acc.thinking_blocks.append(block)

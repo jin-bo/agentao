@@ -11,7 +11,11 @@ from .compaction.types import (
     CompactionDecisionContext,
     CompactionOutcome,
 )
-from .llm._stream_response import ANTHROPIC_THINKING_BLOCKS, OPENAI_REASONING_ITEMS
+from .llm._stream_response import (
+    ANTHROPIC_THINKING_BLOCKS,
+    OPENAI_REASONING_ITEMS,
+    WIRE_CARRIER_KEYS,
+)
 
 # ``finish_reason`` spellings (matched case-insensitively) that mean "output was
 # truncated at the token limit". OpenAI says ``"length"``; other providers /
@@ -481,9 +485,16 @@ class ContextManager:
                         tokens += int(self.image_token_estimator(block))
                     except Exception:
                         pass
-        # reasoning_content is truncated to MAX_REASONING_HISTORY_CHARS before storage
+        # ``reasoning_content`` is stored whole and goes out only on the
+        # ``openai-completions`` wire. The other two wires drop it and send
+        # their carrier instead — the same reasoning — so a message that has
+        # one is counted once, through the carrier below.
         rc = msg.get("reasoning_content")
-        if isinstance(rc, str) and rc:
+        if (
+            isinstance(rc, str)
+            and rc
+            and not any(msg.get(key) for key in WIRE_CARRIER_KEYS)
+        ):
             tokens += self.count_tokens_in_text(rc)
         # The ``anthropic-messages`` wire sends signed thinking back whole, and
         # inside a tool loop it is billed as input like any other block.
