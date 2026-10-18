@@ -1475,6 +1475,11 @@ class TestDaemonRegression:
         mgr = _make_mgr(tmp_path)
         try:
             mgr.start_all()
+            # ``send_prompt``'s timeout also bounds the first handshake. On a
+            # loaded runner spawning the server can take longer than 0.3 s,
+            # which fails as HANDSHAKE_FAIL, not the timeout under test. So
+            # connect first: then 0.3 s bounds only the slow turn.
+            mgr.ensure_connected("srv", timeout=10)
             with pytest.raises(AcpClientError) as exc_info:
                 mgr.send_prompt(
                     "srv", "slow", interactive=False, timeout=0.3,
