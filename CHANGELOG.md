@@ -18,6 +18,7 @@ _Targeting 0.5.15. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **`agentao run` no longer sends its prompt twice on every request (#549).** A skill in the spec's `skills:` was activated with the whole `spec.prompt` as its task. The active-skills block repeats the task as `Task:` in the volatile tail, which is re-sent on every request and is never in the provider's prompt cache. A long prompt was thus uncached input on every request, on top of the copy in history. The task is now a one-line pointer to the user's request. The skill's body and resource list are unchanged. Skills that the model or `/skills activate` activates are unchanged. A spec skill that passes the name check and then fails to activate (an MCP skill whose fetch or verification fails) used to be dropped without a word. It is now a `warnings` entry in the run's result, and the run goes on.
 - **A final answer's reasoning is shown.** Only a tool-call turn emitted `THINKING`. A turn that answered without a call kept its reasoning in `agentao.log` only: not in the CLI, not as an ACP `agent_thought_chunk`, not in replay. Every call's reasoning now streams (see *Changed*).
 
 ---

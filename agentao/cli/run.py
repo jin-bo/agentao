@@ -44,6 +44,9 @@ EXIT_INTERRUPTED = 130
 
 DEFAULT_MAX_ITERATIONS = 100
 
+#: The ``task_description`` of a skill that the spec's ``skills:`` activates.
+_RUN_SPEC_SKILL_TASK = "Activated by the run spec. The task is the user's request."
+
 # Maps a TURN_END ``incomplete_reason`` to the error envelope it produces:
 # ``{reason: (error type, message stem)}``. All exit 1 — the run has no answer
 # to hand back either way — and the ``type`` separates the sub-families a
@@ -701,10 +704,18 @@ def _run_pipeline(
             ), output_format)
             agent.close()
             return EXIT_INVALID_USAGE
+        # The task is a pointer, not ``spec.prompt``. The active-skills block
+        # renders it as ``Task:`` in the volatile tail, which is re-sent on
+        # every request and never cached. The prompt is already the
+        # first user message in history (#549).
         for skill_name in spec.skills:
-            agent.skill_manager.activate_skill(
-                skill_name, task_description=spec.prompt or "",
+            result = agent.skill_manager.activate_skill(
+                skill_name, task_description=_RUN_SPEC_SKILL_TASK,
             )
+            # An MCP skill can still fail here (fetch or verification),
+            # after the name check above passed. Do not drop it silently.
+            if isinstance(result, str) and result.startswith("Error:"):
+                warnings.append(f"skill {skill_name!r}: {result}")
 
     replay_path: Optional[str] = None
     if replay_enabled and agent.replay_manager is not None:
