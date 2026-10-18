@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable
 
 from ..agents.tools import AgentToolWrapper
+from ..llm._usage import accepts_keyword
 from ..transport.sdk import invoke_ask_user_callback
 
 if TYPE_CHECKING:
@@ -40,9 +41,14 @@ def _add_usage(
 
     ``agent.llm`` is read here rather than captured: it is the object a host
     may have injected, and one without ``add_usage`` keeps no totals to add to.
+    ``reasoning_tokens`` is passed only when there are some and the host's
+    ``add_usage`` takes the keyword. One from before it would raise
+    ``TypeError`` and lose the prompt and completion counts with it.
     """
     add = getattr(agent.llm, "add_usage", None)
     if callable(add):
+        if not cache_counts.get("reasoning_tokens") or not accepts_keyword(add, "reasoning_tokens"):
+            cache_counts.pop("reasoning_tokens", None)
         add(prompt_tokens, completion_tokens, **cache_counts)
 
 

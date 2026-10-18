@@ -87,9 +87,12 @@ Token Usage:
 17:18:53   Prompt Tokens: 1400
 17:18:53   Completion Tokens: 6
 17:18:53   Total Tokens: 1406
+17:18:53   Reasoning Tokens: 0
 17:18:53 Assistant Response (13 chars):
   It prints hi.
 ```
+
+`Reasoning Tokens` is a part of `Completion Tokens`: the output the model spent thinking. It is 0 when the provider states none, and always 0 on `anthropic-messages`, whose output count includes thinking.
 
 The logging is incremental. To rebuild a full conversation, read the blocks in order from the first request. Inline images are summarized by size and never dumped as base64. The layout is in [`llm/_logging.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/_logging.py).
 
@@ -315,7 +318,7 @@ Replay files are separate from saved sessions: `save_session` / `load_session` r
 
 - **Path:** `.agentao/replays/<session_id>.<instance_id>.jsonl`. Characters other than letters, digits, `_` and `-` in the session id become `_`.
 - **One event per line.** Each event has `event_id`, `session_id`, `instance_id`, `seq`, `ts`, `kind`, `turn_id`, `parent_turn_id` and `payload`.
-- **First line:** a `replay_header` with `schema_version` (currently `1.4`), `session_id`, `instance_id`, `created_at`, and `capture_flags` when any are set.
+- **First line:** a `replay_header` with `schema_version` (currently `1.5`), `session_id`, `instance_id`, `created_at`, and `capture_flags` when any are set.
 - **Last line:** a `replay_footer`, written on a clean close. It has `event_count` and the per-kind `redaction_hits`, `dropped_field_hits` and `truncated_field_hits`.
 - **A new instance per session birth.** `/clear`, `/new`, `/sessions resume`, ACP `session/new` and ACP `session/load` each start a fresh file. A file never spans those boundaries.
 

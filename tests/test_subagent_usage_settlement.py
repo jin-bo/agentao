@@ -34,8 +34,11 @@ from tests.support.anthropic_wire import (
 # Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
+# The Anthropic wire counts thinking inside ``output_tokens`` and states no
+# reasoning count, so it is 0 here.
 USAGE = {"prompt_tokens": 4900, "completion_tokens": 40,
-         "cache_read_tokens": 4000, "cache_creation_tokens": 0}
+         "cache_read_tokens": 4000, "cache_creation_tokens": 0,
+         "reasoning_tokens": 0}
 
 
 def _answer() -> bytes:
@@ -172,12 +175,12 @@ def test_usage_survives_the_replay_round_trip(parent):
     assert replay_payload_to_host_event(kind, payload) == terminal
 
 
-@pytest.mark.parametrize("version", ["1.2", "1.3"])
-def test_a_recorded_terminal_event_validates_against_the_whole_replay_schema(parent, version):
+def test_a_recorded_terminal_event_validates_against_the_whole_replay_schema(parent):
     """Against the *document*, not the payload subschema lifted out of it: a
     ``#/$defs/…`` ref resolves from the document root, so a ``$defs`` left
     under ``payload`` validates in isolation and points at nothing in place."""
     jsonschema = pytest.importorskip("jsonschema", reason="jsonschema not installed")
+    from agentao.replay.events import SCHEMA_VERSION
     from agentao.replay.schema import build_event_schema
 
     spawned, terminal, _ = _run(parent, background=False)
@@ -189,7 +192,7 @@ def test_a_recorded_terminal_event_validates_against_the_whole_replay_schema(par
                 "kind": host_event_to_replay_kind(event),
                 "payload": host_event_to_replay_payload(event),
             },
-            schema=build_event_schema(version),
+            schema=build_event_schema(SCHEMA_VERSION),
         )
 
 
@@ -203,7 +206,7 @@ def test_a_negative_count_is_not_a_usage():
         SubagentUsage(prompt_tokens=-5)
 
 
-def test_the_four_totals_are_read_under_the_lock_the_adds_take():
+def test_the_totals_are_read_under_the_lock_the_adds_take():
     """Read one attribute at a time, an ``add_usage`` on another thread lands
     between two reads. Holding the lock here stands in for that add being
     half-way: the snapshot must wait for it rather than read around it."""
@@ -220,7 +223,8 @@ def test_the_four_totals_are_read_under_the_lock_the_adds_take():
         llm.total_completion_tokens += 2
     reader.join(5)
     assert got == [{"prompt_tokens": 15, "completion_tokens": 3,
-                    "cache_read_tokens": 0, "cache_creation_tokens": 0}]
+                    "cache_read_tokens": 0, "cache_creation_tokens": 0,
+                    "reasoning_tokens": 0}]
 
 
 def test_the_settle_reads_through_that_snapshot(parent, monkeypatch):

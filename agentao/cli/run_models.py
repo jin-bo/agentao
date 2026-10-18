@@ -275,6 +275,9 @@ class RunUsage(BaseModel):
     # ``total_tokens`` twice): the input a provider bills at cache rates.
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    # A part of ``completion_tokens``: the output spent thinking. 0 where the
+    # wire does not state it (Anthropic counts thinking in its output).
+    reasoning_tokens: int = 0
 
     model_config = ConfigDict(extra="ignore")
 

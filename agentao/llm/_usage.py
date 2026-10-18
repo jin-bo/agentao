@@ -1,17 +1,31 @@
-"""Reading cache counts off a ``response.usage``, whichever wire built it.
+"""Reading cache and reasoning counts off a ``response.usage``, whichever wire built it.
 
-Both counts are **parts of** ``prompt_tokens``, never additions to it: the
+Both cache counts are **parts of** ``prompt_tokens``, never additions to it: the
 ``anthropic-messages`` adapter folds them in (``_Usage``), and on Chat
 Completions ``prompt_tokens_details.cached_tokens`` is a subset by definition.
 They exist because a provider bills them at a different rate than the rest of
 the input — the totals cannot be turned into a cost without them. agentao
-reports the four quantities and stops there; prices are the host's.
+reports the counts and stops there; prices are the host's.
+
+The reasoning count is likewise a **part of** ``completion_tokens``: the output
+the model spent thinking, which a thinking-mode provider bills as output but
+never shows. Only the OpenAI-shaped wires state it. Anthropic's
+``output_tokens`` includes thinking with no separate count, so there it is 0.
 
 Standard library only, and nothing here raises: a usage object is whatever a
 provider, a gateway or a test handed back.
 """
 
+import inspect
 from typing import Any, Tuple
+
+
+#: The five session totals, by the names ``LLMClient.usage_snapshot()``,
+#: ``agentao run``'s ``usage`` and ``SubagentUsage`` all use.
+USAGE_KEYS = (
+    "prompt_tokens", "completion_tokens", "cache_read_tokens",
+    "cache_creation_tokens", "reasoning_tokens",
+)
 
 
 def positive_int(value: Any) -> int:
@@ -41,3 +55,34 @@ def cache_token_counts(usage: Any) -> Tuple[int, int]:
         details = getattr(usage, "prompt_tokens_details", None)
         creation = positive_int(getattr(details, "cache_write_tokens", None))
     return read, creation
+
+
+def reasoning_token_count(usage: Any) -> int:
+    """The reasoning part of ``completion_tokens``, 0 where not stated.
+
+    ``completion_tokens_details.reasoning_tokens``: what Chat Completions
+    states, and where the ``openai-responses`` adapter's usage puts the
+    Responses API's ``output_tokens_details.reasoning_tokens``.
+    """
+    details = getattr(usage, "completion_tokens_details", None)
+    return positive_int(getattr(details, "reasoning_tokens", None))
+
+
+def accepts_keyword(func: Any, name: str) -> bool:
+    """Whether ``func`` takes ``name=`` (or ``**kwargs``). False when unknown.
+
+    For a usage add or sink written before a count's keyword existed: passing
+    the keyword to it would raise ``TypeError`` and lose the whole roll-up,
+    prompt and completion counts included. An un-introspectable callable is
+    assumed to predate the keyword, as ``transport/sdk.py`` assumes a legacy
+    callback.
+    """
+    try:
+        params = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        p.kind is p.VAR_KEYWORD
+        or (p.name == name and p.kind in (p.KEYWORD_ONLY, p.POSITIONAL_OR_KEYWORD))
+        for p in params
+    )

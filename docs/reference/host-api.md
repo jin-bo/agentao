@@ -49,7 +49,7 @@ intentionally not part of this surface.
 | `ActivePermissions` | Read-only snapshot of the active permission policy. |
 | `ToolLifecycleEvent` | Public envelope for one tool call's lifecycle. |
 | `SubagentLifecycleEvent` | Lineage fact for a sub-agent task/session. `phase ∈ {spawned, completed, failed, cancelled}`; `failed` covers both a raised exception and a run that never answered — see [Sub-agent `failed` has two shapes](#sub-agent-failed-has-two-shapes). |
-| `SubagentUsage` | The four token counts on a terminal `SubagentLifecycleEvent.usage` (0.5.2) — see [What a sub-agent cost](#what-a-sub-agent-cost). |
+| `SubagentUsage` | The token counts on a terminal `SubagentLifecycleEvent.usage` (0.5.2) — see [What a sub-agent cost](#what-a-sub-agent-cost). |
 | `PermissionDecisionEvent` | Per-decision permission projection. |
 | `HostEvent` | Discriminated union of the three event models. |
 | `EventStream` | The stream behind `agent.events()` and the observer methods. The runtime constructs it, and the iterator `agent.events()` returns reads from it; `Agentao` keeps it private, so a host reaches it only through those methods. To record an agent's events, see [Replay projection](#replay-projection-agentaohostreplay_projection). See [Event subscription semantics](#event-subscription-semantics). |
@@ -123,9 +123,11 @@ result and counters the run produced.
 
 A terminal `SubagentLifecycleEvent` carries `usage` (0.5.2): a
 `SubagentUsage` with `prompt_tokens`, `completion_tokens`,
-`cache_read_tokens` and `cache_creation_tokens` — the same four quantities,
-under the same names, as `agentao run`'s `usage`. `prompt_tokens` is the
-**whole** input and the two cache counts are parts *of* it. It is what the
+`cache_read_tokens`, `cache_creation_tokens` and (0.5.15) `reasoning_tokens`
+— the same quantities, under the same names, as `agentao run`'s `usage`.
+`prompt_tokens` is the **whole** input and the two cache counts are parts *of*
+it. `reasoning_tokens` is a part *of* `completion_tokens`, and 0 on a wire
+that does not state it (`anthropic-messages`). It is what the
 sub-agent's requests **reported**, summed over its run, a failed or cancelled
 one included; agentao applies no prices.
 
@@ -146,7 +148,7 @@ sub-agent's history ended up. A record recovered from a file written before
 
 Every count is a non-negative integer, and the schema says so (`minimum: 0`).
 They are read from the sub-agent's client in one locked read
-(`LLMClient.usage_snapshot()`), so the four numbers describe one moment even
+(`LLMClient.usage_snapshot()`), so the numbers describe one moment even
 when a cancelled run's stream is still winding down on another thread.
 
 Both emit sites carry this behavior: the foreground sub-agent call and
@@ -302,7 +304,7 @@ starts, and `agent.last_turn` is not set for it.
 - Not included: reasoning text, tool and permission events (they stay on
   `events()`), and a sub-agent's text, which runs on its own transport.
 - `TextDelta` and `TurnOutcome` are not `HostEvent` members. They are not
-  projected into replay and are not in `docs/schema/host.events.v1.json`;
+  projected into replay and are not in `docs/schema/host.events.v2.json`;
   the text already reaches replay through the internal stream.
 
 ## Compaction (`Agentao.compact`)
@@ -621,7 +623,7 @@ held to `--strict`.
 
 Each release ships a checked-in JSON schema snapshot:
 
-- `docs/schema/host.events.v1.json` — events + permissions
+- `docs/schema/host.events.v2.json` — events + permissions
 - `docs/schema/host.acp.v1.json` — ACP payloads
 
 `tests/test_host_schema.py` regenerates the schema from the Pydantic
@@ -828,7 +830,7 @@ meaning changed under a name consumers already read.
 
 |  | `HostEvent` (this contract) | `AgentEvent` (`Transport`) |
 |---|---|---|
-| Schema snapshot in `docs/schema/`? | ✅ `host.events.v1.json` | ❌ |
+| Schema snapshot in `docs/schema/`? | ✅ `host.events.v2.json` | ❌ |
 | Field rename / removal triggers version bump? | ✅ enforced by `tests/test_host_schema.py` | ⚠️ best-effort `schema_version` bump — global, so it moves every event type |
 | Redaction / projection layer? | ✅ `agentao/host/projection.py` strips raw input/output | ❌ raw payloads (LLM_CALL_IO can contain full prompts and tool I/O) |
 | Cross-version compatibility audit before release? | ✅ part of the release checklist | ❌ |

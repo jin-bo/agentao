@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 
-SCHEMA_VERSION = "1.4"
+SCHEMA_VERSION = "1.5"
 
 
 class EventKind:
@@ -48,6 +48,12 @@ class EventKind:
       compression. Reading the audit trail now means reading both:
       ``compaction_settled`` for what was attempted and how it ended,
       ``context_compressed`` for the successes.
+    - 1.4 — adds ``images_removed``, for history rewrites a delta capture
+      cannot show.
+    - 1.5 — no new kind. ``subagent_lifecycle``'s ``usage`` gains
+      ``reasoning_tokens`` (#550). That payload is typed and closed
+      (``additionalProperties: false``), so a new field there is a new
+      version: the 1.2–1.4 files stay as published and reject it.
     """
 
     REPLAY_HEADER = "replay_header"
@@ -180,9 +186,12 @@ class EventKind:
 
     V1_4 = V1_3 | V1_4_NEW
 
+    # v1.5 — no new kinds; a typed payload gained a field.
+    V1_5 = V1_4
+
     # Back-compat alias. Existing callers that imported ``EventKind.ALL``
     # keep working; new code should pick the version-specific set.
-    ALL = V1_4
+    ALL = V1_5
 
 
 @dataclass

@@ -17,6 +17,7 @@ import json
 from typing import Any, Dict
 
 from .. import json_parse
+from ._usage import reasoning_token_count
 
 
 #: Keys whose values are redacted before logging ``extra_body``. ``extra_body``
@@ -268,6 +269,9 @@ class _LoggingMixin:
             self.logger.info(f"  Prompt Tokens: {usage.prompt_tokens}")
             self.logger.info(f"  Completion Tokens: {usage.completion_tokens}")
             self.logger.info(f"  Total Tokens: {usage.total_tokens}")
+            # A part of the completion count. 0 on a wire that does not
+            # state it (Anthropic counts thinking in ``output_tokens``).
+            self.logger.info(f"  Reasoning Tokens: {reasoning_token_count(usage)}")
 
         # Log message content - FULL content without truncation
         if message.content:

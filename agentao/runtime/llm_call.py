@@ -21,7 +21,7 @@ import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..cancellation import CancellationToken
-from ..llm._usage import cache_token_counts
+from ..llm._usage import cache_token_counts, reasoning_token_count
 from ..security.stream_text import StreamTextSanitizer
 from ..transport import AgentEvent, EventType
 
@@ -251,6 +251,7 @@ def run_llm_call(
             "completion_tokens": None,
             "cache_read_tokens": None,
             "cache_creation_tokens": None,
+            "reasoning_tokens": None,
         }))
         raise
 
@@ -278,6 +279,7 @@ def run_llm_call(
     # the provider did not state it).
     cache_read_tokens: Optional[int] = None
     cache_creation_tokens: Optional[int] = None
+    reasoning_tokens: Optional[int] = None
     try:
         choices = getattr(response, "choices", None)
         if choices:
@@ -290,6 +292,7 @@ def run_llm_call(
             prompt_tokens = getattr(usage, "prompt_tokens", None)
             completion_tokens = getattr(usage, "completion_tokens", None)
             cache_read_tokens, cache_creation_tokens = cache_token_counts(usage)
+            reasoning_tokens = reasoning_token_count(usage)
     except Exception:
         pass
 
@@ -308,5 +311,6 @@ def run_llm_call(
         "completion_tokens": completion_tokens,
         "cache_read_tokens": cache_read_tokens,
         "cache_creation_tokens": cache_creation_tokens,
+        "reasoning_tokens": reasoning_tokens,
     }))
     return response

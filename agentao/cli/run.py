@@ -334,18 +334,27 @@ def _resolve_permission_mode(name: Optional[PermissionModeName]):
     return PermissionMode(name or "workspace-write")
 
 
-def _cache_totals(llm: Any) -> "tuple[int, int]":
-    """``(cache_read, cache_creation)`` session totals, 0 for a client without.
+def _usage_totals(llm: Any) -> Dict[str, int]:
+    """The client's session totals, read together where it offers that.
 
-    Type-checked rather than ``getattr(..., 0)``: ``llm`` may be a host's own
-    object or a mock that answers any attribute.
+    ``LLMClient.usage_snapshot()`` reads them under the lock the adds take,
+    so a background sub-agent's roll-up cannot land between two reads. A
+    host's own client may not have it, so what came back is checked, and
+    each attribute is read on its own otherwise. Type-checked rather than
+    ``getattr(..., 0)``: ``llm`` may be a mock that answers any attribute.
     """
-    from ..llm._usage import positive_int
+    from ..llm._usage import USAGE_KEYS, positive_int
 
-    return (
-        positive_int(getattr(llm, "total_cache_read_tokens", None)),
-        positive_int(getattr(llm, "total_cache_creation_tokens", None)),
-    )
+    snapshot = getattr(llm, "usage_snapshot", None)
+    try:
+        # A host's ``usage_snapshot`` is host code: one that raises must not
+        # take the envelope down with it (this runs after the turn too).
+        counts = snapshot() if callable(snapshot) else None
+    except Exception:
+        counts = None
+    if not isinstance(counts, dict):
+        counts = {key: getattr(llm, f"total_{key}", None) for key in USAGE_KEYS}
+    return {key: positive_int(counts.get(key)) for key in USAGE_KEYS}
 
 
 def _serialize_result(result: RunResult, output_format: str) -> str:
@@ -753,9 +762,7 @@ def _run_pipeline(
 
     agent.add_host_event_observer(_on_event)
 
-    pre_prompt = agent.llm.total_prompt_tokens
-    pre_completion = agent.llm.total_completion_tokens
-    pre_cache = _cache_totals(agent.llm)
+    pre_usage = _usage_totals(agent.llm)
 
     tool_calls_count = 0
     captured_turn_id: Optional[str] = None
@@ -843,14 +850,11 @@ def _run_pipeline(
         final_text=final_text,
     )
 
-    delta_prompt = max(0, agent.llm.total_prompt_tokens - pre_prompt)
-    delta_completion = max(0, agent.llm.total_completion_tokens - pre_completion)
+    post_usage = _usage_totals(agent.llm)
+    delta = {key: max(0, value - pre_usage[key]) for key, value in post_usage.items()}
     usage = RunUsage(
-        prompt_tokens=delta_prompt,
-        completion_tokens=delta_completion,
-        total_tokens=delta_prompt + delta_completion,
-        cache_read_tokens=max(0, _cache_totals(agent.llm)[0] - pre_cache[0]),
-        cache_creation_tokens=max(0, _cache_totals(agent.llm)[1] - pre_cache[1]),
+        total_tokens=delta["prompt_tokens"] + delta["completion_tokens"],
+        **delta,
     )
 
     result = RunResult(

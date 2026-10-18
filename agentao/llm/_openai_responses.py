@@ -383,6 +383,11 @@ class _PromptTokensDetails:
         self.cache_write_tokens = cache_write_tokens
 
 
+class _CompletionTokensDetails:
+    def __init__(self, reasoning_tokens: int) -> None:
+        self.reasoning_tokens = reasoning_tokens
+
+
 class _Usage:
     """``response.usage`` in the shape the runtime reads.
 
@@ -393,6 +398,8 @@ class _Usage:
     where Chat Completions puts them, so ``cache_token_counts`` reads both
     wires with one rule. ``cache_write_tokens`` is a field the ``openai`` SDK
     has from 3.x on (there it is required); on 2.x it is absent and reads 0.
+    The reasoning count is a part of ``output_tokens`` and rides where Chat
+    Completions puts it, for ``reasoning_token_count``.
     """
 
     def __init__(self, usage: Any) -> None:
@@ -403,6 +410,10 @@ class _Usage:
         self.prompt_tokens_details = _PromptTokensDetails(
             positive_int(getattr(details, "cached_tokens", None)),
             positive_int(getattr(details, "cache_write_tokens", None)),
+        )
+        output_details = getattr(usage, "output_tokens_details", None)
+        self.completion_tokens_details = _CompletionTokensDetails(
+            positive_int(getattr(output_details, "reasoning_tokens", None)),
         )
 
 

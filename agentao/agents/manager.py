@@ -176,7 +176,7 @@ class AgentManager:
         parent's catalogue (#254).
 
         ``usage_sink(prompt_tokens, completion_tokens, *, cache_read_tokens,
-        cache_creation_tokens)`` receives each finished sub-agent's token usage. Without it a sub-agent's requests
+        cache_creation_tokens, reasoning_tokens)`` receives each finished sub-agent's token usage. Without it a sub-agent's requests
         are counted nowhere: it has its own LLM client.
 
         ``event_sink`` receives a foreground sub-agent's lifecycle and tool

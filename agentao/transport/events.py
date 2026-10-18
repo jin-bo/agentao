@@ -76,7 +76,11 @@ class AgentEvent:
     payload field's shape or semantics change. Adding a new key is not
     such a change: consumers ignore keys they do not know, so additive
     fields ship without a bump (``tool_count`` and ``incomplete_reason``
-    both joined TURN_END this way). Because the version is a single value
+    both joined TURN_END this way). That holds for these open ``data``
+    dicts only. The public ``agentao.host`` models and the replay's typed
+    payloads are closed (``additionalProperties: false``), so a field
+    added to one is a new snapshot version (``agentao/host/schema.py``,
+    ``docs/reference/replay-schema-policy.md``). Because the version is a single value
     across every event type, bumping it for one payload would strand a
     consumer pinned to the old version on *that* event rather than let it
     skip one unread field.

@@ -14,7 +14,7 @@ Canonical EN ↔ ZH terms used in this guide. If you find a translation that doe
 | Text delta | 文本增量 | `TextDelta` — one chunk of assistant text yielded by `agent.astream()`, from `agentao.host`. For display only: joined deltas are not the answer. Not a `HostEvent`. See [4.7](/en/part-4/7-host-contract#streaming-text-agent-astream) |
 | Turn outcome | 本轮结果 / Turn outcome | `TurnOutcome` — how a turn ended (`text`, `status`, `.is_answer`, …); the last item of `agent.astream()` and the value of `agent.last_turn`. Exported from `agentao.host` (same class as `agentao.TurnOutcome`) |
 | Capability protocol | 能力协议 | `FileSystem` / `ShellExecutor` runtime-checkable Protocols at `agentao.host.protocols`, injected at construction time to route IO through Docker / virtual FS / audit proxies |
-| Schema snapshot | Schema 快照 | The checked-in JSON schema files (`docs/schema/host.events.v1.json`, `host.acp.v1.json`) re-generated from the Pydantic models and CI-asserted byte-equal — the wire-form contract |
+| Schema snapshot | Schema 快照 | The checked-in JSON schema files (`docs/schema/host.events.v2.json`, `host.acp.v1.json`) re-generated from the Pydantic models and CI-asserted byte-equal — the wire-form contract |
 | Session | 会话 | One agent instance's lifetime of conversation, bound to a `working_directory` |
 | Turn | 一轮 / 一次 | One `chat()` call; may fire many tool calls internally |
 | Iteration | 迭代 | Each LLM round within a single turn, capped by `max_iterations` |

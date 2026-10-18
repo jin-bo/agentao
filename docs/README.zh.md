@@ -75,7 +75,7 @@ docs/
 | [reference/configuration.md](reference/configuration.md) | 每个配置文件、环境变量、公开 API——权威 schema 级参考（[English](reference/configuration.md)） |
 | [reference/host-api.md](reference/host-api.md) | `agentao.host` 包：`ActivePermissions`、`ToolLifecycleEvent`、`SubagentLifecycleEvent`、`PermissionDecisionEvent`、`EventStream`、schema 导出辅助（[中文](reference/host-api.zh.md)） |
 | [reference/replay-schema-policy.md](reference/replay-schema-policy.md) | replay JSONL schema 的稳定性策略 |
-| [schema/host.events.v1.json](schema/host.events.v1.json) | 公共事件 + 权限快照面的发布期 schema 快照；`tests/test_host_schema.py` 强制字节相等 |
+| [schema/host.events.v2.json](schema/host.events.v2.json) | 公共事件 + 权限快照面的发布期 schema 快照；`tests/test_host_schema.py` 强制字节相等 |
 | [schema/host.acp.v1.json](schema/host.acp.v1.json) | 宿主面 ACP 载荷的发布期 schema 快照 |
 
 Schema 快照已 check-in。任何改变 wire form 的 model 变更必须在同一 PR 内同时更新 Pydantic 模型与快照。

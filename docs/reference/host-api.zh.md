@@ -44,7 +44,7 @@ Harness API 是宿主应用嵌入 Agentao 时面向外部的兼容性边界。�
 | `ActivePermissions` | 当前权限策略的只读快照。 |
 | `ToolLifecycleEvent` | 一次工具调用生命周期的对外信封。 |
 | `SubagentLifecycleEvent` | 子 Agent 任务/会话的血统事件。`phase ∈ {spawned, completed, failed, cancelled}`；`failed` 同时覆盖"抛异常"和"跑完但没给出答案"两种形态——见[子 Agent 的 `failed` 有两种形态](#子-agent-的-failed-有两种形态)。 |
-| `SubagentUsage` | 终态 `SubagentLifecycleEvent.usage` 上的四项 token 计数（0.5.2）——见[子 Agent 花了多少](#子-agent-花了多少)。 |
+| `SubagentUsage` | 终态 `SubagentLifecycleEvent.usage` 上的各项 token 计数（0.5.2）——见[子 Agent 花了多少](#子-agent-花了多少)。 |
 | `PermissionDecisionEvent` | 每次权限决策的对外投影。 |
 | `HostEvent` | 上述三种事件的判别联合。 |
 | `EventStream` | `agent.events()` 和观察者方法背后的流。由运行时构造，`agent.events()` 返回的迭代器从它读取；`Agentao` 把它设为私有，宿主只能通过这些方法接触它。要记录 agent 的事件，见 [Replay 投影](#replay-投影agentaohostreplay_projection)。见[事件订阅语义](#事件订阅语义)。 |
@@ -110,9 +110,10 @@ if isinstance(ev, SubagentLifecycleEvent) and ev.phase == "failed":
 
 终态的 `SubagentLifecycleEvent` 带 `usage`（0.5.2）：一个 `SubagentUsage`，
 含 `prompt_tokens`、`completion_tokens`、`cache_read_tokens`、
-`cache_creation_tokens` —— 与 `agentao run` 的 `usage` 是同样四个量、同样的
-名字。`prompt_tokens` 是**整个**输入，两项缓存计数是它的**组成部分**而不是
-额外相加。它是这个子 Agent 的请求**上报**的数，按整次运行求和，失败或被取消
+`cache_creation_tokens` 和（0.5.15）`reasoning_tokens` —— 与 `agentao run` 的
+`usage` 是同样的量、同样的名字。`prompt_tokens` 是**整个**输入，两项缓存计数
+是它的**组成部分**而不是额外相加。`reasoning_tokens` 是 `completion_tokens`
+的组成部分，线路不提供时（`anthropic-messages`）为 0。它是这个子 Agent 的请求**上报**的数，按整次运行求和，失败或被取消
 的运行同样计入；agentao 不套用任何价格。
 
 `usage` 在 `spawned` 上、在开跑前就被取消的运行上、以及在构造阶段就抛异常
@@ -129,7 +130,7 @@ if isinstance(ev, SubagentLifecycleEvent) and ev.phase == "failed":
 
 每个计数都是非负整数，schema 里也这样写明（`minimum: 0`）。它们是对子 Agent
 的 client 做一次持锁读取得到的（`LLMClient.usage_snapshot()`），所以即使被
-取消的运行还有流在另一个线程上收尾，这四个数描述的也是同一时刻。
+取消的运行还有流在另一个线程上收尾，这几个数描述的也是同一时刻。
 
 两个发事件的位置行为一致：前台子 Agent 调用，以及后台
 （`run_in_background=True`）worker。后台的 `BackgroundTaskStore` 记录
@@ -239,7 +240,7 @@ async with aclosing(agent.astream(prompt)) as stream:
 - 不包含：reasoning 文本、工具和权限事件（仍在 `events()` 上），以及子
   agent 的文本——子 agent 运行在自己的 transport 上。
 - `TextDelta` 和 `TurnOutcome` 不是 `HostEvent` 成员，不投影进 replay，也不
-  在 `docs/schema/host.events.v1.json` 里；文本已经通过内部流进入 replay。
+  在 `docs/schema/host.events.v2.json` 里；文本已经通过内部流进入 replay。
 
 ## 压缩（`Agentao.compact`）
 
@@ -502,7 +503,7 @@ CI 的 `Typing gate` Job 在每个 PR 上强制执行。下游项目对自己代
 
 每个发布版都附带一份签入仓库的 JSON schema 快照：
 
-- `docs/schema/host.events.v1.json` —— 事件 + 权限
+- `docs/schema/host.events.v2.json` —— 事件 + 权限
 - `docs/schema/host.acp.v1.json` —— ACP 负载
 
 `tests/test_host_schema.py` 会从 Pydantic 模型重新生成 schema，
@@ -679,7 +680,7 @@ for ev in events:
 
 |  | `HostEvent`（本合约） | `AgentEvent`（`Transport`） |
 |---|---|---|
-| `docs/schema/` 下有 schema 快照？ | ✅ `host.events.v1.json` | ❌ |
+| `docs/schema/` 下有 schema 快照？ | ✅ `host.events.v2.json` | ❌ |
 | 字段重命名/删除会触发版本 bump？ | ✅ 由 `tests/test_host_schema.py` 强制 | ⚠️ best-effort `schema_version` bump —— 全局的，一动就动所有事件类型 |
 | 有脱敏/投影层？ | ✅ `agentao/host/projection.py` 剥掉原始 input/output | ❌ 原始载荷（LLM_CALL_IO 可含完整 prompt 与工具 I/O） |
 | 发布前跨版本兼容性审计？ | ✅ 是发布检查表项 | ❌ |
