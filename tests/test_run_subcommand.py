@@ -1385,3 +1385,33 @@ def test_mid_turn_hook_notices_reach_the_emitted_result(
 
     assert rc == 0
     assert "context reload failed" in json.loads(capsys.readouterr().out)["warnings"]
+
+
+def test_a_host_snapshot_without_reasoning_tokens_falls_back_to_the_attribute():
+    """A host ``usage_snapshot`` from before #550 returns four keys. The
+    reasoning count its client keeps must not read as 0."""
+    from types import SimpleNamespace
+
+    from agentao.cli.run import _usage_totals
+
+    llm = SimpleNamespace(
+        usage_snapshot=lambda: {
+            "prompt_tokens": 10, "completion_tokens": 5,
+            "cache_read_tokens": 0, "cache_creation_tokens": 0,
+        },
+        total_reasoning_tokens=3,
+    )
+    assert _usage_totals(llm) == {
+        "prompt_tokens": 10, "completion_tokens": 5, "cache_read_tokens": 0,
+        "cache_creation_tokens": 0, "reasoning_tokens": 3,
+    }
+
+
+def test_a_sub_agent_snapshot_without_reasoning_tokens_falls_back_to_the_attribute():
+    """The sub-agent roll-up reads a pre-#550 snapshot the same way as the run."""
+    from types import SimpleNamespace
+
+    from agentao.llm._usage import usage_totals
+
+    llm = SimpleNamespace(total_reasoning_tokens=4)
+    assert usage_totals({"prompt_tokens": 2}, llm)["reasoning_tokens"] == 4

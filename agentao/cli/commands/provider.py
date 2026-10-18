@@ -10,7 +10,7 @@ to enumerate available ``XXXX_API_KEY`` triples from the environment;
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Mapping
 
 from rich.markup import escape
 
@@ -296,7 +296,7 @@ def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
     console.print(f"\n[success]Temperature changed from {old} to {value}[/success]\n")
 
 
-def _handle_thinking_responses(llm: object, extra_body: dict, args: str) -> None:
+def _handle_thinking_responses(llm: object, extra_body: Mapping, args: str) -> None:
     """``/thinking`` on the ``openai-responses`` wire: ``reasoning.effort``.
 
     The Responses API spells the field as a key of a ``reasoning`` object and
@@ -320,16 +320,24 @@ def _handle_thinking_responses(llm: object, extra_body: dict, args: str) -> None
         shown = escape(str(current)) if is_set else "default"
         console.print(f"\n[info]Thinking depth:[/info] [cyan]{shown}[/cyan] "
                       "[dim](reasoning.effort)[/dim]")
+        # ``/thinking`` writes only into a dict: a read-only mapping must be
+        # changed by the host, so do not advise a command that refuses it.
+        writable = isinstance(extra_body, dict)
         if malformed:
             console.print(
                 "[warning]extra_body's `reasoning` is not an object, which this "
-                "wire rejects on every request; /thinking off or a new level "
-                "replaces it.[/warning]")
+                "wire rejects on every request; "
+                + ("/thinking off or a new level replaces it." if writable
+                   else "the host must replace it (extra_body is read-only here).")
+                + "[/warning]")
         if stale:
             console.print(
                 "[warning]extra_body also carries `reasoning_effort` "
                 f"('{escape(str(extra_body['reasoning_effort']))}'), which this "
-                "wire rejects; /thinking off or a new level clears it.[/warning]")
+                "wire rejects; "
+                + ("/thinking off or a new level clears it." if writable
+                   else "the host must remove it (extra_body is read-only here).")
+                + "[/warning]")
         console.print(usage)
         return
 
@@ -394,14 +402,17 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
         # An injected client may default ``extra_body`` to ``None``; initialize
         # it so the setter is functional rather than silently inert.
         llm.extra_body = {}
-    if not isinstance(llm.extra_body, dict):
-        # ``llm/thinking.py`` writes only into a dict, and would raise.
+    args = args.strip()
+    if not isinstance(llm.extra_body, dict) and (args or not isinstance(llm.extra_body, Mapping)):
+        # ``llm/thinking.py`` writes only into a dict, and would raise. A
+        # bare ``/thinking`` only reads, and ``current_thinking`` reads any
+        # mapping, so a read-only one still shows its level. One that is not
+        # a mapping at all (a ``str``) would make the readers raise.
         console.print("\n[error]Active LLM client's extra_body is not a dict; "
                       "cannot set reasoning effort.[/error]\n")
         return
     extra_body = llm.extra_body
 
-    args = args.strip()
     if getattr(llm, "api_format", None) == "anthropic-messages":
         _handle_thinking_anthropic(llm, args)
         return

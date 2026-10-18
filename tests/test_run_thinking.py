@@ -262,3 +262,43 @@ def test_a_quoted_false_stays_a_level():
     from agentao.cli.run_models import RunSpec
 
     assert RunSpec(thinking="false").thinking == "false"
+
+
+def test_bare_slash_thinking_shows_a_read_only_extra_body(capsys):
+    """Showing the level only reads, so a mapping it cannot write still shows."""
+    from types import MappingProxyType
+
+    from agentao.cli.commands.provider import handle_thinking_command
+
+    llm = SimpleNamespace(
+        api_format="openai-completions",
+        extra_body=MappingProxyType({"reasoning_effort": "high"}),
+    )
+    handle_thinking_command(SimpleNamespace(agent=SimpleNamespace(llm=llm)), "")
+    out = capsys.readouterr().out
+    assert "high" in out
+    assert "not a dict" not in out
+
+
+def test_bare_slash_thinking_refuses_an_extra_body_that_is_not_a_mapping(capsys):
+    """A ``str`` ``extra_body`` cannot be read either: say so, do not raise."""
+    from agentao.cli.commands.provider import handle_thinking_command
+
+    llm = SimpleNamespace(api_format="openai-responses", extra_body="reasoning")
+    handle_thinking_command(SimpleNamespace(agent=SimpleNamespace(llm=llm)), "")
+    assert "not a dict" in capsys.readouterr().out
+
+
+def test_a_read_only_extra_body_is_not_told_to_run_a_command_it_refuses(capsys):
+    from types import MappingProxyType
+
+    from agentao.cli.commands.provider import handle_thinking_command
+
+    llm = SimpleNamespace(
+        api_format="openai-responses",
+        extra_body=MappingProxyType({"reasoning_effort": "high", "reasoning": "low"}),
+    )
+    handle_thinking_command(SimpleNamespace(agent=SimpleNamespace(llm=llm)), "")
+    out = " ".join(capsys.readouterr().out.split())
+    assert "/thinking off or a new level" not in out
+    assert "read-only" in out

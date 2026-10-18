@@ -352,7 +352,7 @@ def _usage_totals(llm: Any) -> Dict[str, int]:
     each attribute is read on its own otherwise. Type-checked rather than
     ``getattr(..., 0)``: ``llm`` may be a mock that answers any attribute.
     """
-    from ..llm._usage import USAGE_KEYS, positive_int
+    from ..llm._usage import usage_totals
 
     snapshot = getattr(llm, "usage_snapshot", None)
     try:
@@ -361,9 +361,7 @@ def _usage_totals(llm: Any) -> Dict[str, int]:
         counts = snapshot() if callable(snapshot) else None
     except Exception:
         counts = None
-    if not isinstance(counts, dict):
-        counts = {key: getattr(llm, f"total_{key}", None) for key in USAGE_KEYS}
-    return {key: positive_int(counts.get(key)) for key in USAGE_KEYS}
+    return usage_totals(counts, llm)
 
 
 def _apply_thinking(llm: Any, level: str) -> None:
