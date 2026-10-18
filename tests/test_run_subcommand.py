@@ -1031,6 +1031,118 @@ def test_missing_skill_fails_before_chat(
     assert "chat_prompt" not in captured
 
 
+def test_a_spec_skill_that_fails_to_activate_is_a_warning(
+    monkeypatch, stub_pipeline, capsys,
+):
+    """An MCP skill passes the name check and can still fail to load.
+
+    ``activate_skill`` answers ``"Error: ..."`` then. The run goes on, and
+    the result says which skill is missing.
+    """
+    captured, StubAgent = stub_pipeline
+    real_init = StubAgent.__init__
+
+    def _init(self, *args, **kwargs):
+        real_init(self, *args, **kwargs)
+        self.skill_manager = type(
+            "SM", (),
+            {
+                "list_available_skills": lambda self_: ["mcp:docs:skill://x"],
+                "activate_skill": (
+                    lambda self_, name, task_description="":
+                    "Error: verification failed"
+                ),
+            },
+        )()
+
+    monkeypatch.setattr(StubAgent, "__init__", _init)
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    rc = run._execute_with_args(_build_args(
+        prompt="hi", skills=["mcp:docs:skill://x"], output_format="json",
+    ))
+
+    assert rc == 0
+    assert captured["chat_prompt"] == "hi"
+    assert (
+        "skill 'mcp:docs:skill://x': Error: verification failed"
+        in json.loads(capsys.readouterr().out)["warnings"]
+    )
+
+
+def test_a_spec_skill_does_not_copy_the_prompt_into_the_tail(
+    monkeypatch, tmp_path, capsys,
+):
+    """``skills:`` activates with a pointer task, not ``spec.prompt`` (#549).
+
+    The active-skills block renders the task as ``Task:`` in the volatile
+    tail. The tail is re-sent on every request and never cached, and the
+    prompt is already the first user message. This runs a real ``Agentao``
+    through the pipeline and reads the first request it sends.
+    """
+    import agentao.embedding as embedding
+    from agentao.cli import run
+
+    skill_dir = tmp_path / "skills" / "ingest"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: ingest\ndescription: Ingest pages.\n---\n\n"
+        "SKILL-BODY-MARKER: follow these steps.\n",
+        encoding="utf-8",
+    )
+    prompt = "PROMPT-MARKER " + "catalogue entry " * 200
+    spec_path = tmp_path / "task.yaml"
+    spec_path.write_text(
+        json.dumps({"prompt": prompt, "skills": ["ingest"]}), encoding="utf-8",
+    )
+
+    sent: List[list] = []
+    real_build = embedding.build_from_environment
+
+    def _build(**kwargs):
+        agent = real_build(
+            resolved_llm={
+                "api_key": "test-key",
+                "base_url": "https://example.test/v1",
+                "model": "test-model",
+            },
+            **kwargs,
+        )
+
+        def _call(messages, tools, token):
+            sent.append(list(messages))
+            message = SimpleNamespace(
+                content="done", tool_calls=None, reasoning_content=None,
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=message, finish_reason="stop")],
+                usage=None, model="test-model",
+            )
+
+        agent._llm_call = _call
+        return agent
+
+    monkeypatch.setattr("agentao.embedding.build_from_environment", _build)
+    monkeypatch.setattr(
+        "agentao.cli.subcommands._load_and_register_plugins",
+        lambda agent: None,
+    )
+    _no_stdin(monkeypatch)
+
+    args = _build_args(spec_path=str(spec_path), output_format="json")
+    assert run._execute_with_args(args) == run.EXIT_OK
+
+    tail = sent[0][-1]
+    assert tail["role"] == "user"
+    assert "=== Active Skills ===" in tail["content"]
+    # The skill still activates, with its body.
+    assert "SKILL-BODY-MARKER" in tail["content"]
+    assert "PROMPT-MARKER" not in tail["content"]
+    # The prompt is sent once, as the user message in history.
+    assert sum("PROMPT-MARKER" in str(m.get("content", "")) for m in sent[0]) == 1
+
+
 # ---------------------------------------------------------------------------
 # -p shim shares the unified pipeline
 # ---------------------------------------------------------------------------
