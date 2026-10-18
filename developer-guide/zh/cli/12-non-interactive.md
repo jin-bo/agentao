@@ -103,7 +103,7 @@ CLI flag 只在用户**显式**提供时才覆盖 spec 值，argparse 默认值�
 | `anthropic-messages` | `output_config.effort` | `low`、`medium`、`high`、`xhigh`、`max`。其他词在发出任何请求前以退出码 `2` 失败 |
 | `openai-responses` | `reasoning.effort` | 同 `openai-completions` |
 
-`off` 移除显式设置的档位（例如 `LLM_EXTRA_BODY` 设置的），恢复 provider 的默认行为。它不承诺关闭模型的推理：默认就推理的模型仍会推理。请加引号写成 `thinking: "off"`。YAML 会把裸写的 `off`、`false`、`no` 读成布尔值 `false`，spec 也把它当作 `off`。`true` 和数字会被拒绝（退出码 `2`）。加了引号的 `"false"`、`"no"` 仍是字符串，会作为档位发送。多于一个词以退出码 `2` 失败。宿主的 LLM client 没有可写入的 `extra_body` dict 时，以退出码 `1` 失败（`runtime_error`）。结果 envelope 里的 `thinking` 给出该线路读取的字段里的档位（其他线路遗留的 `reasoning_effort` 不算），无论它来自 `thinking` 还是 `LLM_EXTRA_BODY`。它不保证请求里没有其他遗留字段：`/provider` 切换之后，`extra_body` 里可能还留着另一条线路的字段，并会原样发送。没有设置档位时不输出该字段。没有自动恢复：模型拒绝该档位时，每个请求都会失败。其他 provider 字段仍通过 `LLM_EXTRA_BODY` 发送。
+`off` 移除显式设置的档位（例如 `LLM_EXTRA_BODY` 设置的），恢复 provider 的默认行为。它不承诺关闭模型的推理：默认就推理的模型仍会推理。请加引号写成 `thinking: "off"`。YAML 会把裸写的 `off`、`false`、`no` 读成布尔值 `false`，spec 也把它当作 `off`。`true` 和数字会被拒绝（退出码 `2`）。加了引号的 `"false"`、`"no"` 仍是字符串，会作为档位发送。多于一个词以退出码 `2` 失败。宿主的 LLM client 没有可写入的 `extra_body` dict 时，以退出码 `1` 失败（`runtime_error`）。结果 envelope 里的 `thinking` 给出该线路读取的字段里的档位（其他线路遗留的 `reasoning_effort` 不算），无论它来自 `thinking` 还是 `LLM_EXTRA_BODY`。它不保证请求里没有另一条线路的字段：宿主在 `LLM_EXTRA_BODY` 里设置的字段会原样发送。没有设置档位时不输出该字段。没有自动恢复：模型拒绝该档位时，每个请求都会失败。其他 provider 字段仍通过 `LLM_EXTRA_BODY` 发送。
 
 ### 参数与模板渲染（`--param`）
 

@@ -419,6 +419,7 @@ Design: `docs/design/llm-api-adapters.md`.
   - `anthropic-messages` sets `output_config.effort`. The levels come from the Models API's `capabilities.effort`, else `low|medium|high|xhigh|max`. The command refuses a level that is not in the list.
   - `openai-responses` sets `reasoning.effort`. It keeps the host's other `reasoning` keys and drops a carried-in `reasoning_effort`.
   - There is no auto-recovery. A model that rejects the setting fails until you set `off` (`docs/design/host-llm-extra-params.md`).
+  - A wire switch moves a level that `/thinking` or `agentao run` wrote to the new wire's field (`llm/thinking.py::carry_over_wire_switch`). The record of what was written decides this, never the field name. A field the host set stays.
 
 ## Adding new components
 

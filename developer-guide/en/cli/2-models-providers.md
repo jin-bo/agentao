@@ -150,6 +150,8 @@ What it writes depends on the wire, because the protocols name the field differe
 
 On current Anthropic models the effort alone turns adaptive thinking on. There is **no auto-recovery** on any wire: a model that rejects the field fails every request until `/thinking off`. The setting is per session and sub-agents inherit it; to make it persistent put the same field in `LLM_EXTRA_BODY`.
 
+A `/provider` switch to another wire moves the level `/thinking` set into the new wire's field, because each wire rejects the others' fields. A level the new wire does not take (`minimal` on `anthropic-messages`) is dropped, and the log says so. Only a level that `/thinking` (or `agentao run`'s `thinking`) wrote moves, and only while its field still holds it. If you already set the new wire's field yourself, your value wins and the moved level is dropped. A field you set in `LLM_EXTRA_BODY` is yours: it stays as it is, and a switch to a wire that rejects it fails every request until you change it.
+
 ## When to switch what
 
 | Situation | What to do |

@@ -148,6 +148,8 @@ Sub-agents are **rebuilt from the parent's live config snapshot** — `Agentao._
 
 `reconfigure()` (`client.py:251`) **preserves `self.extra_body`** — it is instance-level host config, not a model-detected quirk (those are the latches reset in `reset_capability_latches()`).
 
+**One exception, by source (0.5.15):** a thinking level that agentao itself wrote (`/thinking`, `agentao run`'s `thinking`) is not host config. On a **wire** change, `llm/thinking.py::carry_over_wire_switch` moves it to the new wire's field, or drops it when the new wire does not take the level. A record on the client of what was written decides this, never the field name, so a field the host set (or changed since) stays as this section describes, and a host value already in the new wire's field wins over the moved level. A model switch on the same wire moves nothing.
+
 **Documented caveat — no auto-recovery (honest about the asymmetry):** unlike `temperature`, which **auto-recovers** via the one-shot `omit_temperature` latch when a model rejects it, a stale `extra_body` field (e.g. `reasoning_effort` after switching to a non-reasoning model) has **no latch** — *every* subsequent call hard-fails with a provider 400 until the host clears it. So this does **not** fully match the temperature precedent; it is strictly less forgiving. v1 makes it the **host's responsibility** to drop model-specific `extra_body` keys on switch. A future enhancement could add a "drop-on-reject" latch for `extra_body` keys, mirroring `omit_temperature` — out of v1 scope (gap≠need), but called out so the severity is not understated.
 
 ## 6. Precedence summary
