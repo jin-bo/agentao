@@ -186,16 +186,30 @@ def test_unterminated_header_without_body_is_left_alone():
 def test_private_key_patterns_stay_linear():
     # Many headers with no END. The terminated tail must stop at the next
     # header rather than scan to the end of the text from each one.
+    #
+    # Growth, not a wall-clock bound: a loaded Windows runner once took
+    # 1.09 s for what takes 0.02 s locally, and a fixed bound flaked. Four
+    # times the input takes about four times as long when linear, and about
+    # sixteen times as long when quadratic (about 4 s for the second input at
+    # 5000 before the tempered tail). The best of three runs drops the
+    # scheduler's noise, which only ever adds time.
     import time
 
-    for text in (
-        "-----BEGIN RSA PRIVATE KEY----- " * 5000,
-        "-----BEGIN RSA PRIVATE KEY-----\nAAAA\\" * 5000,
+    def best_of_three(text: str) -> float:
+        times = []
+        for _ in range(3):
+            start = time.perf_counter()
+            scan_and_redact(text)
+            times.append(time.perf_counter() - start)
+        return min(times)
+
+    for unit in (
+        "-----BEGIN RSA PRIVATE KEY----- ",
+        "-----BEGIN RSA PRIVATE KEY-----\nAAAA\\",
     ):
-        start = time.perf_counter()
-        scan_and_redact(text)
-        # Quadratic before the tempered tail: about 4 s for the second input.
-        assert time.perf_counter() - start < 1.0
+        small = best_of_three(unit * 2000)
+        large = best_of_three(unit * 8000)
+        assert large < 8 * max(small, 1e-3), (small, large)
 
 
 def test_scan_redacts_bearer_header():
