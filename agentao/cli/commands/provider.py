@@ -17,9 +17,11 @@ from rich.markup import escape
 from ...llm.thinking import (
     REASONING_LEVELS as _REASONING_LEVELS,
     anthropic_effort_levels as _effort_levels,
+    ThinkingUnsupported,
     clear_thinking,
     current_thinking,
     set_thinking,
+    writable_extra_body,
 )
 from .._globals import console
 
@@ -147,13 +149,20 @@ def _handle_thinking_anthropic(llm: object, args: str) -> None:
                       "cleared; provider default in effect.[/success]\n")
         return
 
-    if lowered not in levels:
+    try:
+        # The one check of the level: ``set_thinking`` refuses one the model
+        # does not list, against the same ``levels`` shown in ``usage``.
+        # ``handle_thinking_command`` has made sure there is a dict to write.
+        set_thinking(llm, lowered)
+    except ThinkingUnsupported as exc:
+        # Not a fact about the level: do not call it an invalid depth.
+        console.print(f"\n[error]Cannot set reasoning effort: {escape(str(exc))}.[/error]\n")
+        return
+    except ValueError:
         console.print(f"\n[error]Invalid thinking depth for this model: "
                       f"'{escape(args)}'.[/error]")
         console.print(usage)
         return
-
-    set_thinking(llm, lowered)
     if not is_set:
         console.print(f"\n[success]Thinking depth set to [cyan]{lowered}[/cyan]"
                       "[/success] [dim](output_config.effort)[/dim]")
@@ -392,26 +401,22 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
     is ``reasoning.effort``; see :func:`_handle_thinking_responses`.
     """
     llm = cli.agent.llm
-    if not hasattr(llm, "extra_body"):
-        # Defensive: a host that injected a non-``LLMClient`` may lack the attr
-        # entirely — there is nowhere to carry reasoning_effort.
-        console.print("\n[error]Active LLM client has no extra_body passthrough; "
-                      "cannot set reasoning effort.[/error]\n")
-        return
-    if llm.extra_body is None:
-        # An injected client may default ``extra_body`` to ``None``; initialize
-        # it so the setter is functional rather than silently inert.
-        llm.extra_body = {}
     args = args.strip()
-    if not isinstance(llm.extra_body, dict) and (args or not isinstance(llm.extra_body, Mapping)):
-        # ``llm/thinking.py`` writes only into a dict, and would raise. A
-        # bare ``/thinking`` only reads, and ``current_thinking`` reads any
-        # mapping, so a read-only one still shows its level. One that is not
-        # a mapping at all (a ``str``) would make the readers raise.
-        console.print("\n[error]Active LLM client's extra_body is not a dict; "
-                      "cannot set reasoning effort.[/error]\n")
+    try:
+        # The write rule is ``llm/thinking.py``'s: a client with no
+        # ``extra_body`` has nowhere to write, ``None`` becomes a dict, and
+        # anything else must be a dict. A bare ``/thinking`` only reads, and
+        # ``current_thinking`` reads any mapping, so a read-only one still
+        # shows its level. One that is not a mapping at all (a ``str``)
+        # would make the readers raise.
+        extra_body = getattr(llm, "extra_body", None)
+        if args or extra_body is None:
+            extra_body = writable_extra_body(llm)
+        elif not isinstance(extra_body, Mapping):
+            raise ThinkingUnsupported("the LLM client's extra_body is not a dict")
+    except ThinkingUnsupported as exc:
+        console.print(f"\n[error]Cannot set reasoning effort: {escape(str(exc))}.[/error]\n")
         return
-    extra_body = llm.extra_body
 
     if getattr(llm, "api_format", None) == "anthropic-messages":
         _handle_thinking_anthropic(llm, args)
