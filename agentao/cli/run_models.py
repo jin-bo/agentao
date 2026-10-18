@@ -210,12 +210,26 @@ class RunSpec(BaseModel):
     permissions: Optional[RunPermissionRules] = None
     max_iterations: Optional[int] = None
     skills: Optional[List[str]] = None
+    #: Thinking depth, as ``/thinking`` takes it: a level, or ``off`` to clear
+    #: one that ``LLM_EXTRA_BODY`` set. Written where the wire reads it
+    #: (``agentao/llm/thinking.py``).
+    thinking: Optional[str] = None
     replay: Optional[bool] = None
     output: Optional[RunOutputOptions] = None
     instructions: Optional[str] = None
     parameters: Optional[List[RunParameter]] = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("thinking", mode="before")
+    @classmethod
+    def _yaml_off_is_off(cls, value: Any) -> Any:
+        # YAML 1.1 (``yaml.safe_load``) reads a bare ``off`` as ``False``, so
+        # the documented ``thinking: off`` would otherwise fail as "not a
+        # string". ``True`` has no meaning and is left to fail.
+        if value is False:
+            return "off"
+        return value
 
     @model_validator(mode="after")
     def _no_duplicate_parameter_names(self) -> "RunSpec":
@@ -311,6 +325,12 @@ class RunResult(BaseModel):
     #: ``agentao run`` — there is no ``TurnOutcome`` on that surface, only this
     #: envelope.
     finish_reason_missing: bool = False
+    #: The thinking depth in the field the wire reads, from ``thinking`` or
+    #: ``LLM_EXTRA_BODY``. A ``reasoning_effort`` left over on another wire
+    #: is not that field. Not a check of the whole request: another wire's
+    #: leftover field may still be sent. Left out of the JSON when none was
+    #: set, so the provider's default applied.
+    thinking: Optional[str] = None
     warnings: List[str] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="ignore")

@@ -119,6 +119,12 @@ def _attach_run_arguments(parser: argparse.ArgumentParser) -> None:
         type=int, default=None,
     )
     parser.add_argument(
+        "--thinking", dest="thinking", default=None, metavar="LEVEL",
+        help="Thinking depth (minimal|low|medium|high, or off; "
+             "anthropic-messages: low|medium|high|xhigh|max). "
+             "Example: --thinking high",
+    )
+    parser.add_argument(
         "--skill", dest="skills",
         action="append", default=None, metavar="NAME",
     )
@@ -302,6 +308,9 @@ def _apply_cli_overrides(spec: RunSpec, args: argparse.Namespace) -> RunSpec:
         overrides["max_iterations"] = args.max_iterations
     if args.skills is not None:
         overrides["skills"] = list(args.skills)
+    # ``getattr``: the ``-p`` shim builds its own namespace.
+    if getattr(args, "thinking", None) is not None:
+        overrides["thinking"] = args.thinking
     if args.replay is not None:
         overrides["replay"] = bool(args.replay)
     if args.output_format is not None:
@@ -355,6 +364,27 @@ def _usage_totals(llm: Any) -> Dict[str, int]:
     if not isinstance(counts, dict):
         counts = {key: getattr(llm, f"total_{key}", None) for key in USAGE_KEYS}
     return {key: positive_int(counts.get(key)) for key in USAGE_KEYS}
+
+
+def _apply_thinking(llm: Any, level: str) -> None:
+    """Set the spec's thinking depth on ``llm``, or clear it for ``off``.
+
+    Raises ``ValueError`` for a level the wire refuses (more than one word,
+    an Anthropic effort outside the static five, since the Models API has not
+    answered before the first request) or a client with nowhere to
+    write it.
+    """
+    from ..llm.thinking import OFF, ThinkingUnsupported, clear_thinking, set_thinking
+
+    if level.strip().lower() == OFF:
+        # ``clear_thinking`` cannot edit an ``extra_body`` that is not a dict,
+        # and a level it holds would still be sent: say so, as a set would.
+        extra_body = getattr(llm, "extra_body", None)
+        if extra_body is not None and not isinstance(extra_body, dict):
+            raise ThinkingUnsupported("the LLM client's extra_body is not a dict")
+        clear_thinking(llm)
+    else:
+        set_thinking(llm, level)
 
 
 def _serialize_result(result: RunResult, output_format: str) -> str:
@@ -503,6 +533,16 @@ def _execute_with_args(args: argparse.Namespace) -> int:
             )
         return _emit_invalid_usage(
             "agentao run: prompt is required (set spec.prompt or pass --prompt).",
+            output_format,
+        )
+
+    # The wire-free half of the thinking check, here with the other spec
+    # checks so a malformed level is not reported after (or as) a
+    # construction failure. Which levels a wire takes is checked later.
+    if spec.thinking is not None and len(spec.thinking.split()) != 1:
+        return _emit_invalid_usage(
+            f"agentao run: invalid thinking {spec.thinking!r}: expected a "
+            "single level or 'off'.",
             output_format,
         )
 
@@ -689,6 +729,32 @@ def _run_pipeline(
                 agent.close()
                 return EXIT_INVALID_USAGE
 
+    if spec.thinking is not None:
+        from ..llm.thinking import ThinkingUnsupported
+
+        try:
+            _apply_thinking(agent.llm, spec.thinking)
+        except ValueError as exc:
+            # A client with nowhere to write a level is the runtime's
+            # problem, not the spec's: exit 1, like a failed construction.
+            unsupported = isinstance(exc, ThinkingUnsupported)
+            _emit(RunResult(
+                status="error",
+                session_id=agent._session_id or "",
+                turn_id=agent._current_turn_id,
+                cwd=str(cwd),
+                model=agent.llm.model,
+                error=RunErrorEnvelope(
+                    type="runtime_error" if unsupported else "invalid_spec",
+                    message=f"cannot set thinking: {exc}" if unsupported
+                    else f"invalid thinking: {exc}",
+                ),
+                tool_calls=0,
+                warnings=warnings,
+            ), output_format)
+            agent.close()
+            return EXIT_RUNTIME_ERROR if unsupported else EXIT_INVALID_USAGE
+
     try:
         _load_and_register_plugins(agent)
     except Exception as exc:
@@ -850,6 +916,8 @@ def _run_pipeline(
         final_text=final_text,
     )
 
+    from ..llm.thinking import sent_thinking
+
     post_usage = _usage_totals(agent.llm)
     delta = {key: max(0, value - pre_usage[key]) for key, value in post_usage.items()}
     usage = RunUsage(
@@ -872,6 +940,7 @@ def _run_pipeline(
         usage=usage,
         tool_calls=tool_calls_count,
         finish_reason_missing=finish_reason_missing,
+        thinking=sent_thinking(agent.llm),
         warnings=warnings,
     )
 

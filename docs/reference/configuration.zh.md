@@ -446,6 +446,7 @@ prompt 组成规则与约定见 [开发者指南 5.6](../../developer-guide/zh/p
 | `permissions` | `{allow, deny}` | `RunPermissionRule` 列表。Spec 不允许手写 `action:` —— 由 loader 注入。 |
 | `max_iterations` | `int?` | 默认 100。 |
 | `skills` | `list[str]?` | 必须已存在；缺失 skill 退出 2。 |
+| `thinking` | `str?` | 思考深度，取值同 `/thinking`：一个级别，或用 `off` 清除 `LLM_EXTRA_BODY` 设的级别。写入线路读取的字段（`agentao/llm/thinking.py`）。`--thinking` 优先。多于一个词，或 `anthropic-messages` 上不在 `low\|medium\|high\|xhigh\|max` 之内的级别，退出 2。YAML 裸写的 `off` 也接受。 |
 | `replay` | `bool?` | 权威；设置后绕过 factory 的磁盘自动加载。 |
 | `output` | `{format: "text"\|"json"}?` | 等效于 `--format`。 |
 

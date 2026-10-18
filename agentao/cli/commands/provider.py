@@ -14,6 +14,13 @@ from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
+from ...llm.thinking import (
+    REASONING_LEVELS as _REASONING_LEVELS,
+    anthropic_effort_levels as _effort_levels,
+    clear_thinking,
+    current_thinking,
+    set_thinking,
+)
 from .._globals import console
 
 if TYPE_CHECKING:
@@ -106,27 +113,7 @@ def handle_provider_command(cli: AgentaoCLI, args: str) -> None:
         console.print()
 
 
-#: What ``output_config.effort`` accepts on the Messages API when the endpoint
-#: has no Models API to say so itself (observed on api.anthropic.com: anything
-#: else is a 400 naming these five). ``minimal`` is not one of them.
-_ANTHROPIC_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
-
-
-def _effort_levels(capabilities: object) -> tuple:
-    """The effort levels the Models API marks supported, else the static five."""
-    try:
-        effort = capabilities["effort"]  # type: ignore[index]
-        levels = tuple(name for name, value in effort.items()
-                       if isinstance(value, dict) and value.get("supported") is True)
-    except (KeyError, TypeError, AttributeError):
-        return _ANTHROPIC_EFFORT_LEVELS
-    # The API lists them alphabetically; show them weakest first.
-    known = _ANTHROPIC_EFFORT_LEVELS
-    ordered = tuple(sorted(levels, key=lambda n: known.index(n) if n in known else len(known)))
-    return ordered or _ANTHROPIC_EFFORT_LEVELS
-
-
-def _handle_thinking_anthropic(llm: object, extra_body: dict, args: str) -> None:
+def _handle_thinking_anthropic(llm: object, args: str) -> None:
     """``/thinking`` on the ``anthropic-messages`` wire: ``output_config.effort``.
 
     ``reasoning_effort`` is a Chat Completions field and the Messages API
@@ -137,13 +124,12 @@ def _handle_thinking_anthropic(llm: object, extra_body: dict, args: str) -> None
     is still no auto-recovery, so an unlisted word is refused rather than
     stored. Other ``output_config`` keys a host set are left alone.
     """
-    output_config = extra_body.get("output_config")
-    current = output_config.get("effort") if isinstance(output_config, dict) else None
+    is_set, current = current_thinking(llm)
     levels = _effort_levels(getattr(llm, "model_capabilities", None))
     usage = f"[dim]Usage: /thinking <{' | '.join(levels)} | off>[/dim]\n"
 
     if not args:
-        shown = escape(str(current)) if current is not None else "default"
+        shown = escape(str(current)) if is_set else "default"
         console.print(f"\n[info]Thinking depth:[/info] [cyan]{shown}[/cyan] "
                       "[dim](output_config.effort)[/dim]")
         console.print(usage)
@@ -153,12 +139,7 @@ def _handle_thinking_anthropic(llm: object, extra_body: dict, args: str) -> None
     if lowered == "off":
         # A ``reasoning_effort`` carried over a wire switch fails every request
         # here, so ``off`` clears that too.
-        stale = extra_body.pop("reasoning_effort", None)
-        if isinstance(output_config, dict):
-            output_config.pop("effort", None)
-            if not output_config:
-                extra_body.pop("output_config", None)
-        if current is None and stale is None:
+        if not clear_thinking(llm):
             console.print("\n[info]Thinking depth already at provider default "
                           "(output_config.effort unset).[/info]\n")
             return
@@ -172,12 +153,8 @@ def _handle_thinking_anthropic(llm: object, extra_body: dict, args: str) -> None
         console.print(usage)
         return
 
-    if not isinstance(output_config, dict):
-        output_config = {}
-        extra_body["output_config"] = output_config
-    output_config["effort"] = lowered
-    extra_body.pop("reasoning_effort", None)
-    if current is None:
+    set_thinking(llm, lowered)
+    if not is_set:
         console.print(f"\n[success]Thinking depth set to [cyan]{lowered}[/cyan]"
                       "[/success] [dim](output_config.effort)[/dim]")
     else:
@@ -319,17 +296,7 @@ def handle_temperature_command(cli: AgentaoCLI, args: str) -> None:
     console.print(f"\n[success]Temperature changed from {old} to {value}[/success]\n")
 
 
-#: Canonical reasoning-effort levels, low → high. Provider-neutral: this is the
-#: OpenAI o-series / gpt-5 scale that most OpenAI-compatible providers mirror.
-#: The harness deliberately does NOT validate the value — the host configures
-#: its own endpoint and the provider validates (see
-#: ``docs/design/host-llm-extra-params.md`` §"Validate body values"). These are
-#: only the suggested set shown in usage + tab-completion; any other token is
-#: passed through with a "non-standard" note.
-_REASONING_LEVELS = ("minimal", "low", "medium", "high")
-
-
-def _handle_thinking_responses(extra_body: dict, args: str) -> None:
+def _handle_thinking_responses(llm: object, extra_body: dict, args: str) -> None:
     """``/thinking`` on the ``openai-responses`` wire: ``reasoning.effort``.
 
     The Responses API spells the field as a key of a ``reasoning`` object and
@@ -341,16 +308,11 @@ def _handle_thinking_responses(extra_body: dict, args: str) -> None:
     not validated, as on Chat Completions: the scale is the model's
     (``none`` and ``xhigh`` exist on some), and the provider checks it.
     """
-    reasoning = extra_body.get("reasoning")
-    if "reasoning" in extra_body and not isinstance(reasoning, dict):
-        # Not something this API accepts, and every request would say so:
-        # treated as the level it was presumably meant to be, so ``off`` and a
-        # new level both replace it.
-        is_set, current, malformed = True, reasoning, True
-    else:
-        malformed = False
-        is_set = isinstance(reasoning, dict) and "effort" in reasoning
-        current = reasoning.get("effort") if is_set else None
+    # A ``reasoning`` that is not an object is not something this API
+    # accepts, and every request would say so: it reads as the level it was
+    # presumably meant to be, so ``off`` and a new level both replace it.
+    is_set, current = current_thinking(llm)
+    malformed = "reasoning" in extra_body and not isinstance(extra_body["reasoning"], dict)
     stale = "reasoning_effort" in extra_body
     usage = f"[dim]Usage: /thinking <{' | '.join(_REASONING_LEVELS)} | off>[/dim]\n"
 
@@ -373,12 +335,7 @@ def _handle_thinking_responses(extra_body: dict, args: str) -> None:
 
     lowered = args.lower()
     if lowered == "off":
-        extra_body.pop("reasoning_effort", None)
-        if isinstance(reasoning, dict):
-            reasoning.pop("effort", None)
-        if not isinstance(reasoning, dict) or not reasoning:
-            extra_body.pop("reasoning", None)
-        if not is_set and not stale:
+        if not clear_thinking(llm):
             console.print("\n[info]Thinking depth already at provider default "
                           "(reasoning.effort unset).[/info]\n")
             return
@@ -392,13 +349,7 @@ def _handle_thinking_responses(extra_body: dict, args: str) -> None:
                       "not multiple words.[/error]\n")
         return
 
-    value = lowered if lowered in _REASONING_LEVELS else args
-    if not isinstance(reasoning, dict):
-        # A non-dict ``reasoning`` is not something this API accepts; replaced.
-        reasoning = {}
-        extra_body["reasoning"] = reasoning
-    reasoning["effort"] = value
-    extra_body.pop("reasoning_effort", None)
+    value = set_thinking(llm, args)
     note = ""
     if value not in _REASONING_LEVELS:
         note = (f"  [dim](non-standard — your provider validates it; "
@@ -443,20 +394,24 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
         # An injected client may default ``extra_body`` to ``None``; initialize
         # it so the setter is functional rather than silently inert.
         llm.extra_body = {}
+    if not isinstance(llm.extra_body, dict):
+        # ``llm/thinking.py`` writes only into a dict, and would raise.
+        console.print("\n[error]Active LLM client's extra_body is not a dict; "
+                      "cannot set reasoning effort.[/error]\n")
+        return
     extra_body = llm.extra_body
 
     args = args.strip()
     if getattr(llm, "api_format", None) == "anthropic-messages":
-        _handle_thinking_anthropic(llm, extra_body, args)
+        _handle_thinking_anthropic(llm, args)
         return
     if getattr(llm, "api_format", None) == "openai-responses":
-        _handle_thinking_responses(extra_body, args)
+        _handle_thinking_responses(llm, extra_body, args)
         return
-    # Membership, not ``.get() is None``: a host may set ``reasoning_effort=None``
-    # explicitly (which is still sent to the provider), and ``off`` must be able
-    # to clear *that* too — conflating the two would make ``off`` a no-op.
-    is_set = "reasoning_effort" in extra_body
-    current = extra_body.get("reasoning_effort")
+    # Membership, not ``.get() is None`` (``current_thinking``): a host may set
+    # ``reasoning_effort=None`` explicitly (which is still sent to the
+    # provider), and ``off`` must be able to clear *that* too.
+    is_set, current = current_thinking(llm)
 
     if not args:
         if not is_set:
@@ -474,13 +429,12 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
     # value: a provider whose scale includes a literal "none" effort is set with
     # ``/thinking none`` instead — keeping the disable keyword unambiguous.
     if lowered == "off":
-        if not is_set:
+        if not clear_thinking(llm):
             console.print("\n[info]Thinking depth already at provider default "
                           "(reasoning_effort unset).[/info]\n")
             return
-        prev = extra_body.pop("reasoning_effort", None)
         console.print(f"\n[success]Thinking depth off — reasoning_effort "
-                      f"('{escape(str(prev))}') cleared; provider default in effect.[/success]\n")
+                      f"('{escape(str(current))}') cleared; provider default in effect.[/success]\n")
         return
 
     # Reject a multi-word argument: ``/thinking high please`` would otherwise
@@ -495,8 +449,7 @@ def handle_thinking_command(cli: AgentaoCLI, args: str) -> None:
     # Normalize a *known* level to its canonical lowercase form (so ``HIGH`` →
     # ``high``), but pass a non-standard token through verbatim — forcing
     # lowercase would silently mangle a provider whose scale is case-sensitive.
-    value = lowered if lowered in _REASONING_LEVELS else args
-    extra_body["reasoning_effort"] = value
+    value = set_thinking(llm, args)
     note = ""
     if value not in _REASONING_LEVELS:
         note = (f"  [dim](non-standard — your provider validates it; "

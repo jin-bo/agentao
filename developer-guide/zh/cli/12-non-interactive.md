@@ -82,6 +82,8 @@ permissions:
       domain: { ... }
 max_iterations: int            # 默认 100
 skills: [string]               # 在自动发现的激活 skills 之上追加
+thinking: string               # 思考深度（0.5.15）：minimal | low | medium
+                               # | high、模型接受的其他档位，或 "off"
 replay: boolean                # 这次 run 启用 ReplayManager
 output:
   format: text | json
@@ -90,6 +92,18 @@ output:
 `extra="forbid"` —— 未知 spec 字段会以退出码 `2` 失败。secrets（`api_key`）**绝不**在 spec 里接收，必须留在环境变量或宿主注入的 client 里。
 
 CLI flag 只在用户**显式**提供时才覆盖 spec 值，argparse 默认值不会抹掉 spec 字段。
+
+#### 思考深度（`thinking`、`--thinking`）
+
+`thinking`（或 `--thinking LEVEL`，后者优先于 spec）设置思考深度，与交互式的 `/thinking` 是同一个设置。Agentao 把档位写进该线路读取的请求字段：
+
+| 线路 | 请求字段 | 档位 |
+|---|---|---|
+| `openai-completions` | `reasoning_effort` | `minimal`、`low`、`medium`、`high`。其他单个词原样发送，由 provider 校验 |
+| `anthropic-messages` | `output_config.effort` | `low`、`medium`、`high`、`xhigh`、`max`。其他词在发出任何请求前以退出码 `2` 失败 |
+| `openai-responses` | `reasoning.effort` | 同 `openai-completions` |
+
+`off` 移除显式设置的档位（例如 `LLM_EXTRA_BODY` 设置的），恢复 provider 的默认行为。它不承诺关闭模型的推理：默认就推理的模型仍会推理。请加引号写成 `thinking: "off"`。YAML 会把裸写的 `off`、`false`、`no` 读成布尔值 `false`，spec 也把它当作 `off`。`true` 和数字会被拒绝（退出码 `2`）。加了引号的 `"false"`、`"no"` 仍是字符串，会作为档位发送。多于一个词以退出码 `2` 失败。宿主的 LLM client 没有可写入的 `extra_body` dict 时，以退出码 `1` 失败（`runtime_error`）。结果 envelope 里的 `thinking` 给出该线路读取的字段里的档位（其他线路遗留的 `reasoning_effort` 不算），无论它来自 `thinking` 还是 `LLM_EXTRA_BODY`。它不保证请求里没有其他遗留字段：`/provider` 切换之后，`extra_body` 里可能还留着另一条线路的字段，并会原样发送。没有设置档位时不输出该字段。没有自动恢复：模型拒绝该档位时，每个请求都会失败。其他 provider 字段仍通过 `LLM_EXTRA_BODY` 发送。
 
 ### 参数与模板渲染（`--param`）
 
@@ -158,6 +172,7 @@ agentao run --spec .agentao/runs/review-pr.yaml \
     "reasoning_tokens": 600
   },
   "tool_calls": 7,
+  "thinking": "high",
   "warnings": []
 }
 ```
