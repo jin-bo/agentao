@@ -506,6 +506,7 @@ Full schema, tables, and lifecycle → [developer guide 5.5](../../developer-gui
 | `permissions` | `{allow, deny}` | Lists of `RunPermissionRule`. Spec writers never author `action:` — the loader injects it. |
 | `max_iterations` | `int?` | Default 100. |
 | `skills` | `list[str]?` | Must already exist; missing skills exit 2. |
+| `thinking` | `str?` | Thinking depth, as `/thinking` takes it: a level, or `off` to clear one `LLM_EXTRA_BODY` set. Written into the field the wire reads (`agentao/llm/thinking.py`). `--thinking` wins. More than one word, or an `anthropic-messages` effort outside `low\|medium\|high\|xhigh\|max`, exits 2. A YAML bare `off` is accepted. |
 | `replay` | `bool?` | Authoritative; bypasses the factory's disk auto-load when set. |
 | `output` | `{format: "text"\|"json"}?` | Same effect as `--format`. |
 

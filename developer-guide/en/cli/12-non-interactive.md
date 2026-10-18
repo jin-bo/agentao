@@ -82,6 +82,8 @@ permissions:
       domain: { ... }
 max_iterations: int            # default 100
 skills: [string]               # appended to discovered active skills
+thinking: string               # thinking depth (0.5.15): minimal | low | medium
+                               # | high, another level the model takes, or "off"
 replay: boolean                # enable ReplayManager for this run
 output:
   format: text | json
@@ -90,6 +92,18 @@ output:
 `extra="forbid"` — unknown spec fields fail with exit `2`. Secrets (`api_key`) are **never** accepted in the spec; they stay in the environment or in a host-injected client.
 
 CLI flags only override spec values when explicitly provided (argparse defaults do not erase spec fields).
+
+#### Thinking depth (`thinking`, `--thinking`)
+
+`thinking` (or `--thinking LEVEL`, which wins over the spec) sets the thinking depth, the same setting as the interactive `/thinking`. Agentao writes the level into the request field the wire reads:
+
+| Wire | Request field | Levels |
+|---|---|---|
+| `openai-completions` | `reasoning_effort` | `minimal`, `low`, `medium`, `high`. Another single word is sent as written, and the provider checks it |
+| `anthropic-messages` | `output_config.effort` | `low`, `medium`, `high`, `xhigh`, `max`. Another word exits `2` before any request |
+| `openai-responses` | `reasoning.effort` | As on `openai-completions` |
+
+`off` removes an explicit level, for example one that `LLM_EXTRA_BODY` set, so the provider's default behaviour applies. It does not promise to turn the model's reasoning off: a model that reasons by default keeps doing so. Write it quoted, `thinking: "off"`. YAML reads a bare `off`, `false` or `no` as the boolean `false`, and a spec takes that as `off` too. `true` and numbers are refused (exit `2`). A quoted `"false"` or `"no"` stays a string, so it is sent as a level. More than one word exits `2`. A host LLM client with no `extra_body` dict to write into exits `1` (`runtime_error`). The result envelope's `thinking` gives the level in the field the wire reads (a `reasoning_effort` left over on another wire is not it), from `thinking` or from `LLM_EXTRA_BODY`. It does not say the request is free of other leftover fields: after a `/provider` switch, `extra_body` may still hold another wire's field, and it is sent as it is. It is left out when no level was set. There is no auto-recovery: a model that rejects the level fails every request. `LLM_EXTRA_BODY` stays the way to send any other provider field.
 
 ### Parameters & templating (`--param`)
 
@@ -158,6 +172,7 @@ For the full design rationale — including v1 scope, deferred typing (`number` 
     "reasoning_tokens": 600
   },
   "tool_calls": 7,
+  "thinking": "high",
   "warnings": []
 }
 ```
