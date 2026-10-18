@@ -150,6 +150,8 @@ LLM_EXTRA_BODY='{"reasoning_effort":"high"}'
 
 在当前的 Anthropic 模型上，只写 effort 就会打开 adaptive thinking。哪条线路上都**没有自动恢复**：模型不接受这个字段时，每个请求都会失败，直到 `/thinking off`。设置是会话级的，子 agent 会继承；要持久化，把同一个字段写进 `LLM_EXTRA_BODY`。
 
+用 `/provider` 切换到另一条线路时，`/thinking` 设置的档位会移到新线路读取的字段里，因为每条线路都拒绝其他线路的字段。新线路不接受的档位（例如 `anthropic-messages` 上的 `minimal`）会被丢弃，日志里会写明。只有 `/thinking`（或 `agentao run` 的 `thinking`）写入的档位会移动，而且只在它的字段仍是原值时才移动。如果你已经自己设置了新线路的字段，以你的值为准，移过来的档位会被丢弃。你在 `LLM_EXTRA_BODY` 里设置的字段归你管：它保持原样，切换到拒绝它的线路后，每个请求都会失败，直到你修改它。
+
 ## 什么时候该切什么
 
 | 情况 | 怎么做 |

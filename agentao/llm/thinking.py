@@ -12,6 +12,10 @@ request fields are carried (``docs/design/host-llm-extra-params.md``). There
 is no auto-recovery: a model that rejects the level fails every request until
 the level is cleared. ``/thinking`` and ``agentao run``'s ``thinking`` both go
 through this module, and the CLI adds only the messages.
+
+A wire switch moves a level this module wrote, and only that one: the field
+is told apart by where it came from, not by its name
+(:func:`carry_over_wire_switch`). A field the host set stays as it was.
 """
 
 from __future__ import annotations
@@ -31,6 +35,11 @@ ANTHROPIC_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 #: The keyword that clears the level. Not a level: a provider whose scale has
 #: a literal ``none`` is set with ``none``.
 OFF = "off"
+
+#: The attribute on the client where :func:`set_thinking` records what it
+#: wrote, as ``(api_format, level)``. The record, not the field name, is what
+#: makes a field agentao's own at a wire switch.
+_WRITTEN = "_agentao_thinking_written"
 
 
 def anthropic_effort_levels(capabilities: Any) -> Tuple[str, ...]:
@@ -60,10 +69,13 @@ def current_thinking(llm: Any) -> Tuple[bool, Any]:
     ``openai-responses`` counts as set to itself: the API rejects it, and
     :func:`set_thinking` / :func:`clear_thinking` replace it.
     """
-    extra_body = getattr(llm, "extra_body", None)
+    return _read(getattr(llm, "extra_body", None), getattr(llm, "api_format", None))
+
+
+def _read(extra_body: Any, api_format: Any) -> Tuple[bool, Any]:
+    """:func:`current_thinking` for an ``extra_body`` and a wire named apart."""
     if not isinstance(extra_body, Mapping):
         return False, None
-    api_format = getattr(llm, "api_format", None)
     if api_format == "anthropic-messages":
         output_config = extra_body.get("output_config")
         if isinstance(output_config, Mapping) and "effort" in output_config:
@@ -91,7 +103,8 @@ def sent_thinking(llm: Any) -> Optional[str]:
     ``openai-responses`` is not a level: no ``reasoning.effort`` is sent then.
 
     It reports this wire's field only. It does not say the request is free
-    of another wire's field left in ``extra_body`` after a provider switch.
+    of another wire's field the host set: only a level this module wrote
+    moves at a wire switch (:func:`carry_over_wire_switch`).
     """
     is_set, value = current_thinking(llm)
     if not is_set or value is None:
@@ -140,10 +153,22 @@ def set_thinking(llm: Any, level: str) -> str:
     if not isinstance(level, str) or len(level.split()) != 1:
         raise ValueError(f"expected a single level, got {level!r}")
     level = level.strip()
-    lowered = level.lower()
-    if lowered == OFF:
+    if level.lower() == OFF:
         raise ValueError("'off' clears the level; it is not one")
     api_format = getattr(llm, "api_format", None)
+    stored = _write(llm, api_format, level)
+    _record(llm, (api_format, stored))
+    return stored
+
+
+def _write(llm: Any, api_format: Any, level: str, *, drop_stale: bool = True) -> str:
+    """Write a single-word ``level`` into ``api_format``'s field. Returns it.
+
+    ``drop_stale`` also drops a ``reasoning_effort`` on a wire that rejects
+    it, as ``/thinking`` does. A wire-switch move passes ``False``: that
+    field is not one this module wrote, so it is the host's.
+    """
+    lowered = level.lower()
     if api_format == "anthropic-messages":
         levels = anthropic_effort_levels(getattr(llm, "model_capabilities", None))
         if lowered not in levels:
@@ -157,7 +182,8 @@ def set_thinking(llm: Any, level: str) -> str:
             output_config = {}
             extra_body["output_config"] = output_config
         output_config["effort"] = lowered
-        extra_body.pop("reasoning_effort", None)
+        if drop_stale:
+            extra_body.pop("reasoning_effort", None)
         return lowered
     value = lowered if lowered in REASONING_LEVELS else level
     extra_body = _extra_body(llm)
@@ -169,7 +195,8 @@ def set_thinking(llm: Any, level: str) -> str:
             reasoning = {}
             extra_body["reasoning"] = reasoning
         reasoning["effort"] = value
-        extra_body.pop("reasoning_effort", None)
+        if drop_stale:
+            extra_body.pop("reasoning_effort", None)
         return value
     extra_body["reasoning_effort"] = value
     return value
@@ -186,10 +213,20 @@ def clear_thinking(llm: Any) -> bool:
     extra_body = getattr(llm, "extra_body", None)
     if not isinstance(extra_body, dict):
         return False
-    was_set, _ = current_thinking(llm)
-    api_format = getattr(llm, "api_format", None)
-    stale = "reasoning_effort" in extra_body
-    extra_body.pop("reasoning_effort", None)
+    _record(llm, None)
+    return _remove(extra_body, getattr(llm, "api_format", None))
+
+
+def _remove(extra_body: dict, api_format: Any, *, drop_stale: bool = True) -> bool:
+    """:func:`clear_thinking` for an ``extra_body`` and a wire named apart.
+
+    ``drop_stale`` as in :func:`_write`: on ``anthropic-messages`` and
+    ``openai-responses``, ``reasoning_effort`` is not the wire's own field.
+    """
+    was_set, _ = _read(extra_body, api_format)
+    stale = drop_stale and "reasoning_effort" in extra_body
+    if drop_stale or api_format not in ("anthropic-messages", "openai-responses"):
+        extra_body.pop("reasoning_effort", None)
     if api_format == "anthropic-messages":
         output_config = extra_body.get("output_config")
         if isinstance(output_config, dict):
@@ -205,3 +242,62 @@ def clear_thinking(llm: Any) -> bool:
             extra_body.pop("reasoning", None)
         return was_set or stale
     return was_set
+
+
+def _record(llm: Any, written: Optional[Tuple[Any, str]]) -> None:
+    # A host's client may refuse a new attribute (``__slots__``). Then a wire
+    # switch leaves the level where it is, as it leaves a host's own field.
+    try:
+        setattr(llm, _WRITTEN, written)
+    except (AttributeError, TypeError):
+        pass
+
+
+def carry_over_wire_switch(llm: Any, old_format: Any) -> Optional[str]:
+    """Move a level :func:`set_thinking` wrote to the field the new wire reads.
+
+    Called after ``llm.api_format`` changed from ``old_format``. Each wire
+    rejects the others' fields on every request, so a level left in the old
+    field would fail every request. Only a level this module wrote moves,
+    and only while the old field still holds it: a field the host set, or
+    one it changed since, is the host's and stays. So does a level the host
+    already put in the new wire's field: the host's value wins, and agentao's
+    is dropped. A level the new wire does not take (``minimal`` on
+    ``anthropic-messages``) is dropped too.
+
+    Returns a line for the log, or ``None`` when nothing moved. Never raises:
+    a switch must not fail on this.
+    """
+    written = getattr(llm, _WRITTEN, None)
+    new_format = getattr(llm, "api_format", None)
+    if new_format == old_format:
+        return None
+    # Only a record :func:`_record` wrote counts: a duck-typed client may
+    # answer any attribute (``MagicMock``), and that must move nothing.
+    if not (isinstance(written, tuple) and len(written) == 2
+            and isinstance(written[1], str)):
+        return None
+    written_format, level = written
+    extra_body = getattr(llm, "extra_body", None)
+    is_set, value = _read(extra_body, old_format)
+    if (
+        written_format != old_format
+        or not isinstance(extra_body, dict)
+        or not is_set
+        or value != level
+    ):
+        _record(llm, None)
+        return None
+    _remove(extra_body, old_format, drop_stale=False)
+    host_set, host_value = _read(extra_body, new_format)
+    if host_set:
+        _record(llm, None)
+        return (f"thinking depth {level!r} dropped: the {new_format} field "
+                f"already holds the host's {host_value!r}")
+    try:
+        stored = _write(llm, new_format, level, drop_stale=False)
+    except ValueError as exc:
+        _record(llm, None)
+        return f"thinking depth {level!r} dropped: {new_format} does not take it ({exc})"
+    _record(llm, (new_format, stored))
+    return f"thinking depth {stored!r} moved to the field {new_format} reads"

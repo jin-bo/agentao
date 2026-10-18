@@ -328,7 +328,7 @@ class RunResult(BaseModel):
     #: The thinking depth in the field the wire reads, from ``thinking`` or
     #: ``LLM_EXTRA_BODY``. A ``reasoning_effort`` left over on another wire
     #: is not that field. Not a check of the whole request: another wire's
-    #: leftover field may still be sent. Left out of the JSON when none was
+    #: field the host set may still be sent. Left out of the JSON when none was
     #: set, so the provider's default applied.
     thinking: Optional[str] = None
     warnings: List[str] = Field(default_factory=list)

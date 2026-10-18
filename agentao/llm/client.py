@@ -57,6 +57,7 @@ from ._retry import (
 )
 from ._stream_response import _StreamAccumulator, _StreamResponse
 from ._usage import cache_token_counts, positive_int, reasoning_token_count
+from .thinking import carry_over_wire_switch
 from ._logging import _LoggingMixin
 from ..paths import user_root
 from ..security.secret_scan import redact
@@ -633,26 +634,44 @@ class LLMClient(_LoggingMixin):
             self.cache_control = None
             self.prompt_cache = None
             self.prompt_cache_ttl = None
-        if _new_format != self.api_format:
+        _old_format = self.api_format
+        if _new_format != _old_format:
             self.logger.info(
-                "Wire protocol changed: %s -> %s", self.api_format, _new_format
+                "Wire protocol changed: %s -> %s", _old_format, _new_format
             )
             self.api_format = _new_format
             self._adapter = self._make_adapter()
+        self.reset_capability_latches()
+        self.client = self._adapter.create_client()
+        if _new_format != _old_format:
+            # After the last step that can raise, so a failed switch has no
+            # ``extra_body`` change to put back. One exception to
+            # "``extra_body`` stays": a thinking level agentao wrote
+            # (``/thinking``, ``agentao run``) moves to the field the new wire
+            # reads, or is dropped if that wire does not take it. Told apart
+            # by its record, not its name, so a host's own field is never
+            # touched (``llm/thinking.py``).
+            _keys_before = (
+                set(self.extra_body) if isinstance(self.extra_body, dict) else set()
+            )
+            moved = carry_over_wire_switch(self, _old_format)
+            if moved:
+                self.logger.info(moved)
             # ``extra_body`` stays (above), and that is now a sharper edge: its
             # keys were written for the other wire's request body. Said once,
             # here, and the structural overlap is re-read against the new
             # adapter — ``system`` is inert on Chat Completions and replaces
-            # the whole system prompt on Messages.
-            if self.extra_body:
+            # the whole system prompt on Messages. A key the move just created
+            # was written for the new wire and is not named.
+            _stale = sorted(k for k in (self.extra_body or {}) if k in _keys_before)
+            if _stale:
                 self.logger.warning(
                     "extra_body key(s) %s were configured for the previous "
                     "wire protocol and go to %s unchanged.",
-                    ", ".join(sorted(self.extra_body)), _new_format,
+                    ", ".join(_stale), _new_format,
                 )
+            if self.extra_body:
                 self._warn_structural_overlap()
-        self.reset_capability_latches()
-        self.client = self._adapter.create_client()
         self.logger.info(
             f"LLMClient reconfigured: model={self.model}, base_url={self.base_url}"
         )
