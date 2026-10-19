@@ -225,7 +225,13 @@ class SearchTextTool(Tool):
             "other matches. By default, the tool skips large directories: .git, "
             "node_modules, .venv, dist, build, __pycache__, and language caches. "
             "To search one of these directories, name it in `directory` or "
-            "`file_pattern`."
+            "`file_pattern`. In a git repository, the tool also skips the files "
+            "that .gitignore ignores, even when `file_pattern` names them. If "
+            ".gitignore ignores `directory` itself, the tool searches every "
+            "file in it. To search an ignored directory, set `directory` to "
+            "it. The tool never searches an ignored file in a directory that "
+            ".gitignore does not ignore, for example a file that a `*.log` "
+            "rule ignores."
         )
 
     @property
@@ -273,6 +279,23 @@ class SearchTextTool(Tool):
         except (subprocess.SubprocessError, FileNotFoundError):
             return False
 
+    def _is_git_ignored(self, directory: Path) -> bool:
+        """Check if ``.gitignore`` ignores the directory itself (or a parent of it).
+
+        ``git grep`` never searches ignored files, even with ``--untracked``,
+        so its exit 1 there would claim "no matches" for a tree it never
+        read (#563). Fails open to ``False``: git grep stays the default.
+        """
+        try:
+            result = _run_capture(
+                [*_GIT, "check-ignore", "-q", "."],
+                cwd=str(directory),
+                timeout=5,
+            )
+            return result.returncode == 0
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return False
+
     def _git_grep(
         self,
         directory: Path,
@@ -284,7 +307,9 @@ class SearchTextTool(Tool):
     ) -> Optional[str]:
         """Try searching with git grep. Returns formatted result string, or None if git grep fails."""
         try:
-            cmd = [*_GIT, "grep", "-n", "--no-color"]
+            # ``--untracked``: also search files not yet ``git add``ed (a file
+            # the agent just wrote, #563). Ignored files stay excluded.
+            cmd = [*_GIT, "grep", "-n", "--no-color", "--untracked"]
             if not case_sensitive:
                 cmd.append("-i")
             if regex:
@@ -323,20 +348,28 @@ class SearchTextTool(Tool):
         case_sensitive: bool,
         regex: bool,
         skip: FrozenSet[str] = frozenset(),
+        no_ignore_vcs: bool = False,
     ) -> Optional[str]:
         """Search using ripgrep. Caller must probe rg via ``_find_executable`` first.
 
         Primary territory: non-git host trees. ``execute()`` only reaches this
-        branch when the directory is not a git repo (or ``git grep`` itself
-        failed), so we cannot rely on ``.gitignore`` semantics to prune heavy
-        directories — we translate ``skip`` into ``--glob '!<dir>'`` ourselves
-        to skip them at the source rather than post-filter rg's output.
+        branch when the directory is not a git repo, is ignored by
+        ``.gitignore``, or ``git grep`` itself failed, so we cannot rely on
+        ``.gitignore`` semantics to prune heavy directories — we translate
+        ``skip`` into ``--glob '!<dir>'`` ourselves to skip them at the source
+        rather than post-filter rg's output.
+
+        ``no_ignore_vcs``: set when ``.gitignore`` ignores ``directory``. rg
+        reads the parent ``.gitignore`` too, so a rule such as ``kb/*`` or
+        ``/kb/**`` would otherwise hide every file there (#563).
         """
         try:
             # ``--no-config``: ``RIPGREP_CONFIG_PATH`` (settable from a project
             # ``.env``) could add ``--pre=<script>`` and run it from this
             # read-only tool, or ``--quiet`` and hide every match.
             cmd = ["rg", "--no-config", "--line-number", "--no-heading", "--color=never"]
+            if no_ignore_vcs:
+                cmd.append("--no-ignore-vcs")
             if not case_sensitive:
                 cmd.append("-i")
             if not regex:
@@ -393,25 +426,34 @@ class SearchTextTool(Tool):
             skip = _effective_skip_dirs(file_pattern, directory)
 
             # Prefer ``git grep`` in git repos: it constrains the search space
-            # to tracked files (which usually matches "search project code"
-            # intent and excludes build artifacts / vendored deps for free)
-            # and reuses git's universally-available binary. This is a
-            # *semantic* preference — rg's raw scan is faster, but searching
-            # a smaller, intent-aligned file set wins end-to-end on most
-            # repos. Gate on ``LocalFileSystem`` so an injected virtual /
-            # remote FS doesn't get bypassed by the on-disk git repo at
-            # ``path`` returning unrelated results.
+            # to tracked and untracked, non-ignored files (which usually
+            # matches "search project code" intent and excludes build
+            # artifacts / vendored deps for free) and reuses git's
+            # universally-available binary. This is a *semantic* preference
+            # — rg's raw scan is faster, but searching a smaller,
+            # intent-aligned file set wins end-to-end on most repos. Gate on
+            # ``LocalFileSystem`` so an injected virtual / remote FS doesn't
+            # get bypassed by the on-disk git repo at ``path`` returning
+            # unrelated results. Skip git grep when ``.gitignore`` ignores
+            # ``path`` itself (a data directory inside a checkout): git grep
+            # would read none of it and answer "no matches" (#563).
+            ignored = False
             if isinstance(fs, LocalFileSystem) and self._is_git_repo(path):
-                result = self._git_grep(path, pattern, file_pattern, case_sensitive, regex, skip)
-                if result is not None:
-                    return result
+                ignored = self._is_git_ignored(path)
+                if not ignored:
+                    result = self._git_grep(path, pattern, file_pattern, case_sensitive, regex, skip)
+                    if result is not None:
+                        return result
 
-            # Fall through to ripgrep for non-git trees and as a rescue when
-            # ``git grep`` errored. Same ``LocalFileSystem`` gate as git grep:
-            # a virtual / Docker / remote FS would have rg search the wrong
-            # tree.
+            # Fall through to ripgrep for non-git trees, ignored directories,
+            # and as a rescue when ``git grep`` errored. Same
+            # ``LocalFileSystem`` gate as git grep: a virtual / Docker /
+            # remote FS would have rg search the wrong tree.
             if isinstance(fs, LocalFileSystem) and _find_executable("rg") is not None:
-                result = self._ripgrep(path, pattern, file_pattern, case_sensitive, regex, skip)
+                result = self._ripgrep(
+                    path, pattern, file_pattern, case_sensitive, regex, skip,
+                    no_ignore_vcs=ignored,
+                )
                 if result is not None:
                     return result
 

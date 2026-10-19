@@ -15,6 +15,8 @@ _Targeting 0.5.16. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **`search_file_content` finds untracked files and searches ignored directories in a git work tree (#563).** In a git repository the tool searched with `git grep`, which reads tracked files only, and it reported `git grep`'s "nothing found" as the final answer. So a file not yet `git add`ed (one the agent had just written, say) was never found, and a search inside a gitignored directory (a data folder kept in a checkout) always answered "No matches". `git grep` now also searches untracked files (`--untracked`). When `.gitignore` ignores the directory being searched, the tool searches it with ripgrep or the Python scan instead. A search from a directory that is not ignored still skips ignored files, as before, also when `file_pattern` names them. The tool description now says so: it tells the model to set `directory` to an ignored directory to search it, and that an ignored file in a directory that is not ignored (a `*.log` rule, say) is never searched. It no longer implies that naming a gitignored `node_modules` in `file_pattern` searches it.
+
 ---
 
 ## [0.5.15] — 2026-10-18
