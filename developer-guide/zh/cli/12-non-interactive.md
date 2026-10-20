@@ -119,7 +119,7 @@ CLI flag 只在用户**显式**提供时才覆盖 spec 值，argparse 默认值�
 
 `max_denials`（或 `--max-denials N`，默认 `5`）给 `deny` 设上限。它累计整个运行中每一次被拒绝的调用，前台子代理的调用也计入。（运行中没有后台子代理，见下文“输出契约”。）前 `N` 次拒绝返回给模型。第 `N + 1` 次与 `reject` 一样结束运行（`permission_required`，退出码 `3`，消息中注明 `max_denials`），同一批次的其他调用被取消。`0` 让 `deny` 等同于 `reject`。不设 `interaction_policy: deny` 却设了 `max_denials` 时退出码为 `2`，负值也是。
 
-结果的 `denials` 列出每一个被拒绝的调用（`tool_name`、`tool_call_id`，由引擎规则发起 ask 时还有 `matched_rule`），成功和失败时都有。子代理的调用记为 `[<agent>] <tool>`，没有 `tool_call_id` 和 `matched_rule`。`--format text` 下每条写一行到 stderr。**`deny` 下的退出码 `0` 表示模型给出了最终回答，不表示任务已经完成**：模型想做的某一步可能在 `denials` 里，并且没有任何回滚。把结果当作完成之前，先检查 `denials`。
+结果的 `denials` 列出每一个被拒绝的调用（`tool_name`、`tool_call_id`，由引擎规则发起 ask 时还有 `matched_rule`），成功和失败时都有。子代理的调用记为 `[<agent>] <tool>`，带子代理自己的 `tool_call_id`，没有 `matched_rule`（它的权限事件留在子代理那里）。`tool_call_id` 是 provider 给这次调用的 id，跨轮次不保证唯一：有的 provider 在每次响应里都把调用编号为 `call_0`、`call_1`……`--format text` 下每条写一行到 stderr。**`deny` 下的退出码 `0` 表示模型给出了最终回答，不表示任务已经完成**：模型想做的某一步可能在 `denials` 里，并且没有任何回滚。把结果当作完成之前，先检查 `denials`。
 
 ### 参数与模板渲染（`--param`）
 

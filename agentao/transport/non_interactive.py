@@ -16,13 +16,20 @@ call is recoverable. The ``max_denials + 1``-th ASK of the run falls back to the
 ``reject`` abort, so a model that keeps asking still ends. ``ask_user`` aborts
 under both policies: a question nobody answers is a dead end.
 
-The transport never receives the matched permission rule directly —
-that travels through the public host event stream
-(``permission_decision`` events with ``outcome="deny"``). The pipeline
-registers a sync observer that converts those events into
-``transport.rejection``. ASK plans push their ``tool_call_id`` onto
-:attr:`_ask_queue` so the matching ``confirm_tool`` call can recover
-it FIFO.
+``confirm_tool`` gets no call identity, so the transport pairs each one with
+its call as ACP does (``acp/transport.py``): the runner emits
+``TOOL_CONFIRMATION`` with ``call_id`` just before ``confirm_tool``, on the
+same thread, and :meth:`emit` keeps that id in a thread-local that the next
+``confirm_tool`` consumes. A foreground sub-agent's ``TOOL_CONFIRMATION`` is
+forwarded here on the child's thread, so its denials carry its own id (#566).
+
+The matched permission rule travels through the public host event stream
+instead. The pipeline registers a sync observer: a ``permission_decision``
+with ``outcome="deny"`` becomes ``transport.rejection``, and one with
+``outcome="prompt"`` is kept by :meth:`queue_ask`, keyed by
+``(tool_name, tool_call_id)``, until its ``confirm_tool`` takes it. Provider
+ids are not guaranteed unique, hence the name in the key. A sub-agent's
+permission events go to its own stream, so its denials have no rule.
 """
 
 from __future__ import annotations
@@ -31,6 +38,7 @@ import threading
 from typing import Any, Dict, List, Literal, Optional, Tuple, TYPE_CHECKING
 
 from . import confirmation as _confirmation
+from .events import AgentEvent, EventType
 from .sdk import SdkTransport
 
 if TYPE_CHECKING:
@@ -85,13 +93,21 @@ class NonInteractiveTransport(SdkTransport):
         self._policy = policy
         self._max_denials = max_denials
         # A foreground sub-agent confirms through this transport on its own
-        # thread, so the count and the queue are shared across threads.
+        # thread, so the count and the rule map are shared across threads.
         self._lock = threading.Lock()
-        # FIFO populated by the pipeline observer from
-        # ``permission_decision`` events with ``outcome=="prompt"``.
-        # ``confirm_tool`` consumes it to recover the matching
-        # ``tool_call_id`` (and rule) for the rejection or denial.
-        self._ask_queue: List[Tuple[str, Optional[str], Optional[Dict[str, Any]]]] = []
+        # The ``call_id`` of the confirmation about to be asked on this
+        # thread, from ``TOOL_CONFIRMATION``; consumed by ``confirm_tool``.
+        self._confirmation_local = threading.local()
+        # Rules of ASK ``permission_decision`` events, by
+        # ``(tool_name, tool_call_id)``; an entry is removed when matched.
+        self._asked_rules: Dict[Tuple[str, str], Optional[Dict[str, Any]]] = {}
+
+    def emit(self, event: AgentEvent) -> None:
+        if event.type == EventType.TOOL_CONFIRMATION:
+            call_id = (event.data or {}).get("call_id")
+            # Set even when empty, so an id never outlives its confirmation.
+            self._confirmation_local.call_id = str(call_id) if call_id else None
+        super().emit(event)
 
     def queue_ask(
         self,
@@ -99,20 +115,21 @@ class NonInteractiveTransport(SdkTransport):
         tool_call_id: Optional[str],
         matched_rule: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Push an ASK ``permission_decision`` event onto the FIFO."""
+        """Keep an ASK ``permission_decision`` event's rule for its confirmation."""
+        if not tool_call_id:
+            return
         with self._lock:
-            self._ask_queue.append((tool_name, tool_call_id, matched_rule))
+            self._asked_rules[(tool_name, tool_call_id)] = matched_rule
 
-    def _pop_ask(self, tool_name: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-        # FIFO match by name is sufficient: the runner emits
-        # permission_decision events in plan order before any
-        # confirm_tool fires for the same batch (tool_runner.py:193-200).
+    def _take_call(self, tool_name: str) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+        """The call being confirmed on this thread, and its rule; consumes both."""
+        call_id = getattr(self._confirmation_local, "call_id", None)
+        self._confirmation_local.call_id = None
+        if call_id is None:
+            return None, None
         with self._lock:
-            for i, (name, tcid, rule) in enumerate(self._ask_queue):
-                if name == tool_name:
-                    del self._ask_queue[i]
-                    return tcid, rule
-        return None, None
+            rule = self._asked_rules.pop((tool_name, call_id), None)
+        return call_id, rule
 
     def record_rejection(self, rejection: RejectionDict) -> bool:
         """Set :attr:`rejection` unless one is set; ``True`` if this one won.
@@ -138,7 +155,7 @@ class NonInteractiveTransport(SdkTransport):
                 pass
 
     def confirm_tool(self, tool_name: str, description: str, args: dict) -> bool:
-        tool_call_id, matched_rule = self._pop_ask(tool_name)
+        tool_call_id, matched_rule = self._take_call(tool_name)
         if self._policy == "deny":
             with self._lock:
                 deny_back = len(self.denials) < self._max_denials
@@ -157,12 +174,15 @@ class NonInteractiveTransport(SdkTransport):
             )
         else:
             message = f"{tool_name} requires approval in this mode"
-        self.record_rejection({
+        rejection: RejectionDict = {
             "type": "permission_required",
             "tool_name": tool_name,
             "tool_call_id": tool_call_id,
             "message": message,
-        })
+        }
+        if matched_rule is not None:
+            rejection["matched_rule"] = matched_rule
+        self.record_rejection(rejection)
         self._cancel(f"permission_required: {tool_name}")
         return False
 

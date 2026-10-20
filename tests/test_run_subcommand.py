@@ -882,11 +882,15 @@ def test_has_listeners_true_with_observer_only():
 
 def test_non_interactive_confirm_records_rejection_and_cancels():
     from agentao.cancellation import CancellationToken
-    from agentao.transport import NonInteractiveTransport
+    from agentao.transport import AgentEvent, EventType, NonInteractiveTransport
 
     token = CancellationToken()
     transport = NonInteractiveTransport(token=token)
     transport.queue_ask("write_file", "call_42")
+    # The runner announces the call on the same thread just before asking.
+    transport.emit(AgentEvent(EventType.TOOL_CONFIRMATION, {
+        "tool": "write_file", "args": {}, "call_id": "call_42",
+    }))
     assert transport.confirm_tool("write_file", "desc", {}) is False
     assert transport.rejection["type"] == "permission_required"
     assert transport.rejection["tool_call_id"] == "call_42"
@@ -908,19 +912,21 @@ def test_non_interactive_ask_user_records_interaction():
     assert "interaction_required" in token.reason
 
 
-def test_non_interactive_ask_fifo_dedup_by_name():
-    """Two ASK plans for the same tool name → FIFO returns first id, then second."""
+def test_non_interactive_same_name_asks_pair_by_id():
+    """Two ASK plans for the same tool name → each confirmation gets its own id."""
     from agentao.cancellation import CancellationToken
-    from agentao.transport import NonInteractiveTransport
+    from agentao.transport import AgentEvent, EventType, NonInteractiveTransport
 
     transport = NonInteractiveTransport(token=CancellationToken())
     transport.queue_ask("write_file", "call_1")
     transport.queue_ask("write_file", "call_2")
-    transport.confirm_tool("write_file", "d", {})
-    assert transport.rejection["tool_call_id"] == "call_1"
-    transport.rejection = None
-    transport.confirm_tool("write_file", "d", {})
-    assert transport.rejection["tool_call_id"] == "call_2"
+    for call_id in ("call_2", "call_1"):
+        transport.emit(AgentEvent(EventType.TOOL_CONFIRMATION, {
+            "tool": "write_file", "args": {}, "call_id": call_id,
+        }))
+        transport.confirm_tool("write_file", "d", {})
+        assert transport.rejection["tool_call_id"] == call_id
+        transport.rejection = None
 
 
 def test_non_interactive_max_iterations_flag():
