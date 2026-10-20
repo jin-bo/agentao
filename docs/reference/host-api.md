@@ -903,6 +903,22 @@ does this (`agentao run --interaction-policy deny`).
 - `APPROVAL_UNAVAILABLE` is the only reason the runtime reads. The result text
   names non-interactive mode, so do not use it for a person who refused.
 
+### Wrapping `NonInteractiveTransport` (0.5.16)
+
+`confirm_tool` gets no call id, so `NonInteractiveTransport` pairs each
+confirmation with its call itself. The runner emits `TOOL_CONFIRMATION` (with
+`call_id`) just before it calls `confirm_tool`, on the same thread. `emit`
+keeps that id, and the next `confirm_tool` on that thread consumes it. The
+denial or rejection then carries that `tool_call_id`, and the `matched_rule`
+of the matching ASK `permission_decision` event.
+
+A transport that wraps it keeps the pairing only if it forwards both calls:
+`emit(TOOL_CONFIRMATION)` and then the `confirm_tool` that follows, in that
+order, synchronously, on the thread the runner called it on. A wrapper that
+forwards `confirm_tool` but not `emit` gets `tool_call_id: null` and no rule.
+So does a host that calls `confirm_tool` directly. There is no fallback that
+guesses the call by tool name.
+
 ### Known gaps (neither channel covers these today)
 
 - **MCP server lifecycle.** Connect / disconnect / `auth_failed` are

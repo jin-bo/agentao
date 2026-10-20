@@ -732,6 +732,12 @@ transport 可以说明这一点：在 `confirm_tool` 里调用
 - 闸门确认会忽略这个原因，仍返回普通的"未获批准"结果。
 - 运行时只读取 `APPROVAL_UNAVAILABLE` 这一个原因。结果文本提到非交互模式，所以不要在有人明确拒绝时使用它。
 
+### 包装 `NonInteractiveTransport`（0.5.16）
+
+`confirm_tool` 拿不到调用 id，所以 `NonInteractiveTransport` 自己把每次确认与对应的调用配对。运行时在调用 `confirm_tool` 之前、在同一线程上发出 `TOOL_CONFIRMATION`（带 `call_id`）。`emit` 记下这个 id，该线程上的下一次 `confirm_tool` 取走它。拒绝记录或终止原因因此带上这个 `tool_call_id`，以及对应 ASK `permission_decision` 事件的 `matched_rule`。
+
+包装它的 transport 只有同时转发这两个调用才能保持配对：先 `emit(TOOL_CONFIRMATION)`，再转发随后的 `confirm_tool`，按这个顺序同步转发，并留在运行时调用你的那个线程上。只转发 `confirm_tool`、不转发 `emit` 的包装会得到 `tool_call_id: null`，也没有规则。宿主直接调用 `confirm_tool` 时同样如此。不会按工具名猜测是哪一次调用。
+
 ### 已知缺口（两条通道目前都覆盖不到）
 
 - **MCP server 生命周期。** Connect / disconnect / `auth_failed`
