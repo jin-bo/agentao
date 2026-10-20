@@ -290,6 +290,10 @@ class ToolCallPlan:
     #: reached the decision. Binding the spec but not the body would leave a channel that
     #: decides one command and runs another through the same plan.
     decided: Optional[DecidedCall] = None
+    #: Why the confirmation phase turned ``ASK`` into ``CANCELLED``, when the
+    #: transport said (``transport/confirmation.py::record_decline``). ``None``
+    #: is a plain "not approved".
+    decline_reason: Optional[str] = None
 
     def __post_init__(self) -> None:
         # Direct construction sites (tests, custom planners that bypass

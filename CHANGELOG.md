@@ -11,6 +11,8 @@ _Targeting 0.5.16. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`agentao run --interaction-policy deny` declines a call that needs approval back to the model (#565).** Under `reject` (still the default) one tool call that needs approval (a shell command outside the read-only allowlist, say, even `true` or `echo "noop"`) ends the whole run with `permission_required`, exit `3`: the model never sees the refusal, and what the run wrote before it is left half done. Under `deny` the call is not run, the model gets a tool result that says approval is unavailable in non-interactive mode and allows an alternative the current permission rules permit, and the turn goes on. `max_denials` / `--max-denials N` (default `5`) bounds it: call `N + 1` ends the run as `reject` does. The JSON result gains `denials` (`tool_name`, `tool_call_id`, `matched_rule`), on success too; text mode writes one stderr line per denial. Exit `0` under `deny` says the model gave a final answer, not that every call ran. `ask_user` still ends the run, and so does a call that a rule or `read-only` mode denies, under both policies. A confirmation the MCP Skills gate asks keeps the plain "not approved" result, which offers no alternative. The decline text of an interactive "no" is unchanged. For hosts: a transport can tell the runner why it declined with `agentao.transport.record_decline(APPROVAL_UNAVAILABLE)` (host API reference, "Saying why a confirmation was declined"), and `NonInteractiveTransport` takes `policy=` and `max_denials=`.
+
 ### Changed
 
 ### Fixed

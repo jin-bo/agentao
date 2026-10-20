@@ -442,7 +442,8 @@ prompt 组成规则与约定见 [开发者指南 5.6](../../developer-guide/zh/p
 | `cwd` | `str?` | 工作目录；默认 `os.getcwd()`。 |
 | `model` / `base_url` | `str?` | LLM 覆盖项。 |
 | `permission_mode` | enum | `read-only` / `workspace-write` / `full-access` / `plan`。 |
-| `interaction_policy` | `"reject"` | M0 仅接受 `reject`。 |
+| `interaction_policy` | `"reject"` \| `"deny"` | 默认 `reject`：需要审批的调用结束运行（退出码 3）。`deny`（0.5.16）把它拒绝回模型，并列入结果的 `denials`。两种策略下 `ask_user` 都结束运行。 |
+| `max_denials` | `int?` | 仅用于 `deny`（否则退出码 2）。拒绝回模型的调用次数上限，超过后下一次按 `reject` 结束运行。默认 5，`>= 0`。 |
 | `permissions` | `{allow, deny}` | `RunPermissionRule` 列表。Spec 不允许手写 `action:` —— 由 loader 注入。 |
 | `max_iterations` | `int?` | 默认 100。 |
 | `skills` | `list[str]?` | 必须已存在；缺失 skill 退出 2。 |

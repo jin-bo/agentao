@@ -722,6 +722,16 @@ class MyTransport(NullTransport):
 `build_compat_transport` 会批准所有确认，**唯独拒绝闸门确认**。CLI 即使在 `full-access` 下也会询问闸门确认，ACP 服务端对它只提供
 `allow_once` / `reject_once`。
 
+### 说明确认为什么被拒绝（`record_decline`，0.5.16）
+
+`confirm_tool` 只返回 bool，所以默认情况下模型把每个 `False` 都读作一个人的"不"，结果里的收尾语会禁止任何其他路径。因为没有人能回答而拒绝的
+transport 可以说明这一点：在 `confirm_tool` 里调用
+`agentao.transport.record_decline(agentao.transport.APPROVAL_UNAVAILABLE)`，然后返回 `False`。模型收到的结果会说明非交互模式下无法审批，并允许改用当前权限规则允许的替代方式。`NonInteractiveTransport(policy="deny")` 就是这样做的（`agentao run --interaction-policy deny`）。
+
+- 与 `gate_note()` 一样，它是线程局部的。请在 `confirm_tool` 内、在调用你的那个线程上调用它。在确认之外调用它不起作用。
+- 闸门确认会忽略这个原因，仍返回普通的"未获批准"结果。
+- 运行时只读取 `APPROVAL_UNAVAILABLE` 这一个原因。结果文本提到非交互模式，所以不要在有人明确拒绝时使用它。
+
 ### 已知缺口（两条通道目前都覆盖不到）
 
 - **MCP server 生命周期。** Connect / disconnect / `auth_failed`

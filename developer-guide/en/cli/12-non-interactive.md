@@ -67,7 +67,8 @@ cwd: string                    # working directory for the run
 model: string                  # overrides env-derived LLM model
 base_url: string               # overrides env-derived base URL
 permission_mode: read-only | workspace-write | full-access | plan
-interaction_policy: reject     # M0 only accepts "reject"
+interaction_policy: reject | deny   # default reject; see below
+max_denials: int               # deny only; default 5
 permissions:
   allow:
     - tool: string             # glob — same syntax as ~/.agentao/permissions.json
@@ -104,6 +105,21 @@ CLI flags only override spec values when explicitly provided (argparse defaults 
 | `openai-responses` | `reasoning.effort` | As on `openai-completions` |
 
 `off` removes an explicit level, for example one that `LLM_EXTRA_BODY` set, so the provider's default behaviour applies. It does not promise to turn the model's reasoning off: a model that reasons by default keeps doing so. Write it quoted, `thinking: "off"`. YAML reads a bare `off`, `false` or `no` as the boolean `false`, and a spec takes that as `off` too. `true` and numbers are refused (exit `2`). A quoted `"false"` or `"no"` stays a string, so it is sent as a level. More than one word exits `2`. A host LLM client with no `extra_body` dict to write into exits `1` (`runtime_error`). The result envelope's `thinking` gives the level in the field the wire reads (a `reasoning_effort` left over on another wire is not it), from `thinking` or from `LLM_EXTRA_BODY`. It does not say the request is free of another wire's field: one that the host set in `LLM_EXTRA_BODY` is sent as it is. It is left out when no level was set. There is no auto-recovery: a model that rejects the level fails every request. `LLM_EXTRA_BODY` stays the way to send any other provider field.
+
+#### Interaction policy (`interaction_policy`, `--interaction-policy`)
+
+A run has nobody to approve a tool call that needs approval (one the rules answer with *ask*, such as a shell command outside the read-only allowlist). The policy decides what happens to that call:
+
+| Policy | A call that needs approval | `ask_user` |
+|---|---|---|
+| `reject` (default) | Ends the run: `permission_required`, exit `3`. What the run did before it is kept on disk, but the turn never reaches its closing steps. | `interaction_required`, exit `3` |
+| `deny` (0.5.16) | Not run. The model gets a tool result that says approval is unavailable in non-interactive mode, tells it not to retry the call, and allows an alternative the current permission rules permit. The turn goes on. | `interaction_required`, exit `3`, as under `reject` |
+
+A confirmation that the MCP Skills gate asks (consent to a server skill's content, or to a call made while one is loaded) is declined with the plain "not approved" result instead, which offers no alternative. It still counts toward `max_denials`. `deny` changes only the *ask* case. A call that a rule or the `read-only` mode denies still ends the run with `permission_denied`, under both policies.
+
+`max_denials` (or `--max-denials N`, default `5`) bounds `deny`. It counts every declined call of the run, a foreground sub-agent's calls too. (A run has no background sub-agents; see *Output* below.) The first `N` are declined back to the model. Call `N + 1` ends the run as `reject` does (`permission_required`, exit `3`, the message names `max_denials`), and the other calls of its batch are cancelled. `0` makes `deny` act as `reject`. Setting `max_denials` without `interaction_policy: deny` exits `2`, and so does a negative value.
+
+The result lists each declined call in `denials` (`tool_name`, `tool_call_id`, `matched_rule` when an engine rule asked), on success and on failure. A sub-agent's call is listed as `[<agent>] <tool>`, without `tool_call_id` or `matched_rule`. In `--format text` each one is a line on stderr. **Exit `0` under `deny` means the model gave a final answer. It does not mean the task is complete**: a step the model wanted may be in `denials`, and nothing is rolled back. Check `denials` before you treat the result as done.
 
 ### Parameters & templating (`--param`)
 
@@ -173,6 +189,7 @@ For the full design rationale — including v1 scope, deferred typing (`number` 
   },
   "tool_calls": 7,
   "thinking": "high",
+  "denials": [],
   "warnings": []
 }
 ```
@@ -200,10 +217,10 @@ Note that a turn can end this way *after* running tools: the model may do the wo
 
 | Code  | Meaning |
 |-------|---------|
-| `0`   | Completed normally |
+| `0`   | Completed normally. Under `interaction_policy: deny`, check `denials`: exit `0` does not mean every call ran |
 | `1`   | Runtime error, or a turn that produced no answer (`runtime_error`, `empty_response`, `length_truncated`, `doom_loop`, `hook_stop`) |
 | `2`   | Invalid usage / spec validation failed / unknown spec field |
-| `3`   | Permission or interaction required (no interactive approval available) |
+| `3`   | Permission or interaction required (no interactive approval available; under `deny`, past `max_denials`) |
 | `4`   | Max tool iterations reached; answer may be incomplete |
 | `130` | Interrupted (SIGINT / SIGTERM) |
 
