@@ -6,7 +6,7 @@
 
 - `from agentao import ...` → `Agentao`、`SkillManager`
 - `from agentao.embedding import ...` → `build_from_environment`
-- `from agentao.transport import ...` → `AgentEvent`、`EventType`、`CoreTransport`、`Transport`、`NullTransport`、`SdkTransport`、`build_compat_transport`、`gate_note`
+- `from agentao.transport import ...` → `AgentEvent`、`EventType`、`CoreTransport`、`Transport`、`NullTransport`、`SdkTransport`、`NonInteractiveTransport`、`build_compat_transport`、`gate_note`、`record_decline`、`APPROVAL_UNAVAILABLE`
 - `from agentao.capabilities import ...` → `FileSystem`、`LocalFileSystem`、`FileEntry`、`FileStat`、`ShellExecutor`、`LocalShellExecutor`、`ShellRequest`、`ShellResult`、`BackgroundHandle`、`MemoryStore`、`SQLiteMemoryStore`、`MCPRegistry`、`FileBackedMCPRegistry`、`InMemoryMCPRegistry`
 - `from agentao.tools.base import ...` → `Tool`、`ToolRegistry`（`Tool` 也从 `agentao.host` 导出，同时导出的还有 `AsyncToolBase` 和联合类型 `RegistrableTool`——是同一批对象，也是宿主应走的稳定路径）
 - `from agentao.permissions import ...` → `PermissionEngine`、`PermissionMode`、`PermissionDecision`
