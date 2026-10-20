@@ -502,7 +502,8 @@ Full schema, tables, and lifecycle → [developer guide 5.5](../../developer-gui
 | `cwd` | `str?` | Working directory; defaults to `os.getcwd()`. |
 | `model` / `base_url` | `str?` | LLM overrides. |
 | `permission_mode` | enum | `read-only` / `workspace-write` / `full-access` / `plan`. |
-| `interaction_policy` | `"reject"` | Only `reject` accepted in M0. |
+| `interaction_policy` | `"reject"` \| `"deny"` | Default `reject`: a call that needs approval ends the run (exit 3). `deny` (0.5.16) declines it back to the model and lists it in the result's `denials`. `ask_user` ends the run under both. |
+| `max_denials` | `int?` | `deny` only (else exit 2). Calls declined back to the model before the next one ends the run as `reject`. Default 5, `>= 0`. |
 | `permissions` | `{allow, deny}` | Lists of `RunPermissionRule`. Spec writers never author `action:` — the loader injects it. |
 | `max_iterations` | `int?` | Default 100. |
 | `skills` | `list[str]?` | Must already exist; missing skills exit 2. |

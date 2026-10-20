@@ -885,6 +885,24 @@ confirmation **except a gated one, which they refuse**. The CLI asks a gated
 confirmation even in `full-access`, and the ACP server offers only
 `allow_once` / `reject_once` for it.
 
+### Saying why a confirmation was declined (`record_decline`, 0.5.16)
+
+`confirm_tool` returns only a bool, so by default the model reads every
+`False` as a person's "no", with a close that bars any other route. A transport
+that declines because nobody can answer may say so: call
+`agentao.transport.record_decline(agentao.transport.APPROVAL_UNAVAILABLE)`
+inside `confirm_tool`, then return `False`. The model then gets a result that
+says approval is unavailable in non-interactive mode and allows an alternative
+the current permission rules permit. `NonInteractiveTransport(policy="deny")`
+does this (`agentao run --interaction-policy deny`).
+
+- Like `gate_note()`, it is thread-local. Call it inside `confirm_tool`, on
+  the thread that calls you. Outside a confirmation it is a no-op.
+- A gated confirmation ignores the reason and keeps the plain "not approved"
+  result.
+- `APPROVAL_UNAVAILABLE` is the only reason the runtime reads. The result text
+  names non-interactive mode, so do not use it for a person who refused.
+
 ### Known gaps (neither channel covers these today)
 
 - **MCP server lifecycle.** Connect / disconnect / `auth_failed` are

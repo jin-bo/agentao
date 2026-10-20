@@ -67,7 +67,8 @@ cwd: string                    # 这次 run 的工作目录
 model: string                  # 覆盖环境里的 LLM model
 base_url: string               # 覆盖环境里的 base URL
 permission_mode: read-only | workspace-write | full-access | plan
-interaction_policy: reject     # M0 仅接受 "reject"
+interaction_policy: reject | deny   # 默认 reject；见下文
+max_denials: int               # 仅 deny；默认 5
 permissions:
   allow:
     - tool: string             # glob — 与 ~/.agentao/permissions.json 同语法
@@ -104,6 +105,21 @@ CLI flag 只在用户**显式**提供时才覆盖 spec 值，argparse 默认值�
 | `openai-responses` | `reasoning.effort` | 同 `openai-completions` |
 
 `off` 移除显式设置的档位（例如 `LLM_EXTRA_BODY` 设置的），恢复 provider 的默认行为。它不承诺关闭模型的推理：默认就推理的模型仍会推理。请加引号写成 `thinking: "off"`。YAML 会把裸写的 `off`、`false`、`no` 读成布尔值 `false`，spec 也把它当作 `off`。`true` 和数字会被拒绝（退出码 `2`）。加了引号的 `"false"`、`"no"` 仍是字符串，会作为档位发送。多于一个词以退出码 `2` 失败。宿主的 LLM client 没有可写入的 `extra_body` dict 时，以退出码 `1` 失败（`runtime_error`）。结果 envelope 里的 `thinking` 给出该线路读取的字段里的档位（其他线路遗留的 `reasoning_effort` 不算），无论它来自 `thinking` 还是 `LLM_EXTRA_BODY`。它不保证请求里没有另一条线路的字段：宿主在 `LLM_EXTRA_BODY` 里设置的字段会原样发送。没有设置档位时不输出该字段。没有自动恢复：模型拒绝该档位时，每个请求都会失败。其他 provider 字段仍通过 `LLM_EXTRA_BODY` 发送。
+
+#### 交互策略（`interaction_policy`、`--interaction-policy`）
+
+运行时没有人能批准需要审批的工具调用（规则判为 *ask* 的调用，例如不在只读白名单里的 shell 命令）。策略决定这个调用的结果：
+
+| 策略 | 需要审批的调用 | `ask_user` |
+|---|---|---|
+| `reject`（默认） | 结束运行：`permission_required`，退出码 `3`。此前的写入留在磁盘上，但这一轮到不了收尾步骤。 | `interaction_required`，退出码 `3` |
+| `deny`（0.5.16） | 不执行。模型收到一条工具结果：非交互模式下无法审批，不要重试这个调用，可以改用当前权限规则允许的替代方式。这一轮继续。 | `interaction_required`，退出码 `3`，与 `reject` 相同 |
+
+由 MCP Skills gate 发起的确认（同意使用服务器 skill 的内容，或在 skill 已加载时执行的调用）改为返回普通的“未获批准”结果，不提供替代路径，但仍计入 `max_denials`。`deny` 只改变 *ask* 的情形。被规则或 `read-only` 模式拒绝（deny）的调用，在两种策略下都仍以 `permission_denied` 结束运行。
+
+`max_denials`（或 `--max-denials N`，默认 `5`）给 `deny` 设上限。它累计整个运行中每一次被拒绝的调用，前台子代理的调用也计入。（运行中没有后台子代理，见下文“输出契约”。）前 `N` 次拒绝返回给模型。第 `N + 1` 次与 `reject` 一样结束运行（`permission_required`，退出码 `3`，消息中注明 `max_denials`），同一批次的其他调用被取消。`0` 让 `deny` 等同于 `reject`。不设 `interaction_policy: deny` 却设了 `max_denials` 时退出码为 `2`，负值也是。
+
+结果的 `denials` 列出每一个被拒绝的调用（`tool_name`、`tool_call_id`，由引擎规则发起 ask 时还有 `matched_rule`），成功和失败时都有。子代理的调用记为 `[<agent>] <tool>`，没有 `tool_call_id` 和 `matched_rule`。`--format text` 下每条写一行到 stderr。**`deny` 下的退出码 `0` 表示模型给出了最终回答，不表示任务已经完成**：模型想做的某一步可能在 `denials` 里，并且没有任何回滚。把结果当作完成之前，先检查 `denials`。
 
 ### 参数与模板渲染（`--param`）
 
@@ -173,6 +189,7 @@ agentao run --spec .agentao/runs/review-pr.yaml \
   },
   "tool_calls": 7,
   "thinking": "high",
+  "denials": [],
   "warnings": []
 }
 ```
@@ -200,10 +217,10 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 
 | 退出码 | 含义 |
 |--------|------|
-| `0`    | 正常完成 |
+| `0`    | 正常完成。`interaction_policy: deny` 下请检查 `denials`：退出码 `0` 不表示每个调用都执行了 |
 | `1`    | 运行时错误，或 turn 没有产出答案（`runtime_error`、`empty_response`、`length_truncated`、`doom_loop`、`hook_stop`） |
 | `2`    | 用法错误 / spec 校验失败 / 未知 spec 字段 |
-| `3`    | 需要权限或交互（非交互环境无人审批） |
+| `3`    | 需要权限或交互（非交互环境无人审批；`deny` 下超过 `max_denials`） |
 | `4`    | 达到最大工具迭代数，回答可能不完整 |
 | `130`  | 被中断（SIGINT / SIGTERM） |
 

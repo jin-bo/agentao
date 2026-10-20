@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .run_models import (
     PermissionModeName,
+    RunDenial,
     RunErrorEnvelope,
     RunResult,
     RunSpec,
@@ -112,7 +113,13 @@ def _attach_run_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--interaction-policy", dest="interaction_policy",
-        choices=["reject"], default=None,
+        choices=["reject", "deny"], default=None,
+    )
+    parser.add_argument(
+        "--max-denials", dest="max_denials",
+        type=int, default=None, metavar="N",
+        help="With --interaction-policy deny: calls declined back to the "
+             "model before the next one aborts the run (default 5).",
     )
     parser.add_argument(
         "--max-iterations", dest="max_iterations",
@@ -306,6 +313,9 @@ def _apply_cli_overrides(spec: RunSpec, args: argparse.Namespace) -> RunSpec:
         overrides["interaction_policy"] = args.interaction_policy
     if args.max_iterations is not None:
         overrides["max_iterations"] = args.max_iterations
+    # ``getattr``: the ``-p`` shim builds its own namespace.
+    if getattr(args, "max_denials", None) is not None:
+        overrides["max_denials"] = args.max_denials
     if args.skills is not None:
         overrides["skills"] = list(args.skills)
     # ``getattr``: the ``-p`` shim builds its own namespace.
@@ -406,6 +416,14 @@ def _emit(result: RunResult, output_format: str) -> None:
     # ``-p`` shim and ``--format text`` would exit silently on
     # permission-denied / max-iter / interrupted / runtime errors.
     # JSON mode already serializes ``error`` inline, so skip there.
+    # Denials get one line each for the same reason: text mode has no
+    # envelope, and an exit 0 alone would hide what was not run.
+    if output_format == "text":
+        for denial in result.denials:
+            sys.stderr.write(
+                f"agentao run: denied {denial.tool_name} "
+                "(needed approval; not run)\n"
+            )
     if (
         output_format == "text"
         and result.error is not None
@@ -571,12 +589,20 @@ def _execute_with_args(args: argparse.Namespace) -> int:
             output_format,
         )
 
-    if spec.interaction_policy is not None and spec.interaction_policy != "reject":
-        return _emit_invalid_usage(
-            f"agentao run: interaction_policy={spec.interaction_policy!r} "
-            "is not supported (M0 accepts only 'reject').",
-            output_format,
-        )
+    # The Literal on ``RunSpec`` already refuses an unknown policy.
+    if spec.max_denials is not None:
+        if spec.interaction_policy != "deny":
+            return _emit_invalid_usage(
+                "agentao run: max_denials applies only with "
+                "interaction_policy 'deny'.",
+                output_format,
+            )
+        if spec.max_denials < 0:
+            return _emit_invalid_usage(
+                f"agentao run: invalid max_denials {spec.max_denials!r}: "
+                "expected an integer >= 0.",
+                output_format,
+            )
 
     # Permission rules are validated here, with the rest of the spec
     # checks, because this is the last point before a runtime exists.
@@ -629,6 +655,7 @@ def _run_pipeline(
     from ..permissions import PermissionMode
     from ..replay import ReplayConfig
     from ..transport import EventType, NonInteractiveTransport
+    from ..transport.non_interactive import DEFAULT_MAX_DENIALS
     from .session import (
         dispatch_plugin_session_end, dispatch_plugin_session_start,
     )
@@ -645,7 +672,13 @@ def _run_pipeline(
     )
 
     token = CancellationToken()
-    transport = NonInteractiveTransport(token=token)
+    transport = NonInteractiveTransport(
+        token=token,
+        policy=spec.interaction_policy or "reject",
+        max_denials=(
+            DEFAULT_MAX_DENIALS if spec.max_denials is None else spec.max_denials
+        ),
+    )
 
     # spec.replay is authoritative — pass an explicit ReplayConfig so
     # the factory's disk auto-load is bypassed when ``replay: false``.
@@ -813,17 +846,18 @@ def _run_pipeline(
         if not isinstance(event, PermissionDecisionEvent):
             return
         if event.outcome == "deny":
-            if transport.rejection is None:
-                transport.rejection = {
-                    "type": "permission_denied",
-                    "tool_name": event.tool_name,
-                    "tool_call_id": event.tool_call_id,
-                    "matched_rule": event.matched_rule,
-                    "message": event.reason or "denied",
-                }
+            transport.record_rejection({
+                "type": "permission_denied",
+                "tool_name": event.tool_name,
+                "tool_call_id": event.tool_call_id,
+                "matched_rule": event.matched_rule,
+                "message": event.reason or "denied",
+            })
             token.cancel(f"permission_denied: {event.tool_name}")
         elif event.outcome == "prompt":
-            transport.queue_ask(event.tool_name, event.tool_call_id)
+            transport.queue_ask(
+                event.tool_name, event.tool_call_id, event.matched_rule,
+            )
 
     agent.add_host_event_observer(_on_event)
 
@@ -940,6 +974,7 @@ def _run_pipeline(
         tool_calls=tool_calls_count,
         finish_reason_missing=finish_reason_missing,
         thinking=sent_thinking(agent.llm),
+        denials=[RunDenial(**d) for d in transport.denials],
         warnings=warnings,
     )
 

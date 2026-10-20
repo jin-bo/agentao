@@ -37,6 +37,7 @@ from ..cancellation import (
 from ..sandbox import SandboxMisconfiguredError, SandboxPolicy
 from ..tools.base import AsyncToolBase
 from ..transport import AgentEvent, EventType
+from ..transport.confirmation import APPROVAL_UNAVAILABLE
 from . import identity as _identity
 from .tool_planning import (
     ToolCallDecision,
@@ -76,6 +77,13 @@ ASYNC_CANCEL_REASON = "async-cancel"
 _DO_NOT_RETRY_CLOSE = (
     "Do not retry this call, rephrase its arguments, "
     "or use a different tool to achieve the same outcome."
+)
+
+# Close for a call that needed approval when no one could give it (#565). It
+# bars the same call and leaves the model the tools the rules already allow.
+_APPROVAL_UNAVAILABLE_CLOSE = (
+    "Do not retry this call. You may use an alternative permitted by the "
+    "current permission rules."
 )
 
 # Hook-branch closes. These bar only the identical re-issue and defer to the
@@ -399,11 +407,23 @@ class ToolExecutor:
             # goes for the event and the result's ``error`` — a host reading
             # either would attribute the refusal to the user just as wrongly,
             # so one summary serves all three (as on the DENY path above).
-            summary = "not approved"
-            result_text = (
-                f"Tool execution declined: '{fn}' needed approval and was not "
-                f"approved. " + _DO_NOT_RETRY_CLOSE
-            )
+            if plan.decline_reason == APPROVAL_UNAVAILABLE:
+                # Nobody refused this call; nobody could be asked. Another
+                # tool the rules already allow is a legitimate route, so this
+                # close does not forbid one the way ``_DO_NOT_RETRY_CLOSE``
+                # does (#565).
+                summary = "approval unavailable"
+                result_text = (
+                    f"Tool execution declined: '{fn}' needed approval, and "
+                    f"approval is unavailable in non-interactive mode, so this "
+                    f"call was not executed. " + _APPROVAL_UNAVAILABLE_CLOSE
+                )
+            else:
+                summary = "not approved"
+                result_text = (
+                    f"Tool execution declined: '{fn}' needed approval and was "
+                    f"not approved. " + _DO_NOT_RETRY_CLOSE
+                )
             self._emit_complete(fn, call_id, "cancelled", 0, summary)
             self._emit_host_terminal_cancelled(fn, call_id, summary=summary)
             return call_id, ToolExecutionResult(

@@ -346,15 +346,21 @@ class ToolRunner:
                     "tool": _fn, "args": _plan.function_args,
                     "call_id": _plan.tool_call_id,
                 }))
-                with _confirmation.gated(_gate_note(_plan)):
+                _note = _gate_note(_plan)
+                with _confirmation.gated(_note):
                     _confirmed = self._transport.confirm_tool(
                         _fn,
                         _confirm_description(_plan),
                         _plan.function_args,
                     )
+                    # A gated ask wants a person's consent to this call, so
+                    # "no one could approve" must not soften into "use an
+                    # allowed alternative": it keeps the plain decline.
+                    _decline = None if _note is not None else _confirmation.decline_reason()
                 if not _confirmed:
                     self._logger.info(f"Tool {_fn} execution cancelled by user")
                     _plan.decision = ToolCallDecision.CANCELLED
+                    _plan.decline_reason = _decline
                     # Reset the spinner the prompt left behind. ``display_reset``
                     # marks this as no new LLM iteration, so a sub-agent's turn
                     # counter does not count it.

@@ -106,7 +106,9 @@ class RunOutputOptions(BaseModel):
 PermissionModeName = Literal[
     "read-only", "workspace-write", "full-access", "plan",
 ]
-InteractionPolicy = Literal["reject"]
+#: ``reject`` aborts the run on the first tool call that needs approval;
+#: ``deny`` declines it back to the model, up to ``max_denials`` (#565).
+InteractionPolicy = Literal["reject", "deny"]
 
 
 # ASCII identifier rule for parameter names: matches Python identifier
@@ -207,6 +209,9 @@ class RunSpec(BaseModel):
     base_url: Optional[str] = None
     permission_mode: Optional[PermissionModeName] = None
     interaction_policy: Optional[InteractionPolicy] = None
+    #: ``interaction_policy: deny`` only: how many calls the run declines back
+    #: to the model before the next one aborts it. Default 5.
+    max_denials: Optional[int] = None
     permissions: Optional[RunPermissionRules] = None
     max_iterations: Optional[int] = None
     skills: Optional[List[str]] = None
@@ -220,6 +225,14 @@ class RunSpec(BaseModel):
     parameters: Optional[List[RunParameter]] = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("max_denials", mode="before")
+    @classmethod
+    def _max_denials_not_bool(cls, value: Any) -> Any:
+        # Lax ``int`` would read YAML ``max_denials: true`` as ``1``.
+        if isinstance(value, bool):
+            raise ValueError("max_denials must be an integer, not a boolean")
+        return value
 
     @field_validator("thinking", mode="before")
     @classmethod
@@ -281,6 +294,18 @@ class RunErrorEnvelope(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class RunDenial(BaseModel):
+    """A tool call ``interaction_policy: deny`` declined back to the model."""
+
+    tool_name: str
+    tool_call_id: Optional[str] = None
+    #: The engine rule that asked, when one matched; ``None`` when the tool's
+    #: own ``requires_confirmation`` asked.
+    matched_rule: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
 class RunUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -331,6 +356,10 @@ class RunResult(BaseModel):
     #: field the host set may still be sent. Left out of the JSON when none was
     #: set, so the provider's default applied.
     thinking: Optional[str] = None
+    #: Calls ``interaction_policy: deny`` declined back to the model, in order.
+    #: Present on success too: exit 0 says the model gave a final answer, not
+    #: that every step it wanted ran.
+    denials: List[RunDenial] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="ignore")
@@ -339,6 +368,7 @@ class RunResult(BaseModel):
 __all__ = [
     "InteractionPolicy",
     "PermissionModeName",
+    "RunDenial",
     "RunErrorEnvelope",
     "RunOutputOptions",
     "RunParameter",

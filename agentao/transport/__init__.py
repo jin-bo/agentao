@@ -1,7 +1,7 @@
 """Transport layer — decouples Agentao core runtime from UI and transport implementations."""
 
 from .broadcast import EventBroadcaster
-from .confirmation import gate_note
+from .confirmation import APPROVAL_UNAVAILABLE, gate_note, record_decline
 from .events import AgentEvent, EventType
 from .base import CoreTransport, Transport
 from .non_interactive import NonInteractiveTransport
@@ -19,4 +19,6 @@ __all__ = [
     "EventBroadcaster",
     "build_compat_transport",
     "gate_note",
+    "record_decline",
+    "APPROVAL_UNAVAILABLE",
 ]
