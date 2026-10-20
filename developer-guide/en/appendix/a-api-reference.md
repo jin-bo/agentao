@@ -6,7 +6,7 @@ Authoritative `__all__`:
 
 - `from agentao import ...` → `Agentao`, `SkillManager`
 - `from agentao.embedding import ...` → `build_from_environment`
-- `from agentao.transport import ...` → `AgentEvent`, `EventType`, `CoreTransport`, `Transport`, `NullTransport`, `SdkTransport`, `build_compat_transport`, `gate_note`
+- `from agentao.transport import ...` → `AgentEvent`, `EventType`, `CoreTransport`, `Transport`, `NullTransport`, `SdkTransport`, `NonInteractiveTransport`, `build_compat_transport`, `gate_note`, `record_decline`, `APPROVAL_UNAVAILABLE`
 - `from agentao.capabilities import ...` → `FileSystem`, `LocalFileSystem`, `FileEntry`, `FileStat`, `ShellExecutor`, `LocalShellExecutor`, `ShellRequest`, `ShellResult`, `BackgroundHandle`, `MemoryStore`, `SQLiteMemoryStore`, `MCPRegistry`, `FileBackedMCPRegistry`, `InMemoryMCPRegistry`
 - `from agentao.tools.base import ...` → `Tool`, `ToolRegistry` (`Tool` is also exported from `agentao.host`, with `AsyncToolBase` and the `RegistrableTool` union — the same objects, and the stable path for hosts)
 - `from agentao.permissions import ...` → `PermissionEngine`, `PermissionMode`, `PermissionDecision`
