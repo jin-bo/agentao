@@ -68,6 +68,8 @@ Model: gpt-5.4 · Mode: workspace-write
 
 两者都会把权限模式重置成 `workspace-write`。`/clear all` 只是 `/clear` 的兼容别名。
 
+两者都不接受参数。自 0.5.17 起，带其他参数（如 `/clear 只清对话`）时只打印提示，什么也不做：不重置会话、不清记忆、不触发 `SessionEnd` / `SessionStart` hook。之前参数会被忽略，命令照常完整执行。
+
 什么时候用：
 - 当前任务做完，不想让它的 context 污染下一个任务
 - token 用量在攀升（见 [7. 上下文与状态](./7-context-status) 里的 `/context`）

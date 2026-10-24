@@ -23,6 +23,7 @@ from rich.text import Text
 from ...compaction.coordinator import CompactionRequest
 from ...context_manager import ContextManager
 from .._globals import console
+from .._utils import refuse_arguments
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
@@ -84,6 +85,9 @@ class _CompactingStatus:
 
 def handle_compact_command(cli: AgentaoCLI, args: str) -> None:
     """Handle ``/compact`` — summarize old history into a compact block."""
+    if refuse_arguments(args, "/compact takes no arguments; nothing was compacted. "
+                              "Run /compact on its own to compact now."):
+        return
     agent = cli.agent
     cm = agent.context_manager
 

@@ -82,6 +82,8 @@ Context limit set to 500,000 tokens
 
 `/compact` 走的是和自动压缩**完全一样**的全量压缩路径，只是现在就执行，不等用量条爬上去。
 
+它不接受参数。自 0.5.17 起，`/compact <文字>` 只打印提示，不执行压缩；之前文字会被静默丢弃。目前还不支持给摘要指定重点。
+
 ```text
 > /compact
 ⠋ Compacting context (12s)

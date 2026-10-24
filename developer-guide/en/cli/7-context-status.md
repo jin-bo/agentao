@@ -82,6 +82,8 @@ The "circuit breaker" is a safety: if compaction itself fails (LLM timeout, pars
 
 `/compact` runs the *same* full-compaction path as the auto-compactor, but right now instead of waiting for the usage bar to climb.
 
+It takes no arguments. Since 0.5.17, `/compact <text>` prints a notice and does not compact; before, the text was silently dropped. Focus instructions for the summary are not supported yet.
+
 ```text
 > /compact
 ⠋ Compacting context (12s)
