@@ -66,6 +66,7 @@ from .resources import (
     template_info,
 )
 from .oauth import AuthVerdict, StoredTokenAuth
+from ._dispatch import Dispatch, current_dispatch, guard_client
 from .oauth_store import OAuthRuntime
 from . import skills as _skills
 
@@ -1180,6 +1181,12 @@ class McpClient:
         await self._preflight_content_type(url, headers)
         return url, headers, sse_read_timeout
 
+    def _guarded_http_client(self, headers: Any = None, timeout: Any = None, auth: Any = None) -> Any:
+        """``create_mcp_http_client``, its transport guarded (``_dispatch.py``, #571)."""
+        return guard_client(
+            create_mcp_http_client(headers=headers, timeout=timeout, auth=auth), self.name
+        )
+
     async def _connect_sse(self, startup_timeout: float, request_timeout: Optional[float]) -> None:
         """Establish the legacy SSE transport (``type: "sse"``).
 
@@ -1196,6 +1203,8 @@ class McpClient:
                 headers=headers,
                 timeout=startup_timeout,
                 sse_read_timeout=sse_read_timeout,
+                # The SDK's own factory, with the #571 guard on what it builds.
+                httpx_client_factory=self._guarded_http_client,
                 **({"auth": self._auth} if self._auth is not None else {}),
             )
         )
@@ -1241,7 +1250,7 @@ class McpClient:
         url, headers, sse_read_timeout = await self._prepare_url_connect(
             startup_timeout, request_timeout
         )
-        http_client = create_mcp_http_client(
+        http_client = self._guarded_http_client(
             # ``headers`` always carries at least the default User-Agent (see
             # _prepare_url_connect), so it is never empty — pass it directly.
             headers=headers,
@@ -1479,12 +1488,30 @@ class McpClient:
         )
 
     async def _send_on(self, gone: asyncio.Event, coro: Any) -> Any:
-        """Await ``coro``, given up once its connection starts to close (see ``_call_on``)."""
-        request = asyncio.ensure_future(coro)
+        """Await ``coro``, given up once its connection starts to close (see ``_call_on``).
+
+        However this returns — answered, timed out, cancelled, closed — the
+        request is marked settled, so an auth flow still waiting on a refresh
+        does not send it afterwards (#571).
+        """
+        dispatch = Dispatch()
+
+        async def tracked() -> Any:
+            # Set inside the task, so only this request's context carries it.
+            current_dispatch.set(dispatch)
+            try:
+                return await coro
+            finally:
+                # At once, not when this method next runs: a timeout inside
+                # ``coro`` must not leave a turn for a pending send to go out.
+                dispatch.settled = True
+
+        request = asyncio.ensure_future(tracked())
         closing = asyncio.ensure_future(gone.wait())
         try:
             await asyncio.wait({request, closing}, return_when=asyncio.FIRST_COMPLETED)
         finally:
+            dispatch.settled = True
             closing.cancel()
             abandoned = not request.done()
             if abandoned:

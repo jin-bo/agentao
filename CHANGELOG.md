@@ -15,6 +15,8 @@ _Targeting 0.5.17. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **An MCP tool call given up while it waits for an OAuth token refresh is no longer sent (#571).** A call that timed out or was cancelled (a `wait_for`, the request timeout, a cancelled turn) while its request waited for a shared refresh, or for one after a `401`, still reached the server once the refresh finished, so a side-effecting tool ran although the model was told the call failed. Each request now carries whether its caller still waits, and the connection's HTTP transport answers a request whose caller stopped waiting locally, without sending it. Notifications (`notifications/cancelled`) still go out, and the refreshed token is still written. This holds on mcp 2.x (Streamable HTTP and SSE). On mcp 1.x, which sends outside the caller's context, the request is still sent.
+
 ---
 
 ## [0.5.16] — 2026-10-20

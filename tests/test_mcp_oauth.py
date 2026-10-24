@@ -24,8 +24,10 @@ from unittest.mock import patch
 
 import pytest
 
+from agentao.cancellation import AgentCancelledError, CancellationToken, bind_cancellation_token
 from agentao.mcp import oauth as oauth_mod
-from agentao.mcp._compat import SDK_BINDS_ISSUER
+from agentao.mcp._dispatch import Dispatch, SettledGuard, current_dispatch, guard_client, not_sent
+from agentao.mcp._compat import SDK_BINDS_ISSUER, SENDS_IN_SENDER_CONTEXT, httpx_for_mcp
 from agentao.mcp.client import McpClient, McpClientManager, ServerStatus
 from agentao.mcp.config import McpOAuthConfigError, resolve_oauth
 from agentao.mcp.oauth import (
@@ -1514,3 +1516,205 @@ def test_a_record_with_an_unparseable_url_is_unreadable_and_login_replaces_it(ru
     assert first == ServerStatus.NEEDS_AUTH
     assert status == ServerStatus.CONNECTED
     assert runtime.store.load(MCP_URL).server_url == MCP_URL
+
+
+# ---------------------------------------------------------------------------
+# #571: a request whose caller stopped waiting is never sent
+# ---------------------------------------------------------------------------
+
+#: mcp 2.x sends each POST in a copy of the sender's context, which is how the
+#: guard learns the caller stopped waiting; 1.x sends in the transport's own
+#: (see ``agentao/mcp/_dispatch.py`` and ``_compat.SENDS_IN_SENDER_CONTEXT``).
+needs_sender_context = pytest.mark.skipif(
+    not SENDS_IN_SENDER_CONTEXT, reason="mcp 1.x sends POSTs outside the sender's context"
+)
+
+
+def _expiring(runtime, client):
+    """Make the stored token due for a refresh before the client's next send."""
+    record = runtime.store.load(client._auth.server_url)
+    runtime.store.save(merge_token_response(record, {"access_token": record.access_token, "expires_in": 30}))
+    client._auth._record = runtime.store.load(client._auth.server_url)
+    return record
+
+
+@needs_sender_context
+class TestCancelledWhileWaiting:
+    def _given_up_while_refreshing(self, runtime, origin, config=CONFIG, *, revoke=False):
+        """One call times out while it waits for a slow refresh, one keeps waiting."""
+
+        async def scenario():
+            client = await connect(runtime, config)
+            before = _expiring(runtime, client) if not revoke else runtime.store.load(client._auth.server_url)
+            if revoke:
+                origin.revoke_access()  # the next send gets a 401, then refreshes
+            origin.token_delay = 0.8
+            origin.executed.clear()
+            given_up = asyncio.ensure_future(
+                asyncio.wait_for(client.call_tool("echo", {"who": "given-up"}), 0.3)
+            )
+            kept = asyncio.ensure_future(client.call_tool("echo", {"who": "kept"}))
+            outcome = await asyncio.gather(given_up, kept, return_exceptions=True)
+            await asyncio.sleep(0.3)  # anything still queued would land by now
+            after = await client.call_tool("echo", {"who": "after"})
+            status, verdict = client.status, client._auth.verdict
+            await client.disconnect()
+            return outcome, after, status, verdict, before
+
+        with patched(origin):
+            (given_up, kept), after, status, verdict, before = run(scenario())
+        assert isinstance(given_up, asyncio.TimeoutError)
+        assert kept == "ok" and after == "ok"
+        assert origin.executed == [{"who": "kept"}, {"who": "after"}]
+        assert status == ServerStatus.CONNECTED and verdict is None
+        # The shared refresh was not cancelled with the caller that gave up.
+        assert runtime.store.load(MCP_URL if config is CONFIG else SSE_URL).access_token != before.access_token
+        assert len(origin.token_requests) == 1
+
+    def test_a_timeout_during_the_refresh_before_sending(self, runtime, origin):
+        seed(runtime, origin)
+        self._given_up_while_refreshing(runtime, origin)
+
+    def test_a_timeout_during_the_refresh_after_a_401(self, runtime, origin):
+        seed(runtime, origin)
+        self._given_up_while_refreshing(runtime, origin, revoke=True)
+
+    def test_sse(self, runtime, origin):
+        TestSse._seed(None, runtime, origin)
+        self._given_up_while_refreshing(runtime, origin, TestSse.SSE)
+
+    def test_a_cancelled_turn(self, runtime, origin):
+        seed(runtime, origin)
+        manager = McpClientManager({"svr": CONFIG}, oauth_runtime=runtime)
+        token = CancellationToken()
+        with patched(origin):
+            manager.connect_all()
+            client = manager.get_client("svr")
+            before = _expiring(runtime, client)
+            origin.token_delay = 0.8
+            origin.executed.clear()
+
+            def call():
+                with bind_cancellation_token(token):
+                    try:
+                        manager.call_tool("svr", "echo", {"who": "cancelled"})
+                    except AgentCancelledError:
+                        pass
+
+            thread = threading.Thread(target=call)
+            thread.start()
+            time.sleep(0.3)  # the refresh is in flight
+            token.cancel()
+            thread.join(10)
+            assert not thread.is_alive(), "the cancelled call did not return"
+            time.sleep(1.0)  # past the refresh
+            after = manager.call_tool("svr", "echo", {"who": "after"})
+            status = client.status
+            manager.disconnect_all()
+        assert after == "ok" and status == ServerStatus.CONNECTED
+        assert origin.executed == [{"who": "after"}]
+        assert runtime.store.load(MCP_URL).access_token != before.access_token
+
+    @pytest.mark.parametrize("settle_at", ["first-send", "resend", None])
+    def test_the_flow_reads_nothing_into_a_request_not_sent(self, runtime, origin, settle_at):
+        # The guard's local 202 is not the server's answer: the flow must not
+        # count it as a success (which drops a REFRESH_FAILED verdict).
+        seed(runtime, origin)
+
+        async def scenario():
+            auth = StoredTokenAuth("svr", MCP_URL, runtime)
+            succeeded = []
+            real = auth._succeeded
+            auth._succeeded = lambda *a: (succeeded.append(a), real(*a))
+            dispatch = Dispatch()
+            dispatch.settled = settle_at == "first-send"
+            seen = []
+
+            async def handler(request):
+                seen.append(request.headers.get("authorization"))
+                if len(seen) == 1:
+                    if settle_at == "resend":
+                        dispatch.settled = True  # given up while the 401 refreshes
+                    return httpx_for_mcp.Response(401, headers={"www-authenticate": "Bearer"})
+                return httpx_for_mcp.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}})
+
+            http = guard_client(
+                httpx_for_mcp.AsyncClient(auth=auth, transport=httpx_for_mcp.MockTransport(handler)),
+                "svr",
+            )
+
+            async def send():
+                current_dispatch.set(dispatch)
+                return await http.post(MCP_URL, json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                                      "params": {"name": "echo"}})
+
+            async with http:
+                response = await asyncio.create_task(send())
+            return response, seen, succeeded
+
+        with patched(origin):
+            response, seen, succeeded = run(scenario())
+        if settle_at is None:  # the control: a resend that went out succeeds
+            assert response.status_code == 200 and len(seen) == 2 and succeeded
+        else:
+            assert not_sent(response) and not succeeded
+            assert len(seen) == (0 if settle_at == "first-send" else 1)
+
+
+class TestSettledGuard:
+    """The transport guard alone, over a mock socket (``_dispatch.py``)."""
+
+    def _send(self, body, *, settled):
+        seen = []
+
+        def handler(request):
+            seen.append(json.loads(request.content))
+            return httpx_for_mcp.Response(200)
+
+        async def scenario():
+            client = guard_client(
+                httpx_for_mcp.AsyncClient(transport=httpx_for_mcp.MockTransport(handler)), "svr"
+            )
+            dispatch = Dispatch()
+            dispatch.settled = settled
+
+            async def send():
+                current_dispatch.set(dispatch)
+                return await client.post(MCP_URL, json=body)
+
+            async with client:
+                return await asyncio.ensure_future(send())
+
+        response = run(scenario())
+        return response, seen
+
+    def test_a_settled_request_gets_a_local_answer(self):
+        response, seen = self._send({"jsonrpc": "2.0", "id": 3, "method": "tools/call"}, settled=True)
+        assert seen == [] and response.status_code == 202 and not_sent(response)
+
+    def test_a_settled_notification_is_still_sent(self):
+        # ``notifications/cancelled`` comes from the caller that gave up.
+        body = {"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 3}}
+        response, seen = self._send(body, settled=True)
+        assert seen == [body] and not not_sent(response)
+
+    def test_an_unsettled_request_is_sent(self):
+        body = {"jsonrpc": "2.0", "id": 3, "method": "tools/call"}
+        response, seen = self._send(body, settled=False)
+        assert seen == [body] and not not_sent(response)
+
+    def test_proxy_mounts_are_guarded_too(self):
+        client = guard_client(httpx_for_mcp.AsyncClient(proxy="http://proxy.example:8080"), "svr")
+        assert client._mounts and all(
+            isinstance(t, SettledGuard) for t in client._mounts.values() if t is not None
+        )
+        run(client.aclose())
+
+    def test_a_client_without_a_transport_is_left_alone(self, caplog):
+        class Bare:
+            pass
+
+        bare = Bare()
+        with caplog.at_level(logging.WARNING, logger="agentao.mcp._dispatch"):
+            assert guard_client(bare, "svr") is bare
+        assert "#571" in caplog.text

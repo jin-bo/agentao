@@ -24,6 +24,7 @@ misread. Probing asks the object that will actually receive the value.
 """
 
 import importlib
+import importlib.util
 import inspect
 import sys
 from datetime import timedelta
@@ -204,6 +205,13 @@ def _binds_issuer() -> bool:
 
 
 SDK_BINDS_ISSUER: bool = _binds_issuer()
+
+#: Whether the transports send each message in a copy of the sender's context
+#: (mcp 2.x ``_context_streams``); 1.x sends in the transport's own. Only then
+#: can ``_dispatch.SettledGuard`` see a request's caller (#571).
+SENDS_IN_SENDER_CONTEXT: bool = (
+    importlib.util.find_spec("mcp.shared._context_streams") is not None
+)
 
 
 def make_callback_result(code: str, state: Optional[str], iss: Optional[str]) -> Any:

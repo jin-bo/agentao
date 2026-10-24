@@ -136,7 +136,9 @@ def _drive_connect(
         )
         return _FakeCM(http_streams, aenter_exc=http_aenter_exc)
 
-    def fake_sse(url, headers=None, timeout=None, sse_read_timeout=None, auth=None):
+    def fake_sse(
+        url, headers=None, timeout=None, sse_read_timeout=None, auth=None, httpx_client_factory=None
+    ):
         captured["sse"] = dict(
             url=url, headers=headers, timeout=timeout, sse_read_timeout=sse_read_timeout,
             auth=auth,

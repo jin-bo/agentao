@@ -45,7 +45,7 @@ def _connect_sse_capturing(config):
     """
     captured = {}
 
-    def fake_sse_client(url, headers=None, timeout=None, sse_read_timeout=None):
+    def fake_sse_client(url, headers=None, timeout=None, sse_read_timeout=None, httpx_client_factory=None):
         captured.update(url=url, timeout=timeout, sse_read_timeout=sse_read_timeout)
         return _FakeCM(("read", "write"))
 

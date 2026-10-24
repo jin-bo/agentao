@@ -36,6 +36,7 @@ from ._compat import (
     make_callback_result,
     provider_context,
 )
+from ._dispatch import not_sent
 from .oauth_store import OAuthRecord, OAuthRuntime
 
 logger = logging.getLogger(__name__)
@@ -317,6 +318,8 @@ class StoredTokenAuth(AuthBase):  # type: ignore[misc,valid-type]
                 record = None
         sent = self._attach(request, record)
         response = yield request
+        if not_sent(response):
+            return  # its caller stopped waiting: nothing reached the server (#571)
 
         if response.status_code == 401:
             challenged = has_bearer_challenge(response)
@@ -324,6 +327,8 @@ class StoredTokenAuth(AuthBase):  # type: ignore[misc,valid-type]
             if retry is not None:
                 sent = self._attach(request, retry)
                 response = yield request
+                if not_sent(response):
+                    return  # as above: a resend its caller no longer waits for
             if response.status_code == 401:
                 if sent is not None or challenged or has_bearer_challenge(response):
                     # A transient refresh failure of this request stays one:
