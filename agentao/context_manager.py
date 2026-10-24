@@ -2637,3 +2637,26 @@ def is_context_too_long_error(exc: Exception) -> bool:
     if any(pat.search(msg) for pat in _NON_OVERFLOW_PATTERNS):
         return False
     return any(pat.search(msg) for pat in _OVERFLOW_PATTERNS)
+
+
+def is_request_too_large_error(exc: Exception) -> bool:
+    """Return True for an HTTP 413 that is not a recognised context overflow.
+
+    A request-size overflow, not a token-window one (#572): GitHub Copilot
+    answers an oversized request with a bare 413 whose body says nothing
+    ("failed to parse request"). Such a body cannot tell a whole request that
+    is too large from one image that is, so the runner gives it one full
+    compaction and one retry, and nothing more.
+
+    The status is read off the SDK exception and type-checked: a ``"413"``
+    string, a ``bool`` or a body that merely mentions 413 is not one. A 413
+    that :func:`is_context_too_long_error` already recognises (Anthropic's
+    ``request_too_large``) stays on the overflow ladder.
+    """
+    status = getattr(exc, "status_code", None)
+    return (
+        isinstance(status, int)
+        and not isinstance(status, bool)
+        and status == 413
+        and not is_context_too_long_error(exc)
+    )

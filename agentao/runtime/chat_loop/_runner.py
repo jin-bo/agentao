@@ -30,13 +30,13 @@ from __future__ import annotations
 import re
 import time
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 from xml.sax.saxutils import quoteattr
 
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...compaction.coordinator import CompactionRequest
 from ...context_manager import _LENGTH_FINISH_REASONS as _CM_LENGTH_FINISH_REASONS
-from ...context_manager import is_context_too_long_error
+from ...context_manager import is_context_too_long_error, is_request_too_large_error
 from ...llm._retry import (
     _is_image_rejection,
     _is_image_unsupported,
@@ -1441,6 +1441,10 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 except Exception as fallback_e:
                     e = fallback_e
             if not is_context_too_long_error(e):
+                if is_request_too_large_error(e) and not self._is_history_image_rejection(e):
+                    return self._recover_request_too_large(
+                        e, _send, system_prompt, messages_with_system, token,
+                    )
                 return self._llm_error_outcome(e, "LLM call failed")
             agent.llm.logger.warning(f"Context overflow from API, forcing compression: {e}")
             # The provider just told us its real window, if it named one.
@@ -1539,6 +1543,52 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     return self._llm_error_outcome(
                         e2, "LLM call failed after compression"
                     )
+
+    def _recover_request_too_large(
+        self,
+        e: BaseException,
+        send: Callable[[list], Any],
+        system_prompt: str,
+        messages_with_system: list,
+        token: CancellationToken,
+    ) -> "ChatLoopRunner._LlmOutcome":
+        """One full compaction and one retry for an uninformative 413 (#572).
+
+        The body cannot say whether the whole request or one image is too
+        large, so this is the bounded half of the overflow ladder: no minimal
+        history, no second compaction, and no image removal on the strength of
+        this error. A compaction that did not succeed (cancelled, skipped,
+        failed) returns the provider's error, since retrying would resend the
+        same request. Whatever the retry raises goes to the terminal path as
+        it stands: a 413 again, or an image rejection that now says so.
+
+        A retry that is still too large does not count against the compaction
+        breaker: the summary was made, so the compactor did not fail.
+        """
+        agent = self._agent
+        agent.llm.logger.warning(f"Request too large (413), compacting once and retrying: {e}")
+        run = agent.compaction_coordinator.run(
+            CompactionRequest("auto", "full", "api_overflow"),
+            system_prompt=system_prompt,
+            messages_with_system=messages_with_system,
+            measure_system_tokens=False,
+            cancellation_token=token,
+        )
+        if run.outcome.status != "success":
+            agent.llm.logger.warning(
+                f"Compaction on a 413 did not shrink history ({run.outcome.status}); "
+                "returning the provider's error"
+            )
+            return self._llm_error_outcome(e, None)
+        try:
+            response = send(run.messages_with_system)
+        except Exception as e2:
+            return self._llm_error_outcome(e2, "LLM call failed after compression")
+        return ChatLoopRunner._LlmOutcome(
+            response=response,
+            messages_with_system=run.messages_with_system,
+            system_prompt=run.system_prompt,
+        )
 
     # ------------------------------------------------------------------
     # Image fallback helpers
