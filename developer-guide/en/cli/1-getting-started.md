@@ -68,6 +68,8 @@ Both commands save the current session first, then start an empty conversation. 
 
 Both reset permission mode to `workspace-write`. `/clear all` is a backward-compatible alias for `/clear`.
 
+Neither takes an argument. Since 0.5.17, any other argument (`/clear just the conversation`) prints a notice and does nothing: no reset, no memory wipe, no `SessionEnd` / `SessionStart` hook. Before, the argument was ignored and the command ran in full.
+
 When to use:
 - The current task is done; you don't want its context bleeding into the next one
 - Token usage is climbing (see `/context` in [7. Context & Status](./7-context-status))

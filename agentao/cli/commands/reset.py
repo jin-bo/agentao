@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from ...permissions import PermissionMode
 from .._globals import console
-from .._utils import MEMORY_WIPE_RACE_NOTE, wipe_all_memories
+from .._utils import MEMORY_WIPE_RACE_NOTE, refuse_arguments, wipe_all_memories
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
@@ -102,6 +102,10 @@ def _print_detached(count: int, *, memories_wiped: bool) -> None:
 
 def handle_clear_command(cli: AgentaoCLI, args: str = "") -> None:
     """Handle /clear — reset the session *and* drop all memories."""
+    # ``/clear all`` is a documented alias (``help_text.py``).
+    if refuse_arguments(args, "/clear takes no arguments; nothing was cleared. To reset "
+                              "the session and keep memories, use /new.", allowed=("all",)):
+        return
     outcome = _reset_session(cli, clear_memories=True)
     if outcome.not_cleared:
         console.print(
@@ -123,6 +127,8 @@ def handle_clear_command(cli: AgentaoCLI, args: str = "") -> None:
 
 def handle_new_command(cli: AgentaoCLI, args: str = "") -> None:
     """Handle /new — reset the session, keep long-term memories."""
+    if refuse_arguments(args, "/new takes no arguments; the session was not reset."):
+        return
     outcome = _reset_session(cli, clear_memories=False)
     console.print(
         "\n[success]New session started. Long-term memories and earlier "

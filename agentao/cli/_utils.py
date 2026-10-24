@@ -24,6 +24,24 @@ MEMORY_WIPE_RACE_NOTE = (
 )
 
 
+def refuse_arguments(args: str, notice: str, *, allowed: tuple[str, ...] = ()) -> bool:
+    """Print ``notice`` and return True when ``args`` is not blank (#574).
+
+    For commands that take no arguments. They used to drop any they were
+    given, so ``/clear just the conversation`` still wiped every memory.
+    Each handler calls this first, before it reads or changes any state:
+    tests and other entry points call the handler directly, so a check in
+    the dispatch table alone would miss them.
+
+    ``allowed`` lists the exact arguments a command still accepts, such as
+    the documented ``/clear all`` alias.
+    """
+    if not args.strip() or args.strip() in allowed:
+        return False
+    console.print(f"\n[warning]{notice}[/warning]\n")
+    return True
+
+
 # What the CLI reports when it could not get a usable answer out of the
 # memory manager at all. Both parts, because nothing was confirmed cleared —
 # the same fail-closed reading ``MemoryWipeResult`` gives a store it cannot

@@ -16,6 +16,7 @@ All commands start with `/`:
 - `/clear` - Save current session, clear conversation + all memories + all session summaries, and start a new one
   - Resets permission mode to workspace-write
   - `/clear all` - Alias for `/clear` (backward compatible)
+  - Any other argument is refused, and nothing is cleared
 - `/new` - Save current session and start a fresh conversation
   - Preserves long-term memories and earlier session summaries (both still reach the prompt); resets permission mode to workspace-write
 - Both: background agents keep running but no longer report into the conversation — check `/agents --all` once they finish
@@ -75,7 +76,7 @@ All commands start with `/`:
   - `/memory review [approve|reject <id>]` - Review crystallized memory candidates
 - `/context` - Show context window token usage and limit
   - `/context limit <n>` - Set max context tokens (default: 200,000)
-- `/compact` - Summarize older history now into a compact block (manual compaction)
+- `/compact` - Summarize older history now into a compact block (manual compaction; takes no arguments)
 - `/image <path>` - Attach an image to your next message (vision models)
   - `/image` - List images staged for the next message
   - `/image clear` - Discard all staged images
