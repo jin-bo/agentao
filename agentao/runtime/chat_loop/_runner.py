@@ -1567,6 +1567,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         """
         agent = self._agent
         agent.llm.logger.warning(f"Request too large (413), compacting once and retrying: {e}")
+        # ``api_overflow`` means "the API refused an input too large", which
+        # covers request bytes as well as the token window, so this entry
+        # shares that reason's half-open probe, hook payload and breaker rules.
         run = agent.compaction_coordinator.run(
             CompactionRequest("auto", "full", "api_overflow"),
             system_prompt=system_prompt,
@@ -1583,6 +1586,10 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         try:
             response = send(run.messages_with_system)
         except Exception as e2:
+            if is_context_too_long_error(e2):
+                # Not compacted again, but a window the provider stated is
+                # still learned, as on the overflow ladder.
+                agent.context_manager.observe_overflow_error(e2)
             return self._llm_error_outcome(e2, "LLM call failed after compression")
         return ChatLoopRunner._LlmOutcome(
             response=response,

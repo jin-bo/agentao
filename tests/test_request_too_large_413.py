@@ -66,8 +66,8 @@ def _image_400():
 
 
 def _overflow_400():
-    body = {"error": {"message": "This model's maximum context length is 1000 tokens. However, "
-                                 "your messages resulted in 5000 tokens.",
+    body = {"error": {"message": "This model's maximum context length is 8192 tokens. However, "
+                                 "your messages resulted in 9000 tokens.",
                       "type": "invalid_request_error", "param": None,
                       "code": "context_length_exceeded"}}
     return _openai_status(400, body, cls=openai.BadRequestError)
@@ -262,6 +262,8 @@ def test_a_retry_that_turns_into_an_overflow_is_not_compacted_again():
     out = agent.chat("hello")
     assert out.startswith("[LLM API error:") and "maximum context length" in out
     assert len(sent) == 2 and len(runs) == 1
+    # The stated window is still learned, as on the overflow ladder.
+    assert agent.context_manager.observed_limit == 8192
 
 
 def test_a_string_413_status_is_not_recovered():
