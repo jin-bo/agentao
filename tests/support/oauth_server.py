@@ -70,6 +70,8 @@ class FakeOAuthOrigin:
         self.registrations = 0
         self.authorize_requests: List[Dict[str, str]] = []
         self.mcp_auth_headers: List[Optional[str]] = []
+        #: The arguments of each ``tools/call`` the server ran (passed auth).
+        self.executed: List[Any] = []
         # Legacy SSE transport: one event queue per open GET stream.
         self._sse_queues: Dict[str, "asyncio.Queue[Optional[bytes]]"] = {}
 
@@ -264,6 +266,7 @@ class FakeOAuthOrigin:
         elif method == "tools/list":
             result = {"tools": [{"name": "echo", "inputSchema": {"type": "object"}}]}
         elif method == "tools/call":
+            self.executed.append(message.get("params", {}).get("arguments"))
             result = {"content": [{"type": "text", "text": "ok"}]}
         else:
             return {"jsonrpc": "2.0", "id": request_id,
@@ -299,6 +302,7 @@ class FakeOAuthOrigin:
         if method == "tools/list":
             result = {"tools": [{"name": "echo", "inputSchema": {"type": "object"}}]}
         elif method == "tools/call":
+            self.executed.append(message.get("params", {}).get("arguments"))
             if message.get("params", {}).get("name") == "boom":
                 return self._json(200, {"jsonrpc": "2.0", "id": request_id,
                                         "error": {"code": -32602, "message": "boom: bad arguments"}})
@@ -398,11 +402,15 @@ def patched(origin: FakeOAuthOrigin):
 
     real_sse_client = sse_module.sse_client
 
-    def sse_client(url, headers=None, timeout=5.0, sse_read_timeout=300.0, auth=None):
-        # The SDK's own sse_client, with only its HTTP client factory swapped.
+    def sse_client(
+        url, headers=None, timeout=5.0, sse_read_timeout=300.0, auth=None,
+        httpx_client_factory=None,
+    ):
+        # The SDK's own sse_client. agentao's factory builds through the patched
+        # ``create_mcp_http_client`` below, so it lands on ``transport`` too.
         return real_sse_client(
             url, headers=headers, timeout=timeout, sse_read_timeout=sse_read_timeout,
-            auth=auth, httpx_client_factory=connection_client,
+            auth=auth, httpx_client_factory=httpx_client_factory or connection_client,
         )
 
     with patch("agentao.mcp.client.sse_client", sse_client), patch(
