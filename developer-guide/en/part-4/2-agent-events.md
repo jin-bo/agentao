@@ -250,7 +250,7 @@ if event.type == EventType.ERROR:
 | Field | Description |
 |-------|-------------|
 | Trigger | Agent spawns a sub-agent (e.g. `codebase-investigator`, `Explore`) |
-| `data` | `{"agent": "codebase-investigator", "task": "...", "max_turns": 15}` |
+| `data` | `{"agent": "codebase-investigator", "task": "...", "max_turns": 15, "child_task_id": "..."}` (`child_task_id` since 0.5.17) |
 | Typical use | Open a "sub-task" collapsible in the UI |
 
 ### `AGENT_END`
@@ -258,8 +258,10 @@ if event.type == EventType.ERROR:
 | Field | Description |
 |-------|-------------|
 | Trigger | Sub-agent finishes |
-| `data` | `{"agent": "...", "state": "completed"\|"...", "turns": 3, "tool_calls": 5, "tokens": 1200, "duration_ms": 8000, "error": None}`. A counter that is not known is left out: a sub-agent that raised before it ran sends none of `turns` / `tool_calls` / `tokens` / `duration_ms`, so read them with `.get()` |
+| `data` | `{"agent": "...", "state": "completed"\|"...", "turns": 3, "tool_calls": 5, "tokens": 1200, "duration_ms": 8000, "error": None, "child_task_id": "..."}`. A counter that is not known is left out: a sub-agent that raised before it ran sends none of `turns` / `tool_calls` / `tokens` / `duration_ms`, so read them with `.get()` |
 | Typical use | Collapse sub-task, show summary (3 turns / 5 tool calls / 8s) |
+
+**Pairing a sub-agent run (since 0.5.17).** A foreground run puts one `child_task_id` on its `AGENT_START`, its `AGENT_END`, and every child event it forwards in between (`TURN_START`, `TOOL_CONFIRMATION`, `TOOL_START`, `TOOL_OUTPUT`, `TOOL_COMPLETE`). The parent's own events never carry it. Pair a run's events by this id, not by the agent name. With a host event stream, the run's public `SubagentLifecycleEvent` has the same `child_task_id`. Replay's `subagent_started` / `subagent_completed` rows do not record the field, but its `subagent_lifecycle` rows (written through `HostReplaySink`) carry the same `child_task_id`. ACP clients do not receive it.
 
 ### Replay observability events
 

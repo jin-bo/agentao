@@ -291,6 +291,14 @@ class AgentToolWrapper(Tool):
         agent_name = self._definition["name"]
         max_turns  = self._definition.get("max_turns", 15)
 
+        # One id for this run, on every transport event it sends and on its
+        # public ``SubagentLifecycleEvent`` (#578). Minted here, not by the
+        # emitter: ``AGENT_START`` goes out before ``spawned`` is published,
+        # and a run without an emitter needs the id too. A local, never an
+        # attribute, so two runs of this tool cannot read each other's.
+        from ...runtime.identity import new_child_task_id
+        child_task_id = new_child_task_id()
+
         # Signal sub-agent start to the CLI. Not guarded, unlike the end
         # event, and on purpose: a sink that raises here fails the tool call
         # before anything has run, as it always has. Guarding it would let
@@ -299,6 +307,7 @@ class AgentToolWrapper(Tool):
         if self._event_sink:
             self._event_sink(AgentEvent(EventType.AGENT_START, {
                 "agent": agent_name, "task": task[:80], "max_turns": max_turns,
+                "child_task_id": child_task_id,
             }))
 
         # ``task`` is user-supplied free-form text (and may carry the
@@ -310,7 +319,9 @@ class AgentToolWrapper(Tool):
         # via the parent ``tool_name`` and can correlate via the
         # ``child_task_id`` already on the envelope.
         task_summary = f"sub-agent: {agent_name}"
-        subagent_ctx = self._spawn_subagent_event(task_summary)
+        subagent_ctx = self._spawn_subagent_event(
+            task_summary, child_task_id=child_task_id,
+        )
 
         # Filled by ``_run_sync``'s ``finally``, so it is there on the two
         # raising paths below as well as on the ordinary one.
@@ -318,7 +329,7 @@ class AgentToolWrapper(Tool):
         try:
             result, stats = self._run_sync(
                 task, parent_context, cancellation_token=token, settled=settled,
-                skill_manager=skills,
+                skill_manager=skills, child_task_id=child_task_id,
             )
         except AgentCancelledError:
             # Defensive only: ``runtime/turn.py`` maps this to
@@ -334,7 +345,8 @@ class AgentToolWrapper(Tool):
             # show it as zero. A cancel leaves ``error`` empty, as on the
             # ordinary path below.
             self._send_agent_end(
-                "cancelled", **settled.get("counts", {}),
+                "cancelled", child_task_id=child_task_id,
+                **settled.get("counts", {}),
             )
             self._terminal_subagent_event(
                 subagent_ctx, "cancelled", task_summary, usage=settled.get("usage"),
@@ -343,6 +355,7 @@ class AgentToolWrapper(Tool):
         except Exception as exc:
             self._send_agent_end(
                 "failed", error=type(exc).__name__,
+                child_task_id=child_task_id,
                 **settled.get("counts", {}),
             )
             self._terminal_subagent_event(
@@ -366,6 +379,7 @@ class AgentToolWrapper(Tool):
             # labels it. Filling it in would put "it was cancelled"
             # where the CLI renders a crash reason.
             error=incomplete.detail if state == "failed" else None,
+            child_task_id=child_task_id,
         )
 
         if state == "failed":
@@ -400,6 +414,7 @@ class AgentToolWrapper(Tool):
         tool_calls: Optional[int] = None,
         tokens: Optional[int] = None,
         duration_ms: Optional[int] = None,
+        child_task_id: Optional[str] = None,
     ) -> None:
         """Send ``AGENT_END`` without letting the send mask anything.
 
@@ -424,6 +439,8 @@ class AgentToolWrapper(Tool):
         }
         data.update((k, v) for k, v in counts.items() if v is not None)
         data["error"] = error
+        if child_task_id is not None:
+            data["child_task_id"] = child_task_id
         try:
             self._event_sink(AgentEvent(EventType.AGENT_END, data))
         except Exception:
@@ -437,12 +454,15 @@ class AgentToolWrapper(Tool):
         task_summary: str,
         *,
         parent_task_id: Optional[str] = None,
+        child_task_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         if self._subagent_emitter is None:
             return None
+        # ``None`` (the background path) lets the emitter mint the id.
         try:
             return self._subagent_emitter.spawned(
                 task_summary=task_summary, parent_task_id=parent_task_id,
+                child_task_id=child_task_id,
             )
         except Exception:
             return None
@@ -546,6 +566,7 @@ class AgentToolWrapper(Tool):
         cancellation_token: Optional[Any] = None,
         settled: Optional[Dict[str, Any]] = None,
         skill_manager: Optional[Any] = None,
+        child_task_id: Optional[str] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Create, run and close a sub-agent. Returns (result, stats).
 
@@ -563,7 +584,9 @@ class AgentToolWrapper(Tool):
                 forwarded to the parent, so a background thread does not
                 interleave output with the foreground session.
         """
-        sub_agent, setup = self._build_sub_agent(suppress_output, skill_manager)
+        sub_agent, setup = self._build_sub_agent(
+            suppress_output, skill_manager, child_task_id=child_task_id,
+        )
         # Everything after construction runs under ``finally``: the sub-agent
         # holds resources of its own (its memory stores), and nothing else
         # releases them, since it is a local the parent's ``close()`` does not
@@ -592,6 +615,7 @@ class AgentToolWrapper(Tool):
 
     def _build_sub_agent(
         self, suppress_output: bool, skill_manager: Optional[Any] = None,
+        *, child_task_id: Optional[str] = None,
     ) -> Tuple[Any, Dict[str, Any]]:
         """Construct a sub-agent. Returns it with the keyword arguments
         ``_drive_sub_agent`` needs from the same config read.
@@ -642,7 +666,9 @@ class AgentToolWrapper(Tool):
 
         max_turns = self._definition.get("max_turns", 15)
         agent_name = self._definition["name"]
-        transport = self._child_transport(suppress_output, max_turns)
+        transport = self._child_transport(
+            suppress_output, max_turns, child_task_id=child_task_id,
+        )
 
         # Built here, so a constructor that raises does not leak it: to
         # ``Agentao`` it is injected, and an injected manager is the caller's.
@@ -1308,7 +1334,10 @@ class AgentToolWrapper(Tool):
             f"check_background_agent(agent_id='{agent_id}', wait_seconds=N) once."
         )
 
-    def _child_transport(self, suppress_output: bool, max_turns: int) -> SdkTransport:
+    def _child_transport(
+        self, suppress_output: bool, max_turns: int,
+        *, child_task_id: Optional[str] = None,
+    ) -> SdkTransport:
         """The transport a sub-agent is built with.
 
         A foreground sub-agent reports to the parent through
@@ -1338,7 +1367,7 @@ class AgentToolWrapper(Tool):
                 return _parent_confirm(f"[{agent_name}] {tool_name}", tool_desc, tool_args)
 
         return SdkTransport(
-            on_event=self._make_forwarder(max_turns),
+            on_event=self._make_forwarder(max_turns, child_task_id=child_task_id),
             confirm_tool=confirm,
             ask_user=self._ask_user,
         )
@@ -1347,7 +1376,9 @@ class AgentToolWrapper(Tool):
     # The foreground child's events, forwarded to the parent
     # ------------------------------------------------------------------
 
-    def _make_forwarder(self, max_turns: int) -> Optional[Callable[[AgentEvent], None]]:
+    def _make_forwarder(
+        self, max_turns: int, *, child_task_id: Optional[str] = None,
+    ) -> Optional[Callable[[AgentEvent], None]]:
         """The ``on_event`` of a foreground child's transport, or ``None``.
 
         A whitelist: only the events the parent shows as the child's tool
@@ -1360,6 +1391,11 @@ class AgentToolWrapper(Tool):
         a forwarder (``docs/design/subagent-event-bridge.md`` §6.3). Every
         event sent is a new one: the child's transport hands the same object
         to its own subscribers, so it is never changed in place.
+
+        ``child_task_id`` is the run's id (#578). :func:`send` sets it on
+        every forwarded event, over any value the child's event had, so a
+        host can tell a run's events from the parent's and from another
+        run's. ``None`` sends the events without it.
         """
         sink = self._event_sink
         if sink is None:
@@ -1375,6 +1411,13 @@ class AgentToolWrapper(Tool):
             # into label and tool name; change the two together.
             return f"[{agent_name} {turn[0]}/{max_turns}] {tool}"
 
+        def send(event: AgentEvent) -> None:
+            # Every event reaching here has a ``data`` dict built in
+            # ``forward``, so setting the key changes nothing the child holds.
+            if child_task_id is not None:
+                event.data["child_task_id"] = child_task_id
+            sink(event)
+
         def forward(event: AgentEvent) -> None:
             t, d = event.type, event.data
             if t == EventType.TURN_START:
@@ -1384,11 +1427,11 @@ class AgentToolWrapper(Tool):
                 reset = bool(d.get("display_reset"))
                 if not reset:
                     turn[0] += 1
-                sink(AgentEvent(EventType.TURN_START, {"display_reset": True} if reset else {}))
+                send(AgentEvent(EventType.TURN_START, {"display_reset": True} if reset else {}))
             elif t == EventType.TOOL_START:
                 tool = label(d.get("tool", ""))
                 args = d.get("args", {})
-                sink(AgentEvent(EventType.TOOL_START, {
+                send(AgentEvent(EventType.TOOL_START, {
                     "tool": tool,
                     "args": dict(args) if isinstance(args, dict) else {},
                     # A missing or empty id falls back to the label.
@@ -1401,10 +1444,10 @@ class AgentToolWrapper(Tool):
                 # being asked about it.
                 data = dict(d)
                 data["tool"] = label(d.get("tool", ""))
-                sink(replace(event, data=data))
+                send(replace(event, data=data))
             elif t == EventType.TOOL_OUTPUT:
                 tool, call_id = d.get("tool", ""), d.get("call_id")
-                sink(AgentEvent(EventType.TOOL_OUTPUT, {
+                send(AgentEvent(EventType.TOOL_OUTPUT, {
                     "tool": tool, "chunk": d.get("chunk", ""),
                     # Only a missing id falls back to the name; an empty one
                     # is kept, so it is not silently collapsed.
@@ -1413,7 +1456,7 @@ class AgentToolWrapper(Tool):
             elif t == EventType.TOOL_COMPLETE:
                 tool, call_id = d.get("tool", ""), d.get("call_id")
                 status, duration_ms = d.get("status"), d.get("duration_ms")
-                sink(AgentEvent(EventType.TOOL_COMPLETE, {
+                send(AgentEvent(EventType.TOOL_COMPLETE, {
                     "tool": tool,
                     "call_id": call_id if call_id is not None else tool,
                     # The real outcome, so a failed or denied tool is not
