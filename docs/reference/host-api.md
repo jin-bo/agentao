@@ -394,6 +394,7 @@ case.
 | Microcompaction | that pass is skipped; no error; not re-asked this turn |
 | Threshold | not re-asked this turn; if the API then overflows the host is asked **again**, with `reason=api_overflow` — a different question |
 | API overflow (either rung) | the provider's context-length error is returned to the caller. It does **not** fall through to `messages[-2:]` |
+| A bare `413` (0.5.17+) | the provider's `413` is returned to the caller. A `413` whose body names no token overflow and no image asks with `reason=api_overflow` too, but gets one compaction and one retry only: never minimal history, never image removal on that error alone |
 | Manual `/compact` | reported as cancelled; an immediate retry dispatches normally (it never latches) |
 
 Arbitrary message-list replacement is **out**: agentao's history is a flat
