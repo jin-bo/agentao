@@ -670,6 +670,19 @@ for ev in events:
 （`model_unsupported`；这一轮去掉图片后重试）。这是这次改写的唯一记录：
 `LLM_CALL_DELTA` 只带这一轮新增的消息。
 
+**前台 sub-agent 运行的 `child_task_id`**（0.5.17 起，#578）。每次运行有一个 id，
+带在它的 `AGENT_START` 和 `AGENT_END` 上，也带在它转发给父代理的每个子事件上：
+`TURN_START`、`TOOL_CONFIRMATION`、`TOOL_START`、`TOOL_OUTPUT` 和 `TOOL_COMPLETE`。
+父代理自己的事件从不带它，所以这个键也能把转发来的子事件和父代理的事件区分开。
+有 host 事件流时，这次运行的公开 `SubagentLifecycleEvent` 带同一个 id，两个通道可以
+按它关联。请按这个 id 配对一次运行的事件，不要按 agent 名字。它是受支持的增量字段，
+有测试钉住，但不在任何 schema 快照之内。回放的 `subagent_started` /
+`subagent_completed` 行不记录它，但 `start_replay()` 经 `HostReplaySink` 写入的
+`subagent_lifecycle` 行带同一个 `child_task_id`。ACP 客户端收不到它，后台
+sub-agent 也不发这些事件。
+`build_compat_transport` 的旧式回调也收不到它，只有 `confirmation_event_callback` 拿到的事件带着它。它不能把这次运行关联到父代理自己的 `agent_*` 工具调用：
+那一对只能按顺序配对。
+
 每个 `AgentEvent` 都带 `schema_version: int` 字段；这是载荷形状变化
 的**唯一**信号。它是**所有事件类型共用的单个值**，不是按载荷分版本的
 ——bump 一次就把全部事件一起推高，而 pin 在旧值上的消费方会因此开始

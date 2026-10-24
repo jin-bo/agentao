@@ -11,6 +11,8 @@ _Targeting 0.5.17. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **Foreground sub-agent transport events carry a per-run `child_task_id` (#578).** A host that showed sub-agent progress from transport events could pair them only by agent name, which is correct only while two calls to one sub-agent never overlap. Each foreground run now has one id, on its `AGENT_START` and `AGENT_END`, and on every child event it forwards to the parent (`TURN_START`, `TOOL_CONFIRMATION`, `TOOL_START`, `TOOL_OUTPUT`, `TOOL_COMPLETE`). The parent's own events never carry it. The id is there with or without a host event stream, and the run's public `SubagentLifecycleEvent` has the same `child_task_id`. The field is additive: `agent`, the `[name n/max] tool` label and `call_id` are unchanged, and `schema_version` stays `1`. Replay's `subagent_started` / `subagent_completed` rows do not record it (its `subagent_lifecycle` rows already carry the same id), ACP clients and the `build_compat_transport` callbacks do not receive it (except the event `confirmation_event_callback` gets), and background sub-agents are unchanged.
+
 ### Changed
 
 - **`/clear`, `/new` and `/compact` refuse an argument (#574).** They take none, and used to drop any they were given, so `/clear just the conversation` still wiped every memory and `/compact focus on X` ran an ordinary compaction. A non-blank argument now prints a notice and the command does nothing else: no reset, no memory wipe, no compaction, no lifecycle hook. A blank argument runs as before, and `/clear all` stays an alias for `/clear`. Focus instructions for `/compact` are not supported yet (#576).

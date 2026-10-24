@@ -288,8 +288,13 @@ class HostSubagentEmitter:
         task_summary: Optional[str],
         parent_task_id: Optional[str] = None,
         child_session_id: Optional[str] = None,
+        child_task_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        child_task_id = _identity.new_child_task_id()
+        # A foreground run passes the id its transport events already carry
+        # (#578), so a host can join the two channels on it. ``None`` mints
+        # one here, as the background path does.
+        if child_task_id is None:
+            child_task_id = _identity.new_child_task_id()
         started_at = _identity.utc_now_rfc3339()
         # Pin the parent session at spawn time and thread it through
         # the returned ctx so the matching terminal event uses the

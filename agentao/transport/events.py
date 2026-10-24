@@ -114,13 +114,17 @@ class AgentEvent:
         LLM_RETRY     {"retry": 1, "max_retries": 4, "delay_s": 1.62,
                        "reason": "status=503"|"RemoteProtocolError"}
         ERROR         {"message": "...", "detail": "..."}
-        AGENT_START       {"agent": "codebase-investigator", "task": "...", "max_turns": 15}
+        AGENT_START       {"agent": "codebase-investigator", "task": "...", "max_turns": 15,
+                       "child_task_id": "uuid"}
         AGENT_END         {"agent": "codebase-investigator", "state": "completed",
                        "turns": 3, "tool_calls": 5, "tokens": 1200,
-                       "duration_ms": 8000, "error": None}
+                       "duration_ms": 8000, "error": None,
+                       "child_task_id": "uuid"}
                       A counter that is not known is left out: a sub-agent
                       that raised before it ran sends no turns / tool_calls /
                       tokens / duration_ms.
+                      ``child_task_id`` is one id per foreground run, also
+                      on every child event the run forwards (#578).
     """
 
     type: EventType

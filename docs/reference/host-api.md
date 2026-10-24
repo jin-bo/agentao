@@ -818,6 +818,24 @@ image input (`model_unsupported`; the turn retries without them). It is
 the only record of that rewrite: `LLM_CALL_DELTA` carries only the
 messages a turn adds.
 
+**`child_task_id` on a foreground sub-agent run** (0.5.17+, #578). One id
+per run is on its `AGENT_START` and `AGENT_END`, and on every child event
+the run forwards to the parent: `TURN_START`, `TOOL_CONFIRMATION`,
+`TOOL_START`, `TOOL_OUTPUT` and `TOOL_COMPLETE`. The parent's own events never
+carry it, so the key also tells a forwarded child event from the parent's.
+With a host event stream, the same id is on the run's public
+`SubagentLifecycleEvent`, so the two channels join on it. Pair a run's events
+by this id, not by the agent name. It is a supported additive field, pinned by
+tests, but no schema snapshot covers it. Replay's `subagent_started` /
+`subagent_completed` rows do not record it, but the `subagent_lifecycle`
+rows that `start_replay()` writes through `HostReplaySink` carry the same
+`child_task_id`. ACP clients do not receive it, and a background sub-agent
+sends no such events.
+The legacy callbacks of `build_compat_transport` do not receive it either,
+except through the event that `confirmation_event_callback` gets.
+Nothing on it links the run to the parent's own `agent_*` tool call: pair
+those by order.
+
 Every `AgentEvent` carries a `schema_version: int` field; bumps are
 the *only* signal that a payload's shape changed. It is a **single
 value shared by every event type**, not a per-payload version — so a

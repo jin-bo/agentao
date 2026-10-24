@@ -250,7 +250,7 @@ if event.type == EventType.ERROR:
 | 字段 | 说明 |
 |------|------|
 | 触发时机 | Agent 启动一个 sub-agent（如 `codebase-investigator`、`Explore` 等） |
-| `data` | `{"agent": "codebase-investigator", "task": "...", "max_turns": 15}` |
+| `data` | `{"agent": "codebase-investigator", "task": "...", "max_turns": 15, "child_task_id": "..."}`（`child_task_id` 自 0.5.17 起） |
 | 典型用法 | 在 UI 里开一个"子任务"折叠面板 |
 
 ### `AGENT_END`
@@ -258,8 +258,10 @@ if event.type == EventType.ERROR:
 | 字段 | 说明 |
 |------|------|
 | 触发时机 | sub-agent 完成 |
-| `data` | `{"agent": "...", "state": "completed"\|"...", "turns": 3, "tool_calls": 5, "tokens": 1200, "duration_ms": 8000, "error": None}`。未知的计数不发送：在运行前就抛出异常的 sub-agent 不带 `turns` / `tool_calls` / `tokens` / `duration_ms`，请用 `.get()` 读取 |
+| `data` | `{"agent": "...", "state": "completed"\|"...", "turns": 3, "tool_calls": 5, "tokens": 1200, "duration_ms": 8000, "error": None, "child_task_id": "..."}`。未知的计数不发送：在运行前就抛出异常的 sub-agent 不带 `turns` / `tool_calls` / `tokens` / `duration_ms`，请用 `.get()` 读取 |
 | 典型用法 | 折叠子任务面板、显示汇总 (3 轮/5 次工具/8s) |
+
+**配对一次 sub-agent 运行（自 0.5.17 起）。** 前台运行在它的 `AGENT_START`、`AGENT_END` 以及其间转发的每个子事件（`TURN_START`、`TOOL_CONFIRMATION`、`TOOL_START`、`TOOL_OUTPUT`、`TOOL_COMPLETE`）上带同一个 `child_task_id`。父代理自己的事件从不带它。请按这个 id 配对一次运行的事件，不要按 agent 名字。有 host 事件流时，这次运行的公开 `SubagentLifecycleEvent` 带同一个 `child_task_id`。回放的 `subagent_started` / `subagent_completed` 行不记录这个字段，但经 `HostReplaySink` 写入的 `subagent_lifecycle` 行带同一个 `child_task_id`。ACP 客户端收不到它。
 
 ### Replay 可观测性事件
 
