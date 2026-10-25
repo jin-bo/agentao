@@ -605,14 +605,14 @@ from agentao.host import (
 |---|---|
 | `ActivePermissions` | 当前权限策略的只读快照（`mode`、`rules`、`loaded_sources`） |
 | `ToolLifecycleEvent` | 单次工具调用的公共生命周期信封。`phase ∈ {started, completed, failed}`；取消以 `phase="failed", outcome="cancelled"` 体现 |
-| `SubagentLifecycleEvent` | 子 Agent 任务/会话的血缘事实。`phase ∈ {spawned, completed, failed, cancelled}` —— `cancelled` 在这里是独立 phase。`failed` 有两义：子 Agent **抛了异常**（`error_type` 是异常类名），**或**它跑完却没给出答案（`error_type = "incomplete:<reason>"`，`<reason>` ∈ `no_output`、`reasoning_only`、`length_truncated`、`doom_loop`、`llm_error`、`max_iterations`）。升级告警前先按 `error_type` 分支——见 [4.7](/zh/part-4/7-host-contract) |
+| `SubagentLifecycleEvent` | 子 Agent 任务/会话的血缘事实。`phase ∈ {spawned, completed, failed, cancelled}` —— `cancelled` 在这里是独立 phase。`failed` 有两义：子 Agent **抛了异常**（`error_type` 是异常类名），**或**它跑完却没给出答案（`error_type = "incomplete:<reason>"`，`<reason>` ∈ `no_output`、`reasoning_only`、`length_truncated`、`doom_loop`、`llm_error`、`max_iterations`）。升级告警前先按 `error_type` 分支——见 [4.7](/zh/part-4/7-host-contract)。`parent_tool_call_id`（0.5.17）是启动这次运行的父代理 `agent_*` 调用的 `tool_call_id`，每个 phase 都带 |
 | `SubagentUsage` | 终态 `SubagentLifecycleEvent.usage` 上的 token 计数（0.5.2）：`prompt_tokens`（整个输入）、`completion_tokens`、`cache_read_tokens`、`cache_creation_tokens` —— 后两项是 `prompt_tokens` 的**组成部分** —— 以及自 0.5.15 起的 `reasoning_tokens`，它是 `completion_tokens` 的**组成部分**（线路不提供时为 0）。在 `spawned` 上、以及子 Agent 根本没建出来时为 `None`。事件触发时已计入父级的会话累计 |
 | `PermissionDecisionEvent` | 单次权限决定的投影。在 `allow` / `deny` / `prompt` 都触发；不渲染 allow 的消费者也必须排空迭代器以避免背压 |
 | `HostEvent` | 三种事件模型的判别联合（Pydantic discriminator: `event_type`） |
 | `RFC3339UTCString` | 受约束的时间戳类型。仅允许标准 `Z` 后缀 —— `+00:00` 偏移会被拒绝 |
 | `EventStream` | `Agentao.events()` 的运行时侧。仅供参考：`Agentao` 把自己的流设为私有，宿主通过 `agent.events()` 或 `agent.add_host_event_observer()` 读取，不自己调 `publish()` / `subscribe()` |
 | `StreamSubscribeError` | 同一 `session_id` 过滤器上发起第二个并发订阅时抛出，且第一个还开着；在第二个迭代器第一次迭代时抛出，而不是调用 `agent.events()` 时（MVP 每个过滤条件只支持一个消费者；先用 `aclosing` 关掉第一个，或者用同步观察者做多路分发） |
-| `export_host_event_json_schema()` | 导出事件 + 权限面的标准 JSON schema。`tests/test_host_schema.py` 用它与 `docs/schema/host.events.v2.json` 做字节相等校验 |
+| `export_host_event_json_schema()` | 导出事件 + 权限面的标准 JSON schema。`tests/test_host_schema.py` 用它与 `docs/schema/host.events.v3.json` 做字节相等校验 |
 | `export_host_acp_json_schema()` | 导出宿主面 ACP 载荷的标准 JSON schema。快照在 `docs/schema/host.acp.v1.json` |
 | `CancellationToken` | `chat()` / `arun()` 的 `cancellation_token=` 参数接受的 token。重新导出 `agentao.cancellation.CancellationToken`（同一个类） |
 | `Tool`、`AsyncToolBase` | 宿主自带工具的基类（`extra_tools=` / `add_tool`）。重新导出 `agentao.tools.base` 中的正式类型 |
@@ -666,7 +666,7 @@ snap = agent.active_permissions()
 
 每个发布版都附带 check-in 的 JSON schema 快照：
 
-- [`docs/schema/host.events.v2.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v2.json) —— 事件 + 权限面
+- [`docs/schema/host.events.v3.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v3.json) —— 事件 + 权限面
 - [`docs/schema/host.acp.v1.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.acp.v1.json) —— 宿主面 ACP 载荷
 
 `tests/test_host_schema.py` 会从 Pydantic 模型重新生成 schema，并与快照做字节相等比对。任何改变 wire form 的 model 变更必须在同一 PR 内同时更新模型与快照。新增 optional 字段向后兼容；删除/重命名需要 schema 版本号 bump。

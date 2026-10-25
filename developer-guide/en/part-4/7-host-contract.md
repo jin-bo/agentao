@@ -20,7 +20,7 @@ This is the **churn problem**. `AgentEvent` is the runtime's internal event bus 
 The **embedded harness contract** is the answer: a deliberately small surface at `agentao.host` that's:
 
 - **Frozen as Pydantic models** — fields and types are part of the public contract
-- **Schema-snapshotted** in `docs/schema/host.events.v2.json` — byte-equality enforced in CI
+- **Schema-snapshotted** in `docs/schema/host.events.v3.json` — byte-equality enforced in CI
 - **A redacted projection** of internal events — e.g. user prompt text isn't in the audit body
 - **Versioned** — adding optional fields is backwards-compatible; removing or renaming requires a schema bump
 
@@ -101,7 +101,7 @@ async for ev in agent.events():
         ...
 ```
 
-Full field list: [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-host-contract). The schemas live at [`docs/schema/host.events.v2.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v2.json).
+Full field list: [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-host-contract). The schemas live at [`docs/schema/host.events.v3.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v3.json).
 
 ## 4.7.4 `agent.events()` vs. `Transport(on_event=…)` — when to use which
 
@@ -141,7 +141,7 @@ async with aclosing(agent.astream(prompt)) as stream:
 - **One turn at a time.** A second concurrent turn on the same agent raises `TurnInProgressError` from the iterator when the worker starts it; a refused stream yields nothing from the running turn, and since it never started a turn, `agent.last_turn` is not set for it.
 - `cancellation_token=` is linked to the stream's own token — cancelling it ends the turn. The link is one way: a turn cancelled by closing the stream does not cancel your token, so read the outcome's `status`. The queue is bounded like `events()`'s: a slow consumer slows the turn instead of growing memory.
 - **Never swap `agent.transport` to capture text.** `astream()` *subscribes* to the agent's transport and never replaces it (`NullTransport` and `SdkTransport` both support `subscribe()`; a transport without it makes `astream()` raise `TypeError` before the turn starts). Replacing the transport per request does not work: the tool runner keeps its own reference, so tool events and confirmations would still go to the old transport, and replay would lose its adapter.
-- **Not in the stream:** reasoning text, tool and permission events (they stay on `agent.events()`), and sub-agent text (sub-agents run on their own transports). `TextDelta` and `TurnOutcome` are **not** `HostEvent` members, are not projected into replay, and are not in `host.events.v2.json`.
+- **Not in the stream:** reasoning text, tool and permission events (they stay on `agent.events()`), and sub-agent text (sub-agents run on their own transports). `TextDelta` and `TurnOutcome` are **not** `HostEvent` members, are not projected into replay, and are not in `host.events.v3.json`.
 
 ## 4.7.5 End-to-end: tenant-scoped audit pipeline
 
@@ -203,6 +203,8 @@ async def audit_loop(agent: Agentao, tenant_id: str, db):
                 "ts":                ev.completed_at or ev.started_at,
                 "child_session_id":  ev.child_session_id,
                 "child_task_id":     ev.child_task_id,
+                # The parent's agent_* call that started the run (0.5.17+).
+                "parent_tool_call_id": ev.parent_tool_call_id,
                 "phase":             ev.phase,    # spawned|completed|failed|cancelled
                 # failed = raised OR returned without answering; the
                 # "incomplete:<reason>" prefix marks the latter.
@@ -271,7 +273,7 @@ What `agentao.host` promises:
 
 - **Adding a field** to any model keeps code that reads the models working.
 - **The JSON snapshots are closed.** The models are `extra="forbid"`, so a snapshot says `additionalProperties: false`, and a validator built from it rejects any field it does not list. So adding a field to an event model is a new snapshot version, as removing or renaming one is. A published snapshot is never rewritten: it keeps describing the releases that wrote it, and CI checks its digest.
-- **Migrating a validator:** `host.events.v1.json` describes events up to 0.5.14. Since 0.5.15 (#550) `SubagentUsage` has `reasoning_tokens`, always sent, so a v1 validator rejects every terminal `SubagentLifecycleEvent` that carries `usage`. Validate against `host.events.v2.json` instead. Code that reads the models, or ignores unknown keys, needs no change.
+- **Migrating a validator:** `host.events.v1.json` describes events up to 0.5.14. Since 0.5.15 (#550) `SubagentUsage` has `reasoning_tokens`, always sent, so a v1 validator rejects every terminal `SubagentLifecycleEvent` that carries `usage`. Validate against `host.events.v2.json` instead. Since 0.5.17 (#580) `SubagentLifecycleEvent` has `parent_tool_call_id`, always sent (as `null` when unset), so a v2 validator rejects every `SubagentLifecycleEvent`: validate against `host.events.v3.json`. Code that reads the models, or ignores unknown keys, needs no change.
 - **Internal types** (`agentao.transport.AgentEvent`, `agentao.tools.ToolExecutionResult`, `agentao.permissions.PermissionEngine`) may change in any release. **Don't import them directly into production code paths.**
 - **Schema snapshots are CI-enforced** via `tests/test_host_schema.py` — a model change that shifts the wire form fails the build until both the model and the snapshot are updated together.
 
@@ -332,7 +334,7 @@ Q: I need to react to agent events. Which surface?
 - **30 lines + a database** is all it takes to ship a tenant audit pipeline that survives release upgrades.
 
 → Reference dive: [Appendix A.10 · Embedded Harness Contract](/en/appendix/a-api-reference#a-10-embedded-host-contract)
-→ Schemas: [`docs/schema/host.events.v2.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v2.json)
+→ Schemas: [`docs/schema/host.events.v3.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v3.json)
 → Design rationale: [`docs/design/embedded-host-contract.md`](https://github.com/jin-bo/agentao/blob/main/docs/design/embedded-host-contract.md)
 
 → Next: [Part 5 · Extend Agent Behavior](/en/part-5/)

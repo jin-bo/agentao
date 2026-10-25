@@ -1,7 +1,7 @@
 # Replay schema versioning policy
 
 This document defines how the JSON Schema files under `schemas/` evolve.
-It exists so that "what does `SCHEMA_VERSION = "1.5"` mean?" has a
+It exists so that "what does `SCHEMA_VERSION = "1.6"` mean?" has a
 machine-checkable answer instead of living in a dataclass docstring.
 
 ## Source of truth
@@ -195,3 +195,8 @@ belongs in `agentao/replay/schema.py` so it is unit-testable.
   `replay-event-1.5.json`. From 1.5 on, published files are frozen (see
   above). Earlier, 1.2 and 1.3 were regenerated in place when `usage`
   was added; their committed text is what is frozen now.
+- **1.6** — no new kind. `subagent_lifecycle` gains
+  `parent_tool_call_id`, the `tool_call_id` of the parent's `agent_*`
+  call that started the run (#580). It is always written, as `null` when
+  unset, so the 1.5 file rejects every 1.6 `subagent_lifecycle` line:
+  validate 1.6 replays against `replay-event-1.6.json`.

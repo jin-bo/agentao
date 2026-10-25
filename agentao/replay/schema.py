@@ -59,6 +59,8 @@ def _kinds_for_version(version: str) -> FrozenSet[str]:
         return EventKind.V1_4
     if version == "1.5":
         return EventKind.V1_5
+    if version == "1.6":
+        return EventKind.V1_6
     raise ValueError(f"unknown replay schema version: {version!r}")
 
 
@@ -264,7 +266,7 @@ def build_event_schema(version: str) -> dict:
     }
 
 
-SUPPORTED_VERSIONS: tuple = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5")
+SUPPORTED_VERSIONS: tuple = ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6")
 
 #: The published files that never change again, by SHA-256 of their text
 #: with ``\n`` line ends (:func:`schema_digest`). Freeze the current
@@ -275,6 +277,7 @@ FROZEN_SCHEMAS: Dict[str, str] = {
     "1.2": "35512d43b823766e3a904c6b1f215bd7726dada8b191a24eaec1a564b0a3dbac",
     "1.3": "5a3cb1181c1a4afd1c4d50a038679d77d0d1007130df0595bf9b6229546c0e35",
     "1.4": "bab0a46e09961b55f43d71b33412f29439d350a65141fb9b15a3f67a952bac35",
+    "1.5": "89a3d19d6450cd1f433a5a52c49d0f8bd0b0f332805cc0736a2eabf956b2ed21",
 }
 
 #: The versions the generator writes: those not frozen.

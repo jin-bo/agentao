@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 
-SCHEMA_VERSION = "1.5"
+SCHEMA_VERSION = "1.6"
 
 
 class EventKind:
@@ -54,6 +54,8 @@ class EventKind:
       ``reasoning_tokens`` (#550). That payload is typed and closed
       (``additionalProperties: false``), so a new field there is a new
       version: the 1.2–1.4 files stay as published and reject it.
+    - 1.6 — no new kind. ``subagent_lifecycle`` gains
+      ``parent_tool_call_id`` (#580), for the same reason a new version.
     """
 
     REPLAY_HEADER = "replay_header"
@@ -189,9 +191,12 @@ class EventKind:
     # v1.5 — no new kinds; a typed payload gained a field.
     V1_5 = V1_4
 
+    # v1.6 — no new kinds; a typed payload gained a field.
+    V1_6 = V1_5
+
     # Back-compat alias. Existing callers that imported ``EventKind.ALL``
     # keep working; new code should pick the version-specific set.
-    ALL = V1_5
+    ALL = V1_6
 
 
 @dataclass

@@ -69,7 +69,7 @@ def test_acp_schema_is_independent_from_event_schema():
     the public surface keeps them separate so a payload change on one
     does not flap the other test.
     """
-    event_path = SNAPSHOT_PATH.parent / "host.events.v2.json"
+    event_path = SNAPSHOT_PATH.parent / "host.events.v3.json"
     event = json.loads(event_path.read_text())
     acp = json.loads(SNAPSHOT_PATH.read_text())
     event_defs = set(event.get("$defs", {}).keys())

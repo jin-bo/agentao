@@ -130,12 +130,19 @@ class SubagentLifecycleEvent(BaseModel):
     and on one whose construction raised. By the time a terminal event is
     published the same counts are already in the parent's session totals, so
     a host that reads those totals from its handler sees them included.
+
+    ``parent_tool_call_id`` is the ``tool_call_id`` of the parent's
+    :class:`ToolLifecycleEvent` for the ``agent_*`` call that started the
+    run, on every phase. A background run carries the id of the call that
+    launched it, although that call completed at launch. ``None`` when the
+    run was not started through the tool executor (#580).
     """
 
     event_type: Literal["subagent_lifecycle"] = "subagent_lifecycle"
     session_id: str
     parent_session_id: Optional[str] = None
     parent_task_id: Optional[str] = None
+    parent_tool_call_id: Optional[str] = None
     child_session_id: Optional[str] = None
     child_task_id: str
     phase: Literal["spawned", "completed", "failed", "cancelled"]

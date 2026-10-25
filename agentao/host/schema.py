@@ -5,7 +5,7 @@ Pydantic models. Tests assert that the generated schema matches the
 checked-in snapshot using normalized JSON, so a model change that
 shifts the wire form is caught at PR review.
 
-Snapshots live under ``docs/schema/host.events.v2.json`` and
+Snapshots live under ``docs/schema/host.events.v3.json`` and
 ``docs/schema/host.acp.v1.json``. The models are closed
 (``extra="forbid"``, so ``additionalProperties: false``), so a JSON
 validator built from a snapshot rejects any field the snapshot does not
@@ -15,7 +15,10 @@ rewritten: :data:`FROZEN_SNAPSHOTS` pins its digest, and it keeps
 describing the events of the releases that wrote it.
 
 - ``host.events.v1.json``: frozen. Up to 0.5.14.
-- ``host.events.v2.json``: ``SubagentUsage.reasoning_tokens`` (#550).
+- ``host.events.v2.json``: frozen. ``SubagentUsage.reasoning_tokens``
+  (#550). 0.5.15 and 0.5.16.
+- ``host.events.v3.json``: ``SubagentLifecycleEvent.parent_tool_call_id``
+  (#580).
 """
 
 from __future__ import annotations
@@ -96,11 +99,12 @@ def normalized_schema_json(schema: Dict[str, Any]) -> str:
 #: with ``\n`` line ends (:func:`snapshot_digest`).
 FROZEN_SNAPSHOTS: Dict[str, str] = {
     "host.events.v1.json": "2d86de8fbe893d86065094f8ca4a5aa661f666310acf9c558af9a6aa9e9325ad",
+    "host.events.v2.json": "5ac893eaa2a6cc04b689eb144c7f48cfa34e20e6f96d40035274d570f39467cf",
 }
 
 #: The current host event snapshot: what :func:`export_host_event_json_schema`
 #: produces.
-HOST_EVENTS_SNAPSHOT = "host.events.v2.json"
+HOST_EVENTS_SNAPSHOT = "host.events.v3.json"
 
 
 def snapshot_digest(text: str) -> str:

@@ -79,7 +79,7 @@ Canonical reference material. The host API is the stable host-facing contract �
 | [reference/configuration.md](reference/configuration.md) | Every config file, env var, and public API — the canonical schema-level reference ([中文](reference/configuration.zh.md)) |
 | [reference/host-api.md](reference/host-api.md) | `agentao.host` package: `ActivePermissions`, `ToolLifecycleEvent`, `SubagentLifecycleEvent`, `PermissionDecisionEvent`, `EventStream`, schema export helpers ([中文](reference/host-api.zh.md)) |
 | [reference/replay-schema-policy.md](reference/replay-schema-policy.md) | Stability policy for the replay JSONL schema |
-| [schema/host.events.v2.json](schema/host.events.v2.json) | Release snapshot for the public events + permissions surface; `tests/test_host_schema.py` asserts byte-equality |
+| [schema/host.events.v3.json](schema/host.events.v3.json) | Release snapshot for the public events + permissions surface; `tests/test_host_schema.py` asserts byte-equality |
 | [schema/host.acp.v1.json](schema/host.acp.v1.json) | Release snapshot for the host-facing ACP payloads |
 
 Schema snapshots are checked in. A model change that shifts the wire form must update both the Pydantic model and the snapshot in the same PR.

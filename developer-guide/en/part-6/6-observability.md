@@ -324,7 +324,7 @@ Replay files are separate from saved sessions: `save_session` / `load_session` r
 
 - **Path:** `.agentao/replays/<session_id>.<instance_id>.jsonl`. Characters other than letters, digits, `_` and `-` in the session id become `_`.
 - **One event per line.** Each event has `event_id`, `session_id`, `instance_id`, `seq`, `ts`, `kind`, `turn_id`, `parent_turn_id` and `payload`.
-- **First line:** a `replay_header` with `schema_version` (currently `1.5`), `session_id`, `instance_id`, `created_at`, and `capture_flags` when any are set.
+- **First line:** a `replay_header` with `schema_version` (currently `1.6`), `session_id`, `instance_id`, `created_at`, and `capture_flags` when any are set.
 - **Last line:** a `replay_footer`, written on a clean close. It has `event_count` and the per-kind `redaction_hits`, `dropped_field_hits` and `truncated_field_hits`.
 - **A new instance per session birth.** `/clear`, `/new`, `/sessions resume`, ACP `session/new` and ACP `session/load` each start a fresh file. A file never spans those boundaries.
 

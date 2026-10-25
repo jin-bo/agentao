@@ -89,9 +89,24 @@ def test_the_current_usage_payload_has_reasoning_tokens() -> None:
         assert usage["additionalProperties"] is False
         return usage["properties"]
 
-    assert "reasoning_tokens" in usage_props(build_event_schema("1.5"))
+    assert "reasoning_tokens" in usage_props(_schema("1.5"))
     published = json.loads((SCHEMAS_DIR / "replay-event-1.4.json").read_text(encoding="utf-8"))
     assert "reasoning_tokens" not in usage_props(published)
+
+
+def test_the_current_lifecycle_payload_has_parent_tool_call_id() -> None:
+    """1.6 adds it. 1.5, as published, rejects it (#580)."""
+    def payload(schema: dict) -> dict:
+        variant = next(
+            v for v in schema["oneOf"]
+            if v["properties"]["kind"]["const"] == EventKind.SUBAGENT_LIFECYCLE
+        )
+        payload = variant["properties"]["payload"]
+        assert payload["additionalProperties"] is False
+        return payload["properties"]
+
+    assert "parent_tool_call_id" in payload(build_event_schema(SCHEMA_VERSION))
+    assert "parent_tool_call_id" not in payload(_schema("1.5"))
 
 
 def test_render_is_deterministic() -> None:
@@ -113,6 +128,7 @@ _VERSION_KINDS = {
     "1.3": EventKind.V1_3,
     "1.4": EventKind.V1_4,
     "1.5": EventKind.V1_5,
+    "1.6": EventKind.V1_6,
 }
 
 

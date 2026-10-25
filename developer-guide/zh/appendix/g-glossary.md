@@ -14,7 +14,7 @@
 | Text delta | 文本增量 | `TextDelta`——`agent.astream()` 产出的一段 assistant 文本，从 `agentao.host` 导入。只用于显示：增量拼起来不是回答。不是 `HostEvent`。详见 [4.7](/zh/part-4/7-host-contract#streaming-text-agent-astream) |
 | Turn outcome | 本轮结果 / Turn outcome | `TurnOutcome`——一轮如何结束（`text`、`status`、`.is_answer`……）；`agent.astream()` 的最后一项，也是 `agent.last_turn` 的值。从 `agentao.host` 导出（与 `agentao.TurnOutcome` 是同一个类） |
 | Capability protocol | 能力协议 | `agentao.host.protocols` 下的 `FileSystem` / `ShellExecutor` 运行时可检 Protocol，构造时注入，把 IO 路由到 Docker / 虚拟 FS / 审计代理 |
-| Schema snapshot | Schema 快照 | 仓库里 checked-in 的 JSON schema 文件（`docs/schema/host.events.v2.json`、`host.acp.v1.json`），由 Pydantic 模型重生成并 CI 断言字节级一致——是 wire 形态的合约 |
+| Schema snapshot | Schema 快照 | 仓库里 checked-in 的 JSON schema 文件（`docs/schema/host.events.v3.json`、`host.acp.v1.json`），由 Pydantic 模型重生成并 CI 断言字节级一致——是 wire 形态的合约 |
 | Session | 会话 | 一个 agent 实例的完整对话生命周期，绑定在一个 `working_directory` 上 |
 | Turn | 一轮 / 一次 | 一次 `chat()` 调用；内部可能触发多次工具调用 |
 | Iteration | 迭代 | 单轮内的每一次 LLM 循环，受 `max_iterations` 限制 |
