@@ -596,6 +596,7 @@ unless overridden. Enable deliberately:
 | `replay_config` | reproducing flake, A/B prompt diffs (records only when the config is enabled and you call `agent.start_replay()`); pass `None` to the factory to disable it | `<wd>/.agentao/settings.json :: replay` |
 | `bg_store` | background sub-agents in a long-lived host (not one-shot: workers die at exit); continuing after one finishes is the host's job | `<wd>/.agentao/background_tasks.json` |
 | `enable_builtin_agents=True` | want `codebase-investigator` / `generalist` delegation tools | `<wd>/.agentao/settings.json :: agents.enable_builtin` |
+| `relay_subagent_events=True` (0.5.17) | a host that shows a sub-agent's own tool calls and permission decisions from `agent.events()` (they arrive in the run's `child_session_id`; subscribe with `session_id=None`) | nothing; constructor only |
 
 ---
 
