@@ -334,7 +334,7 @@ def test_foreground_detaches_before_the_close_and_the_terminal_event(parent, mon
     assert not wrapper._subagent_relay._live
 
 
-@pytest.mark.parametrize("outcome", ["ok", "error", "cancel"])
+@pytest.mark.parametrize("outcome", ["ok", "incomplete", "error", "cancel"])
 def test_background_detaches_before_the_terminal_event_and_the_close(tmp_path, monkeypatch, outcome):
     from agentao.cancellation import AgentCancelledError
 
@@ -343,7 +343,12 @@ def test_background_detaches_before_the_terminal_event_and_the_close(tmp_path, m
         wrapper = _wrapper(agent)
         log: List[str] = []
         _trace(monkeypatch, wrapper, log)
-        if outcome == "error":
+        if outcome == "incomplete":
+            # The child answers with nothing: ``failed`` with ``incomplete:``.
+            monkeypatch.setattr(
+                LLMClient, "chat_stream", lambda self, **kw: _response(content=""),
+            )
+        elif outcome == "error":
             _raising_drive(monkeypatch, RuntimeError("boom"))
         elif outcome == "cancel":
             _raising_drive(monkeypatch, AgentCancelledError("user-cancel"))
@@ -358,6 +363,10 @@ def test_background_detaches_before_the_terminal_event_and_the_close(tmp_path, m
         assert log == ["detach", "terminal", "close"]
         assert seen[-1] is _lifecycle(seen)[-1]
         assert not wrapper._subagent_relay._live
+        if outcome == "incomplete":
+            terminal = _lifecycle(seen)[-1]
+            assert terminal.phase == "failed"
+            assert terminal.error_type.startswith("incomplete:")
     finally:
         agent.close()
 
@@ -525,5 +534,7 @@ def test_replay_records_the_same_rows_with_the_relay_on(tmp_path, bg):
     two cases whose relayed rows could not be put on the right turn."""
     off = _replay_rows(tmp_path, relay=False, bg=bg)
     on = _replay_rows(tmp_path, relay=True, bg=bg)
-    assert on == off
+    # Compared as multisets: the two reads of the child's batch run on pool
+    # workers, so their rows interleave in either order.
+    assert sorted(on, key=repr) == sorted(off, key=repr)
     assert ("subagent_lifecycle", "subagent_lifecycle", "spawned", None) in on

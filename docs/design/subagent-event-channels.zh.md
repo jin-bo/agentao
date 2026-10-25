@@ -137,7 +137,7 @@ transport        ── AGENT_START / 转发的子代理事件 / AGENT_END      
 每条路径上的约束：**drive 结束（`_drive_sub_agent` 返回或抛异常）之后解除挂载，并且先于终态 `SubagentLifecycleEvent` 和子代理的 close。** close 与终态事件谁先谁后不属于这个约束，每条路径保留现在的顺序。
 
 - 前台：`_run_sync` 的 `finally` 关闭子代理，`execute()` 在 `_run_sync` 返回之后才发布终态事件。所以现在的顺序是 drive → close → 终态。解除挂载放在这个 `finally` 的开头、`_close_sub_agent` 之前：drive → 解除挂载 → close → 终态。
-- 后台：`_launch_background` 的 worker 在 `try` 里发布终态事件，在 `finally` 里关闭。所以现在的顺序是 drive → 终态 → close。解除挂载放在 drive 刚结束之后、发布终态事件之前，覆盖它的三条终态路径（完成或未完成、`AgentCancelledError`、`Exception`）：drive → 解除挂载 → 终态 → close。`finally` 里再保留一次幂等的解除挂载，用于 `BaseException`。
+- 后台：`_launch_background` 的 worker 在 `try` 里发布终态事件，在 `finally` 里关闭。所以现在的顺序是 drive → 终态 → close。解除挂载放在 drive 刚结束之后、发布终态事件之前：一个直接包在 `_drive_sub_agent` 外面的 `try/finally`，不管 drive 正常返回还是抛异常（包括 `BaseException`）都会解除挂载，并且在三条终态路径（完成或未完成、`AgentCancelledError`、`Exception`）执行之前完成：drive → 解除挂载 → 终态 → close。（rev 3 原计划在三条路径上各解除一次，再在外层 `finally` 里做第二次；一个 `try/finally` 以一次解除挂载得到同样的顺序。）
 - `remove_observer` 不会等待已经取得 observer 快照的发布方（§4.2）。所以这个边界依赖下面这个事实：**drive 结束时，子代理已经没有任何线程能发布 host 事件。** 依据：
   - 并行批次只有在所有 worker 结束之后才会离开 `with ThreadPoolExecutor(...)` 代码块（`tool_executor.py:300`）；
   - 单个工具在 drive 的线程上内联执行；
@@ -225,7 +225,7 @@ transport        ── AGENT_START / 转发的子代理事件 / AGENT_END      
 
 1. **#580**（`parent_tool_call_id`、`host.events.v3.json`、回放 1.6）。§5.1 第一层关联的前提。
 2. **子代理 session id**（§5.2、§5.3）：在 `spawned` 之前生成、私有 adopter、填上 `child_session_id`、把生命周期事件的 `session_id` 固定为父代理的。不改 schema，可以和 #580 一起发布。
-3. **转播**（§5.4、§5.5）：开关、observer、解除挂载边界、回放跳过集合、observer docstring 修改。前台和后台。文档：`docs/reference/host-api.md` 及中文版（一节讲子代理 session，写明 §5.8 和 §5.9 的限制）、开发者指南 part 4 / part 5（中英）、`CHANGELOG.md`。
+3. **转播**（§5.4、§5.5）：开关、observer、解除挂载边界、回放跳过集合、observer docstring 修改。前台和后台。文档：`docs/reference/host-api.md` 及中文版（一节讲子代理 session，写明 §5.8 和 §5.9 的限制）、开发者指南 part 4.7 和 part 2 构造器参考（中英；part 5 没有讲子代理事件的页面）、`CHANGELOG.md`。
 
 ## 9. 测试
 

@@ -137,7 +137,7 @@ A host joins the three levels by ids it already has: `tool_call_id` → `parent_
 The constraint on every path: **detach after the drive ends (`_drive_sub_agent` returns or raises), and before both the terminal `SubagentLifecycleEvent` and the child's close.** The order of the close and the terminal event is not part of the constraint. Each path keeps the order it has today.
 
 - Foreground: `_run_sync`'s `finally` closes the child, and `execute()` publishes the terminal event after `_run_sync` returns. So today's order is drive → close → terminal. The detach goes at the top of that `finally`, before `_close_sub_agent`: drive → detach → close → terminal.
-- Background: `_launch_background`'s worker publishes the terminal event inside its `try`, and closes in its `finally`. So today's order is drive → terminal → close. The detach goes right after the drive, before the terminal publish, on all three of its terminal paths (completed or incomplete, `AgentCancelledError`, `Exception`): drive → detach → terminal → close. Its `finally` keeps a second, idempotent detach for a `BaseException`.
+- Background: `_launch_background`'s worker publishes the terminal event inside its `try`, and closes in its `finally`. So today's order is drive → terminal → close. The detach goes right after the drive, before the terminal publish: one `try/finally` directly around `_drive_sub_agent` detaches whether the drive returns or raises (`BaseException` included), before any of the three terminal paths (completed or incomplete, `AgentCancelledError`, `Exception`) runs: drive → detach → terminal → close. (Rev 3 planned a detach on each of the three paths plus a second one in the outer `finally`; the single `try/finally` gives the same order with one detach.)
 - `remove_observer` does not wait for a publisher that already took the observer snapshot (§4.2). The boundary therefore rests on this fact: **when the drive has ended, no child thread can publish a host event.** Grounds:
   - a parallel batch leaves its `with ThreadPoolExecutor(...)` block only after every worker has finished (`tool_executor.py:300`);
   - a single tool runs inline on the drive's thread;
@@ -225,7 +225,7 @@ For transport hosts, nothing changes: #579 stays their tool. Replay sees no chan
 
 1. **#580** (`parent_tool_call_id`, `host.events.v3.json`, replay 1.6). Prerequisite for the first join in §5.1.
 2. **Child session id** (§5.2, §5.3): mint before `spawned`, the private adopter, populate `child_session_id`, pin the lifecycle `session_id` to the parent. No schema change. Can ship with #580.
-3. **Relay** (§5.4, §5.5): the switch, the observer, the detach boundary, the replay skip set, the observer docstring amendment. Foreground and background. Docs: `docs/reference/host-api.md` + zh (a section on child sessions, with the §5.8 and §5.9 limits), developer guide part 4 / part 5 (en + zh), `CHANGELOG.md`.
+3. **Relay** (§5.4, §5.5): the switch, the observer, the detach boundary, the replay skip set, the observer docstring amendment. Foreground and background. Docs: `docs/reference/host-api.md` + zh (a section on child sessions, with the §5.8 and §5.9 limits), developer guide part 4.7 and the part 2 constructor reference (en + zh; part 5 has no sub-agent events page), `CHANGELOG.md`.
 
 ## 9. Tests
 
