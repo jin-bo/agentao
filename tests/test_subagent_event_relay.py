@@ -534,5 +534,7 @@ def test_replay_records_the_same_rows_with_the_relay_on(tmp_path, bg):
     two cases whose relayed rows could not be put on the right turn."""
     off = _replay_rows(tmp_path, relay=False, bg=bg)
     on = _replay_rows(tmp_path, relay=True, bg=bg)
-    assert on == off
+    # Compared as multisets: the two reads of the child's batch run on pool
+    # workers, so their rows interleave in either order.
+    assert sorted(on, key=repr) == sorted(off, key=repr)
     assert ("subagent_lifecycle", "subagent_lifecycle", "spawned", None) in on
