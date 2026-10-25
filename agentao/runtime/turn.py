@@ -144,6 +144,9 @@ def _run_turn(
     # Public lifecycle events read this via ``agent._current_turn_id``;
     # cleared in ``finally`` so events between turns carry ``turn_id=None``.
     agent._current_turn_id = new_turn_id()
+    # Sticky, unlike the turn id: ``_adopt_session_id`` refuses once a turn
+    # has started, because its events already carry the old session id.
+    agent._turn_started = True
     # The exit paths below answer any call they leave open, so history this
     # runtime wrote is already whole. A host that wrote ``agent.messages``
     # itself (its own store, an older session file) may not have: one unanswered

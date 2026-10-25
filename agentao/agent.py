@@ -522,6 +522,27 @@ class Agentao:
         """
         self._built_memory_manager = manager
 
+    def _adopt_session_id(self, session_id: str) -> None:
+        """Take ``session_id`` as this agent's session, once.
+
+        For the sub-agent factory: the parent mints the child's id before it
+        publishes ``spawned``, which is before the child exists, so the
+        lifecycle event can point at the child's session. Call it after
+        construction and before the first ``chat()``. The emitters read
+        ``_session_id`` lazily, so every event the child publishes uses it.
+        A second call raises, and so does a call once a turn has started: a
+        session id that moves after events carry it would split the child's
+        events across two sessions.
+        """
+        if self._session_id_adopted:
+            raise RuntimeError("session id already adopted")
+        if self._turn_started:
+            raise RuntimeError("session id adopted after a turn started")
+        self._session_id = session_id
+        # The hook payloads' copy, set with it as every session rebind does.
+        self.tool_runner._session_id = session_id
+        self._session_id_adopted = True
+
     def _reinit_mcp(self) -> None:
         """Rebuild the MCP manager from the current server set (a plugin
         added servers), disconnecting the one this agent built.
@@ -777,6 +798,9 @@ class Agentao:
         # assigns a persisted id. Hosts overwrite this directly.
         from .runtime.identity import new_session_id as _new_sid
         self._session_id: str = _new_sid()
+        self._session_id_adopted = False
+        # Set by ``runtime/turn.py`` at the first turn (``_adopt_session_id``).
+        self._turn_started = False
         from .host.events import EventStream
         self._host_events: EventStream = EventStream()
         self._current_turn_id: Optional[str] = None

@@ -661,7 +661,7 @@ boundary.
 | `turn_id` | UUID4 minted at turn entry (`agentao/runtime/turn.py`). One user-submitted agentic loop. |
 | `tool_call_id` | LLM-provided tool call id when present, UUID4 fallback otherwise; normalized once at planning and reused. |
 | `decision_id` | UUID4 per permission decision. |
-| `child_task_id` / `child_session_id` | Captured at sub-agent spawn time, not inferred at completion. |
+| `child_task_id` / `child_session_id` | Captured at sub-agent spawn time, not inferred at completion. Every run has both (0.5.17+). A `SubagentLifecycleEvent`'s own `session_id` is the parent's. |
 | `parent_tool_call_id` | The `tool_call_id` of the parent's `agent_*` call that started the sub-agent run (#580). Set at spawn and kept on the terminal event. |
 
 Uniqueness scope for `tool_call_id` is `(session_id, turn_id, tool_call_id)`;
@@ -847,6 +847,17 @@ is `None` only for a run that was not started through the tool executor, for
 example a direct `AgentToolWrapper.execute()` call. The field is on a closed
 model, so it is in `host.events.v3.json` and replay 1.6. The transport
 `AGENT_START` / `AGENT_END` do not carry it.
+
+**`child_session_id` on every sub-agent run** (0.5.17+). Each run, foreground
+and background, has its own session id, minted before `spawned`. Both
+lifecycle events carry it as `child_session_id`, and the child's own host
+events use it as their `session_id`. Before, the field was always `None`.
+The lifecycle events themselves keep the parent's `session_id`, so
+`events(session_id=<parent>)` still sees every run start and end. The parent's
+`events()` stream does not carry the child's own events: the child publishes
+them on its own stream. A run that ended before its child was built (a
+background run cancelled before it started, or a failed build) still carries
+the id it reserved, on both events, and that session has no events.
 
 Every `AgentEvent` carries a `schema_version: int` field; bumps are
 the *only* signal that a payload's shape changed. It is a **single

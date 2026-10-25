@@ -535,7 +535,7 @@ CI 的 `Typing gate` Job 在每个 PR 上强制执行。下游项目对自己代
 | `turn_id` | 在 `agentao/runtime/turn.py` 入口生成 UUID4，对应一次用户提交的 Agent 循环。 |
 | `tool_call_id` | 优先使用 LLM 提供的 id；缺失时生成 UUID4，并在计划阶段一次性归一化复用。 |
 | `decision_id` | 每次权限决策生成一个 UUID4。 |
-| `child_task_id` / `child_session_id` | 在子 Agent 派生时捕获，不在结束时回溯推断。 |
+| `child_task_id` / `child_session_id` | 在子 Agent 派生时捕获，不在结束时回溯推断。每次运行两者都有（0.5.17 起）。`SubagentLifecycleEvent` 自身的 `session_id` 是父代理的。 |
 | `parent_tool_call_id` | 启动这次子 Agent 运行的父代理 `agent_*` 调用的 `tool_call_id`（#580）。派生时设置，终态事件沿用。 |
 
 `tool_call_id` 的唯一性范围是 `(session_id, turn_id, tool_call_id)`；
@@ -691,6 +691,15 @@ sub-agent 运行的每个 phase 都带父代理那次 `agent_*` 调用的 `ToolL
 `AgentToolWrapper.execute()`）才是 `None`。这个字段在封闭模型上，所以在
 `host.events.v3.json` 和 replay 1.6 里。transport 的 `AGENT_START` / `AGENT_END`
 不带它。
+
+**每次 sub-agent 运行都有 `child_session_id`**（0.5.17 起）。每次运行（前台和后台）
+都有自己的 session id，在 `spawned` 之前生成。两个生命周期事件都把它带在
+`child_session_id` 上，子代理自己的 host 事件也用它作 `session_id`。此前这个字段
+总是 `None`。生命周期事件本身保持父代理的 `session_id`，所以
+`events(session_id=<父代理>)` 仍能看到每次运行的开始和结束。父代理的 `events()`
+流不带子代理自己的事件：子代理把它们发布在自己的流上。子代理建成之前就结束的运行
+（启动前就被取消的后台运行，或构建失败）在两个事件上仍带它预留的 id，那个 session
+里没有任何事件。
 
 每个 `AgentEvent` 都带 `schema_version: int` 字段；这是载荷形状变化
 的**唯一**信号。它是**所有事件类型共用的单个值**，不是按载荷分版本的

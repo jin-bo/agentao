@@ -131,10 +131,12 @@ def test_child_session_id_forwarded_when_provided():
     ctx = em.spawned(task_summary="x", child_session_id="child-1")
     em.completed(ctx=ctx, task_summary="x done")
     spawn, terminal = stream.events
-    # Wire ``session_id`` is the child session when present so a host
-    # filtering by session sees both events together.
-    assert spawn.session_id == "child-1"
-    assert terminal.session_id == "child-1"
+    # Wire ``session_id`` stays the parent's, so a host subscribed to the
+    # parent's session sees the run start and end; ``child_session_id``
+    # points at the child's.
+    assert spawn.session_id == "parent"
+    assert terminal.session_id == "parent"
+    assert terminal.child_session_id == "child-1"
     assert spawn.parent_session_id == "parent"
     assert spawn.child_session_id == "child-1"
 

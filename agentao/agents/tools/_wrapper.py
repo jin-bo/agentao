@@ -310,8 +310,11 @@ class AgentToolWrapper(Tool):
         # emitter: ``AGENT_START`` goes out before ``spawned`` is published,
         # and a run without an emitter needs the id too. A local, never an
         # attribute, so two runs of this tool cannot read each other's.
-        from ...runtime.identity import new_child_task_id
+        from ...runtime.identity import new_child_task_id, new_session_id
         child_task_id = new_child_task_id()
+        # The child's session, minted before ``spawned`` so the event can
+        # point at it; the child adopts it once built.
+        child_session_id = new_session_id()
 
         # Signal sub-agent start to the CLI. Not guarded, unlike the end
         # event, and on purpose: a sink that raises here fails the tool call
@@ -336,6 +339,7 @@ class AgentToolWrapper(Tool):
         subagent_ctx = self._spawn_subagent_event(
             task_summary, child_task_id=child_task_id,
             parent_tool_call_id=parent_tool_call_id,
+            child_session_id=child_session_id,
         )
 
         # Filled by ``_run_sync``'s ``finally``, so it is there on the two
@@ -345,6 +349,7 @@ class AgentToolWrapper(Tool):
             result, stats = self._run_sync(
                 task, parent_context, cancellation_token=token, settled=settled,
                 skill_manager=skills, child_task_id=child_task_id,
+                child_session_id=child_session_id,
             )
         except AgentCancelledError:
             # Defensive only: ``runtime/turn.py`` maps this to
@@ -471,6 +476,7 @@ class AgentToolWrapper(Tool):
         parent_task_id: Optional[str] = None,
         child_task_id: Optional[str] = None,
         parent_tool_call_id: Optional[str] = None,
+        child_session_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         if self._subagent_emitter is None:
             return None
@@ -480,6 +486,7 @@ class AgentToolWrapper(Tool):
                 task_summary=task_summary, parent_task_id=parent_task_id,
                 child_task_id=child_task_id,
                 parent_tool_call_id=parent_tool_call_id,
+                child_session_id=child_session_id,
             )
         except Exception:
             return None
@@ -584,6 +591,7 @@ class AgentToolWrapper(Tool):
         settled: Optional[Dict[str, Any]] = None,
         skill_manager: Optional[Any] = None,
         child_task_id: Optional[str] = None,
+        child_session_id: Optional[str] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Create, run and close a sub-agent. Returns (result, stats).
 
@@ -603,6 +611,7 @@ class AgentToolWrapper(Tool):
         """
         sub_agent, setup = self._build_sub_agent(
             suppress_output, skill_manager, child_task_id=child_task_id,
+            child_session_id=child_session_id,
         )
         # Everything after construction runs under ``finally``: the sub-agent
         # holds resources of its own (its memory stores), and nothing else
@@ -633,6 +642,7 @@ class AgentToolWrapper(Tool):
     def _build_sub_agent(
         self, suppress_output: bool, skill_manager: Optional[Any] = None,
         *, child_task_id: Optional[str] = None,
+        child_session_id: Optional[str] = None,
     ) -> Tuple[Any, Dict[str, Any]]:
         """Construct a sub-agent. Returns it with the keyword arguments
         ``_drive_sub_agent`` needs from the same config read.
@@ -753,6 +763,16 @@ class AgentToolWrapper(Tool):
             raise
         # The sub-agent's own from here: its ``close()`` releases it.
         sub_agent._adopt_memory_manager(child_memory)
+        # The id ``spawned`` already points at, before the child publishes
+        # anything.
+        if child_session_id is not None:
+            # The caller's ``finally`` opens only once this returns, so a
+            # raise here would leak the child it never received.
+            try:
+                sub_agent._adopt_session_id(child_session_id)
+            except BaseException:
+                self._close_sub_agent(sub_agent)
+                raise
 
         return sub_agent, {
             "omit_temperature": omit_temperature,
@@ -1223,9 +1243,12 @@ class AgentToolWrapper(Tool):
         # for the redaction-boundary rationale. ``task`` is intentionally
         # NOT included on the public event.
         task_summary = f"sub-agent: {agent_name}"
+        from ...runtime.identity import new_session_id
+        child_session_id = new_session_id()
         subagent_ctx = self._spawn_subagent_event(
             task_summary, parent_task_id=agent_id,
             parent_tool_call_id=parent_tool_call_id,
+            child_session_id=child_session_id,
         )
 
         def _run():
@@ -1266,6 +1289,7 @@ class AgentToolWrapper(Tool):
             try:
                 sub_agent, setup = self._build_sub_agent(
                     suppress_output=True, skill_manager=skill_manager,
+                    child_session_id=child_session_id,
                 )
                 result, stats = self._drive_sub_agent(
                     sub_agent,

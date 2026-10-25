@@ -306,12 +306,12 @@ class HostSubagentEmitter:
         # ``parent_session_id`` than ``spawned``, breaking
         # session-filtered hosts and event correlation.
         parent_session_id = self._parent_session_id_provider()
-        # Wire ``session_id`` is the child's session when known so a
-        # host that filters by session sees the child's events
-        # together; otherwise it falls back to the parent.
-        session_id = child_session_id or parent_session_id
+        # Wire ``session_id`` is always the parent's: the event is the
+        # parent's fact about a run it started, so a host subscribed to the
+        # parent's session sees its runs start and end. ``child_session_id``
+        # points at the run's own session.
         _safe_publish(self._stream, SubagentLifecycleEvent(
-            session_id=session_id,
+            session_id=parent_session_id,
             parent_session_id=parent_session_id,
             parent_task_id=parent_task_id,
             parent_tool_call_id=parent_tool_call_id,
@@ -378,9 +378,8 @@ class HostSubagentEmitter:
             ctx.get("parent_session_id")
             or self._parent_session_id_provider()
         )
-        session_id = child_session_id or parent_session_id
         _safe_publish(self._stream, SubagentLifecycleEvent(
-            session_id=session_id,
+            session_id=parent_session_id,
             parent_session_id=parent_session_id,
             parent_task_id=ctx.get("parent_task_id"),
             parent_tool_call_id=ctx.get("parent_tool_call_id"),
