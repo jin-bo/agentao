@@ -1,6 +1,6 @@
 # Sub-agent event channels: a child's events on its own session
 
-**Status:** Draft, review complete (rev 3), not yet implemented.
+**Status:** Review complete (rev 3). §8 steps 1 (#580, #582) and 2 (child session id) implemented; step 3 (relay) not yet.
 **Anchors:** agentao `main@ed52674b` (2026-10-24, after #579). codex `816fa702ec6`. pi-mono `136b87e8a`. Line numbers are at those commits.
 **Related:** `subagent-event-bridge.md` (the transport forwarder this doc keeps); `embedded-host-contract.md` (the public host contract); #578 / #579 (`child_task_id` on transport events); #580 (`parent_tool_call_id` on `SubagentLifecycleEvent`).
 **Revision history:**
@@ -110,7 +110,7 @@ A host joins the three levels by ids it already has: `tool_call_id` → `parent_
 
 ### 5.3 Keep the pointer events in the parent's session
 
-`spawned()` today sets `session_id = child_session_id or parent_session_id`. With §5.2 that becomes the child's session for every run, and a host that subscribes with `events(session_id=P)` would stop seeing its runs start and end. So:
+`spawned()` set `session_id = child_session_id or parent_session_id` before step 2 (§8). With §5.2 that becomes the child's session for every run, and a host that subscribes with `events(session_id=P)` would stop seeing its runs start and end. So:
 
 - **Change the rule: the lifecycle event's `session_id` is always the parent's.** `child_session_id` carries the pointer.
 - This changes only a path no caller reaches today (§4.3), so no current event changes its `session_id`.

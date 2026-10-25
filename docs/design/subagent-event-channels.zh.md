@@ -1,6 +1,6 @@
 # 子代理事件通道：子代理的事件放在它自己的 session 上
 
-**状态：** 草案，评审完成（rev 3），尚未实现。
+**状态：** 评审完成（rev 3）。§8 第 1 步（#580、#582）和第 2 步（子代理 session id）已实现；第 3 步（转播）尚未实现。
 **锚点：** agentao `main@ed52674b`（2026-10-24，#579 之后）。codex `816fa702ec6`。pi-mono `136b87e8a`。行号以这些提交为准。
 **相关：** `subagent-event-bridge.md`（本文保留的 transport 转发器）；`embedded-host-contract.md`（公开的 host 契约）；#578 / #579（transport 事件上的 `child_task_id`）；#580（`SubagentLifecycleEvent` 上的 `parent_tool_call_id`）。
 **修订历史：**
@@ -110,7 +110,7 @@ transport        ── AGENT_START / 转发的子代理事件 / AGENT_END      
 
 ### 5.3 指针事件留在父代理的 session
 
-`spawned()` 现在把 `session_id` 设为 `child_session_id or parent_session_id`。有了 §5.2，每次运行都会变成子代理的 session，用 `events(session_id=P)` 订阅的宿主就再也看不到运行的开始和结束。所以：
+第 2 步（§8）之前，`spawned()` 把 `session_id` 设为 `child_session_id or parent_session_id`。有了 §5.2，每次运行都会变成子代理的 session，用 `events(session_id=P)` 订阅的宿主就再也看不到运行的开始和结束。所以：
 
 - **改规则：生命周期事件的 `session_id` 永远是父代理的。** 指针由 `child_session_id` 承载。
 - 这只改了一条目前没有调用方走到的路径（§4.3），所以现有事件的 `session_id` 都不变。
