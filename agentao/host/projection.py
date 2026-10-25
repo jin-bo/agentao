@@ -9,7 +9,8 @@ raw policy internals must never reach a host through these models.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, Literal, Optional
+import threading
+from typing import Any, Callable, Dict, Literal, Optional, Set
 
 from pydantic import BaseModel, ValidationError
 
@@ -394,9 +395,89 @@ class HostSubagentEmitter:
         ))
 
 
+class _RelayHandle:
+    """One run's relay: the child, the observer it registered, its session."""
+
+    __slots__ = ("child", "observer", "session_id", "detached")
+
+    def __init__(self, child: Any, observer: Callable[[Any], None], session_id: str) -> None:
+        self.child = child
+        self.observer = observer
+        self.session_id = session_id
+        self.detached = False
+
+
+class SubagentRelay:
+    """Republish a sub-agent's host events on the parent's stream.
+
+    Internal (``docs/design/subagent-event-channels.md`` §5.4–§5.5). Off
+    unless ``enabled()`` answers ``True`` at spawn. Each relayed event goes
+    out unchanged, in the child's session. While a run is attached its
+    ``child_session_id`` is in a set that :meth:`is_relayed` answers from,
+    so replay can skip what it cannot place on a turn.
+
+    Order: the session is registered before the observer is attached, and
+    the observer is removed before the session is unregistered. The
+    observer also drops anything it gets once its run is detached, since
+    ``EventStream.publish`` fires observers from a snapshot. The design's
+    guarantee still rests on no child thread publishing once the drive has
+    ended (§5.4.3).
+    """
+
+    def __init__(self, stream: EventStream, enabled: Callable[[], bool]) -> None:
+        self._stream = stream
+        self._enabled = enabled
+        # Each run's session id is fresh (``new_session_id``), so a set.
+        self._live: Set[str] = set()
+        self._lock = threading.Lock()
+
+    def is_relayed(self, session_id: Optional[str]) -> bool:
+        """Whether ``session_id`` belongs to a run being relayed now."""
+        with self._lock:
+            return session_id in self._live
+
+    def attach(self, child: Any, child_session_id: Optional[str]) -> Optional[_RelayHandle]:
+        """Start relaying ``child``'s host events. ``None`` when off."""
+        if child_session_id is None or self._enabled() is not True:
+            return None
+        stream = self._stream
+        handle: Optional[_RelayHandle] = None
+
+        def relay(event: Any) -> None:
+            # ``publish`` fires observers from a snapshot, so a publisher that
+            # took it before ``detach`` could still call this. Drop that event.
+            if handle is not None and not handle.detached:
+                stream.publish(event)
+
+        with self._lock:
+            self._live.add(child_session_id)
+        try:
+            child.add_host_event_observer(relay)
+        except BaseException:
+            self._unregister(child_session_id)
+            raise
+        handle = _RelayHandle(child, relay, child_session_id)
+        return handle
+
+    def detach(self, handle: Optional[_RelayHandle]) -> None:
+        """Stop relaying. Idempotent, and a no-op for ``None``."""
+        if handle is None or handle.detached:
+            return
+        handle.detached = True
+        try:
+            handle.child.remove_host_event_observer(handle.observer)
+        finally:
+            self._unregister(handle.session_id)
+
+    def _unregister(self, session_id: str) -> None:
+        with self._lock:
+            self._live.discard(session_id)
+
+
 __all__ = [
     "HostPermissionEmitter",
     "HostSubagentEmitter",
+    "SubagentRelay",
     "HostToolEmitter",
     "MAX_SUMMARY_CHARS",
     "project_matched_rule",

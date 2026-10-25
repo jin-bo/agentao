@@ -103,6 +103,28 @@ async for ev in agent.events():
 
 Full field list: [Appendix A.10](/en/appendix/a-api-reference#a-10-embedded-host-contract). The schemas live at [`docs/schema/host.events.v3.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v3.json).
 
+### Sub-agent events on the parent's stream (opt-in, 0.5.17+) {#subagent-event-relay}
+
+By default `agent.events()` carries a sub-agent run only as two `SubagentLifecycleEvent`s (`spawned`, then a terminal phase). Build the agent with `Agentao(..., relay_subagent_events=True)` and every host event the sub-agent publishes (its `ToolLifecycleEvent`s and `PermissionDecisionEvent`s) is republished on the parent's stream as well. These events are unchanged, and their `session_id` is the run's `child_session_id`, not the parent's:
+
+```python
+agent = Agentao(working_directory=wd, relay_subagent_events=True)
+
+async for ev in agent.events():          # session_id=None: every session
+    if isinstance(ev, SubagentLifecycleEvent):
+        runs[ev.child_session_id] = ev   # spawned / completed / failed / cancelled
+    elif ev.session_id in runs:
+        ...                              # a sub-agent's own tool call or decision
+    else:
+        ...                              # the parent's own
+```
+
+- **Subscribe once, with `session_id=None`, before the run starts.** That subscriber gets a run's `spawned`, then its child-session events, then its terminal event, in that order, when the agent runs off the event loop (`arun()`, or `chat()` on another thread). A subscriber filtered to the parent's session sees no relayed event, and one filtered to a child session never sees the lifecycle events, which are in the parent's session.
+- `events()` has no replay, so a subscription made after `spawned` can miss the child's first events.
+- Calling the synchronous `chat()` on the event loop thread that `events()` is bound to gives no ordering guarantee and can drop events past the queue limit. Use `arun()` there.
+- A slow consumer slows the sub-agent, as it slows the parent.
+- Replay does not record relayed events, and the run's counts and usage stay on its terminal `SubagentLifecycleEvent`.
+
 ## 4.7.4 `agent.events()` vs. `Transport(on_event=…)` — when to use which
 
 Both deliver events, but they're for different jobs. Don't pick one *instead of* the other — pick the right one for each consumer:

@@ -573,7 +573,7 @@ from agentao.host.replay_projection import (
 
 | Symbol | Purpose |
 |---|---|
-| `HostReplaySink(recorder, *, stream=None, turn_id_provider=None)` | Forward projection. `Agentao.start_replay()` wires this automatically, and is the route for hosts. `stream=` takes an `EventStream`, which `Agentao` keeps private; without it the sink is in pull mode, and `agent.add_host_event_observer(sink.record)` feeds it. Every published `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` is then written into `recorder` as a v1.2 replay event. Errors during write are logged at WARNING and swallowed — audit storage failure never breaks the runtime. |
+| `HostReplaySink(recorder, *, stream=None, turn_id_provider=None, skip_session=None)` | Forward projection. `Agentao.start_replay()` wires this automatically, and is the route for hosts. `stream=` takes an `EventStream`, which `Agentao` keeps private; without it the sink is in pull mode, and `agent.add_host_event_observer(sink.record)` feeds it. Every published `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` is then written into `recorder` as a v1.2 replay event. Errors during write are logged at WARNING and swallowed — audit storage failure never breaks the runtime. `skip_session(session_id) -> bool` drops an observed event it answers `True` for; `start_replay()` passes one that skips relayed sub-agent events (0.5.17). |
 | `replay_payload_to_host_event(kind, payload)` | Reverse projection. Rehydrates a `HostEvent` Pydantic model from a replay JSONL line. Strips the sanitizer's optional projection metadata (`redaction_hits`, `redacted`, `redacted_fields`) so a redacted line still validates against the public `extra="forbid"` models. |
 | `host_event_to_replay_kind(event)` / `host_event_to_replay_payload(event)` | Lower-level helpers used by sinks and tests. Return `None` / `model_dump(mode="json")` respectively. |
 
@@ -854,10 +854,34 @@ lifecycle events carry it as `child_session_id`, and the child's own host
 events use it as their `session_id`. Before, the field was always `None`.
 The lifecycle events themselves keep the parent's `session_id`, so
 `events(session_id=<parent>)` still sees every run start and end. The parent's
-`events()` stream does not carry the child's own events: the child publishes
-them on its own stream. A run that ended before its child was built (a
+`events()` stream does not carry the child's own events unless the agent was
+built with `relay_subagent_events=True` (below): the child publishes them on
+its own stream. A run that ended before its child was built (a
 background run cancelled before it started, or a failed build) still carries
 the id it reserved, on both events, and that session has no events.
+
+**Relaying sub-agent events** (0.5.17+, opt-in). With
+`Agentao(..., relay_subagent_events=True)`, every host event a sub-agent
+publishes (`ToolLifecycleEvent`, `PermissionDecisionEvent`) is republished,
+unchanged, on the parent's `events()` stream, with the run's
+`child_session_id` as its `session_id`. Foreground and background runs both
+relay. The switch is fixed at construction.
+- **Who sees them:** a `session_id=None` subscriber does. One filtered to the
+  parent's session does not. One filtered to a child session gets the child's
+  events but never the lifecycle events, which are in the parent's session.
+- **Ordering:** for a `session_id=None` subscription that exists before
+  `spawned` and stays open, a run's events arrive as `spawned`, then its
+  child-session events, then its terminal event. This holds when the agent
+  runs off the event loop (`arun()`, or `chat()` on another thread). Calling
+  `chat()` on the loop thread that `events()` is bound to gives no such
+  guarantee, and drops events past the queue limit: use `arun()`.
+- **Late subscribers:** `events()` has no replay, so subscribing on seeing
+  `spawned` can miss the child's first events. Subscribe once, up front.
+- **Backpressure:** the relay runs on the child's thread, so a slow consumer
+  slows the sub-agent, as it slows the parent.
+- **Replay** does not record relayed events, so a replay file has the same
+  rows with the switch on or off. Counts and usage stay on the terminal
+  `SubagentLifecycleEvent`.
 
 Every `AgentEvent` carries a `schema_version: int` field; bumps are
 the *only* signal that a payload's shape changed. It is a **single

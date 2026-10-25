@@ -2,7 +2,7 @@
 
 > **What you'll learn**
 > - The **smallest call that works**: four parameters, or two with a pre-built `llm_client=`
-> - **All 33 parameters on one map**, grouped by what they configure
+> - **All 34 parameters on one map**, grouped by what they configure
 > - The **ones you'll typically pass in production** (transport, permissions, MCP, …)
 > - The **advanced injection surface** for hosts that need full control
 > - The two factory paths (`Agentao(...)` direct vs. `build_from_environment(...)`) and when to pick each
@@ -26,9 +26,9 @@ Both produce an `Agentao` instance. They combine in one way: every `Agentao` key
 
 ---
 
-## All 33 parameters at a glance
+## All 34 parameters at a glance
 
-`Agentao.__init__` takes 33 parameters. Only `working_directory` has no default. The first five (`api_key`, `base_url`, `model`, `temperature`, `max_tokens`) may be passed by position; every other one is keyword-only. Below they are grouped by what they configure, so you can skip the groups you don't need.
+`Agentao.__init__` takes 34 parameters. Only `working_directory` has no default. The first five (`api_key`, `base_url`, `model`, `temperature`, `max_tokens`) may be passed by position; every other one is keyword-only. Below they are grouped by what they configure, so you can skip the groups you don't need.
 
 | Group | Parameters | Covered in |
 |-------|------------|------------|
@@ -41,7 +41,7 @@ Both produce an `Agentao` instance. They combine in one way: every `Agentao` key
 | **MCP** | `mcp_manager`, *or* `extra_mcp_servers` and `mcp_registry` (these two combine) | Tiers 2–3 |
 | **Prompt** | `project_instructions` | Tier 2 |
 | **Bring your own object** | `logger`, `memory_manager`, `skill_manager`, `filesystem`, `shell` | Tier 3 |
-| **Opt-in subsystems** (off by default) | `bg_store`, `sandbox_policy`, `replay_config`, `enable_builtin_agents` | Tier 3 |
+| **Opt-in subsystems** (off by default) | `bg_store`, `sandbox_policy`, `replay_config`, `enable_builtin_agents`, `relay_subagent_events` | Tier 3 |
 
 Parameters joined by *or*, and the two Model rows, are mutually exclusive: passing both sides raises `ValueError`; see [Mutual-exclusion rules](#mutual-exclusion-rules).
 
@@ -182,7 +182,7 @@ Inject pre-built managers when you don't want Agentao to construct them from def
 | `mcp_registry` | `load_mcp_config(...)` source. Use `InMemoryMCPRegistry` for programmatic registration. **Mutually exclusive with `mcp_manager=`** |
 :::
 
-::: details Opt-in subsystems — `bg_store`, `sandbox_policy`, `replay_config`, `enable_builtin_agents`
+::: details Opt-in subsystems — `bg_store`, `sandbox_policy`, `replay_config`, `enable_builtin_agents`, `relay_subagent_events`
 **Default is `None` (or `False`) = fully disabled.** Pay zero cost if you don't use them.
 
 | Param | When `None` |
@@ -190,6 +190,7 @@ Inject pre-built managers when you don't want Agentao to construct them from def
 | `bg_store` | Background-task tools (`check_background_agent`, `cancel_background_agent`) are not registered; sub-agent tool schemas drop the `run_in_background` field; `/agent bg\|dashboard\|cancel\|delete\|logs\|result` CLI subcommands no-op with a warning |
 | `sandbox_policy` | Shell runs without macOS `sandbox-exec` wrapper. The policy wraps only `run_shell_command`, only on macOS, and only when `~/.agentao/sandbox.json` sets `enabled: true` (a `<wd>/.agentao/sandbox.json` is ignored); it does not restrict the file tools ([`sandbox/policy.py`](https://github.com/jin-bo/agentao/blob/main/agentao/sandbox/policy.py)) |
 | `enable_builtin_agents` (`False`) | The built-in sub-agents (`codebase-investigator`, `generalist`) are not registered as delegation tools. The factory reads `agents.enable_builtin` from `settings.json` |
+| `relay_subagent_events` (`False`) | `agent.events()` carries a sub-agent run only as its two `SubagentLifecycleEvent`s. `True` also republishes the sub-agent's own host events there, in its session (0.5.17, [4.7](/en/part-4/7-host-contract#subagent-event-relay)) |
 | `replay_config` | The `replay` block of `<wd>/.agentao/settings.json` is not read at construction; no `ReplayManager` is attached until `start_replay()` / `reload_replay_config()` creates one. `start_replay()` alone creates it with replay off (it returns `None`); `reload_replay_config()` reads that block but starts nothing: a `start_replay()` after it records only if the block has `enabled` true |
 
 With a value set:
@@ -385,7 +386,7 @@ Upgrading from 0.2.15: [`docs/migration/0.2.15-to-0.3.3.md`](https://github.com/
 
 ## TL;DR
 
-- **33 parameters, one required**: `working_directory` (Path, frozen at construction). The [map above](#all-33-parameters-at-a-glance) groups the rest by purpose.
+- **34 parameters, one required**: `working_directory` (Path, frozen at construction). The [map above](#all-34-parameters-at-a-glance) groups the rest by purpose.
 - **Smallest working call**: `api_key` + `base_url` + `model` + `working_directory`, or `llm_client` + `working_directory`. A direct `Agentao(...)` reads no environment variables.
 - **Typical production additions**: `transport`, `permission_mode` (or `permission_engine`), `max_context_tokens`, `extra_mcp_servers`, `project_instructions`, `temperature`.
 - **Everything else is opt-in or advanced** — capability protocols, custom managers, prompt caching, compaction control, sandbox / replay / background / sub-agent subsystems.

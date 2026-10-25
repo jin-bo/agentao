@@ -1,6 +1,6 @@
 # Sub-agent event channels: a child's events on its own session
 
-**Status:** Review complete (rev 3). §8 steps 1 (#580, #582) and 2 (child session id) implemented; step 3 (relay) not yet.
+**Status:** Review complete (rev 3). §8 steps 1 (#580, #582), 2 (child session id, #583) and 3 (relay) implemented.
 **Anchors:** agentao `main@ed52674b` (2026-10-24, after #579). codex `816fa702ec6`. pi-mono `136b87e8a`. Line numbers are at those commits.
 **Related:** `subagent-event-bridge.md` (the transport forwarder this doc keeps); `embedded-host-contract.md` (the public host contract); #578 / #579 (`child_task_id` on transport events); #580 (`parent_tool_call_id` on `SubagentLifecycleEvent`).
 **Revision history:**

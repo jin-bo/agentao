@@ -100,6 +100,8 @@ def register_agent_tools(agent: "Agentao") -> None:
         usage_sink=lambda prompt, completion, **cache: _add_usage(agent, prompt, completion, **cache),
         sandbox_policy=getattr(agent, "sandbox_policy", None),
         subagent_emitter=getattr(agent, "_host_subagent_emitter", None),
+        # Off unless the agent was built with ``relay_subagent_events=True``.
+        subagent_relay=getattr(agent, "_subagent_relay", None),
         # The backends the parent's built-ins were bound to, so a sub-agent's
         # file and shell calls run where the parent's do.
         filesystem=getattr(agent, "filesystem", None),

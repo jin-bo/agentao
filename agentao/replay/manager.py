@@ -120,6 +120,11 @@ class ReplayManager:
                 recorder,
                 stream=agent._host_events,
                 turn_id_provider=adapter._current_turn_id,
+                # Relayed sub-agent events stay out of the file: their rows
+                # could not be put on the right turn.
+                skip_session=getattr(
+                    getattr(agent, "_subagent_relay", None), "is_relayed", None,
+                ),
             )
         except Exception as exc:
             agent.llm.logger.warning(

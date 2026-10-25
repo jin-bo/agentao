@@ -100,9 +100,15 @@ class HostReplaySink:
         *,
         stream: Optional["EventStream"] = None,
         turn_id_provider: Optional[Callable[[], Optional[str]]] = None,
+        skip_session: Optional[Callable[[Optional[str]], bool]] = None,
     ) -> None:
         self._recorder = recorder
         self._turn_id_provider = turn_id_provider
+        # Observed events whose ``session_id`` this answers ``True`` for are
+        # not recorded: ``ReplayManager`` passes the sub-agent relay's
+        # registry, because a relayed child event cannot be placed on the
+        # right replay turn (``docs/design/subagent-event-channels.md`` §5.5).
+        self._skip_session = skip_session
         self._stream: Optional["EventStream"] = None
         self._observer: Optional[Any] = None
         if stream is not None:
@@ -146,8 +152,18 @@ class HostReplaySink:
 
     def _on_event(self, event: Any) -> None:
         """Synchronous observer callback — drops anything that isn't a model."""
-        if isinstance(event, BaseModel):
-            self.record(event)
+        if not isinstance(event, BaseModel):
+            return
+        if self._skip_session is not None:
+            try:
+                skip = self._skip_session(getattr(event, "session_id", None)) is True
+            except Exception:
+                # Audit first: a broken check records the event.
+                _logger.warning("HostReplaySink: skip_session raised", exc_info=True)
+                skip = False
+            if skip:
+                return
+        self.record(event)
 
     def _envelope_turn_id(self, payload: Any) -> Optional[str]:
         """Pick the ``turn_id`` for the JSONL *envelope*.

@@ -464,7 +464,7 @@ from agentao.host.replay_projection import (
 
 | 符号 | 用途 |
 |---|---|
-| `HostReplaySink(recorder, *, stream=None, turn_id_provider=None)` | 正向投影。`Agentao.start_replay()` 会自动接线，宿主应走这条路。`stream=` 接受的是 `EventStream`，而 `Agentao` 把自己的那个设为私有；不传它时 sink 处于拉取模式，用 `agent.add_host_event_observer(sink.record)` 喂给它。之后每个发布的 `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` 会被写入 `recorder` 作为一条 v1.2 replay 事件。写入失败仅记 WARNING 后吞掉——审计存储坏了不能拖垮运行时。 |
+| `HostReplaySink(recorder, *, stream=None, turn_id_provider=None, skip_session=None)` | 正向投影。`Agentao.start_replay()` 会自动接线，宿主应走这条路。`stream=` 接受的是 `EventStream`，而 `Agentao` 把自己的那个设为私有；不传它时 sink 处于拉取模式，用 `agent.add_host_event_observer(sink.record)` 喂给它。之后每个发布的 `ToolLifecycleEvent` / `SubagentLifecycleEvent` / `PermissionDecisionEvent` 会被写入 `recorder` 作为一条 v1.2 replay 事件。写入失败仅记 WARNING 后吞掉——审计存储坏了不能拖垮运行时。`skip_session(session_id) -> bool` 对回答 `True` 的已观察事件不做记录；`start_replay()` 传入的那个会跳过转播的子代理事件（0.5.17）。 |
 | `replay_payload_to_host_event(kind, payload)` | 反向投影。把一行 replay JSONL 还原回 `HostEvent` Pydantic 模型。会先剥掉 sanitizer 注入的可选元字段（`redaction_hits`、`redacted`、`redacted_fields`），让被脱敏过的事件仍能通过公共模型的 `extra="forbid"` 校验。 |
 | `host_event_to_replay_kind(event)` / `host_event_to_replay_payload(event)` | 较底层的两个辅助函数，给 sink 与测试使用。分别返回 `None` / `model_dump(mode="json")`。 |
 
@@ -697,9 +697,25 @@ sub-agent 运行的每个 phase 都带父代理那次 `agent_*` 调用的 `ToolL
 `child_session_id` 上，子代理自己的 host 事件也用它作 `session_id`。此前这个字段
 总是 `None`。生命周期事件本身保持父代理的 `session_id`，所以
 `events(session_id=<父代理>)` 仍能看到每次运行的开始和结束。父代理的 `events()`
-流不带子代理自己的事件：子代理把它们发布在自己的流上。子代理建成之前就结束的运行
+流不带子代理自己的事件，除非 agent 用 `relay_subagent_events=True` 构建（见下）：子代理把它们发布在自己的流上。子代理建成之前就结束的运行
 （启动前就被取消的后台运行，或构建失败）在两个事件上仍带它预留的 id，那个 session
 里没有任何事件。
+
+**转播子代理事件**（0.5.17 起，可选开启）。用 `Agentao(..., relay_subagent_events=True)`
+构建后，子代理发布的每个 host 事件（`ToolLifecycleEvent`、`PermissionDecisionEvent`）
+都会原样转播到父代理的 `events()` 流上，`session_id` 是这次运行的 `child_session_id`。
+前台和后台运行都会转播。开关在构造时确定。
+- **谁能看到：** `session_id=None` 的订阅者能看到。只订阅父代理 session 的看不到。
+  只订阅某个子 session 的能收到子代理的事件，但永远收不到生命周期事件，因为它们在父代理的
+  session 里。
+- **顺序：** 对于在 `spawned` 之前就存在、并且一直开着的 `session_id=None` 订阅，
+  一次运行的事件按 `spawned`、它的子 session 事件、它的终态事件的顺序到达。agent 在事件循环之外运行时（`arun()`，或在另一个线程上调用 `chat()`）这一点成立。在 `events()`
+  绑定的循环线程上调用 `chat()` 没有这个保证，超过队列上限的事件还会被丢弃：请用 `arun()`。
+- **晚到的订阅者：** `events()` 不补发历史，所以看到 `spawned` 才订阅，可能漏掉子代理
+  最早的事件。请一开始就订阅一次。
+- **背压：** 转播在子代理的线程上运行，所以消费者慢会拖慢子代理，和拖慢父代理一样。
+- **Replay** 不记录转播事件，所以开关开或关，replay 文件里的行都一样。计数和用量仍在终态
+  `SubagentLifecycleEvent` 上。
 
 每个 `AgentEvent` 都带 `schema_version: int` 字段；这是载荷形状变化
 的**唯一**信号。它是**所有事件类型共用的单个值**，不是按载荷分版本的
