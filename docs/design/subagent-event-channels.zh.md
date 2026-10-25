@@ -1,6 +1,6 @@
 # 子代理事件通道：子代理的事件放在它自己的 session 上
 
-**状态：** 评审完成（rev 3）。§8 第 1 步（#580、#582）和第 2 步（子代理 session id）已实现；第 3 步（转播）尚未实现。
+**状态：** 评审完成（rev 3）。§8 第 1 步（#580、#582）、第 2 步（子代理 session id，#583）和第 3 步（转播）均已实现。
 **锚点：** agentao `main@ed52674b`（2026-10-24，#579 之后）。codex `816fa702ec6`。pi-mono `136b87e8a`。行号以这些提交为准。
 **相关：** `subagent-event-bridge.md`（本文保留的 transport 转发器）；`embedded-host-contract.md`（公开的 host 契约）；#578 / #579（transport 事件上的 `child_task_id`）；#580（`SubagentLifecycleEvent` 上的 `parent_tool_call_id`）。
 **修订历史：**

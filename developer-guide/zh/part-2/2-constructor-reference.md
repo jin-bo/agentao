@@ -2,7 +2,7 @@
 
 > **本节你会学到**
 > - **能跑起来的最小调用**：四个参数，或者传预构造的 `llm_client=` 时两个
-> - **一张图看全 33 个参数**，按配置对象分组
+> - **一张图看全 34 个参数**，按配置对象分组
 > - **生产环境通常会用到的参数**（transport / permissions / MCP …）
 > - 给需要完全控制的宿主用的**高级注入面**
 > - 两种工厂路径（直接 `Agentao(...)` vs `build_from_environment(...)`）以及如何选
@@ -26,9 +26,9 @@
 
 ---
 
-## 33 个参数一览
+## 34 个参数一览
 
-`Agentao.__init__` 共 33 个参数，只有 `working_directory` 没有默认值。前五个（`api_key`、`base_url`、`model`、`temperature`、`max_tokens`）可以按位置传，其余都只能按关键字传。下面按配置对象分组，用不到的组可以直接跳过。
+`Agentao.__init__` 共 34 个参数，只有 `working_directory` 没有默认值。前五个（`api_key`、`base_url`、`model`、`temperature`、`max_tokens`）可以按位置传，其余都只能按关键字传。下面按配置对象分组，用不到的组可以直接跳过。
 
 | 分组 | 参数 | 讲解位置 |
 |------|------|----------|
@@ -41,7 +41,7 @@
 | **MCP** | `mcp_manager`，*或* `extra_mcp_servers` 与 `mcp_registry`（这两个可以一起传） | 第 2–3 档 |
 | **提示词** | `project_instructions` | 第 2 档 |
 | **自带对象** | `logger`、`memory_manager`、`skill_manager`、`filesystem`、`shell` | 第 3 档 |
-| **可选子系统**（默认关闭） | `bg_store`、`sandbox_policy`、`replay_config`、`enable_builtin_agents` | 第 3 档 |
+| **可选子系统**（默认关闭） | `bg_store`、`sandbox_policy`、`replay_config`、`enable_builtin_agents`、`relay_subagent_events` | 第 3 档 |
 
 用*或*连接的参数、以及两行"模型"，彼此互斥：两边都传会抛 `ValueError`；见[互斥规则](#互斥规则)。
 
@@ -182,7 +182,7 @@ agent = Agentao(
 | `mcp_registry` | `load_mcp_config(...)` 配置源。要程序化注册就传 `InMemoryMCPRegistry`。**与 `mcp_manager=` 互斥** |
 :::
 
-::: details 可选启用的子系统 — `bg_store` / `sandbox_policy` / `replay_config` / `enable_builtin_agents`
+::: details 可选启用的子系统 — `bg_store` / `sandbox_policy` / `replay_config` / `enable_builtin_agents` / `relay_subagent_events`
 **默认 `None`（或 `False`）= 完全禁用**。不用就不付任何代价。
 
 | 参数 | `None` 时 |
@@ -190,6 +190,7 @@ agent = Agentao(
 | `bg_store` | 后台任务工具（`check_background_agent` / `cancel_background_agent`）不注册；子 agent 的工具 schema 抠掉 `run_in_background` 字段；`/agent bg\|dashboard\|cancel\|delete\|logs\|result` 等 CLI 子命令 no-op + 警告 |
 | `sandbox_policy` | Shell 不套 macOS `sandbox-exec`。这个策略只包 `run_shell_command`，只在 macOS 上生效，而且只有 `~/.agentao/sandbox.json` 设了 `enabled: true` 才启用（`<wd>/.agentao/sandbox.json` 会被忽略）；它不限制文件工具（[`sandbox/policy.py`](https://github.com/jin-bo/agentao/blob/main/agentao/sandbox/policy.py)） |
 | `enable_builtin_agents`（`False`） | 内置子代理（`codebase-investigator`、`generalist`）不注册为委派工具。工厂会读 `settings.json` 里的 `agents.enable_builtin` |
+| `relay_subagent_events`（`False`） | `agent.events()` 只用两个 `SubagentLifecycleEvent` 表示一次子代理运行。设为 `True` 时，子代理自己的 host 事件也会转播到这里，放在它的 session 里（0.5.17，[4.7](/zh/part-4/7-host-contract#subagent-event-relay)） |
 | `replay_config` | 构造时不读 `<wd>/.agentao/settings.json` 里的 `replay` 块；在 `start_replay()` / `reload_replay_config()` 创建 `ReplayManager` 之前不挂它。单独调 `start_replay()` 创建的是关闭 replay 的管理器（返回 `None`）；`reload_replay_config()` 才读这个块，但它本身不开始记录：之后再调 `start_replay()`，且只有其中 `enabled` 为真时才记录 |
 
 传了值时：
@@ -385,7 +386,7 @@ agent = build_from_environment(
 
 ## TL;DR
 
-- **33 个参数，只有一个必填**：`working_directory`（`Path`，构造时冻结）。[上面的一览表](#_33-个参数一览)按用途给其余参数分了组。
+- **34 个参数，只有一个必填**：`working_directory`（`Path`，构造时冻结）。[上面的一览表](#_34-个参数一览)按用途给其余参数分了组。
 - **能跑起来的最小调用**：`api_key` + `base_url` + `model` + `working_directory`，或 `llm_client` + `working_directory`。直接调用 `Agentao(...)` 不读环境变量。
 - **生产环境常加的**：`transport`、`permission_mode`（或 `permission_engine`）、`max_context_tokens`、`extra_mcp_servers`、`project_instructions`、`temperature`。
 - **其他全部是可选 / 高级** —— 能力协议、自定义管理器、提示缓存、压缩控制、沙箱 / replay / 后台 / 子代理子系统。

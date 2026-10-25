@@ -155,8 +155,11 @@ class EventStream:
         The callback runs on the producer thread, before async
         subscribers are notified. It must be cheap and non-blocking; a
         raised exception is logged and discarded so a broken sink can't
-        take down the runtime. Returns the same callback so callers can
-        keep a stable handle for :meth:`remove_observer`.
+        take down the runtime. One internal exception: the sub-agent relay
+        republishes into the parent's stream, and may block under that
+        stream's backpressure, as the parent's own emit sites do. Returns
+        the same callback so callers can keep a stable handle for
+        :meth:`remove_observer`.
         """
         with self._lock:
             self._observers.append(callback)

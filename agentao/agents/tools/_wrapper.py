@@ -134,6 +134,7 @@ class AgentToolWrapper(Tool):
         readonly_mode_getter: Callable[[], bool] = lambda: False,
         sandbox_policy: Optional[Any] = None,
         subagent_emitter: Optional[Any] = None,
+        subagent_relay: Optional[Any] = None,
         filesystem: Optional[Any] = None,
         shell: Optional[Any] = None,
         permission_engine_getter: Optional[Callable] = None,
@@ -193,6 +194,9 @@ class AgentToolWrapper(Tool):
         # for hosts that haven't wired the emitter; the call sites
         # short-circuit when the emitter is missing.
         self._subagent_emitter = subagent_emitter
+        # Republishes a run's host events on the parent's stream when the
+        # parent turned it on (``SubagentRelay``); ``None`` relays nothing.
+        self._subagent_relay = subagent_relay
         # Set by ToolRunner just before execute() to propagate the per-turn token
         self._cancellation_token: Optional[Any] = None
         # Set by the executor under this tool's lock, just before execute():
@@ -469,6 +473,16 @@ class AgentToolWrapper(Tool):
                 self._definition["name"], exc_info=True,
             )
 
+    def _attach_relay(self, sub_agent: Any, child_session_id: Optional[str]) -> Any:
+        """Start relaying the run's host events, when the parent asked for it."""
+        if self._subagent_relay is None:
+            return None
+        return self._subagent_relay.attach(sub_agent, child_session_id)
+
+    def _detach_relay(self, handle: Any) -> None:
+        if self._subagent_relay is not None:
+            self._subagent_relay.detach(handle)
+
     def _spawn_subagent_event(
         self,
         task_summary: str,
@@ -618,7 +632,9 @@ class AgentToolWrapper(Tool):
         # releases them, since it is a local the parent's ``close()`` does not
         # reach. The ``try`` opens here rather than around ``chat()`` because
         # the setup in ``_drive_sub_agent`` can raise too.
+        relay = None
         try:
+            relay = self._attach_relay(sub_agent, child_session_id)
             return self._drive_sub_agent(
                 sub_agent,
                 task=task,
@@ -634,6 +650,10 @@ class AgentToolWrapper(Tool):
                 )
             raise
         finally:
+            # First: once the drive has ended no child thread publishes, and
+            # nothing may be relayed after the terminal event ``execute()``
+            # publishes (design §5.4.3).
+            self._detach_relay(relay)
             usage = self._roll_up_usage(sub_agent)
             if settled is not None:
                 settled["usage"] = usage
@@ -1291,13 +1311,19 @@ class AgentToolWrapper(Tool):
                     suppress_output=True, skill_manager=skill_manager,
                     child_session_id=child_session_id,
                 )
-                result, stats = self._drive_sub_agent(
-                    sub_agent,
-                    task=task,
-                    parent_context=parent_context,
-                    cancellation_token=token,
-                    **setup,
-                )
+                relay = self._attach_relay(sub_agent, child_session_id)
+                # Detached as the drive ends, before any terminal event below
+                # is published (design §5.4.3).
+                try:
+                    result, stats = self._drive_sub_agent(
+                        sub_agent,
+                        task=task,
+                        parent_context=parent_context,
+                        cancellation_token=token,
+                        **setup,
+                    )
+                finally:
+                    self._detach_relay(relay)
                 formatted = self._format_result(result, stats)
                 # Not raising is not the same as finishing. The result text
                 # is still stored either way — a partial answer is useful —

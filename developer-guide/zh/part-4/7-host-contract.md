@@ -103,6 +103,28 @@ async for ev in agent.events():
 
 完整字段表：[附录 A.10](/zh/appendix/a-api-reference#a-10-嵌入-host-合约)。schema 文件：[`docs/schema/host.events.v3.json`](https://github.com/jin-bo/agentao/blob/main/docs/schema/host.events.v3.json)。
 
+### 父代理流上的子代理事件（可选开启，0.5.17 起）{#subagent-event-relay}
+
+默认情况下，`agent.events()` 只用两个 `SubagentLifecycleEvent`（`spawned`，然后是终态 phase）表示一次子代理运行。用 `Agentao(..., relay_subagent_events=True)` 构建 agent 后，子代理发布的每个 host 事件（它的 `ToolLifecycleEvent` 和 `PermissionDecisionEvent`）也会转播到父代理的流上。这些事件原样不变，`session_id` 是这次运行的 `child_session_id`，不是父代理的：
+
+```python
+agent = Agentao(working_directory=wd, relay_subagent_events=True)
+
+async for ev in agent.events():          # session_id=None：所有 session
+    if isinstance(ev, SubagentLifecycleEvent):
+        runs[ev.child_session_id] = ev   # spawned / completed / failed / cancelled
+    elif ev.session_id in runs:
+        ...                              # 子代理自己的工具调用或权限决定
+    else:
+        ...                              # 父代理自己的
+```
+
+- **在运行开始前，用 `session_id=None` 订阅一次。** agent 在事件循环之外运行时（`arun()`，或在另一个线程上调用 `chat()`），这个订阅者按顺序收到一次运行的 `spawned`、它的子 session 事件、它的终态事件。只订阅父代理 session 的订阅者看不到转播事件；只订阅某个子 session 的订阅者永远看不到生命周期事件，因为它们在父代理的 session 里。
+- `events()` 不补发历史，所以在 `spawned` 之后才订阅，可能漏掉子代理最早的事件。
+- 在 `events()` 绑定的事件循环线程上调用同步的 `chat()`，没有顺序保证，超过队列上限的事件还会被丢弃。那种情况请用 `arun()`。
+- 消费者慢会拖慢子代理，和拖慢父代理一样。
+- Replay 不记录转播事件，运行的计数和用量仍在它的终态 `SubagentLifecycleEvent` 上。
+
 ## 4.7.4 `agent.events()` vs `Transport(on_event=…)` —— 怎么选
 
 两者都送事件，但服务的目的不一样。**别把它们当对立选项**——给每个消费者挑对的那个：

@@ -234,6 +234,9 @@ class Agentao:
         sandbox_policy: Optional[SandboxPolicy] = None,
         replay_config: Optional["ReplayConfig"] = None,
         enable_builtin_agents: bool = False,
+        # Republish each sub-agent's host events on this agent's ``events()``
+        # stream, in the sub-agent's own session. Off by default.
+        relay_subagent_events: bool = False,
     ) -> None:
         """Initialize Agentao agent.
 
@@ -325,6 +328,15 @@ class Agentao:
                 Reserved names (``mcp_`` prefix, plan-only) raise at
                 construction; unknown names raise after registration (typo
                 guard). See ``docs/design/host-tool-allowlist.md``.
+            relay_subagent_events: When ``True``, every host event a
+                sub-agent publishes (its ``ToolLifecycleEvent`` and
+                ``PermissionDecisionEvent``) is republished unchanged on
+                this agent's ``events()`` stream, with the sub-agent's
+                ``session_id`` (the run's ``child_session_id``). A
+                ``session_id=None`` subscriber then sees them; one filtered
+                to this agent's session does not. Replay does not record
+                them. Fixed at construction. See
+                ``docs/design/subagent-event-channels.md``.
 
         The eight legacy callback kwargs (``confirmation_callback``,
         ``step_callback``, ``thinking_callback``, ``ask_user_callback``,
@@ -458,6 +470,9 @@ class Agentao:
             # history, plan session, project instructions) must land before
             # ``_wire_tooling`` — the host emitters built there capture
             # ``self._host_events`` / ``self._session_id``.
+            if not isinstance(relay_subagent_events, bool):
+                raise TypeError("relay_subagent_events must be a bool")
+            self._relay_subagent_events = relay_subagent_events
             self._init_session_state(plan_session, project_instructions)
             self._init_replay(replay_config)
             self._wire_tooling(
@@ -1048,6 +1063,7 @@ class Agentao:
             HostPermissionEmitter,
             HostSubagentEmitter,
             HostToolEmitter,
+            SubagentRelay,
         )
         self._host_tool_emitter = HostToolEmitter(
             self._host_events,
@@ -1063,6 +1079,10 @@ class Agentao:
         self._host_subagent_emitter = HostSubagentEmitter(
             self._host_events,
             parent_session_id_provider=lambda: self._session_id,
+        )
+        self._subagent_relay = SubagentRelay(
+            self._host_events,
+            enabled=lambda: self._relay_subagent_events,
         )
 
     def _init_skill_and_memory(
@@ -1208,6 +1228,8 @@ class Agentao:
         The callback fires inline on the producer thread; it must be
         cheap and non-blocking. Raised exceptions are logged and
         discarded by :class:`EventStream`. Returns ``callback`` itself.
+        (The runtime's own sub-agent relay is the one exception to
+        "non-blocking": see :meth:`EventStream.add_observer`.)
         """
         self._host_events.add_observer(callback)
         return callback
