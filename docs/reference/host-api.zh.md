@@ -240,7 +240,7 @@ async with aclosing(agent.astream(prompt)) as stream:
 - 不包含：reasoning 文本、工具和权限事件（仍在 `events()` 上），以及子
   agent 的文本——子 agent 运行在自己的 transport 上。
 - `TextDelta` 和 `TurnOutcome` 不是 `HostEvent` 成员，不投影进 replay，也不
-  在 `docs/schema/host.events.v2.json` 里；文本已经通过内部流进入 replay。
+  在 `docs/schema/host.events.v3.json` 里；文本已经通过内部流进入 replay。
 
 ## 压缩（`Agentao.compact`）
 
@@ -504,7 +504,7 @@ CI 的 `Typing gate` Job 在每个 PR 上强制执行。下游项目对自己代
 
 每个发布版都附带一份签入仓库的 JSON schema 快照：
 
-- `docs/schema/host.events.v2.json` —— 事件 + 权限
+- `docs/schema/host.events.v3.json` —— 事件 + 权限
 - `docs/schema/host.acp.v1.json` —— ACP 负载
 
 `tests/test_host_schema.py` 会从 Pydantic 模型重新生成 schema，
@@ -536,6 +536,7 @@ CI 的 `Typing gate` Job 在每个 PR 上强制执行。下游项目对自己代
 | `tool_call_id` | 优先使用 LLM 提供的 id；缺失时生成 UUID4，并在计划阶段一次性归一化复用。 |
 | `decision_id` | 每次权限决策生成一个 UUID4。 |
 | `child_task_id` / `child_session_id` | 在子 Agent 派生时捕获，不在结束时回溯推断。 |
+| `parent_tool_call_id` | 启动这次子 Agent 运行的父代理 `agent_*` 调用的 `tool_call_id`（#580）。派生时设置，终态事件沿用。 |
 
 `tool_call_id` 的唯一性范围是 `(session_id, turn_id, tool_call_id)`；
 不假设提供方生成的 id 全局唯一。
@@ -680,8 +681,16 @@ for ev in events:
 `subagent_completed` 行不记录它，但 `start_replay()` 经 `HostReplaySink` 写入的
 `subagent_lifecycle` 行带同一个 `child_task_id`。ACP 客户端收不到它，后台
 sub-agent 也不发这些事件。
-`build_compat_transport` 的旧式回调也收不到它，只有 `confirmation_event_callback` 拿到的事件带着它。它不能把这次运行关联到父代理自己的 `agent_*` 工具调用：
-那一对只能按顺序配对。
+`build_compat_transport` 的旧式回调也收不到它，只有 `confirmation_event_callback` 拿到的事件带着它。transport 事件不能把这次运行关联到父代理自己的 `agent_*` 工具调用。公开的
+`SubagentLifecycleEvent` 可以：见下面的 `parent_tool_call_id`。
+
+**`SubagentLifecycleEvent` 上的 `parent_tool_call_id`**（0.5.17 起，#580）。
+sub-agent 运行的每个 phase 都带父代理那次 `agent_*` 调用的 `ToolLifecycleEvent`
+的 `tool_call_id`，所以 host 按它关联调用和运行，不再按顺序配对。后台运行带启动它的
+那次调用的 id，尽管那次调用在启动时就已结束。只有不经工具执行器启动的运行（例如直接调用
+`AgentToolWrapper.execute()`）才是 `None`。这个字段在封闭模型上，所以在
+`host.events.v3.json` 和 replay 1.6 里。transport 的 `AGENT_START` / `AGENT_END`
+不带它。
 
 每个 `AgentEvent` 都带 `schema_version: int` 字段；这是载荷形状变化
 的**唯一**信号。它是**所有事件类型共用的单个值**，不是按载荷分版本的
@@ -694,7 +703,7 @@ sub-agent 也不发这些事件。
 
 |  | `HostEvent`（本合约） | `AgentEvent`（`Transport`） |
 |---|---|---|
-| `docs/schema/` 下有 schema 快照？ | ✅ `host.events.v2.json` | ❌ |
+| `docs/schema/` 下有 schema 快照？ | ✅ `host.events.v3.json` | ❌ |
 | 字段重命名/删除会触发版本 bump？ | ✅ 由 `tests/test_host_schema.py` 强制 | ⚠️ best-effort `schema_version` bump —— 全局的，一动就动所有事件类型 |
 | 有脱敏/投影层？ | ✅ `agentao/host/projection.py` 剥掉原始 input/output | ❌ 原始载荷（LLM_CALL_IO 可含完整 prompt 与工具 I/O） |
 | 发布前跨版本兼容性审计？ | ✅ 是发布检查表项 | ❌ |

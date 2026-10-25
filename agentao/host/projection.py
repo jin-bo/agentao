@@ -289,6 +289,7 @@ class HostSubagentEmitter:
         parent_task_id: Optional[str] = None,
         child_session_id: Optional[str] = None,
         child_task_id: Optional[str] = None,
+        parent_tool_call_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         # A foreground run passes the id its transport events already carry
         # (#578), so a host can join the two channels on it. ``None`` mints
@@ -313,6 +314,7 @@ class HostSubagentEmitter:
             session_id=session_id,
             parent_session_id=parent_session_id,
             parent_task_id=parent_task_id,
+            parent_tool_call_id=parent_tool_call_id,
             child_session_id=child_session_id,
             child_task_id=child_task_id,
             phase="spawned",
@@ -324,6 +326,7 @@ class HostSubagentEmitter:
             "started_at": started_at,
             "child_session_id": child_session_id,
             "parent_task_id": parent_task_id,
+            "parent_tool_call_id": parent_tool_call_id,
             "parent_session_id": parent_session_id,
         }
 
@@ -380,6 +383,7 @@ class HostSubagentEmitter:
             session_id=session_id,
             parent_session_id=parent_session_id,
             parent_task_id=ctx.get("parent_task_id"),
+            parent_tool_call_id=ctx.get("parent_tool_call_id"),
             child_session_id=child_session_id,
             child_task_id=ctx["child_task_id"],
             phase=phase,

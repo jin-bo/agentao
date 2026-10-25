@@ -321,7 +321,7 @@ Replay 文件和保存的 session 是两套东西：`save_session` / `load_sessi
 
 - **路径：** `.agentao/replays/<session_id>.<instance_id>.jsonl`。session id 里字母、数字、`_`、`-` 以外的字符会换成 `_`。
 - **一行一个事件。** 每个事件都有 `event_id`、`session_id`、`instance_id`、`seq`、`ts`、`kind`、`turn_id`、`parent_turn_id` 和 `payload`。
-- **第一行**是 `replay_header`：`schema_version`（当前为 `1.5`）、`session_id`、`instance_id`、`created_at`，设置了 capture flag 时还有 `capture_flags`。
+- **第一行**是 `replay_header`：`schema_version`（当前为 `1.6`）、`session_id`、`instance_id`、`created_at`，设置了 capture flag 时还有 `capture_flags`。
 - **最后一行**是正常关闭时写的 `replay_footer`：`event_count`，以及按类别累计的 `redaction_hits`、`dropped_field_hits`、`truncated_field_hits`。
 - **每次 session 诞生都开新 instance。** `/clear`、`/new`、`/sessions resume`、ACP `session/new` 和 ACP `session/load` 都会新开一个文件，一个文件不会跨越这些边界。
 

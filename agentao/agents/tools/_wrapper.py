@@ -108,6 +108,10 @@ class AgentToolWrapper(Tool):
     # How many recent parent messages to inject as context for sub-agents
     PARENT_CONTEXT_MESSAGES = 10
 
+    # Read by the executor on the class, and only ``True`` counts: it then
+    # sets ``_parent_tool_call_id`` before each call (#580).
+    _takes_parent_tool_call_id = True
+
     @property
     def is_read_only(self) -> bool:
         # The wrapper itself is always allowed; readonly enforcement is propagated
@@ -191,6 +195,9 @@ class AgentToolWrapper(Tool):
         self._subagent_emitter = subagent_emitter
         # Set by ToolRunner just before execute() to propagate the per-turn token
         self._cancellation_token: Optional[Any] = None
+        # Set by the executor under this tool's lock, just before execute():
+        # the id of the ``agent_*`` call being run (#580).
+        self._parent_tool_call_id: Optional[str] = None
 
     @property
     def name(self) -> str:
@@ -274,6 +281,10 @@ class AgentToolWrapper(Tool):
         )
         # Reset per-call injected token so it doesn't linger across calls.
         self._cancellation_token = None
+        # The same for the call id: read once, so a later call made without
+        # the executor never reports this one's id.
+        parent_tool_call_id = self._parent_tool_call_id
+        self._parent_tool_call_id = None
 
         if run_in_background:
             if self._bg_store is None:
@@ -286,7 +297,10 @@ class AgentToolWrapper(Tool):
                     "run_in_background=True but background-agent store "
                     "is disabled (bg_store=None) on this runtime."
                 )
-            return self._launch_background(task, parent_context, skill_manager=skills)
+            return self._launch_background(
+                task, parent_context, skill_manager=skills,
+                parent_tool_call_id=parent_tool_call_id,
+            )
 
         agent_name = self._definition["name"]
         max_turns  = self._definition.get("max_turns", 15)
@@ -321,6 +335,7 @@ class AgentToolWrapper(Tool):
         task_summary = f"sub-agent: {agent_name}"
         subagent_ctx = self._spawn_subagent_event(
             task_summary, child_task_id=child_task_id,
+            parent_tool_call_id=parent_tool_call_id,
         )
 
         # Filled by ``_run_sync``'s ``finally``, so it is there on the two
@@ -455,6 +470,7 @@ class AgentToolWrapper(Tool):
         *,
         parent_task_id: Optional[str] = None,
         child_task_id: Optional[str] = None,
+        parent_tool_call_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         if self._subagent_emitter is None:
             return None
@@ -463,6 +479,7 @@ class AgentToolWrapper(Tool):
             return self._subagent_emitter.spawned(
                 task_summary=task_summary, parent_task_id=parent_task_id,
                 child_task_id=child_task_id,
+                parent_tool_call_id=parent_tool_call_id,
             )
         except Exception:
             return None
@@ -1189,6 +1206,7 @@ class AgentToolWrapper(Tool):
 
     def _launch_background(
         self, task: str, parent_context: str, skill_manager: Optional[Any] = None,
+        *, parent_tool_call_id: Optional[str] = None,
     ) -> str:
         agent_id = uuid.uuid4().hex[:8]
         agent_name = self._definition["name"]
@@ -1205,7 +1223,10 @@ class AgentToolWrapper(Tool):
         # for the redaction-boundary rationale. ``task`` is intentionally
         # NOT included on the public event.
         task_summary = f"sub-agent: {agent_name}"
-        subagent_ctx = self._spawn_subagent_event(task_summary, parent_task_id=agent_id)
+        subagent_ctx = self._spawn_subagent_event(
+            task_summary, parent_task_id=agent_id,
+            parent_tool_call_id=parent_tool_call_id,
+        )
 
         def _run():
             if not self._bg_store.mark_running(agent_id):

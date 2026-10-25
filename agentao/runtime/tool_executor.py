@@ -487,6 +487,13 @@ class ToolExecutor:
         cancelled_output = ""
         error_type_name: Optional[str] = None
         with tool_locks[id(tool)]:
+            # Under the lock, unlike the token above: two calls of one agent
+            # tool in a batch carry different ids, and the wrapper reads its
+            # id at the top of ``execute()``. Read on the class and compared
+            # with ``True``, so a mock or a stray attribute does not count.
+            takes_call_id = getattr(type(tool), "_takes_parent_tool_call_id", False) is True
+            if takes_call_id:
+                tool._parent_tool_call_id = call_id
             if hasattr(tool, "output_callback"):
                 tool.output_callback = (
                     lambda chunk, _name=fn, _cid=call_id: self._transport.emit(
@@ -562,6 +569,11 @@ class ToolExecutor:
             finally:
                 if hasattr(tool, "output_callback"):
                     tool.output_callback = None
+                # ``execute()`` clears it once it reads it; this covers a call
+                # that never got that far (arguments its signature refuses),
+                # so a later call made without the executor reports no id.
+                if takes_call_id:
+                    tool._parent_tool_call_id = None
 
         # A sync tool the turn's cancel reached mid-call: reported like the
         # pre-execution cancel, no post-tool hook.

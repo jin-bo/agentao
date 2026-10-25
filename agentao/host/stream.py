@@ -4,7 +4,7 @@
 turn's :class:`~agentao.outcome.TurnOutcome` as the last item. Neither type is
 a :data:`~agentao.host.models.HostEvent`: they are a delivery API, not an audit
 record, so they are not projected into replay and are not in
-``docs/schema/host.events.v2.json``.
+``docs/schema/host.events.v3.json``.
 
 Standard library only, like the rest of what ``import agentao.host`` loads.
 """

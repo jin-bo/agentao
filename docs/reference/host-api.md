@@ -304,7 +304,7 @@ starts, and `agent.last_turn` is not set for it.
 - Not included: reasoning text, tool and permission events (they stay on
   `events()`), and a sub-agent's text, which runs on its own transport.
 - `TextDelta` and `TurnOutcome` are not `HostEvent` members. They are not
-  projected into replay and are not in `docs/schema/host.events.v2.json`;
+  projected into replay and are not in `docs/schema/host.events.v3.json`;
   the text already reaches replay through the internal stream.
 
 ## Compaction (`Agentao.compact`)
@@ -624,7 +624,7 @@ held to `--strict`.
 
 Each release ships a checked-in JSON schema snapshot:
 
-- `docs/schema/host.events.v2.json` — events + permissions
+- `docs/schema/host.events.v3.json` — events + permissions
 - `docs/schema/host.acp.v1.json` — ACP payloads
 
 `tests/test_host_schema.py` regenerates the schema from the Pydantic
@@ -662,6 +662,7 @@ boundary.
 | `tool_call_id` | LLM-provided tool call id when present, UUID4 fallback otherwise; normalized once at planning and reused. |
 | `decision_id` | UUID4 per permission decision. |
 | `child_task_id` / `child_session_id` | Captured at sub-agent spawn time, not inferred at completion. |
+| `parent_tool_call_id` | The `tool_call_id` of the parent's `agent_*` call that started the sub-agent run (#580). Set at spawn and kept on the terminal event. |
 
 Uniqueness scope for `tool_call_id` is `(session_id, turn_id, tool_call_id)`;
 provider-generated ids are not assumed globally unique.
@@ -833,8 +834,19 @@ rows that `start_replay()` writes through `HostReplaySink` carry the same
 sends no such events.
 The legacy callbacks of `build_compat_transport` do not receive it either,
 except through the event that `confirmation_event_callback` gets.
-Nothing on it links the run to the parent's own `agent_*` tool call: pair
-those by order.
+Nothing on the transport events links the run to the parent's own
+`agent_*` tool call. The public `SubagentLifecycleEvent` does: see
+`parent_tool_call_id` below.
+
+**`parent_tool_call_id` on `SubagentLifecycleEvent`** (0.5.17+, #580). Every
+phase of a sub-agent run carries the `tool_call_id` of the parent's
+`ToolLifecycleEvent` for the `agent_*` call that started it, so a host joins
+the call and the run on it instead of by order. A background run carries the
+id of the call that launched it, although that call completed at launch. It
+is `None` only for a run that was not started through the tool executor, for
+example a direct `AgentToolWrapper.execute()` call. The field is on a closed
+model, so it is in `host.events.v3.json` and replay 1.6. The transport
+`AGENT_START` / `AGENT_END` do not carry it.
 
 Every `AgentEvent` carries a `schema_version: int` field; bumps are
 the *only* signal that a payload's shape changed. It is a **single
@@ -849,7 +861,7 @@ meaning changed under a name consumers already read.
 
 |  | `HostEvent` (this contract) | `AgentEvent` (`Transport`) |
 |---|---|---|
-| Schema snapshot in `docs/schema/`? | ✅ `host.events.v2.json` | ❌ |
+| Schema snapshot in `docs/schema/`? | ✅ `host.events.v3.json` | ❌ |
 | Field rename / removal triggers version bump? | ✅ enforced by `tests/test_host_schema.py` | ⚠️ best-effort `schema_version` bump — global, so it moves every event type |
 | Redaction / projection layer? | ✅ `agentao/host/projection.py` strips raw input/output | ❌ raw payloads (LLM_CALL_IO can contain full prompts and tool I/O) |
 | Cross-version compatibility audit before release? | ✅ part of the release checklist | ❌ |
