@@ -466,6 +466,58 @@ def test_a_wake_turn_that_raises_still_counts(monkeypatch):
     assert seen == [0, 1, 2]
 
 
+def test_an_interrupted_wake_turn_pauses_further_wakes(monkeypatch):
+    # codex #56330: a Ctrl+C on a wake turn means "stop acting on your own".
+    # ``chat()`` returns the interrupt as text, so the loop must read it.
+    monkeypatch.setattr(
+        input_loop, "_run_agent_turn",
+        lambda cli, msg, images=None: input_loop._INTERRUPT_SENTINEL,
+    )
+    printed: List[str] = []
+    monkeypatch.setattr(
+        input_loop.console, "print", lambda *a, **k: printed.append(str(a[0]) if a else "")
+    )
+    cli = _loop_cli([])
+    seen = _recording_inputs(cli, [_BG_WAKE, "/exit"])
+    run_loop(cli)
+    assert seen == [0, _MAX_CONSECUTIVE_BG_WAKES]
+    assert sum("interrupted" in line for line in printed) == 1
+    assert _bg_wake_sequence(_cli(_pending_store(), streak=seen[-1])) is None
+
+
+def test_a_wake_turn_whose_interrupt_escapes_also_pauses(monkeypatch):
+    def interrupted(cli, msg, images=None):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(input_loop, "_run_agent_turn", interrupted)
+    cli = _loop_cli([])
+    seen = _recording_inputs(cli, [_BG_WAKE, "/exit"])
+    run_loop(cli)
+    assert seen == [0, _MAX_CONSECUTIVE_BG_WAKES]
+
+
+def test_a_ctrl_c_on_the_wake_notice_also_pauses(monkeypatch):
+    monkeypatch.setattr(input_loop, "_run_agent_turn", lambda cli, msg, images=None: "done")
+
+    def print_(*a, **k):
+        if a and "continuing" in str(a[0]):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(input_loop.console, "print", print_)
+    cli = _loop_cli([])
+    seen = _recording_inputs(cli, [_BG_WAKE, "/exit"])
+    run_loop(cli)
+    assert seen == [0, _MAX_CONSECUTIVE_BG_WAKES]
+
+
+def test_a_completed_wake_turn_does_not_pause(monkeypatch):
+    monkeypatch.setattr(input_loop, "_run_agent_turn", lambda cli, msg, images=None: "done")
+    cli = _loop_cli([])
+    seen = _recording_inputs(cli, [_BG_WAKE, "/exit"])
+    run_loop(cli)
+    assert seen == [0, 1]
+
+
 @pytest.mark.parametrize("line", ["hello", "", "/help"], ids=["text", "blank", "command"])
 def test_any_user_line_resets_the_streak(monkeypatch, line):
     monkeypatch.setattr(input_loop, "_run_agent_turn", lambda cli, msg, images=None: None)

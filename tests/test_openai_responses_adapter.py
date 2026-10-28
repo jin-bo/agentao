@@ -29,7 +29,8 @@ from agentao.llm.client import LLMClient
 from tests.support.openai_responses_wire import (
     ChunkedBody, Wire, attach, completed, created, error_event, failed,
     function_call_events, function_call_item, incomplete, message_item,
-    reasoning_events, reasoning_item, stream_of, stream_without, text_events, usage,
+    reasoning_events, reasoning_item, stream_failing_with, stream_of, stream_without,
+    text_events, usage,
 )
 
 # ``LLMClient`` opens ``agentao.log`` in the process cwd: see ``isolated_cwd``.
@@ -456,6 +457,37 @@ def test_a_transient_failure_inside_the_stream_is_retried():
     ))
     assert llm.chat_stream(HELLO).choices[0].message.content == "recovered"
     assert len(wire.requests) == 3
+
+
+@pytest.mark.parametrize("code", [
+    "server_is_overloaded", "slow_down", "policy_capacity_unavailable",
+])
+@pytest.mark.parametrize("in_failed", [False, True], ids=["error", "response.failed"])
+def test_an_overload_inside_the_stream_is_retried(code, in_failed):
+    """codex#57452: the same overload as an HTTP 503/429 is already retried."""
+    llm = _llm()
+    scripted = (stream_failing_with(code, created()) if in_failed
+                else stream_of(created(), error_event(code)))
+    wire = attach(llm, Wire(scripted, _says("recovered")))
+    assert llm.chat_stream(HELLO).choices[0].message.content == "recovered"
+    assert len(wire.requests) == 2
+
+
+def test_an_unknown_code_inside_the_stream_is_still_permanent():
+    llm = _llm()
+    wire = attach(llm, Wire(stream_of(created(), error_event("something_new")), _says()))
+    with pytest.raises(ResponsesStreamError):
+        llm.chat_stream(HELLO)
+    assert len(wire.requests) == 1
+
+
+def test_an_overload_after_text_was_shown_is_not_retried():
+    llm = _llm()
+    wire = attach(llm, Wire(stream_of(created(), text_events(0, "par")[:3],
+                                      error_event("server_is_overloaded")), _says()))
+    with pytest.raises(ResponsesStreamError) as raised:
+        llm.chat_stream(HELLO, on_text_chunk=lambda _chunk: None)
+    assert raised.value.streamed is True and len(wire.requests) == 1
 
 
 def test_a_failed_response_still_counts_the_usage_it_stated():

@@ -50,6 +50,17 @@ _BG_WAKE_MESSAGE = "[Background agent finished — review the update and continu
 #: delegating. Any line the user submits — even a blank one — resets it.
 _MAX_CONSECUTIVE_BG_WAKES = 3
 
+_BG_WAKE_INTERRUPTED_NOTE = (
+    "[dim]Background wake paused (interrupted); further updates will be read "
+    "with your next message.[/dim]"
+)
+
+
+def _pause_bg_wake_after_interrupt(cli: "AgentaoCLI") -> None:
+    """Stop further wakes until the user submits a line, and say so."""
+    cli._bg_consecutive_wakes = _MAX_CONSECUTIVE_BG_WAKES
+    console.print(_BG_WAKE_INTERRUPTED_NOTE)
+
 
 def _bg_wake_sequence(cli: "AgentaoCLI") -> Optional[int]:
     """The store's push sequence if an idle prompt should wake now, else ``None``.
@@ -65,7 +76,8 @@ def _bg_wake_sequence(cli: "AgentaoCLI") -> Optional[int]:
 
     And it stops after ``_MAX_CONSECUTIVE_BG_WAKES`` wakes with nobody at the
     keyboard in between; the queued notices then reach the model with the
-    user's next message, as they did before the wake existed.
+    user's next message, as they did before the wake existed. An interrupted
+    wake turn stops it at once (``run_loop`` sets the streak to the cap).
     """
     if getattr(cli, "_bg_auto_wake", False) is not True:
         return None
@@ -393,9 +405,19 @@ def run_loop(cli: "AgentaoCLI") -> None:
             if user_input is _BG_WAKE:
                 # Counted before the turn, so a turn that raises still counts.
                 cli._bg_consecutive_wakes += 1
-                console.print("[dim]⟳ background agent finished — continuing[/dim]")
-                _run_agent_turn(cli, _BG_WAKE_MESSAGE)
-                if cli._bg_consecutive_wakes >= _MAX_CONSECUTIVE_BG_WAKES:
+                # A Ctrl+C on a wake turn says "stop acting on your own": no
+                # more wakes until the user submits a line. ``chat()`` returns
+                # the interrupt as text; one that escapes it is caught by the
+                # loop's ``KeyboardInterrupt`` handler below.
+                try:
+                    console.print("[dim]⟳ background agent finished — continuing[/dim]")
+                    response = _run_agent_turn(cli, _BG_WAKE_MESSAGE)
+                except KeyboardInterrupt:
+                    _pause_bg_wake_after_interrupt(cli)
+                    raise
+                if _was_interrupted(response):
+                    _pause_bg_wake_after_interrupt(cli)
+                elif cli._bg_consecutive_wakes >= _MAX_CONSECUTIVE_BG_WAKES:
                     console.print(
                         f"[dim]Background wake paused after "
                         f"{_MAX_CONSECUTIVE_BG_WAKES} in a row; further updates "

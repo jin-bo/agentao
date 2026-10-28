@@ -197,6 +197,27 @@ def stream_of(*parts: Union[Event, List[Event]]) -> bytes:
     )
 
 
+def stream_failing_with(code: str, *parts: Union[Event, List[Event]]) -> bytes:
+    """``stream_of(*parts, failed())``, then that ``failed`` event's code set to ``code``.
+
+    For a code the service sends but the SDK's closed ``ResponseError.code``
+    enum does not list (``server_is_overloaded``; codex sends it in its own
+    ``response.failed`` tests). The SDK parses events with the lenient
+    ``construct``, so such a code reaches the adapter as a plain string. The
+    event is validated with an enum member *before* the swap, so the code is
+    the only deviation the fixture carries.
+    """
+    flat: List[Event] = []
+    for part in list(parts) + [failed()]:
+        flat.extend(part if isinstance(part, list) else [part])
+    events = validated(flat)
+    events[-1]["response"]["error"]["code"] = code
+    return b"".join(
+        f"event: {event['type']}\ndata: {json.dumps(event)}\n\n".encode("utf-8")
+        for event in events
+    )
+
+
 def stream_without(field: str, *parts: Union[Event, List[Event]]) -> bytes:
     """``stream_of``, then ``field`` deleted from every event that has it.
 

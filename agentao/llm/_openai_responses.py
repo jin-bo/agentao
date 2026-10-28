@@ -68,15 +68,21 @@ _INCOMPLETE_REASONS = {
 }
 
 #: An in-stream error ``code`` worth another attempt → the HTTP status it
-#: would have been. These two are the only transient members of the closed
-#: enum the SDK types ``response.failed``'s ``error.code`` with; the rest of
-#: it (``invalid_prompt``, the image codes) describes the request, and sending
-#: the same request again fails the same way. The bare ``error`` event's code
+#: would have been. ``server_error`` and ``rate_limit_exceeded`` are the only
+#: transient members of the closed enum the SDK types ``response.failed``'s
+#: ``error.code`` with; the rest of it (``invalid_prompt``, the image codes)
+#: describes the request, and sending the same request again fails the same
+#: way. The last three are overload codes the service sends in a 200 stream
+#: (codex's stream classifier retries them, codex#57452): the same overload
+#: as an HTTP 503 or 429 is already retried. The bare ``error`` event's code
 #: is a free string, and anything not listed here is permanent — the safe side
 #: to miss on is the one that ends a turn rather than the one that loops.
 _STREAM_ERROR_STATUS = {
     "server_error": 500,
     "rate_limit_exceeded": 429,
+    "server_is_overloaded": 503,
+    "slow_down": 429,
+    "policy_capacity_unavailable": 503,
 }
 
 

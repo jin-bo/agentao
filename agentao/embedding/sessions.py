@@ -9,6 +9,8 @@ import json
 import logging
 import os
 import re
+import tempfile
+import time
 import uuid as _uuid_mod
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +24,11 @@ _SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>.*?</system-reminder>", re.D
 
 _SESSION_SUBDIR = ".agentao/sessions"
 _MAX_SESSIONS = 10
+#: A temp file older than this is a save that died before it removed it (a
+#: kill between the publish link and the unlink, or a crash mid-dump). It can
+#: hold a whole conversation, and nothing else globs ``*.tmp``. A live save
+#: finishes in seconds, so an hour cannot catch one still being written.
+_STALE_TEMP_SECONDS = 3600
 _TITLE_MAX_CHARS = 60
 
 
@@ -145,7 +152,8 @@ def save_session(
 ) -> Tuple[Path, str]:
     """Serialize conversation to disk and rotate old sessions.
 
-    The file is written under a temporary name and renamed into place, so a
+    The file is written under a unique temporary name and then published
+    under its ``*.json`` name (see :func:`_publish_session_file`), so a
     process killed mid-write leaves no half-written ``*.json`` behind.
 
     Args:
@@ -189,14 +197,11 @@ def save_session(
     # reports `datetime.now()` at a much coarser granularity than its six microsecond
     # digits suggest, so two saves in quick succession land on the *same* name and the
     # second silently destroys the first — a session the user could still resume by id
-    # is simply gone. POSIX makes that race narrow rather than impossible. Stepping to
-    # a free name costs one `exists()` and removes the whole class.
+    # is simply gone. POSIX makes that race narrow rather than impossible. The file is
+    # published with a hard link, which fails on a taken name, so a second process
+    # saving in the same tick steps to the next name instead of passing the same
+    # `exists()` check (see `_publish_session_file`).
     timestamp = now.strftime("%Y%m%d_%H%M%S") + f"_{now.microsecond:06d}"
-    session_file = session_dir / f"{timestamp}.json"
-    collision = 0
-    while session_file.exists():
-        collision += 1
-        session_file = session_dir / f"{timestamp}_{collision}.json"
 
     data = {
         "session_id": sid,
@@ -209,26 +214,32 @@ def save_session(
     }
     if mcp_skill_origins:
         data["mcp_skill_origins"] = list(mcp_skill_origins)
-    partial = session_file.with_name(session_file.name + ".tmp")
+    # A unique temp file, not ``<name>.tmp``: two writers must never share one.
+    fd, partial_name = tempfile.mkstemp(
+        dir=session_dir, prefix=timestamp + ".", suffix=".tmp"
+    )
+    partial = Path(partial_name)
     try:
-        with open(partial, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        os.replace(partial, session_file)
+        session_file = _publish_session_file(partial, session_dir, timestamp)
     except BaseException:
         # A failed dump (unserializable content, a full disk, a Ctrl-C) must
         # not strand the partial file — nothing globs ``*.tmp``, so nothing
         # would ever remove it.
         try:
-            partial.unlink()
+            partial.unlink(missing_ok=True)
         except OSError:
             pass
         raise
 
     if earlier is not None and Path(supersedes).resolve() != session_file.resolve():
         try:
-            Path(supersedes).unlink()
-        except FileNotFoundError:
-            pass  # rotated out already
+            Path(supersedes).unlink(missing_ok=True)  # rotated out already
+        except OSError as exc:
+            # The new file is on disk; a reader holding the old one open (on
+            # Windows) must not turn the save into an error.
+            logger.debug("Could not remove superseded %s: %s", Path(supersedes).name, exc)
     _rotate_sessions(session_dir)
     return session_file, sid
 
@@ -891,8 +902,56 @@ def delete_all_sessions(project_root: Path) -> int:
     return count
 
 
+def _publish_session_file(partial: Path, session_dir: Path, timestamp: str) -> Path:
+    """Give the written ``partial`` the first free ``<timestamp>[_N].json`` name.
+
+    ``os.link`` fails on a taken name and is atomic, so two processes never
+    publish under one name, and a ``*.json`` only ever appears whole — a
+    "latest session" load picks the newest file and must never find an empty
+    or half-written one. Where the filesystem has no hard links, fall back to
+    a check and ``os.replace``: atomic content, a narrow name race.
+    """
+    collision = 0
+    while True:
+        suffix = f"_{collision}" if collision else ""
+        candidate = session_dir / f"{timestamp}{suffix}.json"
+        try:
+            os.link(partial, candidate)
+        except FileExistsError:
+            collision += 1
+            continue
+        except OSError:
+            while candidate.exists():
+                collision += 1
+                candidate = session_dir / f"{timestamp}_{collision}.json"
+            os.replace(partial, candidate)
+            return candidate
+        try:
+            partial.unlink()
+        except OSError as exc:
+            logger.debug("Could not remove temp file %s: %s", partial.name, exc)
+        return candidate
+
+
 def _rotate_sessions(session_dir: Path):
+    # Another process saving into the same directory rotates too, so the file
+    # may be gone already (or, on Windows, open in a reader). The new session
+    # is on disk by now: a failed removal must not turn the save into an error.
     sessions = sorted(session_dir.glob("*.json"))
     while len(sessions) > _MAX_SESSIONS:
-        sessions[0].unlink()
+        try:
+            sessions[0].unlink(missing_ok=True)
+        except OSError as exc:
+            logger.debug("Could not rotate out %s: %s", sessions[0].name, exc)
         sessions = sessions[1:]
+    _sweep_stale_temps(session_dir)
+
+
+def _sweep_stale_temps(session_dir: Path) -> None:
+    cutoff = time.time() - _STALE_TEMP_SECONDS
+    for path in session_dir.glob("*.tmp"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.debug("Could not remove stale temp %s: %s", path.name, exc)
