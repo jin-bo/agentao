@@ -354,6 +354,7 @@ JSON Schema 在 [`schemas/`](https://github.com/jin-bo/agentao/tree/main/schemas
 - **JSON 化。** 值被转成 JSON 原生类型。转不了的字段单独丢掉，事件上会带 `redacted: "filter_error"`，字段名列在 `redacted_fields` 里。
 - **凭据扫描。** 每个字符串都会按"长得像凭据"的模式扫描，命中改写成 `[REDACTED:<kind>]`。每个事件在 `redaction_hits` 里记自己的命中数，footer 汇总。这只是模式匹配，不是完整的 secret 扫描：长得不像凭据的凭据会原样通过。扫描器是 [`agentao/security/secret_scan.py`](https://github.com/jin-bo/agentao/blob/main/agentao/security/secret_scan.py)，`agentao.log` 和 `.agentao/tool-outputs/` 也用它。
 - **头尾截断。** 过长的字段保留头和尾，并带 `truncated`、`original_chars`、`omitted_chars`。上限：`tool_output_chunk` 4,000 字符，`tool_result` 8,000（头部只占 20%，因为报错多在末尾），`memory_write` 2,000，`ask_user_answered` 500，`plugin_hook_fired` 的输出 500。`assistant_text_chunk` 不截断。
+- **被钩子拦截的提示词。** 被 `UserPromptSubmit` 钩子拦截或停止的提示词正文不会写入回放。`TURN_BEGIN` 仍包含原始输入；订阅事件的宿主及日志组件仍可能接收或保存它。 这时该轮次的 `user_message` 行 `content` 为空，并带 `withheld: "hook_blocked"` 或 `"hook_stopped"`；钩子的结论记录在它的 `plugin_hook_fired` 行里。放行的提示词在轮次到达第一次模型请求时才写入，所以现在位于那一行之后。在第一次请求之前就结束的轮次（取消、出错）不写正文。
 
 下面的 deep capture 开关可以取消其中部分上限，凭据扫描照常进行。
 

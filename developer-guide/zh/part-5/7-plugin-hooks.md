@@ -48,6 +48,8 @@ Hooks 在回答**另一个问题**：
 
 来源：`agentao/plugins/models.py` 中的 `SUPPORTED_HOOK_EVENTS`。
 
+被 `UserPromptSubmit` 钩子拦截或停止的提示词正文不会写入回放。`TURN_BEGIN` 仍包含原始输入；订阅事件的宿主及日志组件仍可能接收或保存它。 见 [6.6 · 隐私与截断](../part-6/6-observability#隐私与截断)。
+
 ::: info `Stop` 是控制点，`PreCompact` 是观测点
 Phase B 落地之后，`Stop` 上的 hook 可以让 chat-loop **再发起一轮 LLM**（通过 `force_continue` + `follow_up_message`）——这是真正的**控制信号**，会改变 turn 走向。
 `PreCompact` 始终是 observe-only：`outcome` 恒为 `"allow"`，你可以记录"哪种压缩、什么时候触发"，但**不能阻止压缩发生**。

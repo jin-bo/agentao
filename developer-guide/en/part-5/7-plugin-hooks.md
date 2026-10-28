@@ -48,6 +48,8 @@ The host-side hooks list / disable / hot-reload API is **deliberately not expose
 
 Source: `SUPPORTED_HOOK_EVENTS` in `agentao/plugins/models.py`.
 
+The text of a prompt that a `UserPromptSubmit` hook blocks or stops is not written to replay. `TURN_BEGIN` still carries the raw input, so hosts and logging components that subscribe to events may still receive or store it. See [6.6 · Privacy and truncation](../part-6/6-observability#privacy-and-truncation).
+
 ::: info `Stop` is a control point. `PreCompact` is an observation point.
 After Phase B landed, a `Stop` hook can ask the chat loop to **issue one more LLM call** (via `force_continue` + `follow_up_message`) — that's a real **control signal** that bends the turn's trajectory.
 `PreCompact` stays observe-only: `outcome` is always `"allow"`. You can record "what kind of compaction, when did it fire", but you **cannot prevent compaction**.
