@@ -96,7 +96,7 @@ Merge rule: **same-name entries override** those from `.agentao/mcp.json`.
 | `args` | ❌ | Command-line arguments |
 | `env` | ❌ | Additional env vars; supports `$VAR` / `${VAR}` expansion |
 | `cwd` | ❌ | Subprocess working directory |
-| `timeout` | ❌ | A number: seconds for connecting and the handshake, default 60. It does **not** bound tool calls. To bound each call too, use `{"startup": 60, "request": 30}`; `request` has no default ([config reference](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md)) |
+| `timeout` | ❌ | A number: seconds for connecting and the handshake, default 60. It does **not** bound tool calls. To bound each call too, use `{"startup": 60, "request": 30}`; `request` has no default ([config reference](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md)). On mcp 1.x, a cancelled or timed-out call keeps running on the server; see the config reference |
 | `trust` | ❌ | Skip confirmation when true |
 
 ### Streamable HTTP transport (remote service, default for a bare `url`)

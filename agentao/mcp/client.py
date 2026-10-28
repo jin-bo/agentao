@@ -2204,6 +2204,9 @@ class McpClientManager:
         # the task on the loop is cancelled, and mcp 2.x then sends the server
         # ``notifications/cancelled`` (1.x does not). Without this a turn's
         # cancel waited for the tool — forever, with no ``timeout.request``.
+        # The 1.x gap is a known limitation, documented in
+        # docs/reference/configuration.md (``timeout``) and deliberately not
+        # patched here: 1.x only receives critical and security fixes.
         token = current_cancellation_token()
         unregister = token.add_done_callback(future.cancel) if token is not None else None
         try:

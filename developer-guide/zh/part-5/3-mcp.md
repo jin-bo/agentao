@@ -96,7 +96,7 @@ agent = Agentao(
 | `args` | ❌ | 命令行参数列表 |
 | `env` | ❌ | 额外环境变量；支持 `$VAR` / `${VAR}` 从进程环境展开 |
 | `cwd` | ❌ | 子进程工作目录 |
-| `timeout` | ❌ | 写数字：连接和握手的时限（秒），默认 60，**不**限制工具调用。要同时限制每次调用，写 `{"startup": 60, "request": 30}`；`request` 没有默认值（[配置参考](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md)） |
+| `timeout` | ❌ | 写数字：连接和握手的时限（秒），默认 60，**不**限制工具调用。要同时限制每次调用，写 `{"startup": 60, "request": 30}`；`request` 没有默认值（[配置参考](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md)）。在 mcp 1.x 上，被取消或超时的调用会在 server 上继续运行，详见配置参考 |
 | `trust` | ❌ | 为 true 时跳过工具确认 |
 
 ### Streamable HTTP 传输（远程服务，裸 `url` 的默认）
