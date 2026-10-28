@@ -508,6 +508,11 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 messages_with_system, system_prompt,
             )
 
+            # A ``"refresh_tools": true`` MCP server changed its tool list
+            # (docs/design/mcp-tool-list-changed.md): send the new one.
+            if self._refresh_mcp_tools():
+                tools = agent.tools.to_openai_format(plan_mode=agent._plan_mode)
+
             # Check cancellation before each LLM call (e.g. Ctrl+C fired during
             # tool execution of the previous iteration).
             token.check()
@@ -1353,6 +1358,25 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             self.messages_with_system = messages_with_system
             self.system_prompt = system_prompt
             self.error_return = error_return
+
+    def _refresh_mcp_tools(self) -> bool:
+        """Re-register the tools of MCP servers that changed their list.
+
+        A failure is logged and the request goes out with the tools it had:
+        a server's tool list must not end the turn. A cancel still does.
+        """
+        agent = self._agent
+        refresh = getattr(agent, "_refresh_mcp_tools", None)
+        if refresh is None:
+            return False
+        try:
+            # ``is True``, not truthiness: a stand-in agent answers anything.
+            return refresh() is True
+        except AgentCancelledError:
+            raise
+        except Exception:
+            agent.llm.logger.warning("MCP tool-list refresh failed", exc_info=True)
+            return False
 
     def _call_llm_with_overflow_recovery(
         self,

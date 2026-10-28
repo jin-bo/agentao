@@ -135,6 +135,8 @@ MCP server 'remote' needs login — run /mcp login remote
 
 MCP 工具注册成 `mcp_{server}_{tool}`。所以 `filesystem.read_file` 在 agent 工具列表里是 `mcp_filesystem_read_file`。`/help` 里就是这样辨认 MCP 工具的。
 
+server 的工具在连接时就固定了，除非它设置了 `"refresh_tools": true`：这时 server 发来的 `tools/list_changed` 通知会在下一次模型请求之前更新它们；启动时需要登录的 server，在 `/mcp login` 连上后立即加载工具。见 [MCP Server 集成](../part-5/3-mcp.md#server-更改工具时)。
+
 ### 容易踩的坑
 
 - **连接失败不会让 CLI 崩** — 服务器在 `/mcp list` 里红色显示，它的工具不可用，其他都正常

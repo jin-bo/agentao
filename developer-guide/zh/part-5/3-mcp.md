@@ -160,6 +160,23 @@ Agentao 里的名字: "mcp_github_create_issue"
 - 你写自己的 Tool 时，**不要以 `mcp_` 打头**（避免看起来像 MCP 工具）
 - 权限规则可以按前缀匹配：`{"tool": "mcp_github_*", ...}`
 
+## server 更改工具时
+
+默认情况下，server 的工具就是它在连接时列出的那些，整个会话不变。运行中增加、删除或修改工具的 server 会发出 `notifications/tools/list_changed`。要跟随它，在该 server 上设置 `"refresh_tools": true`：
+
+```json
+{"mcpServers": {"dynamic": {"command": "my-server", "refresh_tools": true}}}
+```
+
+- 只有 `true` 才算开启，其他值会被 `agentao doctor` 指出。
+- 收到通知后，Agentao 会在下一次模型请求之前重新列出该 server 的工具，轮次进行中也一样。模型在那次请求中就能看到新列表。
+- 在那次请求之前收到多个通知，只花一次 `tools/list`。列表没有变化时，注册表保持不变。
+- 只替换该 server 的工具。被删除的工具会注销，新工具遵循与连接时相同的命名和冲突规则。
+- 新列表读取失败时，该 server 保留原有工具，并在 `agentao.log` 中记一条警告。下一个通知会再试。
+- 重连也会重新列出工具，同样会更新到注册表。之前连接失败、随后首次连接成功时也一样：启动时需要登录的 server 在 `/mcp login` 之后就能拿到工具，无须重启。
+- 每次变化都会改变随请求发送的工具列表，所以服务商对工具部分的提示缓存会重新开始。这是它默认关闭的原因。
+- 已经在运行的子代理保留派生时拿到的工具。
+
 ## MCP 资源（resources）
 
 声明了 `resources` capability 的 server 还会暴露可供模型读取的数据。只要有一个已连接的 server 声明了它，就会注册三个只读工具（名字和形状沿用 codex 与 pi，模型已经认识）：

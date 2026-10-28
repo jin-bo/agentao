@@ -160,6 +160,23 @@ So:
 - Don't name your own tools with the `mcp_` prefix (avoid confusion)
 - Permission rules can match by prefix: `{"tool": "mcp_github_*", ...}`
 
+## When a server changes its tools
+
+By default a server's tools are the ones it listed at connect, for the whole session. A server that adds, removes or changes tools while it runs announces it with `notifications/tools/list_changed`. To follow it, set `"refresh_tools": true` on that server:
+
+```json
+{"mcpServers": {"dynamic": {"command": "my-server", "refresh_tools": true}}}
+```
+
+- Only `true` counts. `agentao doctor` flags any other value.
+- After a notice, Agentao lists the server's tools again before the next model request, also in the middle of a turn. The model sees the new list on that request.
+- Many notices before that request cost one `tools/list`. A list that did not change leaves the registry as it was.
+- Only that server's tools are replaced. A removed tool is unregistered, and a new one follows the same naming and collision rules as at connect.
+- If the new list cannot be read, the server keeps its tools, with a warning in `agentao.log`. The next notice tries again.
+- A reconnect lists the tools again too, and those reach the registry the same way. So does the first successful connect after a failed one: a server that needed login at startup gets its tools after `/mcp login`, without a restart.
+- Each change alters the tool list sent with the request, so the provider's prompt cache for the tools starts over. That is why it is off by default.
+- A sub-agent that is already running keeps the tools it was given at spawn.
+
 ## MCP resources
 
 A server that declares the `resources` capability also exposes data the model can read. When at least one connected server does, three read-only tools are registered (names and shapes follow codex and pi, so models already know them):

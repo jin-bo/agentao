@@ -135,6 +135,8 @@ What to know:
 
 MCP tools are registered as `mcp_{server}_{tool}`. So `filesystem.read_file` becomes `mcp_filesystem_read_file` in the agent's tool list. This is how you spot MCP-sourced tools in `/help`.
 
+A server's tools are fixed at connect unless it has `"refresh_tools": true`. Then a `tools/list_changed` notice from the server updates them before the next model request, and a server that needed login at startup loads its tools as soon as `/mcp login` connects it. See [MCP Server Integration](../part-5/3-mcp.md#when-a-server-changes-its-tools).
+
 ### Pitfalls
 
 - **A failed connection doesn't break the CLI** — the server shows up red in `/mcp list`, its tools are unavailable, the rest works

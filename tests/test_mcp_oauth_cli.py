@@ -704,6 +704,28 @@ class TestRepl:
         assert "Restart agentao to load the tools of 'svr'." in out
         assert "Logged out of 'svr'" in logout
 
+    def test_login_from_startup_needs_auth_loads_tools_with_refresh_tools(
+        self, runtime, origin, monkeypatch,
+    ):
+        """``"refresh_tools": true``: failed first connect → login → the tools
+        are registered in the same session, no restart."""
+        import logging
+        from types import SimpleNamespace
+
+        self._scripted_ui(monkeypatch, origin)
+        manager = McpClientManager({"svr": {**CONFIG, "refresh_tools": True}}, oauth_runtime=runtime)
+        cli = self._cli(manager)
+        cli.agent.llm = SimpleNamespace(logger=logging.getLogger("t"))
+        with patched(origin):
+            manager.connect_all()
+            assert not [n for n in cli.agent.tools.tools if n.startswith("mcp_svr_")]
+            out = self._run(cli, "login svr")
+            names = [n for n in cli.agent.tools.tools if n.startswith("mcp_svr_")]
+            manager.disconnect_all()
+        assert "Logged in to 'svr' — connected, 1 tool(s)." in out
+        assert "Restart agentao" not in out
+        assert len(names) == 1
+
     def test_login_with_tools_registered_needs_no_restart(self, runtime, origin, monkeypatch):
         from agentao.tooling.mcp_tools import register_mcp_tools
 

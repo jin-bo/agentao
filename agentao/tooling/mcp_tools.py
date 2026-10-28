@@ -15,7 +15,7 @@ not abort session construction.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 # ``McpClientManager`` / ``McpTool`` pull in the heavy ``mcp`` SDK
 # (httpx + click + rich + pydantic_settings + starlette). They are
@@ -143,13 +143,55 @@ def register_mcp_tools(agent: "Agentao", manager: "McpClientManager") -> None:
     """
     _ensure_mcp_classes()
     from ..mcp.client import McpClientManager as _RealManager
-    from .registry import _bind_and_register
 
     # The whole-result path (embedded blobs saved, resource-link read hints)
     # needs the real manager's ``call_tool_result``; a host's duck-typed
     # manager keeps the plain ``call_tool -> str`` path it was written for.
     # ``isinstance``, not ``hasattr``: a mock answers any attribute.
     real = isinstance(manager, _RealManager)
+
+    # Two MCP tools can map to one name (``my-srv`` and ``my_srv``, ``a.b`` and
+    # ``a-b``). The registry would let the second overwrite the first, and the
+    # model would then call a different tool than the one it was described.
+    # The first keeps the name; a later one is refused, by name, in the log.
+    # Per pass, not against the registry: a re-init (a plugin adding servers)
+    # registers the same tools again over a new manager and must replace them.
+    claimed: Dict[str, Tuple[str, Any]] = {}
+    _register_entries(agent, manager, manager.get_all_tools(), claimed, real=real)
+    # What a refresh removes, and what it compares a server's new list with.
+    agent._mcp_registered = claimed
+    by_server: Dict[str, List[Any]] = {}
+    for server_name, tool_def in manager.get_all_tools():
+        by_server.setdefault(server_name, []).append(tool_def)
+    agent._mcp_listed = by_server
+
+    # The tools registered, not the tools listed: a collision left some out.
+    count = len(claimed)
+    if count:
+        agent.llm.logger.info(
+            f"MCP: {count} tools from {len(manager.clients)} server(s)"
+        )
+
+    if real:
+        register_mcp_resource_tools(agent, manager)
+        register_mcp_skills(agent, manager)
+
+
+def _register_entries(
+    agent: "Agentao",
+    manager: "McpClientManager",
+    entries: List[Tuple[str, Any]],
+    claimed: Dict[str, Tuple[str, Any]],
+    *,
+    real: bool,
+) -> None:
+    """Wrap and register each ``(server, tool definition)``; ``claimed`` records them.
+
+    A name already in ``claimed`` is refused, so the caller decides what the
+    new tools may collide with: nothing (a full pass) or the other servers'
+    tools (a refresh of one server).
+    """
+    from .registry import _bind_and_register
 
     def read_hint(server_name: str) -> bool:
         # §6: hint only when the model could follow it right now.
@@ -160,14 +202,7 @@ def register_mcp_tools(agent: "Agentao", manager: "McpClientManager") -> None:
         client = manager.get_client(server_name)
         return client is not None and client.supports_resources
 
-    # Two MCP tools can map to one name (``my-srv`` and ``my_srv``, ``a.b`` and
-    # ``a-b``). The registry would let the second overwrite the first, and the
-    # model would then call a different tool than the one it was described.
-    # The first keeps the name; a later one is refused, by name, in the log.
-    # Per pass, not against the registry: a re-init (a plugin adding servers)
-    # registers the same tools again over a new manager and must replace them.
-    claimed: dict = {}
-    for server_name, mcp_tool_def in manager.get_all_tools():
+    for server_name, mcp_tool_def in entries:
         client = manager.get_client(server_name)
         trusted = client.is_trusted if client else False
         tool = McpTool(
@@ -183,25 +218,83 @@ def register_mcp_tools(agent: "Agentao", manager: "McpClientManager") -> None:
             agent.llm.logger.error(
                 "MCP: tool %r from server %r maps to %s, already taken by %r "
                 "from server %r; not registered. Rename one of them.",
-                mcp_tool_def.name, server_name, tool.name, first[1], first[0],
+                mcp_tool_def.name, server_name, tool.name, first[1].name, first[0],
             )
             continue
-        claimed[tool.name] = (server_name, mcp_tool_def.name)
+        claimed[tool.name] = (server_name, mcp_tool_def)
         # Bound like a built-in, so an embedded blob in its result is saved
         # under this session's working directory (docs/design/mcp-resources.md §6).
         _bind_and_register(agent, tool, origin="mcp")
         agent.llm.logger.info(f"Registered MCP tool: {tool.name}")
 
-    # The tools registered, not the tools listed: a collision left some out.
-    count = len(claimed)
-    if count:
-        agent.llm.logger.info(
-            f"MCP: {count} tools from {len(manager.clients)} server(s)"
-        )
 
-    if real:
-        register_mcp_resource_tools(agent, manager)
-        register_mcp_skills(agent, manager)
+def _listed_by_server(agent: "Agentao") -> Dict[str, List[Any]]:
+    listed = getattr(agent, "_mcp_listed", None)
+    if not isinstance(listed, dict):
+        listed = {}
+        agent._mcp_listed = listed
+    return listed
+
+
+def refresh_mcp_tools(agent: "Agentao") -> bool:
+    """Bring the registry up to date with servers whose tool list changed.
+
+    For ``"refresh_tools": true`` servers only (the manager marks them; see
+    docs/design/mcp-tool-list-changed.md). The chat loop calls this before
+    each model request and rebuilds the tool list it sends when it returns
+    ``True``. Each changed server's tools are replaced as a set: a removed
+    tool is unregistered, an added one registered, against the same
+    collision rule as the first pass. A server whose re-list failed keeps
+    its tools, and the other servers' tools are never touched (a server
+    that is reconnecting keeps the tools the model knows).
+    """
+    manager = getattr(agent, "mcp_manager", None)
+    if manager is None:
+        return False
+    from ..mcp.client import McpClientManager as _RealManager
+
+    # A host's duck-typed manager has no notion of a stale list.
+    if not isinstance(manager, _RealManager):
+        return False
+    relisted = manager.refresh_stale_tools()
+    if not relisted:
+        return False
+    _ensure_mcp_classes()  # ``_register_entries`` builds ``McpTool``s
+
+    registered = getattr(agent, "_mcp_registered", None)
+    if not isinstance(registered, dict):
+        registered = {}
+        agent._mcp_registered = registered
+    listed = _listed_by_server(agent)
+    changed = False
+    for server, tools in relisted.items():
+        # Against what the server listed last, not what got registered: a
+        # tool refused for a name collision is in one and not the other, and
+        # would make every refresh of an unchanged list look like a change.
+        if listed.get(server) == tools:
+            continue
+        listed[server] = list(tools)
+        old = {
+            name: entry for name, entry in registered.items() if entry[0] == server
+        }
+        # The list the re-list returned, never ``get_all_tools()`` or the
+        # client's current list: both are empty for a server that dropped
+        # since, which would unregister every tool it has.
+        new = [(server, d) for d in tools]
+        changed = True
+        for name in old:
+            del registered[name]
+            # Only what this pass registered: a host tool that took the name
+            # since stays.
+            if name in agent.tools.tools and agent.tools.origin(name) == "mcp":
+                agent.tools.unregister(name)
+        _register_entries(agent, manager, new, registered, real=True)
+        now = {name for name, entry in registered.items() if entry[0] == server}
+        agent.llm.logger.info(
+            "MCP server %r: tool list refreshed, %d tools (+%d, -%d)",
+            server, len(now), len(now - set(old)), len(set(old) - now),
+        )
+    return changed
 
 
 def register_mcp_resource_tools(agent: "Agentao", manager: "McpClientManager") -> None:

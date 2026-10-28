@@ -196,8 +196,18 @@ def _login_or_logout(cli: AgentaoCLI, sub: str, sub_args: str) -> None:
         return
     outcome = login(manager, name, open_browser=open_browser, write=_say)
     if outcome is LoginOutcome.CONNECTED and not _has_registered_tools(cli, name):
-        # D8: tools are registered once, at startup; this server had none then.
-        console.print(f"[info]Restart agentao to load the tools of '{escape(name)}'.[/info]")
+        client = manager.get_client(name)
+        if client is not None and client.refresh_tools_requested is True:
+            # The reconnect marked its tools stale; load them now rather than
+            # at the next request, so ``/mcp list`` and ``/tools`` show them
+            # (docs/design/mcp-tool-list-changed.md D13).
+            from ...tooling.mcp_tools import refresh_mcp_tools
+
+            refresh_mcp_tools(cli.agent)
+        if not _has_registered_tools(cli, name):
+            # D8: without "refresh_tools": true, tools are registered once,
+            # at startup; this server had none then.
+            console.print(f"[info]Restart agentao to load the tools of '{escape(name)}'.[/info]")
     console.print()
 
 
