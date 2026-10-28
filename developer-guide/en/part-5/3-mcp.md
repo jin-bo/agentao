@@ -172,10 +172,11 @@ By default a server's tools are the ones it listed at connect, for the whole ses
 - After a notice, Agentao lists the server's tools again before the next model request, also in the middle of a turn. The model sees the new list on that request.
 - Many notices before that request cost one `tools/list`. A list that did not change leaves the registry as it was.
 - Only that server's tools are replaced. A removed tool is unregistered, and a new one follows the same naming and collision rules as at connect.
-- If the new list cannot be read, the server keeps its tools, with a warning in `agentao.log`. The next notice tries again.
-- A reconnect lists the tools again too, and those reach the registry the same way. So does the first successful connect after a failed one: a server that needed login at startup gets its tools after `/mcp login`, without a restart.
+- The re-list may take at most 10 seconds, or the server's `startup` timeout if that is shorter. If the new list cannot be read in time, or at all, the server keeps its tools, with a warning in `agentao.log`, and the other servers' updates still apply. The next notice tries again.
+- A reconnect lists the tools again too, and those reach the registry the same way. So does the first successful connect after a failed one: a server that needed login at startup gets its tools after `/mcp login`, without a restart, and its resource tools if it is the first server to offer resources. Its MCP skills still need a restart.
 - Each change alters the tool list sent with the request, so the provider's prompt cache for the tools starts over. That is why it is off by default.
 - A sub-agent that is already running keeps the tools it was given at spawn.
+- If you embed Agentao, give each `Agentao` its own MCP manager when you use `refresh_tools`. Two agents sharing one manager also share its change flags, and only the first to send a request sees a change.
 
 ## MCP resources
 

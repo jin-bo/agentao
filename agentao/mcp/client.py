@@ -319,6 +319,12 @@ class ServerStatus(str, Enum):
     NEEDS_AUTH = "needs_auth"
 
 
+#: The most a ``"refresh_tools": true`` re-list may hold up a model request
+#: (capped further by the server's ``startup``). See
+#: docs/design/mcp-tool-list-changed.md D6.
+_REFRESH_TIMEOUT_S = 10.0
+
+
 class McpClient:
     """Manages a single MCP server connection."""
 
@@ -1176,15 +1182,29 @@ class McpClient:
         if not relist:
             # Only a reconnect: its handshake already listed :attr:`tools`.
             return list(self._tools)
+        # The whole re-list, every page, is bounded by the shorter of
+        # ``_REFRESH_TIMEOUT_S`` and the server's ``startup``: it holds up the
+        # model request, and a server that announced a change and then stopped
+        # answering must not stall it for a full connect budget. It never
+        # reconnects, so there is nothing else to bound.
+        budget = _REFRESH_TIMEOUT_S
         try:
             startup_timeout, _request = resolve_timeouts(self.config)
-            tools = await asyncio.wait_for(
-                self._list_all_tools(), timeout=startup_timeout
-            )
+            budget = min(_REFRESH_TIMEOUT_S, startup_timeout)
+            tools = await asyncio.wait_for(self._list_all_tools(), timeout=budget)
         except asyncio.CancelledError:
             # The turn was cancelled; the list is as stale as before.
             self._tools_stale = self._relist_needed = True
             raise
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"MCP server '{self.name}': re-listing tools timed out after "
+                f"{budget:g}s, keeping the previous {len(self._tools)}; the next "
+                f"tools/list_changed notice tries again"
+            )
+            if session is not self._session or self.status != ServerStatus.CONNECTED:
+                return None
+            return list(self._tools)
         except Exception as e:
             logger.warning(
                 f"MCP server '{self.name}': re-listing tools failed, keeping the "

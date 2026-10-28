@@ -451,3 +451,131 @@ def test_a_refresh_never_overwrites_a_host_tool_that_took_the_name(tmp_path):
         assert "mcp_srv_beta" in agent.tools.tools
     finally:
         agent.close()
+
+
+# ---------------------------------------------------------------------------
+# The refresh budget: min(10 s, startup)
+# ---------------------------------------------------------------------------
+
+
+def test_a_hung_relist_is_bounded_and_keeps_the_other_servers_results(tmp_path, caplog):
+    hung, hung_marks = changing_tools_server(
+        tmp_path / "hung", [tool("alpha")], refresh_tools=True, timeout={"startup": 1.5},
+    )
+    fine, _ = changing_tools_server(tmp_path / "fine", [tool("omega")], refresh_tools=True)
+    agent = _agent(tmp_path, {"hung": hung, "fine": fine})
+    try:
+        (hung_marks / "list_hang").touch()
+        _change(agent, [tool("beta")], server="hung")
+        _change(agent, [tool("psi")], server="fine")
+        assert _wait_stale(agent, "hung") and _wait_stale(agent, "fine")
+        started = time.monotonic()
+        with caplog.at_level("WARNING", logger="agentao.mcp.client"):
+            assert refresh_mcp_tools(agent) is True
+        elapsed = time.monotonic() - started
+        assert elapsed < 5  # the hung server's 1.5 s budget, not 10 s or 60 s
+        assert _mcp_names(agent, "fine") == ["mcp_fine_change", "mcp_fine_psi"]
+        assert _mcp_names(agent, "hung") == ["mcp_hung_alpha", "mcp_hung_change"]
+        assert "timed out after 1.5s" in caplog.text
+        # The old tools still work, and the next notice recovers.
+        assert agent.mcp_manager.call_tool("hung", "alpha", {}) == "alpha"
+        (hung_marks / "list_hang").unlink()
+        _change(agent, [tool("beta")], server="hung")
+        assert _wait_stale(agent, "hung")
+        assert refresh_mcp_tools(agent) is True
+        assert _mcp_names(agent, "hung") == ["mcp_hung_beta", "mcp_hung_change"]
+    finally:
+        agent.close()
+
+
+def test_the_refresh_budget_is_at_most_ten_seconds(tmp_path, monkeypatch):
+    from agentao.mcp import client as client_mod
+
+    config, marks = changing_tools_server(tmp_path, [tool("alpha")], refresh_tools=True)
+    agent = _agent(tmp_path, {"srv": config})  # startup defaults to 60 s
+    budgets = []
+    real_wait_for = client_mod.asyncio.wait_for
+
+    async def recording_wait_for(aw, timeout):
+        budgets.append(timeout)
+        return await real_wait_for(aw, timeout)
+
+    try:
+        _change(agent, [tool("beta")])
+        assert _wait_stale(agent)
+        monkeypatch.setattr(client_mod.asyncio, "wait_for", recording_wait_for)
+        refresh_mcp_tools(agent)
+    finally:
+        monkeypatch.undo()
+        agent.close()
+    assert budgets == [client_mod._REFRESH_TIMEOUT_S] == [10.0]
+
+
+# ---------------------------------------------------------------------------
+# Resource tools a refresh brings (D13)
+# ---------------------------------------------------------------------------
+
+
+def _late_resource_server(tmp_path):
+    """A resources server whose first connect fails, as one needing login does."""
+    from agentao.mcp.client import McpClientManager
+
+    config, _ = changing_tools_server(
+        tmp_path, [tool("alpha")], resources=True, refresh_tools=True,
+    )
+    script = tmp_path / "changing_tools_server.py"
+    body = script.read_text()
+    script.write_text("import sys; sys.exit(1)\n")
+    manager = McpClientManager({"srv": config})
+    manager.connect_all()
+    script.write_text(body)
+    return manager
+
+
+def _connect_late(manager):
+    client = manager.get_client("srv")
+    manager._run(client.connect())
+    assert client.status.value == "connected" and client.supports_resources
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [
+        ({}, {"list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"}),
+        ({"disable_tools": ["read_mcp_resource"]}, {"list_mcp_resources", "list_mcp_resource_templates"}),
+        ({"enabled_tools": ["list_mcp_resources"]}, {"list_mcp_resources"}),
+    ],
+    ids=["all", "disable_tools", "enabled_tools"],
+)
+def test_a_refresh_registers_resource_tools_under_the_first_pass_rules(tmp_path, kwargs, expected):
+    from agentao.tooling.registry import MCP_RESOURCE_TOOL_NAMES
+
+    manager = _late_resource_server(tmp_path)
+    agent = make_dummy_agent(tmp_path, mcp_manager=manager, **kwargs)
+    try:
+        assert not MCP_RESOURCE_TOOL_NAMES & set(agent.tools.tools)
+        _connect_late(manager)
+        assert refresh_mcp_tools(agent) is True
+        assert MCP_RESOURCE_TOOL_NAMES & set(agent.tools.tools) == expected
+        assert {agent.tools.origin(n) for n in expected} == {"mcp"}
+        assert "mcp_srv_alpha" in agent.tools.tools
+    finally:
+        agent.close()
+        manager.disconnect_all()
+
+
+def test_a_refresh_never_replaces_a_host_tool_with_a_resource_tools_name(tmp_path):
+    from tests.support.tools import NamedTool
+
+    manager = _late_resource_server(tmp_path)
+    host_tool = NamedTool("read_mcp_resource")
+    agent = make_dummy_agent(tmp_path, mcp_manager=manager, extra_tools=[host_tool])
+    try:
+        _connect_late(manager)
+        refresh_mcp_tools(agent)
+        assert agent.tools.get("read_mcp_resource") is host_tool
+        assert agent.tools.origin("read_mcp_resource") == "host"
+        assert "list_mcp_resources" in agent.tools.tools
+    finally:
+        agent.close()
+        manager.disconnect_all()

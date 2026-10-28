@@ -315,7 +315,47 @@ def refresh_mcp_tools(agent: "Agentao") -> bool:
             "MCP server %r: tool list refreshed, %d tools (+%d, -%d)",
             server, len(now), len(now - set(old)), len(set(old) - now),
         )
+    if _add_late_resource_tools(agent, manager, relisted):
+        changed = True
     return changed
+
+
+def _add_late_resource_tools(
+    agent: "Agentao", manager: "McpClientManager", relisted: Dict[str, List[Any]],
+) -> bool:
+    """Register the resource tools when a refreshed server is the first to offer them.
+
+    The server that needed login at startup (D13): the first pass found no
+    server declaring ``resources``, so the three tools were never registered.
+    Only after a refresh, only for a re-listed server that declares them and
+    is allowed them. The rules of the first pass hold: ``disable_tools`` and
+    the ``enabled_tools`` allowlist (which pruned them at construction), and
+    a name already registered — by the first pass or by a host tool — is
+    never replaced. Skills are not loaded this way: a server's skills need a
+    restart (mcp-skills.md D8).
+    """
+    from ..mcp.resource_tools import resource_tools
+    from .registry import _bind_and_register
+
+    offered = any(
+        manager.resources_allowed(name)
+        and (client := manager.get_client(name)) is not None
+        and client.supports_resources
+        for name in relisted
+    )
+    if not offered:
+        return False
+    allow = getattr(agent, "_enabled_tools", None)
+    added = False
+    for tool in resource_tools(manager):
+        if tool.name in agent._disable_tools or tool.name in agent.tools.tools:
+            continue
+        if isinstance(allow, frozenset) and tool.name not in allow:
+            continue
+        _bind_and_register(agent, tool, origin="mcp")
+        agent.llm.logger.info(f"Registered MCP resource tool: {tool.name}")
+        added = True
+    return added
 
 
 def register_mcp_resource_tools(agent: "Agentao", manager: "McpClientManager") -> None:

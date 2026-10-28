@@ -644,6 +644,12 @@ class TestSurfaces:
 # ---------------------------------------------------------------------------
 
 
+def mcp_tools_refresh(agent):
+    from agentao.tooling.mcp_tools import refresh_mcp_tools
+
+    return refresh_mcp_tools(agent)
+
+
 class TestRepl:
     def _cli(self, manager):
         from types import SimpleNamespace
@@ -725,6 +731,33 @@ class TestRepl:
         assert "Logged in to 'svr' — connected, 1 tool(s)." in out
         assert "Restart agentao" not in out
         assert len(names) == 1
+
+    @pytest.mark.parametrize("refresh", [True, False], ids=["refresh_tools", "default"])
+    def test_login_registers_the_resource_tools_only_with_refresh_tools(
+        self, runtime, origin, monkeypatch, refresh,
+    ):
+        """The first server to declare ``resources`` needed login at startup,
+        so the resource tools were never registered (D13, mcp-resources §5.2)."""
+        import logging
+        from types import SimpleNamespace
+
+        from agentao.tooling.registry import MCP_RESOURCE_TOOL_NAMES
+
+        origin.declare_resources = True
+        self._scripted_ui(monkeypatch, origin)
+        config = {**CONFIG, "refresh_tools": True} if refresh else dict(CONFIG)
+        manager = McpClientManager({"svr": config}, oauth_runtime=runtime)
+        cli = self._cli(manager)
+        cli.agent.llm = SimpleNamespace(logger=logging.getLogger("t"))
+        with patched(origin):
+            manager.connect_all()
+            assert not MCP_RESOURCE_TOOL_NAMES & set(cli.agent.tools.tools)
+            self._run(cli, "login svr")
+            registered = MCP_RESOURCE_TOOL_NAMES & set(cli.agent.tools.tools)
+            again = mcp_tools_refresh(cli.agent)
+            manager.disconnect_all()
+        assert registered == (MCP_RESOURCE_TOOL_NAMES if refresh else set())
+        assert again is False  # nothing stale: no second registration
 
     def test_a_failed_refresh_after_login_falls_back_to_the_restart_notice(
         self, runtime, origin, monkeypatch,

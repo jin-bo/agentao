@@ -9,7 +9,8 @@ answers, so a test changes the catalogue through the client it is testing.
 Any other tool call answers with the tool's name.
 
 Every request method is appended to ``<marks>/methods``. While
-``<marks>/list_error`` exists, ``tools/list`` answers with an error.
+``<marks>/list_error`` exists, ``tools/list`` answers with an error; while
+``<marks>/list_hang`` exists, it is never answered.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ SCRIPT = textwrap.dedent('''
     from pathlib import Path
 
     marks = Path(sys.argv[1])
+    resources = sys.argv[2:] == ["resources"]
     out = sys.stdout.buffer
 
     def send(msg):
@@ -41,10 +43,15 @@ SCRIPT = textwrap.dedent('''
         if method == "initialize":
             send({"id": msg["id"], "result": {
                 "protocolVersion": msg["params"]["protocolVersion"],
-                "capabilities": {"tools": {"listChanged": True}},
+                "capabilities": (
+                    {"tools": {"listChanged": True}, "resources": {}} if resources
+                    else {"tools": {"listChanged": True}}
+                ),
                 "serverInfo": {"name": "changing-tools", "version": "0"},
             }})
         elif method == "tools/list":
+            if (marks / "list_hang").exists():
+                continue  # never answered
             if (marks / "list_error").exists():
                 send({"id": msg["id"], "error": {"code": -32603, "message": "list failed"}})
             else:
@@ -73,12 +80,12 @@ def tool(name: str, description: str = "") -> Dict[str, Any]:
 
 
 def changing_tools_server(
-    directory: Path, tools: List[Dict[str, Any]], **config: Any,
+    directory: Path, tools: List[Dict[str, Any]], *, resources: bool = False, **config: Any,
 ) -> Tuple[Dict[str, Any], Path]:
     """Write the server into ``directory``; return ``(config, marks)``.
 
     ``tools`` is the list it serves at first; ``change`` is always added to
-    it. ``config`` keys (``refresh_tools`` and so on) go into the trusted
+    it. ``resources`` declares the ``resources`` capability. ``config`` keys (``refresh_tools`` and so on) go into the trusted
     stdio server entry.
     """
     directory.mkdir(parents=True, exist_ok=True)
@@ -90,7 +97,7 @@ def changing_tools_server(
     (marks / "tools.json").write_text(json.dumps([change] + list(tools)))
     entry = {
         "command": sys.executable,
-        "args": [str(script), str(marks)],
+        "args": [str(script), str(marks)] + (["resources"] if resources else []),
         "trust": True,
         **config,
     }
