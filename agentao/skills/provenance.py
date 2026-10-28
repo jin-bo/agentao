@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Any, Iterable, Set
+from typing import Any, Dict, Iterable, Optional, Set
 from urllib.parse import quote, unquote
 
 #: The tools that put a loaded MCP skill's content into the transcript.
@@ -51,6 +51,82 @@ _SKILL_RESULT_START = {
     # declined, cancelled or raised — carries none.
     "read_skill_file": re.compile(r'\s*<mcp-skill-file server="'),
 }
+
+
+#: An MCP activation result's first line, which names the skill.
+_ACTIVATION_NAME = re.compile(r"\s*Skill Activated: (mcp:[^\n]*)\n")
+
+
+def mcp_activation_name(message: Any) -> Optional[str]:
+    """The MCP skill an ``activate_skill`` result activated, or ``None``.
+
+    Read from the result's first line, past a formatter's truncation header,
+    so a truncated result still counts as that skill's. The active-skills
+    block points at a skill's **latest** such result, and microcompaction
+    keeps that one whole (#552): both find it with this, so they agree.
+    """
+    if not (
+        isinstance(message, dict)
+        and message.get("role") == "tool"
+        and message.get("name") == "activate_skill"
+    ):
+        return None
+    content = message.get("content")
+    if not isinstance(content, str):
+        return None
+    match = _ACTIVATION_NAME.match(_TRUNCATED.sub("", content, count=1))
+    return match.group(1) if match else None
+
+
+def latest_mcp_activations(messages: Iterable[Any]) -> Dict[str, int]:
+    """Each MCP skill's latest ``activate_skill`` result, as an index."""
+    latest: Dict[str, int] = {}
+    for index, message in enumerate(messages):
+        name = mcp_activation_name(message)
+        if name is not None:
+            latest[name] = index
+    return latest
+
+
+def is_truncated(content: str) -> bool:
+    """Whether the result formatter truncated this tool result."""
+    return bool(_TRUNCATED.match(content))
+
+
+#: How an MCP skill's activation result ends: the tool's own words after the
+#: rendered block. The active-skills pointer anchors on it (#552).
+MCP_ACTIVATION_END = "\nThe skill is now active."
+
+#: What an active MCP skill gets in the active-skills block when its whole
+#: ``<mcp-skill>`` block is already in an ``activate_skill`` result in history
+#: (#552). The origin framing stays with the block there. The runner looks
+#: for it to decide whether a tail must be built again after a compaction.
+MCP_SKILL_IN_HISTORY_NOTE = (
+    "The instructions and the file list of this skill are in its most "
+    "recent activate_skill result earlier in this conversation, in the "
+    "<mcp-skill> block. The skill is still active.\n"
+)
+
+
+def mcp_activation_head(skill_name: str) -> str:
+    """How an MCP skill's activation result starts (``_ACTIVATION_NAME`` reads it back)."""
+    return f"\nSkill Activated: {skill_name}\n"
+
+
+def tail_points_into_history(tail: Any) -> bool:
+    """Whether a volatile-tail message carries an active-skills pointer (#552)."""
+    content = tail.get("content") if isinstance(tail, dict) else None
+    return isinstance(content, str) and MCP_SKILL_IN_HISTORY_NOTE in content
+
+
+def can_carry_pointer(content: str) -> bool:
+    """Whether an MCP activation result is still as the tool wrote it.
+
+    Not truncated by the formatter, and ending with the tool's closing line
+    (a hook may append to a result). Only such a result can be what the
+    active-skills block points at, so only it is kept from microcompaction.
+    """
+    return not is_truncated(content) and content.endswith(MCP_ACTIVATION_END)
 
 
 def is_skill_result(tool_name: Any, content: Any) -> bool:

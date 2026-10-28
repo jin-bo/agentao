@@ -20,32 +20,21 @@ from agentao.mcp.config import (
 # resolve_timeouts
 # ---------------------------------------------------------------------------
 
-def test_resolve_timeouts_absent_defaults_to_startup_60_request_none():
-    # No timeout configured → 60s connect budget, unbounded per-request (the
-    # MCP SDK default), i.e. exact pre-split behavior.
-    assert resolve_timeouts({}) == (60.0, None)
-
-
-def test_resolve_timeouts_legacy_int_maps_to_startup_only():
-    # Legacy int form: agentao's timeout governed the *connect* phase, so it
-    # must map to startup (NOT request — that is the opencode mapping).
-    assert resolve_timeouts({"timeout": 30}) == (30.0, None)
-
-
-def test_resolve_timeouts_legacy_float_preserved():
-    assert resolve_timeouts({"timeout": 12.5}) == (12.5, None)
-
-
-def test_resolve_timeouts_split_object():
-    assert resolve_timeouts({"timeout": {"startup": 15, "request": 90}}) == (15.0, 90.0)
-
-
-def test_resolve_timeouts_split_request_only_keeps_default_startup():
-    assert resolve_timeouts({"timeout": {"request": 90}}) == (60.0, 90.0)
-
-
-def test_resolve_timeouts_split_startup_only_leaves_request_unbounded():
-    assert resolve_timeouts({"timeout": {"startup": 15}}) == (15.0, None)
+@pytest.mark.parametrize(
+    "config, expected",
+    [
+        pytest.param({}, (60.0, None), id="default"),
+        # Legacy scalars affect startup only, never the per-request timeout.
+        pytest.param({"timeout": 30}, (30.0, None), id="legacy-int"),
+        pytest.param({"timeout": 12.5}, (12.5, None), id="legacy-float"),
+        pytest.param({"timeout": {"startup": 15, "request": 90}}, (15.0, 90.0), id="split"),
+        pytest.param({"timeout": {"request": 90}}, (60.0, 90.0), id="request-only"),
+        pytest.param({"timeout": {"startup": 15}}, (15.0, None), id="startup-only"),
+        pytest.param({"timeout": {"startup": 15, "request": 0}}, (15.0, None), id="zero-request"),
+    ],
+)
+def test_resolve_timeouts(config, expected):
+    assert resolve_timeouts(config) == expected
 
 
 @pytest.mark.parametrize("bad", [0, -5, "60", None, True, False, {"startup": "x"}])
@@ -57,10 +46,6 @@ def test_resolve_timeouts_malformed_falls_back_not_raises(bad):
     assert resolve_timeouts({"timeout": bad}) == (60.0, None)
 
 
-def test_resolve_timeouts_split_rejects_nonpositive_request():
-    assert resolve_timeouts({"timeout": {"startup": 15, "request": 0}}) == (15.0, None)
-
-
 @pytest.mark.parametrize("bad", [float("inf"), float("nan"), float("-inf"), 10 ** 400])
 def test_resolve_timeouts_non_finite_or_overflow_never_raises(bad):
     # json.loads accepts the Infinity/NaN literals, and a giant integer
@@ -70,25 +55,19 @@ def test_resolve_timeouts_non_finite_or_overflow_never_raises(bad):
     assert resolve_timeouts({"timeout": {"request": bad}}) == (60.0, None)
 
 
-def test_resolve_timeouts_warns_on_invalid_scalar(caplog):
+@pytest.mark.parametrize(
+    "timeout, warning",
+    [
+        pytest.param("90", "timeout", id="invalid-scalar"),
+        pytest.param({"request": 0}, "request", id="zero-request"),
+        pytest.param({"requets": 90}, "unknown", id="unknown-key"),
+    ],
+)
+def test_resolve_timeouts_warns(timeout, warning, caplog):
     with caplog.at_level(logging.WARNING, logger="agentao.mcp.config"):
-        out = resolve_timeouts({"timeout": "90"})
+        out = resolve_timeouts({"timeout": timeout})
     assert out == (60.0, None)
-    assert "timeout" in caplog.text.lower()
-
-
-def test_resolve_timeouts_warns_on_zero_request(caplog):
-    with caplog.at_level(logging.WARNING, logger="agentao.mcp.config"):
-        out = resolve_timeouts({"timeout": {"request": 0}})
-    assert out == (60.0, None)
-    assert "request" in caplog.text.lower()
-
-
-def test_resolve_timeouts_warns_on_unknown_key(caplog):
-    with caplog.at_level(logging.WARNING, logger="agentao.mcp.config"):
-        out = resolve_timeouts({"timeout": {"requets": 90}})  # typo'd 'request'
-    assert out == (60.0, None)
-    assert "unknown" in caplog.text.lower()
+    assert warning in caplog.text.lower()
 
 
 def test_resolve_timeouts_absent_request_does_not_warn(caplog):
@@ -180,15 +159,10 @@ def test_load_json_file_missing(tmp_path):
     assert _load_json_file(tmp_path / "nonexistent.json") == {}
 
 
-def test_load_json_file_invalid_json(tmp_path):
+@pytest.mark.parametrize("content", ["not json {{{", ""], ids=["invalid-json", "empty"])
+def test_load_json_file_invalid_or_empty(tmp_path, content):
     f = tmp_path / "bad.json"
-    f.write_text("not json {{{", encoding="utf-8")
-    assert _load_json_file(f) == {}
-
-
-def test_load_json_file_empty_file(tmp_path):
-    f = tmp_path / "empty.json"
-    f.write_text("", encoding="utf-8")
+    f.write_text(content, encoding="utf-8")
     assert _load_json_file(f) == {}
 
 

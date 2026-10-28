@@ -37,6 +37,7 @@ from ...cancellation import AgentCancelledError, CancellationToken
 from ...compaction.coordinator import CompactionRequest
 from ...context_manager import _LENGTH_FINISH_REASONS as _CM_LENGTH_FINISH_REASONS
 from ...context_manager import is_context_too_long_error, is_request_too_large_error
+from ...skills.provenance import tail_points_into_history
 from ...llm._retry import (
     _is_image_rejection,
     _is_image_unsupported,
@@ -265,6 +266,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         stop_reentry_cap: int = 3,
     ) -> None:
         self._agent = agent
+        # Tokens of a tail the overflow ladder rebuilt after a compaction,
+        # or ``None`` when the request carried the one the iteration built.
+        self._sent_tail_tokens: Optional[int] = None
         # Counters reset per chat() because ChatLoopRunner is
         # instantiated fresh by Agentao._chat_inner.
         self._stop_reentries: int = 0
@@ -500,10 +504,22 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             messages_with_system, system_prompt = self._maybe_microcompact(
                 messages_with_system, system_prompt, tokens=est_tokens,
             )
+            # Taken after microcompaction: it replaces the list but never
+            # clips an MCP skill's activation result, so a pointer survives
+            # it, and rebuilding would spend a recall pass for nothing.
+            history_before = agent.messages
             messages_with_system, system_prompt = self._maybe_full_compress(
                 messages_with_system, system_prompt, tokens=est_tokens,
                 cancellation_token=token,
             )
+            if (
+                agent.messages is not history_before
+                and tail_points_into_history(tail_msg)
+            ):
+                # A compaction replaced history, and the tail points at an
+                # MCP skill's activation result it may have removed (#552).
+                # A tail without a pointer is still right: no recall pass.
+                tail_msg, tail_tokens = self._volatile_tail()
             messages_with_system = self._inject_background_notifications(
                 messages_with_system, system_prompt,
             )
@@ -541,6 +557,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             response = llm_outcome.response
             messages_with_system = llm_outcome.messages_with_system
             system_prompt = llm_outcome.system_prompt
+            if self._sent_tail_tokens is not None:
+                # A ladder rung rebuilt the tail; anchor on the one sent.
+                tail_tokens = self._sent_tail_tokens
 
             # Tier 1 token count: record real prompt_tokens from API response.
             # Anchored on the **persistent** prefix — ``messages_with_system``
@@ -1393,15 +1412,26 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         Every ``_llm_call`` in the package goes through ``_send`` below, which
         is where — and the only place where — the request-only volatile tail is
         appended to the persistent prefix. The same ``tail`` is reused for
-        every attempt on the ladder: a compaction rewrites the system prompt
-        and the history, not skills / todos / recall / plan, so rebuilding it
-        per attempt would pay for a fresh memory-recall pass and return the
-        same text.
+        every attempt on the ladder while history is unchanged. Once a rung
+        replaced history, a tail that carries an active-skills pointer is
+        built again: an active MCP skill's block reads as a pointer to its
+        ``activate_skill`` result while that result is in history (#552),
+        and a compaction can remove it. A tail without one is kept, so no
+        recall pass is spent for nothing. The
+        tokens of the tail actually sent are left on
+        ``self._sent_tail_tokens`` for the caller's anchor.
         """
         agent = self._agent
+        self._sent_tail_tokens = None
+        built_for = agent.messages
 
         def _send(persistent: list):
             """Assemble ``persistent + [tail]`` and run one LLM attempt."""
+            nonlocal tail, built_for
+            if agent.messages is not built_for:
+                built_for = agent.messages
+                if tail_points_into_history(tail):
+                    tail, self._sent_tail_tokens = self._volatile_tail()
             if tail is None:
                 agent._llm_request_tail_count = 0
                 return agent._llm_call(persistent, tools, token)

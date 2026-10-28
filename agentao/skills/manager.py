@@ -8,13 +8,16 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from agentao.frontmatter import parse_frontmatter
 
 from ..paths import user_root
 from .. import json_parse
 from ..config_file import read_config_text
+from .provenance import MCP_ACTIVATION_END as _MCP_ACTIVATION_END
+from .provenance import MCP_SKILL_IN_HISTORY_NOTE as _MCP_SKILL_IN_HISTORY_NOTE
+from .provenance import mcp_activation_head as _mcp_activation_head
 
 logger = logging.getLogger(__name__)
 
@@ -886,10 +889,10 @@ class SkillManager:
             "mcp_key": held.entry.key,
         }
         return (
-            f"\nSkill Activated: {skill_name}\n"
-            f"Task: {task_description}\n\n"
+            _mcp_activation_head(skill_name)
+            + f"Task: {task_description}\n\n"
             + _render_mcp_skill(held)
-            + "\nThe skill is now active."
+            + _MCP_ACTIVATION_END
         )
 
     def deactivate_skill(self, skill_name: str) -> bool:
@@ -904,12 +907,55 @@ class SkillManager:
     def clear_active_skills(self):
         self.active_skills.clear()
 
-    def get_skills_context(self) -> str:
-        """Get context about active skills for the LLM."""
+    def mcp_pointer_targets(self, history: Optional[Sequence[Any]]) -> Dict[str, int]:
+        """The ``history`` index of each activation result the tail points at.
+
+        One entry per active MCP skill whose latest ``activate_skill`` result
+        holds the skill's current block (:func:`_activation_result_holds`).
+        :meth:`get_skills_context` gives exactly these skills a pointer, and
+        microcompaction keeps exactly these results whole (#552), so the two
+        cannot disagree. A deactivated skill's result is not here, and is
+        clipped like any other.
+        """
+        if not history:
+            return {}
+        targets: Dict[str, int] = {}
+        latest: Optional[Dict[str, int]] = None
+        for name, info in self.active_skills.items():
+            if info.get("mcp_key") is None or not self.mcp_skills:
+                continue
+            held = self.mcp_skills.held(info["mcp_key"], self.mcp_view)
+            if held is None:
+                continue
+            if latest is None:
+                from .provenance import latest_mcp_activations
+
+                latest = latest_mcp_activations(history)
+            index = latest.get(name)
+            if index is not None and _activation_result_holds(
+                history[index]["content"], name, _render_mcp_skill(held),
+            ):
+                targets[name] = index
+        return targets
+
+    def get_skills_context(self, *, history: Optional[Sequence[Any]] = None) -> str:
+        """Get context about active skills for the LLM.
+
+        ``history`` is the conversation the context goes out with. An active
+        MCP skill whose whole ``<mcp-skill>`` block is already in one of its
+        ``activate_skill`` results there gets a pointer to it, not a second
+        copy (#552): this context rides in the request-only tail, which is
+        outside the provider's prompt cache on every request, while the
+        result is cached history. Where the block is not there whole — a
+        ``/skills activate`` or ``spec.skills`` activation (no tool result),
+        a result a summary or a restore replaced — the block is sent here, as
+        before. ``None`` (no history given) always sends it.
+        """
         if not self.active_skills:
             return ""
 
         context = "\n=== Active Skills ===\n"
+        pointed = self.mcp_pointer_targets(history)
         for name, info in self.active_skills.items():
             skill_info = info['skill_info']
             if info.get("mcp_key") is not None:
@@ -920,7 +966,10 @@ class SkillManager:
                 )
                 if held is not None:
                     context += f"\n## {name}\nTask: {info['task']}\n\n"
-                    context += _render_mcp_skill(held)
+                    if name in pointed:
+                        context += _MCP_SKILL_IN_HISTORY_NOTE
+                    else:
+                        context += _render_mcp_skill(held)
                 continue
             context += f"\n## {name} - {skill_info.get('title', name)}\n"
             context += f"Task: {info['task']}\n"
@@ -1062,6 +1111,26 @@ class SkillManager:
                 return f.read()
         except IOError:
             return None
+
+
+def _activation_result_holds(content: str, skill_name: str, block: str) -> bool:
+    """Whether ``skill_name``'s latest activation result ``content`` holds ``block``.
+
+    Only the latest one counts: the pointer names it, and microcompaction
+    keeps it whole while it clips earlier ones (#552). Both sides find it
+    with :func:`provenance.latest_mcp_activations`. It must start as that
+    skill's activation does and end with the exact rendering followed by
+    the tool's closing line. So anything that changed it — a truncation,
+    a summary, a restore's placeholder, a re-approved manifest with other
+    bytes since — reads as "not there", and the caller sends the block
+    again. Another skill's result, a local ``SKILL.md`` that quotes the
+    block, or a ``Task:`` the model wrote it into does not count either. A
+    wrong "not there" costs tokens. A wrong "there" would drop the skill's
+    instructions, so nothing looser counts.
+    """
+    return content.startswith(_mcp_activation_head(skill_name)) and content.endswith(
+        block + _MCP_ACTIVATION_END
+    )
 
 
 def _render_mcp_skill(held: Any) -> str:

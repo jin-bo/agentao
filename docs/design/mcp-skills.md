@@ -299,6 +299,8 @@ server's skill count or its gate diagnostic.
    **as paths relative to the skill root** (from the manifest; no `resources/directory/read`), and
    the instruction to read them with `read_skill_file`. The active-skills block in the volatile
    tail renders the held bytes with the same wrapper — never re-fetched, never read from disk.
+   *Revised by #552:* the tail sends a pointer instead while an `activate_skill` result in
+   history still holds that wrapper whole (see Appendix B).
 
 `allowed-tools` in an MCP skill's frontmatter grants nothing. agentao reads that field for no
 skill today; a test pins that this stays true for MCP skills (D3 records the decision not to add an
@@ -693,11 +695,37 @@ Where the code differs from, or settles, the text above:
   the restore, not an ungated call. A damaged field reads as an unknown origin. Inside a live
   session there is no such backstop: code that moves messages must carry the marker.
 - **SKILL.md size.** Beyond the spec's 512 / 16 MiB, agentao lists a skill unavailable when its
-  `SKILL.md` is over 100,000 bytes (`MAX_SKILL_MD_BYTES`). An active skill's `SKILL.md` is sent
-  with every request in the request-only tail, which no compaction reaches, so an oversized one
-  would fail every turn until deactivated. It is refused rather than truncated: half the
-  instructions could be followed as if whole. The listing check is the only one needed, because
-  verification holds the fetched bytes to the declared size.
+  `SKILL.md` is over 100,000 bytes (`MAX_SKILL_MD_BYTES`). An active skill's `SKILL.md` is in
+  every request — in the request-only tail, or in its `activate_skill` result, which
+  microcompaction does not clip — so an oversized one would fail every turn until deactivated.
+  It is refused rather than truncated: half the instructions could be followed as if whole. The
+  listing check is the only one needed, because verification holds the fetched bytes to the
+  declared size.
+- **Tail pointer (#552).** The tail is outside the provider's prompt cache on every request, and
+  a model activation already put the wrapped body into history. So while that skill's latest
+  `activate_skill` result is in `agent.messages` unchanged — it starts with `Skill Activated:
+  <name>` and ends with the rendered block byte for byte, then the tool's closing line
+  (`skills/manager.py::_activation_result_holds`) — the active-skills block gives that skill's
+  `Task:` and a one-line pointer to its most recent result instead of the block. Earlier results
+  of the same skill do not matter, and the latest one is found the same way by both sides
+  (`skills/provenance.py::latest_mcp_activations`). Anything else sends the block in the tail
+  as before: `/skills activate` and `spec.skills` (no tool result), a summary, a restore's
+  placeholder, a truncated result, a manifest re-approved since the latest activation. A wrong "not there"
+  costs tokens; nothing looser than this anchored match counts, so another skill's result, a
+  local `SKILL.md` that quotes the block, or a `Task:` the model wrote it into does not count.
+  Microcompaction keeps whole exactly the results the tail points at: the agent answers
+  `ContextManager.mcp_pointer_provider` from `SkillManager.mcp_pointer_targets`, the same function
+  `get_skills_context` uses. Everything else is clipped as before — earlier results of a skill, a
+  deactivated skill's, one a hook appended to or the formatter truncated — so repeated
+  activations or a re-approval leave one whole copy. With no usable answer (no provider, a raise,
+  a bad shape), it keeps the latest result of every MCP skill that could carry a pointer
+  (`provenance.can_carry_pointer`): the tail is built before microcompaction, so clipping a
+  result it points at would send the pointer with nothing behind it. A full compaction
+  still summarises it, and the tail then sends the block again. A tail built before a
+  compaction that carries a pointer is built again once the compaction replaced history — after a threshold compaction
+  in the same iteration, and before each retry on the overflow ladder — so the request never
+  points at a result it no longer carries. A host-injected `SkillManager`
+  whose `get_skills_context` takes no `history` keyword gets the old call.
 - **No spill files.** Skill content is never spilled to `.agentao/tool-outputs/`, and a binary
   skill file read through `read_mcp_resource` is described, not saved. `read_skill_file` takes
   `offset` / `limit` so a long file is read in pages below the truncation threshold. This is

@@ -22,17 +22,17 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict
 
 from agentao.permissions import PermissionEngine
 from agentao.plugins.hooks import PluginHookDispatcher
 from agentao.plugins.hooks._profile import LEGACY_CONTRACT_ID, PROFILE_ID
 from agentao.plugins.models import ParsedHookRule
 from agentao.runtime.tool_runner import ToolRunner
-from agentao.tools.base import Tool, ToolRegistry
+from agentao.tools.base import ToolRegistry
 
 from ._hook_commands import as_kwargs, emits_json, emitting
 from tests.support.tool_calls import make_tool_call
+from tests.support.tools import EchoTool as _EchoTool
 
 
 def rule(event, command, contract):
@@ -127,24 +127,6 @@ def test_pre_compact_a_v1_cancel_does_not_suppress_the_profile_rule(tmp_path):
 # --------------------------------------------------------------------------
 # Shape 2 — only the profile has a decision
 # --------------------------------------------------------------------------
-
-class _EchoTool(Tool):
-    @property
-    def name(self) -> str:
-        return "echo_tool"
-
-    @property
-    def description(self) -> str:
-        return "echoes"
-
-    @property
-    def parameters(self) -> Dict[str, Any]:
-        return {"type": "object", "properties": {"text": {"type": "string"}},
-                "required": ["text"]}
-
-    def execute(self, text: str) -> str:
-        return f"echoed {text}"
-
 
 class _NullTransport:
     def emit(self, event):

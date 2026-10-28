@@ -683,15 +683,57 @@ class ContextManager:
         callers that must decide before mutating (announcing ``PreCompact``)
         ask :meth:`microcompact_would_mutate`, and the transform below simply
         rewrites this exact index set.
+
+        An activation result the active-skills block points at is not
+        shortened (#552): that block sends a pointer to it instead of the
+        skill, so a clip would leave the pointer with nothing behind it. The
+        agent names those results (``mcp_pointer_provider``): the latest
+        unchanged result of each active MCP skill. Everything else is clipped
+        as before — earlier results of a skill, a deactivated skill's, one a
+        hook or the formatter changed. Without an answer from the agent, the
+        latest result of every MCP skill that could carry a pointer is kept.
         """
+        from .skills.provenance import can_carry_pointer, latest_mcp_activations
+
+        kept = self._pointer_targets(messages)
+        if kept is None:
+            # No answer from the agent: keep every result that could carry a
+            # pointer. Keeping too much costs tokens. Clipping a result the
+            # tail already points at would send the pointer with nothing
+            # behind it, since the tail is built before this pass runs.
+            kept = {
+                i for i in latest_mcp_activations(messages).values()
+                if can_carry_pointer(messages[i]["content"])
+            }
         tool_indices = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
         preserve = set(tool_indices[-self.MICROCOMPACT_PRESERVE_RECENT:])
         return {
             i for i in tool_indices
             if i not in preserve
+            and i not in kept
             and isinstance(messages[i].get("content"), str)
             and len(messages[i]["content"]) > self.MICROCOMPACT_TOOL_LIMIT
         }
+
+    def _pointer_targets(self, messages: List[Dict[str, Any]]) -> Optional[set]:
+        """Indices the active-skills block points at, from the agent, or ``None``.
+
+        ``mcp_pointer_provider`` is set by the agent, which knows the active
+        skills (this class does not). ``None`` — no provider, a raise, or an
+        answer that is not a set of in-range ints — means "unknown".
+        """
+        provider = getattr(self, "mcp_pointer_provider", None)
+        if not callable(provider):
+            return None
+        try:
+            answer = provider(messages)
+        except Exception:
+            return None
+        if not isinstance(answer, set) or not all(
+            isinstance(i, int) and 0 <= i < len(messages) for i in answer
+        ):
+            return None
+        return answer
 
     def microcompact_would_mutate(self, messages: List[Dict[str, Any]]) -> bool:
         """True when :meth:`microcompact_messages` would shorten something.
