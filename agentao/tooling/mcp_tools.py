@@ -157,11 +157,15 @@ def register_mcp_tools(agent: "Agentao", manager: "McpClientManager") -> None:
     # Per pass, not against the registry: a re-init (a plugin adding servers)
     # registers the same tools again over a new manager and must replace them.
     claimed: Dict[str, Tuple[str, Any]] = {}
-    _register_entries(agent, manager, manager.get_all_tools(), claimed, real=real)
+    # One listing for both: a second ``get_all_tools()`` could see a server
+    # that connected or dropped in between, and record a list it never
+    # registered.
+    entries = list(manager.get_all_tools())
+    _register_entries(agent, manager, entries, claimed, real=real)
     # What a refresh removes, and what it compares a server's new list with.
     agent._mcp_registered = claimed
     by_server: Dict[str, List[Any]] = {}
-    for server_name, tool_def in manager.get_all_tools():
+    for server_name, tool_def in entries:
         by_server.setdefault(server_name, []).append(tool_def)
     agent._mcp_listed = by_server
 
@@ -184,12 +188,15 @@ def _register_entries(
     claimed: Dict[str, Tuple[str, Any]],
     *,
     real: bool,
+    keep_foreign: bool = False,
 ) -> None:
     """Wrap and register each ``(server, tool definition)``; ``claimed`` records them.
 
     A name already in ``claimed`` is refused, so the caller decides what the
     new tools may collide with: nothing (a full pass) or the other servers'
-    tools (a refresh of one server).
+    tools (a refresh of one server). With ``keep_foreign`` a name the
+    registry holds with an origin other than ``mcp`` (a host tool that took
+    it since) is refused too.
     """
     from .registry import _bind_and_register
 
@@ -219,6 +226,18 @@ def _register_entries(
                 "MCP: tool %r from server %r maps to %s, already taken by %r "
                 "from server %r; not registered. Rename one of them.",
                 mcp_tool_def.name, server_name, tool.name, first[1].name, first[0],
+            )
+            continue
+        if (
+            keep_foreign
+            and tool.name in agent.tools.tools
+            and agent.tools.origin(tool.name) != "mcp"
+        ):
+            agent.llm.logger.error(
+                "MCP: tool %r from server %r maps to %s, already taken by a "
+                "%s tool; not registered.",
+                mcp_tool_def.name, server_name, tool.name,
+                agent.tools.origin(tool.name),
             )
             continue
         claimed[tool.name] = (server_name, mcp_tool_def)
@@ -288,7 +307,9 @@ def refresh_mcp_tools(agent: "Agentao") -> bool:
             # since stays.
             if name in agent.tools.tools and agent.tools.origin(name) == "mcp":
                 agent.tools.unregister(name)
-        _register_entries(agent, manager, new, registered, real=True)
+        _register_entries(
+            agent, manager, new, registered, real=True, keep_foreign=True,
+        )
         now = {name for name, entry in registered.items() if entry[0] == server}
         agent.llm.logger.info(
             "MCP server %r: tool list refreshed, %d tools (+%d, -%d)",

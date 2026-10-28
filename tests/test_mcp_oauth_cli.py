@@ -726,6 +726,24 @@ class TestRepl:
         assert "Restart agentao" not in out
         assert len(names) == 1
 
+    def test_a_failed_refresh_after_login_falls_back_to_the_restart_notice(
+        self, runtime, origin, monkeypatch,
+    ):
+        import agentao.tooling.mcp_tools as mcp_tools
+
+        def broken(agent):
+            raise ValueError("registry refused")
+
+        monkeypatch.setattr(mcp_tools, "refresh_mcp_tools", broken)
+        self._scripted_ui(monkeypatch, origin)
+        manager = McpClientManager({"svr": {**CONFIG, "refresh_tools": True}}, oauth_runtime=runtime)
+        cli = self._cli(manager)
+        with patched(origin):
+            manager.connect_all()
+            out = self._run(cli, "login svr")
+            manager.disconnect_all()
+        assert "Restart agentao to load the tools of 'svr'." in out
+
     def test_login_with_tools_registered_needs_no_restart(self, runtime, origin, monkeypatch):
         from agentao.tooling.mcp_tools import register_mcp_tools
 

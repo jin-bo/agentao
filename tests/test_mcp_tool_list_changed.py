@@ -382,3 +382,72 @@ def test_a_first_success_after_a_failed_connect_is_stale_only_when_opted_in(tmp_
         assert ("srv" in listed) is opted_in
     finally:
         manager.disconnect_all()
+
+
+def test_a_failed_relist_after_a_reconnect_hands_over_the_reconnects_list(tmp_path):
+    """The reconnect's handshake listed new tools; a notice then asks for a
+    re-list that fails. The flag is cleared, so the registry must take the
+    list the client holds now rather than stay on the first connection's."""
+    config, marks = changing_tools_server(tmp_path, [tool("alpha")], refresh_tools=True)
+    agent = _agent(tmp_path, {"srv": config})
+    try:
+        client = agent.mcp_manager.get_client("srv")
+        change = {"name": "change", "inputSchema": {"type": "object"}}
+        (marks / "tools.json").write_text(json.dumps([change, tool("beta")]))
+        agent.mcp_manager._run(client.disconnect())
+        agent.mcp_manager._run(client.connect())
+        (marks / "list_error").touch()
+        _change(agent, [tool("gamma")])
+        assert _wait_stale(agent)
+        assert refresh_mcp_tools(agent) is True
+        assert _mcp_names(agent) == ["mcp_srv_beta", "mcp_srv_change"]
+    finally:
+        agent.close()
+
+
+def test_a_cancel_after_the_relist_leaves_the_list_stale(tmp_path):
+    """A raise out of the manager's wait drops the results of re-lists that
+    finished. Their servers stay stale, and the next request hands the
+    registry their list without another ``tools/list``."""
+    from agentao.cancellation import AgentCancelledError
+
+    config, marks = changing_tools_server(tmp_path, [tool("alpha")], refresh_tools=True)
+    agent = _agent(tmp_path, {"srv": config})
+    try:
+        manager = agent.mcp_manager
+        _change(agent, [tool("beta")])
+        assert _wait_stale(agent)
+        real_run = manager._run
+
+        def run_then_cancel(coro):
+            real_run(coro)
+            raise AgentCancelledError()
+
+        manager._run = run_then_cancel
+        with pytest.raises(AgentCancelledError):
+            refresh_mcp_tools(agent)
+        manager._run = real_run
+        assert manager.get_client("srv").tools_stale is True
+        listed = _list_count(marks)
+        assert refresh_mcp_tools(agent) is True
+        assert _mcp_names(agent) == ["mcp_srv_beta", "mcp_srv_change"]
+        assert _list_count(marks) == listed
+    finally:
+        agent.close()
+
+
+def test_a_refresh_never_overwrites_a_host_tool_that_took_the_name(tmp_path):
+    from tests.support.tools import NamedTool
+
+    config, _ = changing_tools_server(tmp_path, [tool("alpha")], refresh_tools=True)
+    agent = _agent(tmp_path, {"srv": config})
+    try:
+        host = NamedTool("mcp_srv_alpha")
+        agent.tools.register(host, replace=True, origin="host")
+        _change(agent, [tool("alpha"), tool("beta")])
+        assert _wait_stale(agent)
+        assert refresh_mcp_tools(agent) is True
+        assert agent.tools.get("mcp_srv_alpha") is host
+        assert "mcp_srv_beta" in agent.tools.tools
+    finally:
+        agent.close()

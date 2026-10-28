@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
 from ...security.terminal_text import sanitize_terminal_text
 from .._globals import console, split_subcommand, unknown_subcommand
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
@@ -203,7 +206,12 @@ def _login_or_logout(cli: AgentaoCLI, sub: str, sub_args: str) -> None:
             # (docs/design/mcp-tool-list-changed.md D13).
             from ...tooling.mcp_tools import refresh_mcp_tools
 
-            refresh_mcp_tools(cli.agent)
+            try:
+                refresh_mcp_tools(cli.agent)
+            except Exception:
+                # As in the chat loop: a failed refresh is logged, and the
+                # restart notice below still tells the user what to do.
+                _logger.warning("MCP tool refresh after login failed", exc_info=True)
         if not _has_registered_tools(cli, name):
             # D8: without "refresh_tools": true, tools are registered once,
             # at startup; this server had none then.

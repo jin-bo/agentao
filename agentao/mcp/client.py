@@ -1190,7 +1190,13 @@ class McpClient:
                 f"MCP server '{self.name}': re-listing tools failed, keeping the "
                 f"previous {len(self._tools)}: {e or type(e).__name__}"
             )
-            return None
+            # The current list, not ``None``: a reconnect may have listed it
+            # since the registry last saw this server, and with the flag
+            # cleared nothing else would bring the registry up to it. An
+            # unchanged list changes nothing in the registry.
+            if session is not self._session or self.status != ServerStatus.CONNECTED:
+                return None
+            return list(self._tools)
         if session is not self._session:
             # Reconnected meanwhile: that connect listed its own tools, and
             # marked them stale for the next request.
@@ -2272,6 +2278,14 @@ class McpClientManager:
             done = self._run(_refresh_all())
         except McpManagerClosedError:
             return {}
+        except BaseException:
+            # A cancel (or anything else) drops every result, also of the
+            # servers whose re-list finished and cleared their flag. Mark them
+            # stale again: the next request hands the registry their current
+            # list, at no extra ``tools/list``.
+            for client in stale:
+                client._tools_stale = True
+            raise
         listed: Dict[str, List[McpToolDef]] = {}
         for client, result in zip(stale, done):
             if isinstance(result, BaseException):
