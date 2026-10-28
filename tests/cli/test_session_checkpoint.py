@@ -12,6 +12,7 @@ checkpoint reads nothing else, and a real LLM would add nothing here.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import Callable, List, Union
@@ -268,9 +269,237 @@ def test_a_failed_save_leaves_no_partial_file(tmp_path):
     assert list((tmp_path / ".agentao" / "sessions").iterdir()) == []
 
 
+def _fill_sessions(tmp_path, count):
+    session_dir = tmp_path / ".agentao" / "sessions"
+    session_dir.mkdir(parents=True)
+    for i in range(count):
+        (session_dir / f"20000101_000000_{i:06d}.json").write_text("{}", encoding="utf-8")
+    return session_dir
+
+
+def test_rotation_tolerates_a_file_another_process_removed(tmp_path, monkeypatch):
+    """codex #57358: two processes rotate one directory. The oldest file the
+    glob saw can be gone before the unlink — the save already landed, so it
+    must not end in ``FileNotFoundError``."""
+    from agentao.embedding import sessions as sessions_mod
+
+    session_dir = _fill_sessions(tmp_path, sessions_mod._MAX_SESSIONS)
+    real_glob = Path.glob
+    phantom = session_dir / "19990101_000000_000000.json"
+
+    def glob_with_phantom(self, pattern):
+        found = list(real_glob(self, pattern))
+        return found + [phantom] if self == session_dir and pattern == "*.json" else found
+
+    monkeypatch.setattr(Path, "glob", glob_with_phantom)
+    path, _ = save_session([{"role": "user", "content": "x"}], "m", project_root=tmp_path)
+    monkeypatch.undo()
+    assert path.exists()
+    assert len(list(session_dir.glob("*.json"))) == sessions_mod._MAX_SESSIONS
+
+
+def test_two_writers_in_one_tick_never_share_a_temp_file(tmp_path, monkeypatch):
+    """A second save starts, with the same clock reading, while the first is
+    still dumping: each has its own temp file and both sessions survive whole.
+    A fixed ``<timestamp>.tmp`` would have the second save write into, and
+    rename away, the first one's half-written file."""
+    from agentao.embedding import sessions as sessions_mod
+
+    fixed = datetime(2026, 10, 28, 12, 0, 0, 0).astimezone()
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+
+    monkeypatch.setattr(sessions_mod, "datetime", _Frozen)
+    temps: List[str] = []
+    real_mkstemp = sessions_mod.tempfile.mkstemp
+
+    def recording_mkstemp(*args, **kwargs):
+        fd, name = real_mkstemp(*args, **kwargs)
+        temps.append(name)
+        return fd, name
+
+    real_dump = json.dump
+    nested = []
+
+    def dump_with_a_second_writer(obj, fp, **kwargs):
+        if not nested:
+            nested.append(True)
+            save_session([{"role": "user", "content": "b"}], "m", project_root=tmp_path)
+        real_dump(obj, fp, **kwargs)
+
+    monkeypatch.setattr(sessions_mod.tempfile, "mkstemp", recording_mkstemp)
+    monkeypatch.setattr(sessions_mod.json, "dump", dump_with_a_second_writer)
+    first, _ = save_session([{"role": "user", "content": "a"}], "m", project_root=tmp_path)
+    monkeypatch.undo()
+
+    assert len(set(temps)) == 2
+    session_dir = tmp_path / ".agentao" / "sessions"
+    contents = sorted(
+        json.loads(p.read_text(encoding="utf-8"))["messages"][0]["content"]
+        for p in session_dir.glob("*.json")
+    )
+    assert contents == ["a", "b"]
+    assert not list(session_dir.glob("*.tmp"))
+
+
+def _written(tmp_path, name, text):
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_a_taken_name_steps_to_the_next_suffix(tmp_path):
+    from agentao.embedding import sessions as sessions_mod
+
+    for expected in ("t.json", "t_1.json", "t_2.json"):
+        partial = _written(tmp_path, f"{expected}.tmp", expected)
+        published = sessions_mod._publish_session_file(partial, tmp_path, "t")
+        assert published.name == expected and not partial.exists()
+    assert (tmp_path / "t.json").read_text(encoding="utf-8") == "t.json"
+
+
+def test_without_hard_links_the_save_still_publishes(tmp_path, monkeypatch):
+    from agentao.embedding import sessions as sessions_mod
+
+    def no_links(src, dst):
+        raise PermissionError("hard links not supported")
+
+    monkeypatch.setattr(sessions_mod.os, "link", no_links)
+    _written(tmp_path, "t.json", "taken")
+    partial = _written(tmp_path, "p.tmp", "new")
+    published = sessions_mod._publish_session_file(partial, tmp_path, "t")
+    assert published.name == "t_1.json"
+    assert published.read_text(encoding="utf-8") == "new"
+    assert (tmp_path / "t.json").read_text(encoding="utf-8") == "taken"
+
+
+def test_no_session_name_is_claimed_while_the_content_is_written(tmp_path, monkeypatch):
+    """An empty or partial ``*.json`` is what a "latest session" load would
+    pick, so none may exist while the content is written."""
+    from agentao.embedding import sessions as sessions_mod
+
+    session_dir = tmp_path / ".agentao" / "sessions"
+    seen: List[List[str]] = []
+    real_dump = sessions_mod.json.dump
+
+    def recording_dump(*args, **kwargs):
+        seen.append(sorted(p.name for p in session_dir.glob("*.json")))
+        return real_dump(*args, **kwargs)
+
+    monkeypatch.setattr(sessions_mod.json, "dump", recording_dump)
+    save_session([{"role": "user", "content": "x"}], "m", project_root=tmp_path)
+    assert seen == [[]]
+
+
+_CONCURRENT_SAVER = """
+import datetime, sys
+from pathlib import Path
+from agentao.embedding import sessions
+
+fixed = datetime.datetime(2026, 10, 28, 12, 0, 0, 0).astimezone()
+
+class _Frozen(datetime.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return fixed
+
+sessions.datetime = _Frozen
+for i in range(int(sys.argv[3])):
+    sessions.save_session(
+        [{"role": "user", "content": f"{sys.argv[2]}-{i}"}], "m",
+        project_root=Path(sys.argv[1]),
+    )
+"""
+
+
+def test_processes_saving_in_one_tick_all_succeed(tmp_path):
+    """Several processes save into one directory with the same clock reading:
+    every save succeeds, every file left is a whole session, no temp stays."""
+    import subprocess
+    import sys
+
+    from agentao.embedding import sessions as sessions_mod
+
+    saves = 6
+    procs = [
+        subprocess.Popen(
+            [sys.executable, "-c", _CONCURRENT_SAVER, str(tmp_path), f"p{n}", str(saves)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        for n in range(4)
+    ]
+    for proc in procs:
+        _out, err = proc.communicate(timeout=120)
+        assert proc.returncode == 0, err
+    session_dir = tmp_path / ".agentao" / "sessions"
+    left = sorted(p.name for p in session_dir.iterdir())
+    assert len(left) == sessions_mod._MAX_SESSIONS
+    assert all(name.endswith(".json") for name in left)
+    for name in left:
+        assert json.loads((session_dir / name).read_text(encoding="utf-8"))["messages"]
+
+
 def test_supersedes_carries_created_at(tmp_path):
     first, sid = save_session([{"role": "user", "content": "1"}], "m", project_root=tmp_path)
     created = json.loads(first.read_text(encoding="utf-8"))["created_at"]
     second, _ = save_session([{"role": "user", "content": "2"}], "m", session_id=sid,
                              project_root=tmp_path, supersedes=first)
     assert json.loads(second.read_text(encoding="utf-8"))["created_at"] == created
+
+
+def test_a_reader_never_sees_an_incomplete_session_file(tmp_path, monkeypatch):
+    """Every ``*.json`` that exists at any step of a save parses: a "latest
+    session" load in another process must not find an empty placeholder."""
+    from agentao.embedding import sessions as sessions_mod
+
+    session_dir = tmp_path / ".agentao" / "sessions"
+    bad: List[str] = []
+
+    def check_all(*_args):
+        for path in session_dir.glob("*.json"):
+            try:
+                json.loads(path.read_text(encoding="utf-8"))
+            except ValueError:
+                bad.append(path.name)
+
+    real_link, real_replace = sessions_mod.os.link, sessions_mod.os.replace
+
+    def link(src, dst):
+        check_all()
+        real_link(src, dst)
+        check_all()
+
+    def replace(src, dst):
+        check_all()
+        real_replace(src, dst)
+        check_all()
+
+    monkeypatch.setattr(sessions_mod.os, "link", link)
+    monkeypatch.setattr(sessions_mod.os, "replace", replace)
+    save_session([{"role": "user", "content": "x"}], "m", project_root=tmp_path)
+    assert bad == []
+
+
+def test_a_save_sweeps_temp_files_a_dead_save_left(tmp_path):
+    """A kill between the publish link and the temp unlink leaves a full copy
+    of the conversation as ``*.tmp``; the next save removes it once it is old."""
+    import os
+    import time
+
+    from agentao.embedding import sessions as sessions_mod
+
+    session_dir = tmp_path / ".agentao" / "sessions"
+    session_dir.mkdir(parents=True)
+    stale = session_dir / "20260101_000000_000000.abcd.tmp"
+    fresh = session_dir / "20260101_000000_000001.efgh.tmp"
+    stale.write_text("{}", encoding="utf-8")
+    fresh.write_text("{}", encoding="utf-8")
+    old = time.time() - sessions_mod._STALE_TEMP_SECONDS - 60
+    os.utime(stale, (old, old))
+
+    save_session([{"role": "user", "content": "x"}], "m", project_root=tmp_path)
+    assert not stale.exists()
+    assert fresh.exists()  # could be another process's save in progress

@@ -13,7 +13,13 @@ _Targeting 0.5.18. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **Session files are written mode `0600` on POSIX.** `save_session` now writes through a unique temp file from `tempfile.mkstemp`, and the saved file keeps that file's mode, owner-only. Before, the mode came from the umask (usually `0644`). Session files hold the whole conversation and are not secret-scanned.
+
 ### Fixed
+
+- **Ctrl+C on a background wake turn stops further wakes.** When a background sub-agent finished at an idle prompt, the CLI started a turn by itself. Interrupting that turn did not stop the next completion from starting another one, up to 2 more with nobody typing. An interrupted wake turn now pauses the wake, as the 3-in-a-row cap does, and prints a notice. Any line you submit starts it again. From codex#56330.
+- **Two processes saving sessions into one project no longer fail.** Rotation removed the oldest session with an `unlink()` that raised when another process had already removed it. The save had landed, but it reported an error and the CLI skipped the checkpoint, which left a duplicate session file. Rotation now ignores a file that is gone. Two saves in the same clock tick also shared one `<name>.tmp`; each save now has its own temp file and publishes it with a hard link, which fails on a taken name, so a session file only ever appears whole. On a filesystem without hard links the save falls back to the old check and rename. A save also removes temp files older than an hour, which only a save that died mid-write leaves; each can hold a whole conversation. From codex#57358.
+- **The `openai-responses` wire retries an overload reported inside the stream.** `server_is_overloaded`, `slow_down` and `policy_capacity_unavailable` in an `error` or `response.failed` event ended the turn at once, while the same overload as HTTP 503 or 429 was retried. They are now retried with backoff, like `server_error`. An unknown in-stream code is still permanent, and a failure after text was shown is still not retried. From codex#57452.
 
 ---
 
