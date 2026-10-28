@@ -16,6 +16,7 @@ _Targeting 0.5.18. Add entries under the relevant heading as work lands._
 ### Changed
 
 - **Session files are written mode `0600` on POSIX.** `save_session` now writes through a unique temp file from `tempfile.mkstemp`, and the saved file keeps that file's mode, owner-only. Before, the mode came from the umask (usually `0644`). Session files hold the whole conversation and are not secret-scanned.
+- **Docs: on mcp 1.x, a cancelled or timed-out MCP tool call keeps running on the server.** mcp 2.x sends `notifications/cancelled`; 1.x sends nothing, so the tool may finish, side effects included. Recorded as a known 1.x limitation in the configuration reference and the developer guide, both languages; behaviour is unchanged. Use mcp 2.x where a tool must stop on cancel.
 
 ### Fixed
 

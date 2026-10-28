@@ -319,7 +319,7 @@ URL 类 server（`http` 或 `sse`）默认使用 **OAuth**，不需要任何键�
 **`timeout`** 接受两种形式（`mcp/config.py :: resolve_timeouts`）：
 
 - **int / float**（旧形式）—— *连接 / 启动*阶段的秒数（默认 `60`）：约束 URL 传输的 HTTP 连接建立**以及** `initialize()` / `list_tools()` 握手（所有传输都生效）。单次工具调用**不设上限**（沿用 MCP SDK 默认值）。现有配置行为不变。
-- **对象 `{ "startup": int, "request": int }`** —— 两个键都可选。`startup` 即上述连接/握手上限（默认 `60`）；`request` 约束初始化后的*每次工具调用*（省略则不设上限）。不配 `request` 时，挂起的工具调用在 stdio 下永不自终止，在 SSE 或 Streamable HTTP 下也要连续约 300 秒收不到 server 的数据才断开——配上 `request` 才能确定性封顶（`request` 超过 300 秒时还会同步抬高这个读超时）。超过 `request` 的调用报错失败；server 不会被停掉，已经开始的工作可能还在继续。
+- **对象 `{ "startup": int, "request": int }`** —— 两个键都可选。`startup` 即上述连接/握手上限（默认 `60`）；`request` 约束初始化后的*每次工具调用*（省略则不设上限）。不配 `request` 时，挂起的工具调用在 stdio 下永不自终止，在 SSE 或 Streamable HTTP 下也要连续约 300 秒收不到 server 的数据才断开——配上 `request` 才能确定性封顶（`request` 超过 300 秒时还会同步抬高这个读超时）。提前结束的调用（超过 `request`，或因轮次被取消而放弃，比如 Ctrl+C、ACP `session/cancel`）会立即向模型报告错误或取消。server 端收到什么，取决于装的 SDK 版本。**mcp 2.x** 下，Agentao 会发送 `notifications/cancelled`，遵守它的 server 会停止这次调用。**mcp 1.x** 下什么都不会发送：server 不知道调用已被放弃，工具可能一直运行到结束，副作用也会照常发生。这是 1.x 的已知限制，不会在 1.x 上修复，因为 1.x 只接收严重缺陷和安全修复。需要工具在取消时真正停下来的场合，请安装 mcp 2.x（`mcp>=2`）。无论哪个版本，server 已经完成的工作都不会回滚。
 
 ```json
 "slow-server": { "url": "https://...", "timeout": { "startup": 15, "request": 90 } }
