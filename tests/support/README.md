@@ -32,5 +32,6 @@ classes**, not pytest fixtures — construction is explicit at the call site.
 | `permissions.py` | Permission-rule builders. |
 | `stop_precompact.py` | Runner + capture-script setup for the Stop / PreCompact hook suites. |
 | `tool_calls.py` | The OpenAI SDK *wire* `tool_call` shape. |
-| `tools.py` | Registrable tool doubles (`NamedTool`) and `make_dummy_agent`. |
+| `tools.py` | Registrable tool doubles (`NamedTool`, `EchoTool`) and `make_dummy_agent`. |
+| `chat.py` | `make_chat_agent` for chat-loop regressions using `isolated_cwd`. |
 | `wheel.py` | Built-wheel discovery for the `slow` clean-install tests — newest **by version**, since `dist/` accumulates builds and `0.4.9` sorts after `0.4.10` as text. |

@@ -15,14 +15,13 @@ property that the *next* request goes out clean.
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from agentao import Agentao
 from agentao.runtime.sanitize import backfill_orphaned_tool_calls
 from agentao.tools.base import Tool
+from tests.support.chat import make_chat_agent as _make_agent
 
 # Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
@@ -31,15 +30,6 @@ pytestmark = pytest.mark.usefixtures("isolated_cwd")
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_agent() -> Agentao:
-    return Agentao(
-        api_key="test-key",
-        base_url="https://example.test/v1",
-        model="test-model",
-        working_directory=Path.cwd(),
-    )
 
 
 def _tool_call(call_id: str, name: str = "boom", args: str = "{}"):

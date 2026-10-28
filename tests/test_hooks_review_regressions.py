@@ -24,28 +24,11 @@ from agentao.plugins.hooks._resolve import diagnose_fields
 from agentao.plugins.models import ParsedHookRule
 from agentao.runtime.tool_planning import ToolCallDecision
 from agentao.runtime.tool_runner import ToolRunner
-from agentao.tools.base import Tool, ToolRegistry
+from agentao.tools.base import ToolRegistry
 
 from ._hook_commands import as_kwargs, emits_json, emitting
 from tests.support.tool_calls import make_tool_call
-
-
-class _EchoTool(Tool):
-    @property
-    def name(self) -> str:
-        return "echo_tool"
-
-    @property
-    def description(self) -> str:
-        return "echoes"
-
-    @property
-    def parameters(self) -> Dict[str, Any]:
-        return {"type": "object", "properties": {"text": {"type": "string"}},
-                "required": ["text"]}
-
-    def execute(self, text: str) -> str:
-        return f"echoed {text}"
+from tests.support.tools import EchoTool as _EchoTool
 
 
 class _CapturingTransport:

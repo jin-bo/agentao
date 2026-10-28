@@ -55,3 +55,21 @@ def make_dummy_agent(tmp_path: Any, **kwargs: Any) -> Agentao:
         model="dummy",
         **kwargs,
     )
+
+
+class EchoTool(Tool):
+    @property
+    def name(self) -> str:
+        return "echo_tool"
+
+    @property
+    def description(self) -> str:
+        return "echoes"
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {"type": "object", "properties": {"text": {"type": "string"}},
+                "required": ["text"]}
+
+    def execute(self, text: str) -> str:
+        return f"echoed {text}"

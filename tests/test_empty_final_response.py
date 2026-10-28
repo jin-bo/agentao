@@ -10,13 +10,13 @@ classifies the turn via ``incomplete_reason`` — that is what lets ``agentao
 run`` exit non-zero instead of handing a pipeline the placeholder as a result.
 """
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from agentao import Agentao
 from agentao.transport import EventType
+from tests.support.chat import make_chat_agent as _make_agent
 
 # Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
@@ -26,15 +26,6 @@ def _fake_response(content, *, reasoning=None):
     message = SimpleNamespace(content=content, tool_calls=None, reasoning_content=reasoning)
     choice = SimpleNamespace(message=message, finish_reason="stop")
     return SimpleNamespace(choices=[choice], usage=None, model="test-model")
-
-
-def _make_agent() -> Agentao:
-    return Agentao(
-        api_key="test-key",
-        base_url="https://example.test/v1",
-        model="test-model",
-        working_directory=Path.cwd(),
-    )
 
 
 def _capture_incomplete_reason(agent: Agentao) -> list:

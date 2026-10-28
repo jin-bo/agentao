@@ -6,25 +6,16 @@ placeholder / canned notice / LLM-error string. It must mirror the gated
 ``TURN_END`` classification exactly.
 """
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from agentao import Agentao, TurnOutcome
+from agentao import TurnOutcome
 from agentao.cancellation import CancellationToken
+from tests.support.chat import make_chat_agent as _make_agent
 
 # Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
-
-
-def _make_agent() -> Agentao:
-    return Agentao(
-        api_key="test-key",
-        base_url="https://example.test/v1",
-        model="test-model",
-        working_directory=Path.cwd(),
-    )
 
 
 def _text_response(content, *, finish_reason="stop", reasoning=None):

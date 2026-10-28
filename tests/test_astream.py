@@ -27,20 +27,12 @@ from agentao.host import TextDelta, TurnOutcome
 from agentao.replay.adapter import ReplayAdapter
 from agentao.runtime.turn import TurnInProgressError
 from agentao.tools.base import Tool
+from tests.support.chat import make_chat_agent as _make_agent
 
 # Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
-def _make_agent() -> Agentao:
-    return Agentao(
-        api_key="test-key",
-        base_url="https://example.test/v1",
-        model="test-model",
-        working_directory=Path.cwd(),
-    )
 
 
 def _response(content: str, tool_calls: Optional[list] = None) -> Any:

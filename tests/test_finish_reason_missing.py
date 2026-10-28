@@ -29,15 +29,14 @@ rather than here.
 """
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agentao import Agentao
 from agentao.cancellation import CancellationToken
 from agentao.llm._stream_response import _StreamAccumulator
+from tests.support.chat import make_chat_agent as _make_agent
 
 # Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
@@ -67,15 +66,6 @@ def _make_client():
             base_url="https://example.test/v1",
             model="test-model",
         )
-
-
-def _make_agent() -> Agentao:
-    return Agentao(
-        api_key="test-key",
-        base_url="https://example.test/v1",
-        model="test-model",
-        working_directory=Path.cwd(),
-    )
 
 
 def _streamed(content, *, finish):

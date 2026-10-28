@@ -11,16 +11,15 @@ Ported from the pi-mono #6285 lesson (strict-parse alone is insufficient; the
 ``finish_reason`` signal is the robust discriminator).
 """
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from agentao import Agentao
 from agentao.runtime.chat_loop._runner import (
     LENGTH_TRUNCATED_TOOL_CALL_MESSAGE,
     LENGTH_TRUNCATION_ABORT_THRESHOLD,
 )
+from tests.support.chat import make_chat_agent as _make_agent
 
 # Agentao here writes to the process cwd: see ``isolated_cwd`` in conftest.py.
 pytestmark = pytest.mark.usefixtures("isolated_cwd")
@@ -50,15 +49,6 @@ def _scripted_llm_call(responses):
         return next(it)
 
     return _call
-
-
-def _make_agent() -> Agentao:
-    return Agentao(
-        api_key="test-key",
-        base_url="https://example.test/v1",
-        model="test-model",
-        working_directory=Path.cwd(),
-    )
 
 
 def test_length_truncated_tool_call_is_not_executed_and_reissued():
