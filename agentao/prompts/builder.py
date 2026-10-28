@@ -260,7 +260,16 @@ class SystemPromptBuilder:
         agent = self._agent
         sections: Dict[str, str] = {}
 
-        skills_context = agent.skill_manager.get_skills_context()
+        # The history lets an active MCP skill whose block is already in its
+        # ``activate_skill`` result get a pointer here, not a second copy
+        # (#552). A host-injected manager may predate the keyword.
+        from ..tools.skill import _takes
+
+        get_skills_context = agent.skill_manager.get_skills_context
+        if _takes(get_skills_context, "history"):
+            skills_context = get_skills_context(history=agent.messages)
+        else:
+            skills_context = get_skills_context()
         if skills_context:
             sections["active_skills_context"] = "\n\n" + skills_context
 

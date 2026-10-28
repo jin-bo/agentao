@@ -366,6 +366,7 @@ There are eight events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `User
   - The formatter never spills skill content to `.agentao/tool-outputs/`. `read_skill_file` (`mcp/skill_tools.py`, in `MCP_SKILL_TOOL_NAMES`) pages it instead, with `offset` / `limit` (at most 30,000 chars).
   - That is not "never on disk". Replay and `agentao.log` keep skill content verbatim.
   - The runtime refuses (does not truncate) a `SKILL.md` over `MAX_SKILL_MD_BYTES` (100,000). Local and plugin skills cannot use the `mcp:` name prefix.
+  - **The tail sends an active MCP skill's block only when history does not hold it whole** (#552). Only that skill's latest `activate_skill` result, unchanged, gives a pointer instead (`skills/manager.py::_activation_result_holds`). Microcompaction keeps whole exactly the results the tail points at, as `SkillManager.mcp_pointer_targets` reports them through `ContextManager.mcp_pointer_provider`. A missing or failing answer must keep more, never less. A compaction that replaces history makes the runner build a tail that carries the pointer again (`chat_loop/_runner.py`, `provenance.tail_points_into_history`).
 - Test server: `tests/support/skills_mcp_server.py`.
 
 ### LLM wire protocols

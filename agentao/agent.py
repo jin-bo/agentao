@@ -971,6 +971,9 @@ class Agentao:
         # Compaction reads the session's MCP origins too (see
         # ``ContextManager.commit_compaction``).
         self.context_manager.mcp_origins_provider = self._mcp_session_origins
+        # Microcompaction keeps whole exactly the results the active-skills
+        # block points at (#552).
+        self.context_manager.mcp_pointer_provider = self._mcp_pointer_indices
         self.tool_runner.set_mcp_skill_gate(
             self._mcp_skill_gate,
             begin_batch=self._mcp_skill_begin_batch,
@@ -1018,6 +1021,20 @@ class Agentao:
         if mcp_skills is not None:
             origins |= set(mcp_skills.origins(getattr(manager, "mcp_view", None)))
         return origins
+
+    def _mcp_pointer_indices(self, messages: list) -> Optional[set]:
+        """Indices in ``messages`` the active-skills block points at (#552).
+
+        ``None`` for a host-injected manager without
+        ``mcp_pointer_targets``: microcompaction then keeps its fallback.
+        """
+        targets = getattr(self.skill_manager, "mcp_pointer_targets", None)
+        if not callable(targets):
+            return None
+        answer = targets(messages)
+        if not isinstance(answer, dict):
+            return None
+        return set(answer.values())
 
     def _mcp_admit(self, text: Any) -> Any:
         """Let text carrying an MCP-origin marker into this conversation.

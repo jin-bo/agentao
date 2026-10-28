@@ -152,7 +152,7 @@ This design lets you **stack many skills** without bloating context: only the on
 Where each part goes in the request:
 
 - **The catalogue** (name + description of every enabled skill) is in the system prompt, which stays byte-identical across turns so the provider's prompt cache holds. It lists active skills too, so activating a skill does not change it. It changes only when the enabled set changes: enable, disable, install or reload. It is rendered only if the agent has the `activate_skill` tool.
-- **Active skill bodies** go into the per-request volatile tail, a trailing `<system-reminder>`. They are never stored in history. An active body is re-sent uncached on every request, so deactivate a skill when you are done with it.
+- **Active skill bodies** go into the per-request volatile tail, a trailing `<system-reminder>`. The tail is never stored in history. An active body is re-sent uncached on every request, so deactivate a skill when you are done with it. One exception, where the body does live in history: when the model activated an MCP skill with `activate_skill` and the latest such result is still in history unchanged, the tail gives the skill's `Task:` and a pointer to that result instead of a second copy. Microcompaction does not clip that result while the skill is active. It clips earlier results of the same skill, and the result once the skill is deactivated. After a full compaction or a restore, the tail sends the block again.
 
 See [`prompts/builder.py`](https://github.com/jin-bo/agentao/blob/main/agentao/prompts/builder.py) for the order of the sections.
 
@@ -302,7 +302,7 @@ print(agent.skill_manager.get_skills_context())
 | `get_skill_content(name)` | Full `SKILL.md` text, or `None` |
 | `activate_skill(name, task_description)` | The activation message. An unknown or disabled name returns `Error: Unknown skill …`. |
 | `deactivate_skill(name)` | `True` if the skill was active |
-| `get_skills_context()` | The active-skills block of the volatile tail |
+| `get_skills_context(*, history=None)` | The active-skills block of the volatile tail. With `history`, an active MCP skill whose latest `activate_skill` result is in it unchanged gets a pointer instead of its block. |
 | `reload_skills()` | Re-scans the three layers and returns the enabled count. Plugin and MCP skills are kept. |
 | `disable_skill(name)` / `enable_skill(name)` | The message the CLI prints (see [above](#how-skills-config-json-is-written)) |
 
