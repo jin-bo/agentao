@@ -759,6 +759,24 @@ class TestRepl:
         assert registered == (MCP_RESOURCE_TOOL_NAMES if refresh else set())
         assert again is False  # nothing stale: no second registration
 
+    def test_login_to_a_refresh_tools_server_with_no_tools_asks_for_no_restart(
+        self, runtime, origin, monkeypatch,
+    ):
+        import logging
+        from types import SimpleNamespace
+
+        origin.no_tools = True
+        self._scripted_ui(monkeypatch, origin)
+        manager = McpClientManager({"svr": {**CONFIG, "refresh_tools": True}}, oauth_runtime=runtime)
+        cli = self._cli(manager)
+        cli.agent.llm = SimpleNamespace(logger=logging.getLogger("t"))
+        with patched(origin):
+            manager.connect_all()
+            out = self._run(cli, "login svr")
+            manager.disconnect_all()
+        assert "connected, 0 tool(s)" in out
+        assert "Restart agentao" not in out
+
     def test_a_failed_refresh_after_login_falls_back_to_the_restart_notice(
         self, runtime, origin, monkeypatch,
     ):

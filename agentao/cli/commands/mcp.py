@@ -200,6 +200,7 @@ def _login_or_logout(cli: AgentaoCLI, sub: str, sub_args: str) -> None:
     outcome = login(manager, name, open_browser=open_browser, write=_say)
     if outcome is LoginOutcome.CONNECTED and not _has_registered_tools(cli, name):
         client = manager.get_client(name)
+        lists_none = False
         if client is not None and client.refresh_tools_requested is True:
             # The reconnect marked its tools stale; load them now rather than
             # at the next request, so ``/mcp list`` and ``/tools`` show them
@@ -208,11 +209,14 @@ def _login_or_logout(cli: AgentaoCLI, sub: str, sub_args: str) -> None:
 
             try:
                 refresh_mcp_tools(cli.agent)
+                lists_none = client.tools == []
             except Exception:
                 # As in the chat loop: a failed refresh is logged, and the
                 # restart notice below still tells the user what to do.
                 _logger.warning("MCP tool refresh after login failed", exc_info=True)
-        if not _has_registered_tools(cli, name):
+        # A refreshed server that lists no tools has none to load: a restart
+        # would not change that.
+        if not lists_none and not _has_registered_tools(cli, name):
             # D8: without "refresh_tools": true, tools are registered once,
             # at startup; this server had none then.
             console.print(f"[info]Restart agentao to load the tools of '{escape(name)}'.[/info]")

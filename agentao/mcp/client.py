@@ -687,6 +687,10 @@ class McpClient:
             # session and enter no exit-stack context, so a timeout cancellation
             # never crosses an anyio cancel scope into the transport cleanup
             # that ``connect``'s ``except`` performs.
+            # The handshake lists the tools: a notice from an earlier
+            # connection is answered by it. One that arrives during the
+            # handshake sets the flag again.
+            self._relist_needed = False
             try:
                 self._tools = await asyncio.wait_for(
                     self._handshake(), timeout=startup_timeout
@@ -1221,7 +1225,10 @@ class McpClient:
             # Reconnected meanwhile: that connect listed its own tools, and
             # marked them stale for the next request.
             return None
-        self._tools = tools
+        if self.status == ServerStatus.CONNECTED:
+            # A connection that dropped meanwhile keeps the empty list its
+            # disconnect left; the registry still gets the re-listed one (D12).
+            self._tools = tools
         return list(tools)
 
     async def _preflight_content_type(self, url: str, headers: Dict[str, str]) -> None:

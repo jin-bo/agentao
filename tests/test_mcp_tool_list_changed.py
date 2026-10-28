@@ -579,3 +579,81 @@ def test_a_refresh_never_replaces_a_host_tool_with_a_resource_tools_name(tmp_pat
     finally:
         agent.close()
         manager.disconnect_all()
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups
+# ---------------------------------------------------------------------------
+
+
+def test_one_servers_failed_registration_keeps_the_others_and_retries_later(
+    tmp_path, monkeypatch,
+):
+    import agentao.tooling.mcp_tools as mcp_tools
+
+    one, _ = changing_tools_server(tmp_path / "one", [tool("alpha")], refresh_tools=True)
+    two, _ = changing_tools_server(tmp_path / "two", [tool("omega")], refresh_tools=True)
+    agent = _agent(tmp_path, {"one": one, "two": two})
+    real = mcp_tools._register_entries
+
+    def failing_for_one(agent_, manager, entries, claimed, **kwargs):
+        if entries and entries[0][0] == "one":
+            raise RuntimeError("bad tool")
+        return real(agent_, manager, entries, claimed, **kwargs)
+
+    try:
+        _change(agent, [tool("beta")], server="one")
+        _change(agent, [tool("psi")], server="two")
+        assert _wait_stale(agent, "one") and _wait_stale(agent, "two")
+        monkeypatch.setattr(mcp_tools, "_register_entries", failing_for_one)
+        assert refresh_mcp_tools(agent) is True
+        assert _mcp_names(agent, "two") == ["mcp_two_change", "mcp_two_psi"]
+        monkeypatch.setattr(mcp_tools, "_register_entries", real)
+        # The same list again is not "unchanged": the failed one was never recorded.
+        _change(agent, [tool("beta")], server="one")
+        assert _wait_stale(agent, "one")
+        assert refresh_mcp_tools(agent) is True
+        assert _mcp_names(agent, "one") == ["mcp_one_beta", "mcp_one_change"]
+    finally:
+        agent.close()
+
+
+def test_a_drop_during_the_relist_leaves_the_client_list_empty(tmp_path):
+    from agentao.mcp.client import ServerStatus
+
+    config, _ = changing_tools_server(tmp_path, [tool("alpha")], refresh_tools=True)
+    agent = _agent(tmp_path, {"srv": config})
+    try:
+        client = agent.mcp_manager.get_client("srv")
+        real_list = client._list_all_tools
+
+        async def list_then_drop():
+            tools = await real_list()
+            client.status = ServerStatus.ERROR  # as a dropping connection does
+            client._tools = []
+            return tools
+
+        client._list_all_tools = list_then_drop
+        _change(agent, [tool("beta")])
+        assert _wait_stale(agent)
+        assert refresh_mcp_tools(agent) is True
+        assert client.tools == []
+        assert _mcp_names(agent) == ["mcp_srv_beta", "mcp_srv_change"]
+    finally:
+        agent.close()
+
+
+def test_a_reconnect_answers_an_earlier_notice_without_another_relist(tmp_path):
+    config, marks = changing_tools_server(tmp_path, [tool("alpha")], refresh_tools=True)
+    agent = _agent(tmp_path, {"srv": config})
+    try:
+        client = agent.mcp_manager.get_client("srv")
+        _change(agent, [tool("beta")])
+        assert _wait_stale(agent)
+        agent.mcp_manager._run(client.disconnect())
+        agent.mcp_manager._run(client.connect())
+        assert refresh_mcp_tools(agent) is True
+        assert _mcp_names(agent) == ["mcp_srv_beta", "mcp_srv_change"]
+        assert _list_count(marks) == 2  # the two handshakes, nothing more
+    finally:
+        agent.close()

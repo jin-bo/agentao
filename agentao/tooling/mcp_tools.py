@@ -292,7 +292,6 @@ def refresh_mcp_tools(agent: "Agentao") -> bool:
         # would make every refresh of an unchanged list look like a change.
         if listed.get(server) == tools:
             continue
-        listed[server] = list(tools)
         old = {
             name: entry for name, entry in registered.items() if entry[0] == server
         }
@@ -307,9 +306,20 @@ def refresh_mcp_tools(agent: "Agentao") -> bool:
             # since stays.
             if name in agent.tools.tools and agent.tools.origin(name) == "mcp":
                 agent.tools.unregister(name)
-        _register_entries(
-            agent, manager, new, registered, real=True, keep_foreign=True,
-        )
+        try:
+            _register_entries(
+                agent, manager, new, registered, real=True, keep_foreign=True,
+            )
+        except Exception:
+            # One server's bad list must not drop the other servers' updates
+            # (their flags are already cleared). ``listed`` keeps the old
+            # list, so the same list is not taken for "unchanged" next time.
+            agent.llm.logger.warning(
+                "MCP server %r: registering the refreshed tools failed",
+                server, exc_info=True,
+            )
+            continue
+        listed[server] = list(tools)
         now = {name for name, entry in registered.items() if entry[0] == server}
         agent.llm.logger.info(
             "MCP server %r: tool list refreshed, %d tools (+%d, -%d)",
