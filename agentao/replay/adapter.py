@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import threading
 import uuid as _uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..transport import AgentEvent, EventType
 from .events import EventKind
@@ -41,6 +41,10 @@ class ReplayAdapter:
         self._inner = inner
         self._recorder = recorder
         self._turn_id: Optional[str] = None
+        # The user message of a turn opened by ``TURN_BEGIN``, held until the
+        # turn is known to have passed its ``UserPromptSubmit`` hooks (see
+        # ``_settle_user_message``): ``(turn_id, text)``.
+        self._pending_user_message: Optional[Tuple[str, str]] = None
         # Per-thread subagent stack. ToolRunner executes tool calls in a
         # ThreadPoolExecutor, so two sub-agents may be running
         # simultaneously on different threads. Keeping the stack in
@@ -58,9 +62,15 @@ class ReplayAdapter:
         """The wrapped transport — used by lifecycle code to restore on teardown."""
         return self._inner
 
-    def begin_turn(self, user_message: str) -> str:
-        """Start a new replay turn and return its ``turn_id``."""
+    def begin_turn(self, user_message: str, *, defer_user_message: bool = False) -> str:
+        """Start a new replay turn and return its ``turn_id``.
+
+        ``defer_user_message`` holds the ``user_message`` row back until the
+        turn passes its ``UserPromptSubmit`` hooks. The ``TURN_BEGIN`` path
+        sets it; a host calling this directly gets the row at once, as before.
+        """
         self._flush_thought()
+        self._pending_user_message = None  # never carried into another turn
         turn_id = _short_id()
         self._turn_id = turn_id
         self._recorder.record(
@@ -68,12 +78,55 @@ class ReplayAdapter:
             turn_id=turn_id,
             payload={"has_user_message": bool(user_message)},
         )
-        self._recorder.record(
-            EventKind.USER_MESSAGE,
-            turn_id=turn_id,
-            payload={"content": user_message or ""},
-        )
+        if defer_user_message:
+            self._pending_user_message = (turn_id, user_message or "")
+        else:
+            self._record_user_message(turn_id, user_message or "")
         return turn_id
+
+    def _record_user_message(self, turn_id: str, content: str, *, withheld: Optional[str] = None) -> None:
+        payload: Dict[str, Any] = {"content": content}
+        if withheld is not None:
+            payload["withheld"] = withheld
+        self._recorder.record(EventKind.USER_MESSAGE, turn_id=turn_id, payload=payload)
+
+    def _settle_user_message(self, kind: Any, data: Dict[str, Any]) -> None:
+        """Write or withhold the held user message once the turn says which.
+
+        The prompt's text reaches the file only when the turn is known to
+        have passed every ``UserPromptSubmit`` hook: the runtime dispatches
+        them all at once and emits one ``PLUGIN_HOOK_FIRED`` with the merged
+        verdict, and ``TURN_START`` is emitted only after that, before the
+        first model request. So:
+
+        - ``PLUGIN_HOOK_FIRED`` for ``UserPromptSubmit`` with ``block`` or
+          ``stop``: a ``user_message`` row with empty ``content`` and
+          ``withheld`` set, so the turn's shape stays the same;
+        - ``TURN_START``: the text (also on the path with no hooks at all);
+        - ``TURN_END`` first (a cancel, an exception, anything that ended the
+          turn before a request): nothing, and the held text is dropped.
+
+        Any other event leaves it held: an ``allow`` verdict is not enough on
+        its own, and events from other threads say nothing about this turn.
+        """
+        pending = self._pending_user_message
+        if pending is None:
+            return
+        turn_id, content = pending
+        if kind == EventType.PLUGIN_HOOK_FIRED and data.get("hook_name") == "UserPromptSubmit":
+            outcome = data.get("outcome")
+            if outcome in ("block", "stop"):
+                self._pending_user_message = None
+                self._record_user_message(
+                    turn_id, "",
+                    withheld="hook_blocked" if outcome == "block" else "hook_stopped",
+                )
+        elif kind == EventType.TURN_START:
+            self._pending_user_message = None
+            if turn_id == self._turn_id:
+                self._record_user_message(turn_id, content)
+        elif kind == EventType.TURN_END:
+            self._pending_user_message = None
 
     def end_turn(
         self,
@@ -86,6 +139,9 @@ class ReplayAdapter:
         finish_reason_missing: bool = False,
     ) -> None:
         self._flush_thought()
+        # A held message that never settled (a direct ``end_turn`` call) is
+        # dropped with the turn, never written into the next one.
+        self._pending_user_message = None
         turn_id = self._turn_id
         if turn_id is None:
             return
@@ -308,10 +364,17 @@ class ReplayAdapter:
         # any host that wants synchronous turn boundaries) keep working.
         if kind == EventType.TURN_BEGIN:
             try:
-                self.begin_turn(str(data.get("user_message", "") or ""))
+                self.begin_turn(
+                    str(data.get("user_message", "") or ""), defer_user_message=True,
+                )
             except Exception:
                 pass
             return
+
+        try:
+            self._settle_user_message(kind, data)
+        except Exception:
+            self._pending_user_message = None
 
         if kind == EventType.TURN_END:
             try:
