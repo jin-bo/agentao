@@ -51,6 +51,11 @@ Expected keys per server:
                            tools (docs/design/mcp-resources.md)
   skills: bool           — true opts in to the MCP Skills extension
                            (docs/design/mcp-skills.md); only ``true`` counts
+  refresh_tools: bool    — true follows the server's
+                           ``notifications/tools/list_changed``: its tools are
+                           re-listed before the next model request
+                           (docs/design/mcp-tool-list-changed.md); only
+                           ``true`` counts
 """
 
 

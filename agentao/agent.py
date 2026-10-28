@@ -29,6 +29,7 @@ from .tooling import (
     register_agent_tools,
     register_builtin_tools,
     register_extra_tools,
+    refresh_mcp_tools,
     register_mcp_tools,
 )
 from .agents import AgentManager
@@ -557,6 +558,12 @@ class Agentao:
         # The hook payloads' copy, set with it as every session rebind does.
         self.tool_runner._session_id = session_id
         self._session_id_adopted = True
+
+    def _refresh_mcp_tools(self) -> bool:
+        """Re-register the tools of ``"refresh_tools": true`` MCP servers whose
+        list changed; ``True`` when the registry changed. The chat loop calls it
+        before each model request (docs/design/mcp-tool-list-changed.md)."""
+        return refresh_mcp_tools(self)
 
     def _reinit_mcp(self) -> None:
         """Rebuild the MCP manager from the current server set (a plugin

@@ -41,6 +41,7 @@ from ._compat import (
     UnexpectedClaimedResult,
     field,
     httpx_for_mcp,
+    is_tool_list_changed,
     read_timeout as _sdk_read_timeout,
 )
 from .config import (
@@ -318,6 +319,12 @@ class ServerStatus(str, Enum):
     NEEDS_AUTH = "needs_auth"
 
 
+#: The most a ``"refresh_tools": true`` re-list may hold up a model request
+#: (capped further by the server's ``startup``). See
+#: docs/design/mcp-tool-list-changed.md D6.
+_REFRESH_TIMEOUT_S = 10.0
+
+
 class McpClient:
     """Manages a single MCP server connection."""
 
@@ -369,6 +376,20 @@ class McpClient:
         # instead of starting another.
         self._reconnect_lock = asyncio.Lock()
         self._connect_attempts = 0
+        # ``"refresh_tools": true`` (docs/design/mcp-tool-list-changed.md):
+        # set by a ``tools/list_changed`` notification, or by a reconnect that
+        # listed the tools again, and cleared when the manager re-lists them.
+        # Many notices before the next model request set it once, so they cost
+        # one ``tools/list``.
+        self._tools_stale = False
+        # Whether :attr:`tools` itself is behind the server (a notice), as
+        # opposed to only the registry (a reconnect already listed them).
+        self._relist_needed = False
+        # Whether a connect of this client has ended before, connected or
+        # not. A later connect that succeeds lists tools the registry does not
+        # hold yet: the first connection's, or none at all when that one
+        # failed (a server that needed login at startup).
+        self._connected_or_failed_before = False
 
     @property
     def transport_type(self) -> str:
@@ -417,6 +438,20 @@ class McpClient:
     def resources_seen(self) -> bool:
         """Whether any connection of this client has declared ``resources``."""
         return self._resources_seen
+
+    @property
+    def refresh_tools_requested(self) -> bool:
+        """``"refresh_tools": true`` in this server's config: follow its tool list.
+
+        Only ``True`` counts. Off, a ``tools/list_changed`` notification is
+        ignored and the tools listed at connect stay the model's catalogue.
+        """
+        return self.config.get("refresh_tools") is True
+
+    @property
+    def tools_stale(self) -> bool:
+        """Whether the server's tool list may differ from :attr:`tools`."""
+        return self._tools_stale
 
     @property
     def skills_requested(self) -> bool:
@@ -652,6 +687,10 @@ class McpClient:
             # session and enter no exit-stack context, so a timeout cancellation
             # never crosses an anyio cancel scope into the transport cleanup
             # that ``connect``'s ``except`` performs.
+            # The handshake lists the tools: a notice from an earlier
+            # connection is answered by it. One that arrives during the
+            # handshake sets the flag again.
+            self._relist_needed = False
             try:
                 self._tools = await asyncio.wait_for(
                     self._handshake(), timeout=startup_timeout
@@ -669,6 +708,11 @@ class McpClient:
                 ) from None
 
             self.status = ServerStatus.CONNECTED
+            if self._connected_or_failed_before and self.refresh_tools_requested:
+                # A reconnect, or the first success after a failed connect
+                # (a login), listed tools the registry does not hold.
+                self._tools_stale = True
+            self._connected_or_failed_before = True
             logger.info(
                 f"MCP server '{self.name}' connected via {transport} "
                 f"(protocol {self._protocol_version or 'unknown'}), "
@@ -740,6 +784,7 @@ class McpClient:
         ``sse_client`` otherwise reported a 500 as "unhandled errors in a
         TaskGroup (1 sub-exception)").
         """
+        self._connected_or_failed_before = True
         e = _first_failure(e) or e
         verdict = self._auth_verdict()
         if verdict is not None and verdict.kind == _VERDICT_NEEDS_AUTH:
@@ -1086,8 +1131,105 @@ class McpClient:
         )
         read_stream, write_stream = stdio_transport
         self._session = await self._exit_stack.enter_async_context(
-            ClientSession(read_stream, write_stream)
+            self._new_session(read_stream, write_stream)
         )
+
+    def _new_session(self, read_stream: Any, write_stream: Any) -> ClientSession:
+        """The ``ClientSession`` for one connection, on every transport.
+
+        The message handler is installed only for ``"refresh_tools": true``:
+        without the opt-in the session is built exactly as before.
+        """
+        if not self.refresh_tools_requested:
+            return ClientSession(read_stream, write_stream)
+        return ClientSession(
+            read_stream, write_stream, message_handler=self._on_server_message
+        )
+
+    async def _on_server_message(self, message: Any) -> None:
+        """Mark the tool list stale on ``notifications/tools/list_changed``.
+
+        Runs in the session's receive loop, so it only sets a flag: the
+        re-list happens before the next model request
+        (:meth:`McpClientManager.refresh_stale_tools`), never from here.
+        """
+        if is_tool_list_changed(message):
+            if not self._tools_stale:
+                logger.info(f"MCP server '{self.name}': tool list changed")
+            self._relist_needed = True
+            self._tools_stale = True
+        # What the SDK's default handler does: yield to the loop.
+        await asyncio.sleep(0)
+
+    async def refresh_tools(self) -> Optional[List[McpToolDef]]:
+        """List the tools again into :attr:`tools`; the list, or ``None`` when that failed.
+
+        The list is returned rather than read back from :attr:`tools` later:
+        a connection that drops after the re-list clears :attr:`tools`, and
+        the registry would then lose every tool of a server that only
+        reconnects.
+
+        Whether the catalogue *changed* is the registry's question: after a
+        reconnect :attr:`tools` is already new while the registry still holds
+        the old tools, so a comparison here would miss it.
+
+        Clears the stale flag first, so a notice that arrives during the
+        re-list marks it stale again. Keeps the current list on any failure
+        (a timeout, a protocol error, a catalogue bound), with a warning: the
+        model keeps the tools it has rather than losing them all.
+        """
+        relist = self._relist_needed
+        self._tools_stale = self._relist_needed = False
+        session = self._session
+        if session is None or self.status != ServerStatus.CONNECTED:
+            return None
+        if not relist:
+            # Only a reconnect: its handshake already listed :attr:`tools`.
+            return list(self._tools)
+        # The whole re-list, every page, is bounded by the shorter of
+        # ``_REFRESH_TIMEOUT_S`` and the server's ``startup``: it holds up the
+        # model request, and a server that announced a change and then stopped
+        # answering must not stall it for a full connect budget. It never
+        # reconnects, so there is nothing else to bound.
+        budget = _REFRESH_TIMEOUT_S
+        try:
+            startup_timeout, _request = resolve_timeouts(self.config)
+            budget = min(_REFRESH_TIMEOUT_S, startup_timeout)
+            tools = await asyncio.wait_for(self._list_all_tools(), timeout=budget)
+        except asyncio.CancelledError:
+            # The turn was cancelled; the list is as stale as before.
+            self._tools_stale = self._relist_needed = True
+            raise
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"MCP server '{self.name}': re-listing tools timed out after "
+                f"{budget:g}s, keeping the previous {len(self._tools)}; the next "
+                f"tools/list_changed notice tries again"
+            )
+            if session is not self._session or self.status != ServerStatus.CONNECTED:
+                return None
+            return list(self._tools)
+        except Exception as e:
+            logger.warning(
+                f"MCP server '{self.name}': re-listing tools failed, keeping the "
+                f"previous {len(self._tools)}: {e or type(e).__name__}"
+            )
+            # The current list, not ``None``: a reconnect may have listed it
+            # since the registry last saw this server, and with the flag
+            # cleared nothing else would bring the registry up to it. An
+            # unchanged list changes nothing in the registry.
+            if session is not self._session or self.status != ServerStatus.CONNECTED:
+                return None
+            return list(self._tools)
+        if session is not self._session:
+            # Reconnected meanwhile: that connect listed its own tools, and
+            # marked them stale for the next request.
+            return None
+        if self.status == ServerStatus.CONNECTED:
+            # A connection that dropped meanwhile keeps the empty list its
+            # disconnect left; the registry still gets the re-listed one (D12).
+            self._tools = tools
+        return list(tools)
 
     async def _preflight_content_type(self, url: str, headers: Dict[str, str]) -> None:
         """Probe *url* for an MCP-shaped response before the SDK connects.
@@ -1211,7 +1353,7 @@ class McpClient:
         # ``sse_client`` yields a 2-tuple.
         read_stream, write_stream = sse_transport
         self._session = await self._exit_stack.enter_async_context(
-            ClientSession(read_stream, write_stream)
+            self._new_session(read_stream, write_stream)
         )
 
     async def _connect_streamable_http(
@@ -1277,7 +1419,7 @@ class McpClient:
         # shows up at the yield.
         read_stream, write_stream = http_transport[0], http_transport[1]
         self._session = await self._exit_stack.enter_async_context(
-            ClientSession(read_stream, write_stream)
+            self._new_session(read_stream, write_stream)
         )
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
@@ -2137,6 +2279,49 @@ class McpClientManager:
 
     def get_client(self, name: str) -> Optional[McpClient]:
         return self._clients.get(name)
+
+    def refresh_stale_tools(self) -> Dict[str, List[McpToolDef]]:
+        """Re-list the tools of every server whose list may have changed.
+
+        Returns each re-listed server's new list. Costs no thread hop when none is stale,
+        which is every call for a session without ``"refresh_tools": true``:
+        the chat loop asks before each model request.
+        """
+        stale = [
+            client for client in list(self._clients.values()) if client.tools_stale
+        ]
+        if not stale:
+            return {}
+
+        async def _refresh_all() -> List[Any]:
+            # One server's raise must not drop the others' results: their
+            # flags are already cleared, so a lost result would leave the
+            # registry behind until the next notice.
+            return list(await asyncio.gather(
+                *(c.refresh_tools() for c in stale), return_exceptions=True,
+            ))
+
+        try:
+            done = self._run(_refresh_all())
+        except McpManagerClosedError:
+            return {}
+        except BaseException:
+            # A cancel (or anything else) drops every result, also of the
+            # servers whose re-list finished and cleared their flag. Mark them
+            # stale again: the next request hands the registry their current
+            # list, at no extra ``tools/list``.
+            for client in stale:
+                client._tools_stale = True
+            raise
+        listed: Dict[str, List[McpToolDef]] = {}
+        for client, result in zip(stale, done):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    f"MCP server '{client.name}': re-listing tools failed: {result!r}"
+                )
+            elif isinstance(result, list):
+                listed[client.name] = result
+        return listed
 
     def get_all_tools(self) -> List[Tuple[str, McpToolDef]]:
         """Get all tools from all connected servers.

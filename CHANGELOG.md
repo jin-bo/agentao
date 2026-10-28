@@ -11,6 +11,8 @@ _Targeting 0.5.18. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **Opt-in: follow an MCP server's tool list (`"refresh_tools": true`).** A server's tools were listed once, at connect, and a `notifications/tools/list_changed` was ignored: a tool the server added never reached the model, and a removed one stayed callable by name. With `"refresh_tools": true` on a server, such a notice makes Agentao list that server's tools again before the next model request, in the same turn too, and replace only that server's registered tools. Many notices cost one `tools/list`, an unchanged list changes nothing, and a re-list that fails or takes longer than `min(10 s, startup)` keeps the current tools with a warning, without holding up other servers' updates. A reconnect of such a server also updates the registry, and so does its first successful connect after a failed one: a server that needed login at startup loads its tools after `/mcp login`, without a restart, and its resource tools if it is the first to offer resources (its MCP skills still need a restart). Give each `Agentao` its own MCP manager when you use it: agents sharing one manager share its change flags. Off by default, because each change restarts the provider's prompt cache for the tool list. `agentao doctor` flags a non-boolean value. From codex#54656. Design: `docs/design/mcp-tool-list-changed.md`.
+
 ### Changed
 
 - **Session files are written mode `0600` on POSIX.** `save_session` now writes through a unique temp file from `tempfile.mkstemp`, and the saved file keeps that file's mode, owner-only. Before, the mode came from the umask (usually `0644`). Session files hold the whole conversation and are not secret-scanned.

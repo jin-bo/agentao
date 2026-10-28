@@ -61,6 +61,27 @@ def field(obj: Any, camel: str, snake: str) -> Any:
     return getattr(obj, snake) if hasattr(obj, snake) else getattr(obj, camel)
 
 
+#: mcp 1.x's ``ServerNotification`` is a ``RootModel`` class that wraps the
+#: notification; 2.x's is a plain union of the notification types (not a class).
+_NOTIFICATION_WRAPPER = (
+    mcp.types.ServerNotification if isinstance(mcp.types.ServerNotification, type) else None
+)
+
+
+def is_tool_list_changed(message: Any) -> bool:
+    """Whether a ``ClientSession`` ``message_handler`` argument is ``notifications/tools/list_changed``.
+
+    mcp 1.x hands the handler a ``ServerNotification`` *RootModel* (the
+    notification is its ``root``), and also request responders and
+    exceptions; 2.x hands it the notification itself, or an exception. The
+    ``isinstance`` on the unwrapped value is the check: anything else,
+    whatever attributes it has, is not this notification.
+    """
+    if _NOTIFICATION_WRAPPER is not None and isinstance(message, _NOTIFICATION_WRAPPER):
+        message = message.root
+    return isinstance(message, mcp.types.ToolListChangedNotification)
+
+
 def annotations_dict(ann: Any) -> Dict[str, Any]:
     """Dump ``ToolAnnotations`` with camelCase keys on both majors.
 

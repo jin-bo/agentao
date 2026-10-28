@@ -547,7 +547,7 @@ access token **和一个 refresh token**；token 端点依次配置为回 `400 i
 | **D5** | 面向嵌入式宿主的公开登录入口 | 现在 / 有宿主提出时 | 有宿主提出时（§8.2）。首版只有内部实现加 CLI |
 | **D6** | 稳态认证 | (a) 我们自己的 `StoredTokenAuth`（§5.3）· (b) 子类化 SDK provider 来修 F1–F4 · (c) 原样使用 provider，等上游修 | **(a)。** (b) 要覆盖私有方法（`_initialize`、`async_auth_flow`），而它们在 1.26、1.30（`RedirectAwareAuth`）和 2.0 之间各不相同 —— 正是 `_compat.py` 存在所要避免的那种耦合。(c) 会把 F1–F4 交给用户：每个进程每小时重新登录一次，以及被串行化的 JSON 模式服务器。选 (a)，**稳态**只触及公开的 `httpx.Auth` 协议和我们自己拥有的记录；**登录仍要读 provider 的内部 `context`**（§5.5 第 5 步），通过一个缺失即让登录失败的 `_compat` 探测，并由两个大版本上的测试钉住 |
 | **D7** | 登录时的 step-up scope 并集 | (a) 请求服务器 401 挑战的 scope；403 `insufficient_scope` 在状态中写明缺少的 scope · (b) 在 `login()` 期间包装 `mcp.client.auth.oauth2.get_client_metadata_scopes` 以加入记录的 scope（S5：两个大版本上都可行） | **先 (a)。** (b) patch 的是模块级函数 —— 进程级、私有，且需要一把锁防并发登录。等发现一个真实服务器在 401 时挑战的 scope 少于它之后在 403 时要求的，再重新考虑 |
-| **D8** | 启动时就需要登录的服务器的工具 | (a) `login()` 之后在运行时注册 · (b) 登录提示「重启 agentao 以加载它的工具」 | **先 (b)。** MCP 工具只在构造时注册一次（`tooling/mcp_tools.py::init_mcp`），`/mcp add` 已经要求重启。(a) 是对工具注册表的运行时改动 —— 涉及模型看到的工具块、prompt 缓存前缀、之后派生的子代理 —— `/mcp add` 同样会需要它，应作为单独的改动来做。工具已注册过的服务器（曾连接、后来刷新被拒）只靠重连就能拿回工具（§5.5 第 7 步） |
+| **D8** | 启动时就需要登录的服务器的工具 | (a) `login()` 之后在运行时注册 · (b) 登录提示「重启 agentao 以加载它的工具」 | **先 (b)。** MCP 工具只在构造时注册一次（`tooling/mcp_tools.py::init_mcp`），`/mcp add` 已经要求重启。(a) 是对工具注册表的运行时改动 —— 涉及模型看到的工具块、prompt 缓存前缀、之后派生的子代理 —— `/mcp add` 同样会需要它，应作为单独的改动来做。工具已注册过的服务器（曾连接、后来刷新被拒）只靠重连就能拿回工具（§5.5 第 7 步） **更新（0.5.18）：**设置了 `"refresh_tools": true` 的 server 走 (a)：`/mcp login` 后立即注册它的工具（`mcp-tool-list-changed.md` D13）。未开启时仍是 (b)。 |
 
 ---
 

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from rich.markup import escape
 
 from ...security.terminal_text import sanitize_terminal_text
 from .._globals import console, split_subcommand, unknown_subcommand
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
@@ -196,8 +199,27 @@ def _login_or_logout(cli: AgentaoCLI, sub: str, sub_args: str) -> None:
         return
     outcome = login(manager, name, open_browser=open_browser, write=_say)
     if outcome is LoginOutcome.CONNECTED and not _has_registered_tools(cli, name):
-        # D8: tools are registered once, at startup; this server had none then.
-        console.print(f"[info]Restart agentao to load the tools of '{escape(name)}'.[/info]")
+        client = manager.get_client(name)
+        lists_none = False
+        if client is not None and client.refresh_tools_requested is True:
+            # The reconnect marked its tools stale; load them now rather than
+            # at the next request, so ``/mcp list`` and ``/tools`` show them
+            # (docs/design/mcp-tool-list-changed.md D13).
+            from ...tooling.mcp_tools import refresh_mcp_tools
+
+            try:
+                refresh_mcp_tools(cli.agent)
+                lists_none = client.tools == []
+            except Exception:
+                # As in the chat loop: a failed refresh is logged, and the
+                # restart notice below still tells the user what to do.
+                _logger.warning("MCP tool refresh after login failed", exc_info=True)
+        # A refreshed server that lists no tools has none to load: a restart
+        # would not change that.
+        if not lists_none and not _has_registered_tools(cli, name):
+            # D8: without "refresh_tools": true, tools are registered once,
+            # at startup; this server had none then.
+            console.print(f"[info]Restart agentao to load the tools of '{escape(name)}'.[/info]")
     console.print()
 
 

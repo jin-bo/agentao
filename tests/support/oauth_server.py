@@ -54,6 +54,10 @@ class FakeOAuthOrigin:
         #: Answer the next request carrying a session id with 404, as a
         #: restarted server does for a session it no longer knows.
         self.expire_session_once = False
+        #: Declare the ``resources`` capability at ``initialize``.
+        self.declare_resources = False
+        #: Answer ``tools/list`` with no tools.
+        self.no_tools = False
         #: Send a successful refresh response in small chunks this far apart —
         #: each within any read timeout, the whole well past it.
         self.token_trickle: Optional[float] = None
@@ -260,11 +264,15 @@ class FakeOAuthOrigin:
         if method == "initialize":
             result: Any = {
                 "protocolVersion": "2025-06-18",
-                "capabilities": {"tools": {}},
+                "capabilities": (
+                    {"tools": {}, "resources": {}} if self.declare_resources else {"tools": {}}
+                ),
                 "serverInfo": {"name": "fake-oauth", "version": "1"},
             }
         elif method == "tools/list":
-            result = {"tools": [{"name": "echo", "inputSchema": {"type": "object"}}]}
+            result = {"tools": [] if self.no_tools else [
+                {"name": "echo", "inputSchema": {"type": "object"}}
+            ]}
         elif method == "tools/call":
             self.executed.append(message.get("params", {}).get("arguments"))
             result = {"content": [{"type": "text", "text": "ok"}]}
@@ -292,7 +300,9 @@ class FakeOAuthOrigin:
         if method == "initialize":
             result: Any = {
                 "protocolVersion": "2025-06-18",
-                "capabilities": {"tools": {}},
+                "capabilities": (
+                    {"tools": {}, "resources": {}} if self.declare_resources else {"tools": {}}
+                ),
                 "serverInfo": {"name": "fake-oauth", "version": "1"},
             }
             return self._json(
@@ -300,7 +310,9 @@ class FakeOAuthOrigin:
                 headers={"mcp-session-id": "session-1"},
             )
         if method == "tools/list":
-            result = {"tools": [{"name": "echo", "inputSchema": {"type": "object"}}]}
+            result = {"tools": [] if self.no_tools else [
+                {"name": "echo", "inputSchema": {"type": "object"}}
+            ]}
         elif method == "tools/call":
             self.executed.append(message.get("params", {}).get("arguments"))
             if message.get("params", {}).get("name") == "boom":
