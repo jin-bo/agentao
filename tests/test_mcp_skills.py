@@ -2187,6 +2187,16 @@ def test_an_mcp_skill_name_yields_its_origin(name, label):
     assert name_origin(name) == label
 
 
+def test_the_mcp_skill_name_prefix_has_one_spelling():
+    # The name reservation, the name parser and the restore refusal must
+    # agree on it, or a skill named with one spelling escapes another.
+    from agentao.mcp import skills as mcp_skills
+    from agentao.skills import manager, provenance
+
+    assert mcp_skills.NAME_PREFIX is provenance.MCP_NAME_PREFIX
+    assert manager.MCP_SKILL_PREFIX is provenance.MCP_NAME_PREFIX
+
+
 @modern
 def test_a_restore_reads_origins_from_saved_active_skills(tmp_path, docs):
     from agentao.embedding.sessions import restore_agent_skills

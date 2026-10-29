@@ -16,6 +16,7 @@ from ..paths import user_root
 from .. import json_parse
 from ..config_file import read_config_text
 from .provenance import MCP_ACTIVATION_END as _MCP_ACTIVATION_END
+from .provenance import MCP_NAME_PREFIX as _MCP_NAME_PREFIX
 from .provenance import SKILL_LOADED_IN_HISTORY_NOTE as _SKILL_LOADED_IN_HISTORY_NOTE
 from .provenance import MCP_SKILL_IN_HISTORY_NOTE as _MCP_SKILL_IN_HISTORY_NOTE
 from .provenance import SKILL_STATE_LOADED as _STATE_LOADED
@@ -85,9 +86,9 @@ _RESOURCE_FILE_CAP = 50
 #: Reserved for skills served by MCP servers (docs/design/mcp-skills.md §5.3):
 #: ``mcp:<server>:<SKILL.md URI>``. A local or plugin skill whose name starts
 #: with it is refused, so a remote skill can neither shadow one nor be
-#: shadowed by one. Same literal as ``agentao.mcp.skills.NAME_PREFIX``, kept
-#: here so loading local skills never imports the MCP SDK.
-MCP_SKILL_PREFIX = "mcp:"
+#: shadowed by one. The one spelling is ``provenance.MCP_NAME_PREFIX``, so
+#: loading local skills never imports the MCP SDK.
+MCP_SKILL_PREFIX = _MCP_NAME_PREFIX
 
 
 class SkillManager:

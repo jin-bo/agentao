@@ -613,7 +613,7 @@ def restore_agent_skills(
         # planner's consent gate: re-activating here would load
         # server-written instructions — or, for a name absent from the
         # listing, an arbitrary URI from the session file — with no consent.
-        if name.startswith("mcp:"):
+        if name.startswith(provenance.MCP_NAME_PREFIX):
             logger.info(
                 "%s did not restore MCP skill %r for %s: its approval does not "
                 "carry over; activate it again to be asked",

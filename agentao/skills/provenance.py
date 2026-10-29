@@ -100,6 +100,13 @@ def is_truncated(content: str) -> bool:
 #: rendered block. The active-skills pointer anchors on it (#552).
 MCP_ACTIVATION_END = "\nThe skill is now active."
 
+#: Prefix of every model-facing MCP skill name, ``mcp:<server>:<SKILL.md URI>``
+#: (docs/design/mcp-skills.md §5.3). Local and plugin skills cannot take it.
+#: Defined here, in a standard-library module, so that ``mcp.skills``,
+#: ``skills.manager`` and the session restore share one spelling without
+#: loading the MCP SDK.
+MCP_NAME_PREFIX = "mcp:"
+
 #: What an active MCP skill gets in the active-skills block when its whole
 #: ``<mcp-skill>`` block is already in an ``activate_skill`` result in history
 #: (#552). The origin framing stays with the block there. The runner looks
@@ -180,7 +187,7 @@ def is_mcp_skill_state_message(message: Any) -> bool:
     server-written content: the restore-time withhold must reach it.
     """
     name = skill_state_name(message)
-    return name is not None and name.startswith("mcp:")
+    return name is not None and name.startswith(MCP_NAME_PREFIX)
 
 
 def is_loaded_state(content: str) -> bool:
@@ -307,7 +314,7 @@ def marker_origins(message: Any) -> Set[str]:
         # server's. A marker line in either is content, not provenance. Only
         # the runtime's own line after an MCP block — or a restore's
         # placeholder in its place — counts.
-        if not state.startswith("mcp:"):
+        if not state.startswith(MCP_NAME_PREFIX):
             return set()
         content = BLOCK.sub("", content)
     return summary_origins(content)
@@ -420,9 +427,9 @@ def name_origin(name: Any) -> Any:
     precedes ``<scheme>://``. Anything else ``mcp:``-prefixed reads as an
     unknown origin — it named an MCP skill all the same.
     """
-    if not isinstance(name, str) or not name.startswith("mcp:"):
+    if not isinstance(name, str) or not name.startswith(MCP_NAME_PREFIX):
         return None
-    rest = name[len("mcp:"):]
+    rest = name[len(MCP_NAME_PREFIX):]
     scheme_end = rest.find("://")
     colon = rest.rfind(":", 0, scheme_end) if scheme_end > 0 else -1
     return rest[:colon] if colon > 0 else UNKNOWN_ORIGIN
