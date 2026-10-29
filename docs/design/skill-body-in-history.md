@@ -2,7 +2,7 @@
 
 > 中文：[skill-body-in-history.zh.md](skill-body-in-history.zh.md)
 
-**Status:** Built on branch `fix/552-local-skill-body-in-history`, 2026-10-28. Appendix A records the review.
+**Status:** Built 2026-10-28 (#594, recogniser #595), shipped in 0.5.18. Appendix A records the review.
 **Baseline:** Agentao `44502d73`. Peers: Codex `26ad281fd1c`, pi-mono `136b87e8a`.
 **Issue:** [#552](https://github.com/jin-bo/agentao/issues/552). #593 solved the path where the model activates an MCP skill with `activate_skill` and its result in history is intact. This document covers local and inline plugin skills. MCP skills stay as they are here; [mcp-skill-body-in-history.md](mcp-skill-body-in-history.md) covers them.
 

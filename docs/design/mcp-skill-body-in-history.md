@@ -2,7 +2,7 @@
 
 > 中文：[mcp-skill-body-in-history.zh.md](mcp-skill-body-in-history.zh.md)
 
-**Status:** Built on branch `fix/552-mcp-skill-body-in-history`, 2026-10-29. Design review passed (Appendix A, rounds 1–2). Option (a) of §6.
+**Status:** Built 2026-10-29 (#597, follow-ups #598, #599), shipped in 0.5.18. Design review passed (Appendix A, rounds 1–2). Option (a) of §6.
 **Baseline:** Agentao `96cca5b7` (#594 + #595).
 **Issue:** [#552](https://github.com/jin-bo/agentao/issues/552). This follows [skill-body-in-history.md](skill-body-in-history.md), which moved local and plugin skill bodies into history and left the MCP paths out (§2.3 and §6 of that document).
 
