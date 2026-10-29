@@ -762,7 +762,7 @@ agentao 已经在一个地方有了这个形状：`_run_stop_command_hook` 刻�
 
 `StopHookResult.system_message` **是存在的**（`models.py:372`），解析器也在给它赋值
 （`_output_parsing.py:180-182`）—— 而 `agentao/` 里没有任何地方读它。全仓唯一的读者是一个测试
-（`tests/test_hooks_stop_suppress_output_and_system_message.py:37`）。然后同一个解析器*又*把这个字符串
+（`tests/test_hooks_stop_suppress_output_and_system_message.py:37`，现为 `tests/test_hooks_stop_output_parsing.py` 的 `system-message-is-recorded` 用例）。然后同一个解析器*又*把这个字符串
 append 进了 `additional_contexts`（`:183`），也就是模型通道。
 
 所以 `systemMessage` 那条是**停掉双写 + 给已有字段接个消费者**，不是「造一条通道」。
