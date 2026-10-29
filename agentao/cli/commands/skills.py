@@ -17,34 +17,6 @@ if TYPE_CHECKING:
     from ..app import AgentaoCLI
 
 
-def _record_mcp_activation(cli: AgentaoCLI, manager, name: str) -> None:
-    """Leave a durable provenance record of a user's MCP skill activation.
-
-    A model's activation leaves its ``<mcp-skill>`` result in the
-    transcript; this path puts the skill into context only through the
-    active-skills block, which is rebuilt per request and never saved. The
-    record is what compaction and a session restore read (they see only
-    ``agent.messages``), so derived content keeps its gates after either.
-    """
-    info = (getattr(manager, "active_skills", None) or {}).get(name)
-    key = info.get("mcp_key") if isinstance(info, dict) else None
-    messages = getattr(getattr(cli, "agent", None), "messages", None)
-    if key is None or not isinstance(messages, list):
-        return
-    from ...skills.provenance import result_marker
-
-    # A ``user`` message in ``<system-reminder>``: a mid-history ``system``
-    # message is refused by strict chat templates (see sessions.py).
-    messages.append({
-        "role": "user",
-        "content": (
-            f"<system-reminder>\n[The user activated MCP skill {name}; its "
-            f"instructions are in \"Active Skills\".]\n{result_marker([key[0]])}"
-            "\n</system-reminder>"
-        ),
-    })
-
-
 def handle_skills_command(cli: AgentaoCLI, args: str) -> None:
     """Handle /skills command.
 
@@ -87,7 +59,8 @@ def handle_skills_command(cli: AgentaoCLI, args: str) -> None:
         if result.startswith("Error"):
             console.print(f"\n[warning]{_safe(result)}[/warning]\n")
         else:
-            _record_mcp_activation(cli, manager, sub_arg)
+            # An MCP skill's provenance is the ``Skill loaded`` message the
+            # next sync appends, with its origin marker (#552).
             console.print(f"\n[success]Skill '{_safe(sub_arg)}' activated.[/success]\n")
         return
 

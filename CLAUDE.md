@@ -141,7 +141,7 @@ Callers and their `cause`: `/mode` (`cli/app.py::_apply_mode`, `"cli"`), ACP `se
 
 **The model gets its instructions in two messages. The second message is not in history.**
 - `agent.py::_build_system_prompt()` builds the stable prefix. The prefix is byte-identical across the turns of a session and ends at `<memory-stable>`. `builder.py::_build_sections()` sets the order. Plan mode suppresses the available agents.
-- `agent.py::_build_volatile_tail()` builds the volatile tail: the active-skills block (task lines, pointers, an MCP skill's body when history does not hold it), todos, `<memory-context>` and the plan prompt (`_build_volatile_sections()`). It wraps them in one `<system-reminder>` and appends it to the **outgoing request** as a trailing `user` message.
+- `agent.py::_build_volatile_tail()` builds the volatile tail: the active-skills block (task lines and pointers; a skill's body only when no sync ran), todos, `<memory-context>` and the plan prompt (`_build_volatile_sections()`). It wraps them in one `<system-reminder>` and appends it to the **outgoing request** as a trailing `user` message.
 
 Invariants (`docs/design/llm-api-adapters.md` §2.3):
 - **`messages_with_system` is the persistent prefix, never the request.** Only one place appends the tail: the `_send` in `_call_llm_with_overflow_recovery`.
@@ -244,11 +244,12 @@ The skill manager discovers skills in `skills/`. Each subdirectory has a `SKILL.
   4. refuses to overwrite a file that it cannot read.
 - The lock does not serialize two processes that replace the same skill directory.
 - **The available-skills catalogue renders only when the agent has `activate_skill`** (`prompts/builder.py::_available_skills_block`). No such gate applies to the active-skills block.
-- **A local or plugin skill's body is in history, not in the tail** (#552, `docs/design/skill-body-in-history.md`). `ChatLoopRunner._sync_skill_state` appends what `SkillManager.skill_state_messages` reports: a `Skill loaded` snapshot or a `Skill no longer active` notice.
+- **A skill's body is in history, not in the tail** (#552, `docs/design/skill-body-in-history.md`, `docs/design/mcp-skill-body-in-history.md`). `ChatLoopRunner._sync_skill_state` appends what `SkillManager.skill_state_messages` reports: a `Skill loaded` message or a `Skill no longer active` notice.
   - **Only each skill's latest state message counts.** Never test whether an equal copy appears anywhere in history (A → B → A).
   - Sync before the request is estimated, and again after any compaction that replaced history (the loop, both overflow rungs and the 413 retry).
   - The loaded message carries no `Task:`, or a restore duplicates the body. It escapes `</system-reminder`, or ACP replay leaks the rest.
-  - **MCP skill content never goes into a user message.** Provenance and the restore-time withhold find it by the tool that returned it.
+  - **The active set decides the effective state.** An MCP skill whose latest `activate_skill` result holds its current held bytes needs no state message; that result supersedes older ones. A load record is a state message or a result `provenance.mcp_activation_name` reads. A refused or failed activation is not one.
+  - **An MCP skill's state message is MCP content.** Its name starts with `mcp:` and it ends with a whole-line origin marker. Its origins are the labels actually found on it (`server=`, the marker, the parsed name). Never add a helper's fallback `*`. A restore withholds its body and keeps its first line (`embedding/sessions.py::withheld_state_message`).
 - **The catalogue lists active skills too, and it must continue to do so** (0.4.27). The catalogue is in the cached prefix. It can change only when the *enabled set* changes, never on activation. `tests/test_skills_prompt.py` pins this.
 
 ### Memory system
@@ -372,7 +373,7 @@ There are eight events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `User
   - The formatter never spills skill content to `.agentao/tool-outputs/`. `read_skill_file` (`mcp/skill_tools.py`, in `MCP_SKILL_TOOL_NAMES`) pages it instead, with `offset` / `limit` (at most 30,000 chars).
   - That is not "never on disk". Replay and `agentao.log` keep skill content verbatim.
   - The runtime refuses (does not truncate) a `SKILL.md` over `MAX_SKILL_MD_BYTES` (100,000). Local and plugin skills cannot use the `mcp:` name prefix.
-  - **The tail sends an active MCP skill's block only when history does not hold it whole** (#552). Only that skill's latest `activate_skill` result, unchanged, gives a pointer instead (`skills/manager.py::_activation_result_holds`). Microcompaction keeps whole exactly the results the tail points at, as `SkillManager.mcp_pointer_targets` reports them through `ContextManager.mcp_pointer_provider`. A missing or failing answer must keep more, never less. A compaction that replaces history makes the runner build a tail that carries the pointer again (`chat_loop/_runner.py`, `provenance.tail_points_into_history`).
+  - **The tail points at an active MCP skill's copy in history** (#552): its latest `activate_skill` result when unchanged (`skills/manager.py::_activation_result_holds`), else its `Skill loaded` message. Microcompaction keeps whole exactly the results the tail points at, as `SkillManager.mcp_pointer_targets` reports them through `ContextManager.mcp_pointer_provider`. A missing or failing answer must keep more, never less. A compaction that replaces history makes the runner build a tail that carries the pointer again (`chat_loop/_runner.py`, `provenance.tail_points_into_history`).
 - Test server: `tests/support/skills_mcp_server.py`.
 
 ### LLM wire protocols

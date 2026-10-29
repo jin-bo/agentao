@@ -4,7 +4,7 @@
 
 **状态：** 已实施，分支 `fix/552-local-skill-body-in-history`，2026-10-28。附录 A 记录评审经过。
 **基线：** Agentao `44502d73`。对照：Codex `26ad281fd1c`、pi-mono `136b87e8a`。
-**Issue：** [#552](https://github.com/jin-bo/agentao/issues/552)。#593 解决的是"模型调用 `activate_skill` 激活 MCP 技能、且历史中的结果完整"这一条路径。本文处理本地技能和内联 plugin 技能。MCP 技能保持现状。
+**Issue：** [#552](https://github.com/jin-bo/agentao/issues/552)。#593 解决的是"模型调用 `activate_skill` 激活 MCP 技能、且历史中的结果完整"这一条路径。本文处理本地技能和内联 plugin 技能。MCP 技能在本文中保持现状，由 [mcp-skill-body-in-history.zh.md](mcp-skill-body-in-history.zh.md) 处理。
 
 ## 摘要
 
@@ -190,7 +190,7 @@ The instructions and the file list of this skill are in its latest "Skill loaded
 
 ## 6. 范围之外
 
-- MCP 技能的 `spec.skills` 和 `/skills activate` 路径：需要先让 provenance 能识别 user 角色的技能消息，并扩展恢复时的扣留逻辑。
+- MCP 技能的 `spec.skills` 和 `/skills activate` 路径：需要先让 provenance 能识别 user 角色的技能消息，并扩展恢复时的扣留逻辑。后已实施：[mcp-skill-body-in-history.zh.md](mcp-skill-body-in-history.zh.md)。
 - 在请求中撤回已停用技能的正文。
 - 缓存收益实测：用 #552 的 guanlan 工作负载，前后各跑 10 次。比较未命中 token 的绝对值、总输入 token、请求次数，以及每次请求的 `volatile_tail_sections`。
 
