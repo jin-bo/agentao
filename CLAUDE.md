@@ -249,7 +249,7 @@ The skill manager discovers skills in `skills/`. Each subdirectory has a `SKILL.
   - Sync before the request is estimated, and again after any compaction that replaced history (the loop, both overflow rungs and the 413 retry).
   - The loaded message carries no `Task:`, or a restore duplicates the body. It escapes `</system-reminder`, or ACP replay leaks the rest.
   - **The active set decides the effective state.** An MCP skill whose latest `activate_skill` result holds its current held bytes needs no state message; that result supersedes older ones. A load record is a state message or a result `provenance.mcp_activation_name` reads. A refused or failed activation is not one.
-  - **An MCP skill's state message is MCP content.** Its name starts with `mcp:` and it ends with a whole-line origin marker. Its origins are the labels actually found on it (`server=`, the marker, the parsed name). Never add a helper's fallback `*`. A restore withholds its body and keeps its first line (`embedding/sessions.py::withheld_state_message`).
+  - **An MCP skill's state message is MCP content.** Its name starts with `mcp:` and it ends with a whole-line origin marker. Its origins are the labels actually found on it (`server=`, the marker, the parsed name). Never add a helper's fallback `*`. A marker inside the quoted SKILL.md text (a local body, or an MCP `<mcp-skill>` block) is content, not provenance. A restore withholds its body and keeps its first line (`embedding/sessions.py::withheld_state_message`).
 - **The catalogue lists active skills too, and it must continue to do so** (0.4.27). The catalogue is in the cached prefix. It can change only when the *enabled set* changes, never on activation. `tests/test_skills_prompt.py` pins this.
 
 ### Memory system

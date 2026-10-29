@@ -925,15 +925,24 @@ class SkillManager:
     def clear_active_skills(self):
         self.active_skills.clear()
 
-    def mcp_pointer_targets(self, history: Optional[Sequence[Any]]) -> Dict[str, int]:
+    def mcp_pointer_targets(
+        self,
+        history: Optional[Sequence[Any]],
+        *,
+        states: Optional[Dict[str, Tuple[int, str]]] = None,
+    ) -> Dict[str, int]:
         """The ``history`` index of each activation result the tail points at.
 
         One entry per active MCP skill whose latest ``activate_skill`` result
-        holds the skill's current block (:func:`_activation_result_holds`).
+        holds the skill's current block (:func:`_activation_result_holds`)
+        and is newer than the skill's latest state message: a later
+        ``Skill no longer active`` notice or ``Skill loaded`` message
+        supersedes the result, so it is not the copy the model follows.
         :meth:`get_skills_context` gives exactly these skills a pointer, and
         microcompaction keeps exactly these results whole (#552), so the two
         cannot disagree. A deactivated skill's result is not here, and is
-        clipped like any other.
+        clipped like any other. ``states`` is :func:`_latest_skill_states`
+        of ``history`` when the caller already has it.
         """
         if not history:
             return {}
@@ -949,8 +958,10 @@ class SkillManager:
                 from .provenance import latest_mcp_activations
 
                 latest = latest_mcp_activations(history)
+                if states is None:
+                    states = _latest_skill_states(history)
             index = latest.get(name)
-            if index is not None and _activation_result_holds(
+            if index is not None and index > states.get(name, (-1, ""))[0] and _activation_result_holds(
                 history[index]["content"], name, _render_mcp_skill(held),
             ):
                 targets[name] = index
@@ -975,8 +986,8 @@ class SkillManager:
             return ""
 
         context = "\n=== Active Skills ===\n"
-        pointed = self.mcp_pointer_targets(history)
         latest = _latest_skill_states(history) if history is not None else {}
+        pointed = self.mcp_pointer_targets(history, states=latest)
         for name, info in self.active_skills.items():
             skill_info = info['skill_info']
             if info.get("mcp_key") is not None:
@@ -1136,7 +1147,7 @@ class SkillManager:
         for name in loads:
             if name not in self.active_skills:
                 out.append(_skill_unloaded_message(name))
-        pointed = self.mcp_pointer_targets(history)
+        pointed = self.mcp_pointer_targets(history, states=latest)
         for name, info in self.active_skills.items():
             want = self._wanted_state(name, info, pointed)
             if want is not None and latest.get(name, (None, None))[1] != want:

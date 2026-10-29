@@ -299,6 +299,16 @@ def marker_origins(message: Any) -> Set[str]:
             return summary_origins(
                 "\n".join(m.group(1) for m in _PLACEHOLDER_MARKER.finditer(content))
             )
+    state = skill_state_name(message)
+    if state is not None and isinstance(content, str):
+        # A skill-state message (#552) quotes a SKILL.md: a local one is the
+        # skill author's text, and an MCP one's ``<mcp-skill>`` block is the
+        # server's. A marker line in either is content, not provenance. Only
+        # the runtime's own line after an MCP block — or a restore's
+        # placeholder in its place — counts.
+        if not state.startswith("mcp:"):
+            return set()
+        content = BLOCK.sub("", content)
     return summary_origins(content)
 
 
