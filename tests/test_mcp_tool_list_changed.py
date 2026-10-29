@@ -25,12 +25,7 @@ from tests.support.changing_tools_mcp_server import changing_tools_server, metho
 from tests.support.tools import make_dummy_agent
 
 
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))  # Windows
+pytestmark = pytest.mark.usefixtures("isolated_home")
 
 
 def _agent(tmp_path, servers):

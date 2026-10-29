@@ -220,6 +220,23 @@ def isolated_cwd(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def isolated_home(tmp_path, monkeypatch):
+    """Point the home directory at ``tmp_path / "home"``.
+
+    ``Agentao(...)`` opens the user memory store at ``<home>/.agentao/memory.db`` and
+    reads the user-level config under ``<home>/.agentao/``, so a test that builds one
+    against the real home reads and writes the developer's own. ``USERPROFILE`` is what
+    ``Path.home()`` reads on Windows. The skill directories are module constants that a
+    redirected home does not move: see ``isolated_skill_dirs``. Modules opt in with
+    ``pytestmark``.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+
+@pytest.fixture
 def isolated_skill_dirs(tmp_path, monkeypatch):
     """Keep skill discovery off the developer's home.
 

@@ -30,12 +30,7 @@ from agentao.runtime.tool_executor import ToolExecutor
 from tests.support.host_events import NullTransport, make_plan
 
 
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))  # Windows
+pytestmark = pytest.mark.usefixtures("isolated_home")
 
 
 @pytest.fixture
