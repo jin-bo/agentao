@@ -35,12 +35,7 @@ from agentao.transport import EventType
 from tests.support.tools import NamedTool
 
 
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))  # Windows
+pytestmark = pytest.mark.usefixtures("isolated_home")
 
 
 def _parent(tmp_path, **kwargs):

@@ -36,12 +36,7 @@ from agentao.llm.client import LLMClient
 from agentao.permissions import PermissionEngine
 
 
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))  # Windows
+pytestmark = pytest.mark.usefixtures("isolated_home")
 
 
 def _response(content=None, calls=()):

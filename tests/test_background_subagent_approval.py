@@ -33,12 +33,7 @@ from agentao.agents.bg_store import BackgroundTaskStore
 from agentao.permissions import PermissionEngine, PermissionMode
 
 
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))  # Windows
+pytestmark = pytest.mark.usefixtures("isolated_home")
 
 
 def _write_call(target):

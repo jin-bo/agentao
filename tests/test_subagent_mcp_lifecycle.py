@@ -35,12 +35,7 @@ from agentao.permissions import PermissionEngine
 from tests.support.stdio_mcp_server import started, stdio_server
 
 
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))  # Windows
+pytestmark = pytest.mark.usefixtures("isolated_home")
 
 
 @pytest.fixture

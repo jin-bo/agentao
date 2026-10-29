@@ -44,12 +44,7 @@ PDF = "mcp:docs:skill://pdf-processing/SKILL.md"
 INVOICE_READ = S.wrap_skill_file("docs", "skill://pdf-processing/templates/invoice.md", INVOICE)
 
 
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
+pytestmark = pytest.mark.usefixtures("isolated_home")
 
 
 # ---------------------------------------------------------------------------

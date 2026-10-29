@@ -27,12 +27,7 @@ from agentao.transport import AgentEvent, EventType
 from tests.test_subagent_tool_call_id import _wrapper
 
 
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))  # Windows
+pytestmark = pytest.mark.usefixtures("isolated_home")
 
 
 class _Stream:

@@ -26,12 +26,7 @@ from agentao.tooling.registry import MCP_RESOURCE_TOOL_NAMES as REGISTRY_NAMES
 from tests.support.resource_mcp_server import PNG, methods, resource_server, started
 
 
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
+pytestmark = pytest.mark.usefixtures("isolated_home")
 
 
 def _manager(configs):

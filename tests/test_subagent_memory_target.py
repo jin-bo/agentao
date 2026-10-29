@@ -48,12 +48,7 @@ from agentao.tools import SaveMemoryTool
 from tests.support.tools import NamedTool
 
 
-@pytest.fixture(autouse=True)
-def _isolated_home(tmp_path, monkeypatch):
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))  # Windows
+pytestmark = pytest.mark.usefixtures("isolated_home")
 
 
 # Where a sub-agent's bare manager used to open a store of its own
