@@ -27,6 +27,7 @@ classes**, not pytest fixtures — construction is explicit at the call site.
 | `anthropic_wire.py` | A scripted Anthropic Messages endpoint **below the real SDK**: SSE event builders, a `Wire` that serves responses and records request bodies, and `ChunkedBody` for delivery-order and stream-closure assertions. Only the socket is fake. |
 | `host_events.py` | Host event-stream capture. |
 | `mcp.py` | MCP client/tool doubles. |
+| `mcp_skills.py` | Scaffolding for the MCP Skills suite (`tests/test_mcp_skills_*.py`): the agent and manager builders, the planner/runner call helpers, and `docs_server()`, which each module wraps in its own `docs` fixture. |
 | `stdio_mcp_server.py` | A real SDK-free stdio MCP server that records launches, calls, overlapping calls and stdin EOF as marker files, plus `stdio_server()` to write it and build its config. |
 | `memory.py` | Memory-store builders. |
 | `permissions.py` | Permission-rule builders. |
