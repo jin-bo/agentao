@@ -113,10 +113,51 @@ def mcp_activation_head(skill_name: str) -> str:
     return f"\nSkill Activated: {skill_name}\n"
 
 
+#: What an active local or plugin skill gets in the active-skills block when
+#: its latest skill-state message in history loads its current snapshot
+#: (#552, docs/design/skill-body-in-history.md).
+LOCAL_SKILL_IN_HISTORY_NOTE = (
+    "The instructions and the file list of this skill are in its latest "
+    "\"Skill loaded\" reminder earlier in this conversation. The skill is "
+    "still active.\n"
+)
+
+
+#: How a skill-state message starts (#552). The first line names the skill as
+#: JSON, so any name reads back exactly (docs/design/skill-body-in-history.md).
+SKILL_STATE_OPEN = "<system-reminder>\n"
+SKILL_STATE_LOADED = "Skill loaded: "
+SKILL_STATE_UNLOADED = "Skill no longer active: "
+
+
+def is_skill_state_message(message: Any) -> bool:
+    """Whether ``message`` is a runtime ``Skill loaded`` / ``Skill no longer active`` note.
+
+    Such a user message holds a skill's ``SKILL.md`` text, not anything the
+    user wrote, so readers of "the user's own words" (memory
+    crystallization, ``/crystallize`` evidence, the summarizer's originating
+    request) must skip it.
+    """
+    if not isinstance(message, dict) or message.get("role") != "user":
+        return False
+    content = message.get("content")
+    if not isinstance(content, str) or not content.startswith(SKILL_STATE_OPEN):
+        return False
+    first = content[len(SKILL_STATE_OPEN):]
+    return first.startswith(SKILL_STATE_LOADED) or first.startswith(SKILL_STATE_UNLOADED)
+
+
+def skill_state_head(content: str) -> str:
+    """A skill-state message's first line: ``Skill loaded: "<name>"`` or the unloaded one."""
+    return content[len(SKILL_STATE_OPEN):].split("\n", 1)[0]
+
+
 def tail_points_into_history(tail: Any) -> bool:
     """Whether a volatile-tail message carries an active-skills pointer (#552)."""
     content = tail.get("content") if isinstance(tail, dict) else None
-    return isinstance(content, str) and MCP_SKILL_IN_HISTORY_NOTE in content
+    return isinstance(content, str) and (
+        MCP_SKILL_IN_HISTORY_NOTE in content or LOCAL_SKILL_IN_HISTORY_NOTE in content
+    )
 
 
 def can_carry_pointer(content: str) -> bool:

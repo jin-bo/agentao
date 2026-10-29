@@ -16,8 +16,14 @@ from ..paths import user_root
 from .. import json_parse
 from ..config_file import read_config_text
 from .provenance import MCP_ACTIVATION_END as _MCP_ACTIVATION_END
+from .provenance import LOCAL_SKILL_IN_HISTORY_NOTE as _LOCAL_SKILL_IN_HISTORY_NOTE
 from .provenance import MCP_SKILL_IN_HISTORY_NOTE as _MCP_SKILL_IN_HISTORY_NOTE
+from .provenance import SKILL_STATE_LOADED as _STATE_LOADED
+from .provenance import SKILL_STATE_OPEN as _STATE_OPEN
+from .provenance import SKILL_STATE_UNLOADED as _STATE_UNLOADED
+from .provenance import is_skill_state_message as _is_skill_state_message
 from .provenance import mcp_activation_head as _mcp_activation_head
+from .provenance import skill_state_head as _skill_state_head
 
 logger = logging.getLogger(__name__)
 
@@ -790,9 +796,14 @@ class SkillManager:
             available = ", ".join(sorted(self.list_available_skills()))
             return f"Error: Unknown skill '{skill_name}'. Available skills: {available}"
 
+        # The snapshot is what the model gets, frozen until the skill is
+        # activated again or reloaded: the runner persists it in history once
+        # (#552), so a live re-read could not reach the model anyway.
+        resources = self._list_skill_resources(skill_name)
         self.active_skills[skill_name] = {
             "task": task_description,
             "skill_info": skill_info,
+            "snapshot": self._render_local_skill(skill_name, skill_info, resources=resources),
         }
 
         message = f"\nSkill Activated: {skill_name}\n"
@@ -807,7 +818,6 @@ class SkillManager:
             message += f"Skill directory: {skill_dir}\n"
             message += _SKILL_DIR_NOTE
 
-        resources = self._list_skill_resources(skill_name)
         if any(resources.values()):
             message += "\n=== Available Resource Files ===\n"
             message += "You can use the read_file tool to load these files as needed:\n\n"
@@ -902,7 +912,16 @@ class SkillManager:
         return False
 
     def get_active_skills(self) -> Dict[str, dict]:
-        return self.active_skills.copy()
+        """The active skills, without the runtime's own per-skill caches.
+
+        The activation snapshot and the cached loaded message (#552) are a
+        whole ``SKILL.md`` each. They are how the runtime persists the body,
+        not part of what a host reads here.
+        """
+        return {
+            name: {k: v for k, v in info.items() if k not in _RUNTIME_KEYS}
+            for name, info in self.active_skills.items()
+        }
 
     def clear_active_skills(self):
         self.active_skills.clear()
@@ -949,13 +968,19 @@ class SkillManager:
         result is cached history. Where the block is not there whole — a
         ``/skills activate`` or ``spec.skills`` activation (no tool result),
         a result a summary or a restore replaced — the block is sent here, as
-        before. ``None`` (no history given) always sends it.
+        before. A local or plugin skill likewise gets a pointer when its
+        latest skill-state message in history loads its current snapshot
+        (:meth:`skill_state_messages`), and its snapshot otherwise. ``None``
+        (no history given) always sends the content.
         """
         if not self.active_skills:
             return ""
 
         context = "\n=== Active Skills ===\n"
         pointed = self.mcp_pointer_targets(history)
+        # Scanned only once a local skill needs it: an MCP-only active set
+        # need not walk history for state messages on every request.
+        latest: Optional[Dict[str, str]] = None
         for name, info in self.active_skills.items():
             skill_info = info['skill_info']
             if info.get("mcp_key") is not None:
@@ -973,23 +998,130 @@ class SkillManager:
                 continue
             context += f"\n## {name} - {skill_info.get('title', name)}\n"
             context += f"Task: {info['task']}\n"
-            skill_dir = self._skill_dir(skill_info)
-            if skill_dir is not None:
-                context += f"Skill directory: {skill_dir}\n"
-                context += _SKILL_DIR_NOTE
-
-            skill_content = self.get_skill_content(name)
-            if skill_content:
-                context += f"\n{skill_content}\n"
-
-            resources = self._list_skill_resources(name)
-            if any(resources.values()):
-                context += "\nAvailable resource files (use read_file to load; prefer running scripts directly):\n"
-                for key, _ in _RESOURCE_SPECS:
-                    for path in resources.get(key, []):
-                        context += f"  - {path}\n"
+            if latest is None and history is not None:
+                latest = _latest_skill_states(history)
+            if latest is not None and latest.get(name) == self._skill_loaded_message(name, info):
+                context += _LOCAL_SKILL_IN_HISTORY_NOTE
+            else:
+                context += self._snapshot(name, info)
 
         return context
+
+    def _render_local_skill(
+        self, skill_name: str, skill_info: Optional[dict] = None,
+        resources: Optional[Dict[str, List[str]]] = None,
+    ) -> str:
+        """A local or plugin skill's directory, body and resource list.
+
+        ``skill_info`` is the active entry's own, when it has one: an entry a
+        host put into ``active_skills`` directly may name a skill the scan
+        does not know, and its directory line came from that entry.
+        """
+        if not isinstance(skill_info, dict):
+            skill_info = self.get_skill_info(skill_name) or {}
+        out = ""
+        skill_dir = self._skill_dir(skill_info)
+        if skill_dir is not None:
+            out += f"Skill directory: {skill_dir}\n"
+            out += _SKILL_DIR_NOTE
+
+        skill_content = self.get_skill_content(skill_name)
+        if skill_content:
+            out += f"\n{skill_content}\n"
+
+        if resources is None:
+            resources = self._list_skill_resources(skill_name)
+        if any(resources.values()):
+            out += "\nAvailable resource files (use read_file to load; prefer running scripts directly):\n"
+            for key, _ in _RESOURCE_SPECS:
+                for path in resources.get(key, []):
+                    out += f"  - {path}\n"
+        return out
+
+    def _snapshot(self, name: str, info: dict) -> str:
+        """The activation snapshot, taken now for an entry that lacks one.
+
+        An entry a host put into ``active_skills`` directly has no snapshot.
+        It gets one on first use, and keeps it, like an activation.
+        """
+        snapshot = info.get("snapshot")
+        if not isinstance(snapshot, str):
+            snapshot = info["snapshot"] = self._render_local_skill(
+                name, info.get("skill_info"),
+            )
+        return snapshot
+
+    def _skill_loaded_message(self, name: str, info: dict) -> str:
+        """The persistent message that loads ``name``'s snapshot (#552).
+
+        Deterministic: :meth:`skill_state_messages` and the tail compare it
+        with history byte for byte. It carries no ``Task:``, so a restore,
+        which re-activates with another task, still matches the copy the
+        restored history holds.
+        """
+        skill_info = info.get("skill_info")
+        title = skill_info.get("title", name) if isinstance(skill_info, dict) else name
+        snapshot = self._snapshot(name, info)
+        # Built twice per request (the sync and the tail): kept until the
+        # snapshot or the title changes.
+        cached = info.get("_loaded_message")
+        if (
+            isinstance(cached, tuple) and len(cached) == 3
+            and cached[0] is snapshot and cached[1] == title
+        ):
+            return cached[2]
+        # Nothing inside may close the reminder — not the body, nor the
+        # frontmatter title or name in the heading: ACP replay strips
+        # reminders with a non-greedy match and would show the rest to the
+        # client, and the model reads any spelling of the closing tag as one.
+        # Same neutralization as the volatile tail the body used to ride in.
+        # The JSON name line escapes ``<`` instead, so it still reads back as
+        # exactly ``name``.
+        from ..prompts.builder import _CLOSING_REMINDER_RE
+
+        inner = _CLOSING_REMINDER_RE.sub(
+            r"<\\/system-reminder>",
+            f"## {name} - {title}\n{snapshot.rstrip()}",
+        )
+        message = (
+            f"{_STATE_OPEN}{_STATE_LOADED}{_state_name(name)}\n"
+            "This is the current version of this skill. It replaces any earlier "
+            "instructions of this skill in this conversation.\n"
+            f"{inner}\n"
+            "</system-reminder>"
+        )
+        info["_loaded_message"] = (snapshot, title, message)
+        return message
+
+    def skill_state_messages(self, history: Optional[Sequence[Any]]) -> List[str]:
+        """The skill-state messages to append to ``history`` now (#552).
+
+        A local or plugin skill's body is persisted in history once, as a
+        user ``<system-reminder>``, instead of riding in the uncached tail on
+        every request. Only each skill's *latest* state message counts: an
+        active skill whose latest one is not its current loaded message gets
+        one (new activation, ``reload`` A → B → A, a compaction that removed
+        it, a restore whose file changed). A skill whose latest one loads it
+        but is no longer active gets a notice that it is not. Derived from
+        history alone, so a call that changes nothing returns ``[]``.
+
+        MCP skills are not here: their content must stay in tool results,
+        where provenance and the restore-time withhold find it.
+        """
+        latest = _latest_skill_states(history or ())
+        out: List[str] = []
+        active = {
+            name: info for name, info in self.active_skills.items()
+            if info.get("mcp_key") is None and not name.startswith(MCP_SKILL_PREFIX)
+        }
+        for name, content in latest.items():
+            if name not in active and content.startswith(_STATE_OPEN + _STATE_LOADED):
+                out.append(_skill_unloaded_message(name))
+        for name, info in active.items():
+            want = self._skill_loaded_message(name, info)
+            if latest.get(name) != want:
+                out.append(want)
+        return out
 
     # ------------------------------------------------------------------
     # Plugin skill registration
@@ -1095,6 +1227,14 @@ class SkillManager:
         # skill ever returns; only an explicit ``disable_skill`` /
         # ``enable_skill`` changes it, and ``enable_skill`` clears a name
         # whether or not the skill is currently discoverable.
+        #
+        # A reload is the explicit refresh of an active skill's snapshot
+        # (#552): ``/crystallize`` relies on it to make a just-written skill
+        # take effect. A skill the scan no longer finds keeps its snapshot.
+        for name, info in self.active_skills.items():
+            if info.get("mcp_key") is None and name in self.available_skills:
+                info["skill_info"] = self.available_skills[name]
+                info["snapshot"] = self._render_local_skill(name, info["skill_info"])
         return len(self.list_available_skills())
 
     def get_skill_content(self, skill_name: str) -> Optional[str]:
@@ -1111,6 +1251,55 @@ class SkillManager:
                 return f.read()
         except IOError:
             return None
+
+
+def _state_name(name: str) -> str:
+    """``name`` as the JSON a state message's first line carries.
+
+    ``<`` is escaped, so no name can close the reminder, and ``json.loads``
+    still reads it back as exactly ``name``. Other non-ASCII stays as is: a
+    ``Skill no longer active`` notice carries only this line, and the model
+    must be able to read a name such as ``代码审查`` in it.
+    """
+    return json.dumps(name, ensure_ascii=False).replace("<", "\\u003c")
+
+
+#: Per-skill keys only the runtime reads; :meth:`SkillManager.get_active_skills` leaves them out.
+_RUNTIME_KEYS = frozenset({"snapshot", "_loaded_message"})
+
+
+def _skill_unloaded_message(name: str) -> str:
+    """The persistent notice that ``name``'s loaded instructions no longer apply."""
+    return (
+        f"{_STATE_OPEN}{_STATE_UNLOADED}{_state_name(name)}\n"
+        "Do not follow this skill's instructions from earlier in this conversation.\n"
+        "</system-reminder>"
+    )
+
+
+def _latest_skill_states(history: Sequence[Any]) -> Dict[str, str]:
+    """Each skill's latest skill-state message content in ``history``, by name.
+
+    A state message is a user message whose string content starts with a
+    reminder whose first line is ``Skill loaded:`` or ``Skill no longer
+    active:`` and a JSON name. A user's own turn starts with the date
+    reminder, and a tool result or a file read is not a user message, so
+    neither counts.
+    """
+    latest: Dict[str, str] = {}
+    for message in history:
+        if not _is_skill_state_message(message):
+            continue
+        content = message["content"]
+        first = _skill_state_head(content)
+        prefix = _STATE_LOADED if first.startswith(_STATE_LOADED) else _STATE_UNLOADED
+        try:
+            name = json.loads(first[len(prefix):])
+        except ValueError:
+            continue
+        if isinstance(name, str):
+            latest[name] = content
+    return latest
 
 
 def _activation_result_holds(content: str, skill_name: str, block: str) -> bool:

@@ -19,7 +19,7 @@ When the user asks for a PDF → markdown conversion:
 2. ...
 ```
 
-The YAML frontmatter is what the agent reads when deciding whether to activate. Once active, the full SKILL.md body goes into the per-request `<system-reminder>` (the volatile tail, not the cached system prompt). Files under `references/`, `assets/` and `scripts/` are not inlined: activation lists them by absolute path, and the agent reads them with `read_file` when it needs them.
+The YAML frontmatter is what the agent reads when deciding whether to activate. Once active, the full SKILL.md body is added to the conversation once, as a `Skill loaded` reminder, and is cached from the next request on. It is a snapshot: after you edit the skill, run `/skills activate <name>` again or `/skills reload`. Files under `references/`, `assets/` and `scripts/` are not inlined: activation lists them by absolute path, and the agent reads them with `read_file` when it needs them.
 
 You don't have to know the skill exists — `/skills` lists them, the agent picks them up. You only step in when you want to force, suppress, or build a new one.
 
@@ -44,8 +44,8 @@ The list shows each enabled skill's name, title and description. **Active Skills
 | Subcommand | Effect |
 |-----------|--------|
 | `/skills` | List all skills, then the active ones |
-| `/skills activate <name>` | Force-activate. The body is added to every request from now on. |
-| `/skills deactivate <name>` | Remove from active set. The body is dropped. |
+| `/skills activate <name>` | Force-activate. The body is added to the conversation once. Run it again on an active skill to load an edited version. |
+| `/skills deactivate <name>` | Remove from active set. A notice tells the model to stop following it. |
 | `/skills disable <name>` | **Persistent** — saved to `skills_config.json`. Skill won't load even after restart. |
 | `/skills enable <name>` | Reverse `/skills disable`. Skill is loadable again. |
 | `/skills reload` | Re-scan all three skill directories. Use after editing a `SKILL.md` or adding a new skill folder. |
@@ -86,7 +86,7 @@ Most of the time you don't. The agent reads skill descriptions and self-activate
 - You want a skill's docs in the prompt for *your* benefit (you'll ask the agent to follow it)
 - You're testing whether a new skill loads correctly
 
-Activation is cheap, but not free. The SKILL.md body is re-sent, uncached, with every request while the skill is active. `/skills deactivate <name>` when you are done with it. The skill list itself sits in the cached system prompt and does not change when you activate a skill.
+Activation is cheap, but not free. The SKILL.md body stays in the conversation, cached after the first request, and counts toward the context window. A compaction that removes it adds it again once. `/skills deactivate <name>` when you are done with it. The skill list itself sits in the cached system prompt and does not change when you activate a skill.
 
 ## `/crystallize` — turn this session into a skill
 

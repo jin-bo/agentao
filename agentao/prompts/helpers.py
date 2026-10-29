@@ -54,8 +54,14 @@ def extract_context_hints(messages: List[Dict[str, Any]]) -> List[str]:
       :meth:`ContextManager._format_for_summary` and
       :meth:`MemoryCrystallizer._user_message_text` consume them.
     """
+    from ..skills.provenance import is_skill_state_message
+
+    # A skill's persisted SKILL.md and resource list (#552): its paths are
+    # the skill's, not the conversation's. Dropped before the window is
+    # taken, so a note does not displace a real message from the last ten.
+    recent = [m for m in messages if not is_skill_state_message(m)][-10:]
     hints: List[str] = []
-    for msg in messages[-10:]:
+    for msg in recent:
         content = msg.get("content", "")
         if isinstance(content, str):
             hints.extend(_PATH_RE.findall(content))

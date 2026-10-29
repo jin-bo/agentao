@@ -102,8 +102,14 @@ def _collect_session_content(cli: AgentaoCLI) -> str:
     if summaries:
         session_content = "\n\n---\n\n".join(s.summary_text for s in reversed(summaries))
 
+    from ....skills.provenance import is_skill_state_message
+
     live_parts = []
     for msg in cli.agent.messages:
+        if is_skill_state_message(msg):
+            # A skill's SKILL.md the runtime persisted (#552): not the
+            # user's words, and not this session's workflow to crystallize.
+            continue
         role = msg.get("role", "")
         if role not in ("user", "assistant"):
             continue

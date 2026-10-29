@@ -1173,8 +1173,10 @@ def test_a_spec_skill_does_not_copy_the_prompt_into_the_tail(
     tail = sent[0][-1]
     assert tail["role"] == "user"
     assert "=== Active Skills ===" in tail["content"]
-    # The skill still activates, with its body.
-    assert "SKILL-BODY-MARKER" in tail["content"]
+    # The skill still activates. Its body is persisted once in history, not
+    # re-sent in the uncached tail (#552).
+    assert "SKILL-BODY-MARKER" not in tail["content"]
+    assert sum("SKILL-BODY-MARKER" in str(m.get("content", "")) for m in sent[0]) == 1
     assert "PROMPT-MARKER" not in tail["content"]
     # The prompt is sent once, as the user message in history.
     assert sum("PROMPT-MARKER" in str(m.get("content", "")) for m in sent[0]) == 1

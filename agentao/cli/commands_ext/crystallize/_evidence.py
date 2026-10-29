@@ -46,9 +46,14 @@ def collect_crystallize_evidence(cli: AgentaoCLI):
         if p and p not in key_files_seen:
             key_files_seen.append(p)
 
+    from ....skills.provenance import is_skill_state_message
+
     messages = getattr(cli.agent, "messages", []) or []
     for msg in messages:
         if not isinstance(msg, dict):
+            continue
+        if is_skill_state_message(msg):
+            # A skill's SKILL.md the runtime persisted (#552), not a goal.
             continue
         role = msg.get("role", "")
         if role == "user":

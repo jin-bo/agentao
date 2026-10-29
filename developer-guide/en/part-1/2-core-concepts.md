@@ -101,7 +101,7 @@ A **session** is the lifetime from `Agentao()` to `close()`, matching one conver
 Not a static string. The model gets its instructions in two parts:
 
 1. **The system prompt**, a stable prefix that stays byte-identical across the turns of a session (so providers can cache it): `AGENTAO.md` (project instructions, read from working_directory), the base agent capability description, the available skill catalog, and the stable memories `<memory-stable>`.
-2. **A volatile tail**, rebuilt for every request and sent as one trailing `<system-reminder>` message that history never stores: active skills' full text, the task list (todos), and the memory recall block `<memory-context>`.
+2. **A volatile tail**, rebuilt for every request and sent as one trailing `<system-reminder>` message that history never stores: which skills are active (a local skill's full text is stored in history once instead), the task list (todos), and the memory recall block `<memory-context>`.
 
 The current date and time are in neither part: they go in a `<system-reminder>` at the start of each user message.
 

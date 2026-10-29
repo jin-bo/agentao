@@ -158,9 +158,15 @@ class MemoryCrystallizer:
         equals the number of matching messages. ``confidence`` is raised to
         ``inferred`` once ``occurrences >= 2``.
         """
+        # A ``Skill loaded`` note is a user message that holds a skill's
+        # SKILL.md, full of "always" / "never" lines nobody here said (#552).
+        from ..skills.provenance import is_skill_state_message
+
         merged: Dict[Tuple[str, str], CrystallizationProposal] = {}
         for msg in messages:
             if not isinstance(msg, dict) or msg.get("role") != "user":
+                continue
+            if is_skill_state_message(msg):
                 continue
             text = self._user_message_text(msg.get("content"))
             if not text:

@@ -548,9 +548,19 @@ class AgentToolWrapper(Tool):
         if not msgs:
             return ""
 
-        from ...skills.provenance import result_marker, skill_origins, strip_markers
+        from ...skills.provenance import (
+            is_skill_state_message,
+            result_marker,
+            skill_origins,
+            strip_markers,
+        )
 
-        recent = msgs[-self.PARENT_CONTEXT_MESSAGES:]
+        # A parent skill's SKILL.md the runtime persisted (#552) is not the
+        # user's words, and cut at 400 chars it would leave an unclosed
+        # reminder in the child's prompt. Dropped before the window is taken,
+        # so it does not displace a real message from the excerpt.
+        recent = [m for m in msgs if not is_skill_state_message(m)]
+        recent = recent[-self.PARENT_CONTEXT_MESSAGES:]
         lines: List[str] = []
         for m in recent:
             role = m.get("role", "unknown")

@@ -148,7 +148,11 @@ agent = Agentao(
 两部分在请求里各自的位置：
 
 - **技能目录**（每个已启用技能的 name + description）在系统提示里。系统提示跨轮次逐字节不变，provider 的提示缓存因此能命中。目录也列出已激活的技能，所以激活不会改动它；只有已启用集合变化（enable、disable、安装、reload）时它才变。只有 Agent 拥有 `activate_skill` 工具时才渲染目录。
-- **已激活技能的正文**放在每次请求的易变尾部，即末尾那条 `<system-reminder>`。尾部从不写入历史。激活的正文每次请求都会不走缓存地重发一遍，用完就取消激活。一个例外（此时正文确实在历史里）：模型用 `activate_skill` 激活的 MCP 技能，只要最近一次激活的结果仍原样留在历史里，尾部就只给出该技能的 `Task:` 和一行指向那条结果的提示，不再发第二份。技能激活期间，微压缩不会截短这条结果；同一技能更早的结果，以及技能取消激活后的这条结果，照旧截短。完整压缩或会话恢复之后，尾部会重新发送整块内容。
+- **本地技能和 plugin 技能的正文只在历史里存一份。** 在下一次模型请求之前，运行时追加一条 user `<system-reminder>`，它以 `Skill loaded: "<name>"` 开头，包含技能目录、`SKILL.md` 全文和资源列表。所有激活方式都这样处理：`activate_skill` 工具、`/skills activate`、`agentao run` 的 `spec.skills`、会话恢复。此后正文就是缓存历史的一部分。每次请求的易变尾部（末尾那条从不写入历史的 `<system-reminder>`）只给出该技能的 `Task:` 和一行指向提示。
+  - **正文是激活时的快照。** 修改 `SKILL.md` 或资源目录后，要再次 `/skills activate <name>` 或运行 `/skills reload`（`/crystallize` 会运行它）才生效。新版本作为一条新的 `Skill loaded` 消息追加，并说明它取代之前的版本。每个技能只以最后一条这样的消息为准。
+  - **取消激活会追加一条通知**：`Skill no longer active: "<name>"`，告诉模型不要再遵循之前的指令。旧正文留在历史里。
+  - **压缩移除了正文时**（完整摘要、溢出时的最小历史裁剪），运行时会在下一次请求前重新追加一次。微压缩不会碰它。恢复的会话如果已经含有当前正文，不会再追加第二份。
+- **MCP 技能的正文**放在易变尾部，每次请求都会不走缓存地重发一遍，用完就取消激活。一个例外：模型用 `activate_skill` 激活的 MCP 技能，只要最近一次激活的结果仍原样留在历史里，尾部就只给出该技能的 `Task:` 和一行指向那条结果的提示，不再发第二份。技能激活期间，微压缩不会截短这条结果；同一技能更早的结果，以及技能取消激活后的这条结果，照旧截短。完整压缩或会话恢复之后，尾部会重新发送整块内容。MCP 技能的内容从不移进 user 消息，因为来源识别和恢复时的扣留都按返回它的工具来认。
 
 各段的顺序见 [`prompts/builder.py`](https://github.com/jin-bo/agentao/blob/main/agentao/prompts/builder.py)。
 
@@ -300,7 +304,7 @@ print(agent.skill_manager.get_skills_context())
 | `get_skill_content(name)` | `SKILL.md` 全文，或 `None` |
 | `activate_skill(name, task_description)` | 激活消息。名字未知或已禁用时返回 `Error: Unknown skill …` |
 | `deactivate_skill(name)` | 原本处于激活状态时返回 `True` |
-| `get_skills_context(*, history=None)` | 易变尾部里的已激活技能块。传入 `history` 时，最近一次 `activate_skill` 结果仍原样在其中的已激活 MCP 技能只得到一行指向提示，不再附整块内容。 |
+| `get_skills_context(*, history=None)` | 易变尾部里的已激活技能块。传入 `history` 时，最近一次 `activate_skill` 结果仍原样在其中的已激活 MCP 技能只得到一行指向提示，不再附整块内容；最后一条 `Skill loaded` 消息就是当前版本的本地技能也一样。 |
 | `reload_skills()` | 重扫三层目录，返回已启用技能数。插件和 MCP 技能会保留 |
 | `disable_skill(name)` / `enable_skill(name)` | CLI 打印的那条消息（见[上文](#skills-config-json-怎样写入)） |
 

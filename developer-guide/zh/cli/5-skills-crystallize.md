@@ -19,7 +19,7 @@ description: 用 marker_single 把 PDF 转成 markdown。命中"convert PDF to m
 2. ...
 ```
 
-YAML frontmatter 是 agent 决定要不要激活时读的。激活后，整份 SKILL.md body 进入每次请求的 `<system-reminder>`（易变尾部，不在缓存的系统提示里）。`references/`、`assets/`、`scripts/` 下的文件不会内联：激活时只按绝对路径列出，agent 需要时用 `read_file` 读取。
+YAML frontmatter 是 agent 决定要不要激活时读的。激活后，整份 SKILL.md body 作为一条 `Skill loaded` 提醒加入对话一次，从下一次请求起命中缓存。它是快照：修改 skill 后，要再次 `/skills activate <name>` 或运行 `/skills reload`。`references/`、`assets/`、`scripts/` 下的文件不会内联：激活时只按绝对路径列出，agent 需要时用 `read_file` 读取。
 
 你不需要知道有哪些 skill — `/skills` 列得出，agent 自己识别。只在你想强制 / 抑制 / 新建一个 skill 时才介入。
 
@@ -44,8 +44,8 @@ Active Skills:
 | 子命令 | 作用 |
 |---|---|
 | `/skills` | 列出所有 skill，再列出已激活的 |
-| `/skills activate <name>` | 强制激活，从此每次请求都带上正文 |
-| `/skills deactivate <name>` | 从激活集移除，正文撤掉 |
+| `/skills activate <name>` | 强制激活，正文加入对话一次。对已激活的 skill 再运行一次，会加载修改后的版本 |
+| `/skills deactivate <name>` | 从激活集移除，并追加一条通知，告诉模型不要再遵循它 |
 | `/skills disable <name>` | **持久** — 写到 `skills_config.json`，重启后也不加载 |
 | `/skills enable <name>` | 撤销 disable，让 skill 可加载 |
 | `/skills reload` | 重扫全部三个 skill 目录。改了某个 `SKILL.md` 或加了新 skill 文件夹后用 |
@@ -86,7 +86,7 @@ MCP server 也能提供 skill，在 `.agentao/mcp.json` 里按 server 打开：
 - 你自己想看 skill 的文档（你接下来会让 agent 跟着做）
 - 在测试一个新写的 skill 能不能正常加载
 
-激活成本低，但不是零：skill 处于激活状态时，SKILL.md body 每次请求都会不走缓存地重发。用完就 `/skills deactivate <name>`。skill 列表本身在缓存的系统提示里，激活不会改动它。
+激活成本低，但不是零：SKILL.md body 留在对话里，第一次请求后命中缓存，但占用上下文窗口。压缩移除它后会重新加入一次。用完就 `/skills deactivate <name>`。skill 列表本身在缓存的系统提示里，激活不会改动它。
 
 ## `/crystallize` — 把这次会话做成 skill
 

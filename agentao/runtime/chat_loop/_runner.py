@@ -497,6 +497,13 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             # memory-recall pass and could hand the estimate a different tail
             # than the request carried, which is the one thing the anchor
             # subtraction cannot tolerate.
+            #
+            # Skill bodies first: they are history, so the estimate and the
+            # compaction below must see them, and the tail's pointer to them
+            # must hold (#552).
+            messages_with_system = self._sync_skill_state(
+                messages_with_system, system_prompt,
+            )
             tail_msg, tail_tokens = self._volatile_tail()
             est_tokens = agent.context_manager._threshold_token_estimate(
                 messages_with_system, tail_tokens=tail_tokens,
@@ -512,14 +519,17 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 messages_with_system, system_prompt, tokens=est_tokens,
                 cancellation_token=token,
             )
-            if (
-                agent.messages is not history_before
-                and tail_points_into_history(tail_msg)
-            ):
-                # A compaction replaced history, and the tail points at an
-                # MCP skill's activation result it may have removed (#552).
-                # A tail without a pointer is still right: no recall pass.
-                tail_msg, tail_tokens = self._volatile_tail()
+            if agent.messages is not history_before:
+                # A compaction replaced history and may have removed a
+                # skill's loaded body: load it again (#552).
+                messages_with_system = self._sync_skill_state(
+                    messages_with_system, system_prompt,
+                )
+                if tail_points_into_history(tail_msg):
+                    # The tail points at a skill's body in history, which the
+                    # compaction may have removed (#552). A tail without a
+                    # pointer is still right: no recall pass.
+                    tail_msg, tail_tokens = self._volatile_tail()
             messages_with_system = self._inject_background_notifications(
                 messages_with_system, system_prompt,
             )
@@ -1318,6 +1328,39 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
     # Plugin-hook dispatch
     # ------------------------------------------------------------------
 
+    def _sync_skill_state(self, messages_with_system: list, system_prompt: str) -> list:
+        """Persist active skills' bodies in history, then rebuild the request (#552).
+
+        Idempotent: the skill manager derives what is missing from history
+        alone (``skill_state_messages``), so a call that finds nothing to add
+        returns ``messages_with_system`` unchanged. Called before the request
+        is estimated and compacted, so a newly loaded body counts against the
+        budget, and again wherever a compaction replaced history.
+        """
+        agent = self._agent
+        try:
+            # A host manager whose ``get_skills_context`` predates the
+            # ``history`` keyword sends every body in the tail
+            # (``prompts/builder.py``): persisting it too would send it twice.
+            from ...tools.skill import _takes
+
+            if not _takes(agent.skill_manager.get_skills_context, "history"):
+                return messages_with_system
+            pending = getattr(agent.skill_manager, "skill_state_messages", None)
+            notes = pending(agent.messages) if callable(pending) else None
+        except Exception:
+            agent.llm.logger.warning("Could not sync skill-state messages", exc_info=True)
+            return messages_with_system
+        # Check the answer, not the attribute: a stand-in manager answers
+        # anything. The tail still carries a body this leaves out.
+        if not isinstance(notes, list) or not notes or not all(
+            isinstance(n, str) and n for n in notes
+        ):
+            return messages_with_system
+        for note in notes:
+            agent.messages.append({"role": "user", "content": note})
+        return [{"role": "system", "content": system_prompt}] + agent.messages
+
     def _inject_background_notifications(
         self,
         messages_with_system: list,
@@ -1537,7 +1580,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 )
                 return self._llm_error_outcome(e, None)
             system_prompt = run.system_prompt
-            messages_with_system = run.messages_with_system
+            messages_with_system = self._sync_skill_state(
+                run.messages_with_system, system_prompt,
+            )
             try:
                 response = _send(messages_with_system)
                 return ChatLoopRunner._LlmOutcome(
@@ -1581,7 +1626,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                             + "); returning the context-length error"
                         )
                         return self._llm_error_outcome(e2, None)
-                    messages_with_system = run.messages_with_system
+                    messages_with_system = self._sync_skill_state(
+                        run.messages_with_system, system_prompt,
+                    )
                     try:
                         response = _send(messages_with_system)
                         return ChatLoopRunner._LlmOutcome(
@@ -1637,8 +1684,13 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 "returning the provider's error"
             )
             return self._llm_error_outcome(e, None)
+        # The compaction replaced history and may have removed a skill's
+        # loaded body: load it again, as the overflow rungs do (#552).
+        messages_with_system = self._sync_skill_state(
+            run.messages_with_system, run.system_prompt,
+        )
         try:
-            response = send(run.messages_with_system)
+            response = send(messages_with_system)
         except Exception as e2:
             if is_context_too_long_error(e2):
                 # Not compacted again, but a window the provider stated is
@@ -1647,7 +1699,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             return self._llm_error_outcome(e2, "LLM call failed after compression")
         return ChatLoopRunner._LlmOutcome(
             response=response,
-            messages_with_system=run.messages_with_system,
+            messages_with_system=messages_with_system,
             system_prompt=run.system_prompt,
         )
 
