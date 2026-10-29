@@ -16,7 +16,7 @@ from ..paths import user_root
 from .. import json_parse
 from ..config_file import read_config_text
 from .provenance import MCP_ACTIVATION_END as _MCP_ACTIVATION_END
-from .provenance import LOCAL_SKILL_IN_HISTORY_NOTE as _LOCAL_SKILL_IN_HISTORY_NOTE
+from .provenance import SKILL_LOADED_IN_HISTORY_NOTE as _SKILL_LOADED_IN_HISTORY_NOTE
 from .provenance import MCP_SKILL_IN_HISTORY_NOTE as _MCP_SKILL_IN_HISTORY_NOTE
 from .provenance import SKILL_STATE_LOADED as _STATE_LOADED
 from .provenance import SKILL_STATE_OPEN as _STATE_OPEN
@@ -892,7 +892,7 @@ class SkillManager:
             "mcp_server": held.entry.label,
             "mcp_uri": held.entry.uri,
         }
-        self.active_skills[skill_name] = {
+        entry = self.active_skills[skill_name] = {
             "task": task_description,
             "skill_info": info,
             "mcp_key": held.entry.key,
@@ -900,7 +900,7 @@ class SkillManager:
         return (
             _mcp_activation_head(skill_name)
             + f"Task: {task_description}\n\n"
-            + _render_mcp_skill(held)
+            + _mcp_block(entry, held)
             + _MCP_ACTIVATION_END
         )
 
@@ -913,9 +913,10 @@ class SkillManager:
     def get_active_skills(self) -> Dict[str, dict]:
         """The active skills, without the runtime's own per-skill caches.
 
-        The activation snapshot and the cached loaded message (#552) are a
-        whole ``SKILL.md`` each. They are how the runtime persists the body,
-        not part of what a host reads here.
+        The activation snapshot, the cached loaded message and an MCP
+        skill's cached block (#552) are a whole ``SKILL.md`` each. They are
+        how the runtime persists the body, not part of what a host reads
+        here.
         """
         return {
             name: {k: v for k, v in info.items() if k not in _RUNTIME_KEYS}
@@ -964,7 +965,7 @@ class SkillManager:
                 states = _latest_skill_states(history)
             index = latest.get(name)
             if index is not None and index > states.get(name, (-1, ""))[0] and _activation_result_holds(
-                history[index]["content"], name, _render_mcp_skill(held),
+                history[index]["content"], name, _mcp_block(info, held),
             ):
                 targets[name] = index
         return targets
@@ -1005,14 +1006,14 @@ class SkillManager:
                     elif latest.get(name, (None, None))[1] == self._mcp_loaded_message(
                         name, info, held,
                     ):
-                        context += _LOCAL_SKILL_IN_HISTORY_NOTE
+                        context += _SKILL_LOADED_IN_HISTORY_NOTE
                     else:
-                        context += _render_mcp_skill(held)
+                        context += _mcp_block(info, held)
                 continue
             context += f"\n## {name} - {skill_info.get('title', name)}\n"
             context += f"Task: {info['task']}\n"
             if latest.get(name, (None, None))[1] == self._skill_loaded_message(name, info):
-                context += _LOCAL_SKILL_IN_HISTORY_NOTE
+                context += _SKILL_LOADED_IN_HISTORY_NOTE
             else:
                 context += self._snapshot(name, info)
 
@@ -1101,7 +1102,7 @@ class SkillManager:
 
         message = _loaded_message(
             name,
-            f"## {name}\n{_render_mcp_skill(held).rstrip()}\n"
+            f"## {name}\n{_mcp_block(info, held).rstrip()}\n"
             f"{result_marker([held.entry.label])}",
         )
         info["_loaded_message"] = (held, None, message)
@@ -1302,7 +1303,7 @@ def _state_name(name: str) -> str:
 
 
 #: Per-skill keys only the runtime reads; :meth:`SkillManager.get_active_skills` leaves them out.
-_RUNTIME_KEYS = frozenset({"snapshot", "_loaded_message"})
+_RUNTIME_KEYS = frozenset({"snapshot", "_loaded_message", "_mcp_block"})
 
 
 def _skill_unloaded_message(name: str) -> str:
@@ -1389,6 +1390,21 @@ def _activation_result_holds(content: str, skill_name: str, block: str) -> bool:
     return content.startswith(_mcp_activation_head(skill_name)) and content.endswith(
         block + _MCP_ACTIVATION_END
     )
+
+
+def _mcp_block(info: dict, held: Any) -> str:
+    """``held`` rendered by :func:`_render_mcp_skill`, kept on the active entry ``info``.
+
+    The pointer check, the tail and the loaded message each need it, on
+    every request (#552). The held bytes are frozen at activation, so the
+    rendering is kept until the held entry changes.
+    """
+    cached = info.get("_mcp_block")
+    if isinstance(cached, tuple) and len(cached) == 2 and cached[0] is held:
+        return cached[1]
+    block = _render_mcp_skill(held)
+    info["_mcp_block"] = (held, block)
+    return block
 
 
 def _render_mcp_skill(held: Any) -> str:

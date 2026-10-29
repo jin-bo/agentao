@@ -97,7 +97,7 @@ pointed = mcp_pointer_targets(history)        # 与当前持有字节一致的�
   - `name in pointed` 时指向工具结果；
   - 否则，最新状态消息等于 `want` 时指向状态消息；
   - 否则发送技能块。
-  - 本地的提示语（`LOCAL_SKILL_IN_HISTORY_NOTE`）已经写的是“最新的 'Skill loaded' 提醒”，可以原样复用。
+  - 本地的提示语（`SKILL_LOADED_IN_HISTORY_NOTE`，原名 `LOCAL_SKILL_IN_HISTORY_NOTE`）已经写的是“最新的 'Skill loaded' 提醒”，可以原样复用。
 
 ### 2.3 运行器
 

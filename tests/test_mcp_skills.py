@@ -3516,6 +3516,38 @@ def test_a_compaction_reloads_the_body_only_when_it_removed_it(tmp_path, docs):
 
 
 @modern
+def test_an_mcp_skill_renders_once_until_its_held_bytes_change(tmp_path, docs, monkeypatch):
+    # The pointer check, the tail and the loaded message all need the block
+    # on every request: one rendering serves them until the held entry changes.
+    import agentao.skills.manager as manager_module
+
+    _, manager = docs
+    agent = _agent(tmp_path, manager)
+    renders = []
+    real = manager_module._render_mcp_skill
+    monkeypatch.setattr(
+        manager_module, "_render_mcp_skill",
+        lambda held: renders.append(held) or real(held),
+    )
+    agent.skill_manager.activate_skill(PDF, "invoice")
+    for _ in range(3):
+        _sync(agent)
+        agent._build_volatile_tail()
+    assert len(renders) == 1
+    # A re-approved newer version is rendered once more, and the tail
+    # points at the result that holds it.
+    _hold_version_b(agent)
+    del renders[:]  # the helper renders its own result
+    for _ in range(3):
+        _sync(agent)
+        tail = agent._build_volatile_tail()
+    assert len(renders) == 1 and NEW_STEP in renders[0].text
+    assert RESULT_POINTER in tail and NEW_STEP not in tail
+    info = agent.skill_manager.get_active_skills()[PDF]
+    assert "_mcp_block" not in info
+
+
+@modern
 def test_a_summary_of_a_loaded_message_carries_the_origin_marker(tmp_path, docs):
     _, manager = docs
     agent = _agent(tmp_path, manager)
