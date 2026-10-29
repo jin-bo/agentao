@@ -2,7 +2,7 @@
 
 > English: [mcp-skill-body-in-history.md](mcp-skill-body-in-history.md)
 
-**状态：** 已在分支 `fix/552-mcp-skill-body-in-history` 上实施，2026-10-29。设计评审通过（附录 A 第 1–2 轮）。§6 采用方案 (a)。
+**状态：** 2026-10-29 已实施（#597，后续 #598、#599），随 0.5.18 发布。设计评审通过（附录 A 第 1–2 轮）。§6 采用方案 (a)。
 **基线：** Agentao `96cca5b7`（#594 + #595）。
 **Issue：** [#552](https://github.com/jin-bo/agentao/issues/552)。本文承接 [skill-body-in-history.zh.md](skill-body-in-history.zh.md)：那份文档把本地和插件技能的正文移进了历史，留下了 MCP 路径（该文 §2.3、§6）。
 

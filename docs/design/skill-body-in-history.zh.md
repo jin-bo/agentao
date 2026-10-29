@@ -2,7 +2,7 @@
 
 > English: [skill-body-in-history.md](skill-body-in-history.md)
 
-**状态：** 已实施，分支 `fix/552-local-skill-body-in-history`，2026-10-28。附录 A 记录评审经过。
+**状态：** 2026-10-28 已实施（#594，识别函数 #595），随 0.5.18 发布。附录 A 记录评审经过。
 **基线：** Agentao `44502d73`。对照：Codex `26ad281fd1c`、pi-mono `136b87e8a`。
 **Issue：** [#552](https://github.com/jin-bo/agentao/issues/552)。#593 解决的是"模型调用 `activate_skill` 激活 MCP 技能、且历史中的结果完整"这一条路径。本文处理本地技能和内联 plugin 技能。MCP 技能在本文中保持现状，由 [mcp-skill-body-in-history.zh.md](mcp-skill-body-in-history.zh.md) 处理。
 
