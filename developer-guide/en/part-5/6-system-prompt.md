@@ -43,7 +43,7 @@ request and never written into the transcript.
 ┌──────────────────────────────────────────────┐
 │ Volatile tail — one user message, request-only│
 │   <system-reminder>                          │
-│ 12. Active skills: task, pointer, MCP body   │  ← changes on activation
+│ 12. Active skills: task, pointer             │  ← changes on activation
 │ 13. Current todos                            │  ← dynamic, per request
 │ 14. <memory-context> dynamic recall          │  ← per turn
 │ 15. Plan-mode prompt (conditional)           │  ← conditional
@@ -210,9 +210,9 @@ print(agent._build_volatile_tail())   # the request-only tail ("" when empty)
 ```
 
 ⚠️ Both are private; not guaranteed stable. Debug only. `_build_system_prompt()`
-returns the stable half **only** — if you are looking for todos, an active
-MCP skill's instructions or dynamic recall, they are in the tail. A local
-skill's instructions are a `Skill loaded` message in `agent.messages`.
+returns the stable half **only** — if you are looking for todos or dynamic
+recall, they are in the tail. A skill's instructions are a `Skill loaded`
+message or an `activate_skill` result in `agent.messages`.
 
 In production, log the **character length** as a metric:
 
@@ -253,13 +253,10 @@ changed since the previous request.
 
 The trade: the tail is re-sent in full, uncached, on every request — every tool
 iteration, not every turn. With nothing active it is empty or a few dozen
-tokens. A local or plugin skill's body is not in it: the body is stored once in
-history as a `Skill loaded` message and is cached from the next request on
-(#552, [5.2](./2-skills)). **An active MCP skill's body can be the large
-item** when no unchanged `activate_skill` result of it is in history: it then
-rides the tail on every request for as long as it stays active. Deactivate
-skills you are done with, and measure your own deployment — these are local
-token estimates, not billed figures.
+tokens. A skill's body is not in it: the body is stored once in history, as a
+`Skill loaded` message or the skill's `activate_skill` result, and is cached
+from the next request on (#552, [5.2](./2-skills)). Measure your own
+deployment — these are local token estimates, not billed figures.
 
 ### Explicit breakpoints (opt-in)
 

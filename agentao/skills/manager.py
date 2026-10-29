@@ -925,20 +925,31 @@ class SkillManager:
     def clear_active_skills(self):
         self.active_skills.clear()
 
-    def mcp_pointer_targets(self, history: Optional[Sequence[Any]]) -> Dict[str, int]:
+    def mcp_pointer_targets(
+        self,
+        history: Optional[Sequence[Any]],
+        *,
+        states: Optional[Dict[str, Tuple[int, str]]] = None,
+        activations: Optional[Dict[str, int]] = None,
+    ) -> Dict[str, int]:
         """The ``history`` index of each activation result the tail points at.
 
         One entry per active MCP skill whose latest ``activate_skill`` result
-        holds the skill's current block (:func:`_activation_result_holds`).
+        holds the skill's current block (:func:`_activation_result_holds`)
+        and is newer than the skill's latest state message: a later
+        ``Skill no longer active`` notice or ``Skill loaded`` message
+        supersedes the result, so it is not the copy the model follows.
         :meth:`get_skills_context` gives exactly these skills a pointer, and
         microcompaction keeps exactly these results whole (#552), so the two
         cannot disagree. A deactivated skill's result is not here, and is
-        clipped like any other.
+        clipped like any other. ``states`` is :func:`_latest_skill_states`
+        and ``activations`` :func:`provenance.latest_mcp_activations` of
+        ``history`` when the caller already has them.
         """
         if not history:
             return {}
         targets: Dict[str, int] = {}
-        latest: Optional[Dict[str, int]] = None
+        latest = activations
         for name, info in self.active_skills.items():
             if info.get("mcp_key") is None or not self.mcp_skills:
                 continue
@@ -949,8 +960,10 @@ class SkillManager:
                 from .provenance import latest_mcp_activations
 
                 latest = latest_mcp_activations(history)
+            if states is None:
+                states = _latest_skill_states(history)
             index = latest.get(name)
-            if index is not None and _activation_result_holds(
+            if index is not None and index > states.get(name, (-1, ""))[0] and _activation_result_holds(
                 history[index]["content"], name, _render_mcp_skill(held),
             ):
                 targets[name] = index
@@ -964,22 +977,19 @@ class SkillManager:
         ``activate_skill`` results there gets a pointer to it, not a second
         copy (#552): this context rides in the request-only tail, which is
         outside the provider's prompt cache on every request, while the
-        result is cached history. Where the block is not there whole — a
-        ``/skills activate`` or ``spec.skills`` activation (no tool result),
-        a result a summary or a restore replaced — the block is sent here, as
-        before. A local or plugin skill likewise gets a pointer when its
-        latest skill-state message in history loads its current snapshot
-        (:meth:`skill_state_messages`), and its snapshot otherwise. ``None``
-        (no history given) always sends the content.
+        result is cached history. Any other skill — local, plugin, or an MCP
+        skill with no intact result (a ``/skills activate`` or ``spec.skills``
+        activation, a result a summary or a restore replaced) — gets a
+        pointer when its latest skill-state message in history loads its
+        current content (:meth:`skill_state_messages`), and the content
+        otherwise. ``None`` (no history given) always sends the content.
         """
         if not self.active_skills:
             return ""
 
         context = "\n=== Active Skills ===\n"
-        pointed = self.mcp_pointer_targets(history)
-        # Scanned only once a local skill needs it: an MCP-only active set
-        # need not walk history for state messages on every request.
-        latest: Optional[Dict[str, str]] = None
+        latest = _latest_skill_states(history) if history is not None else {}
+        pointed = self.mcp_pointer_targets(history, states=latest)
         for name, info in self.active_skills.items():
             skill_info = info['skill_info']
             if info.get("mcp_key") is not None:
@@ -992,14 +1002,16 @@ class SkillManager:
                     context += f"\n## {name}\nTask: {info['task']}\n\n"
                     if name in pointed:
                         context += _MCP_SKILL_IN_HISTORY_NOTE
+                    elif latest.get(name, (None, None))[1] == self._mcp_loaded_message(
+                        name, info, held,
+                    ):
+                        context += _LOCAL_SKILL_IN_HISTORY_NOTE
                     else:
                         context += _render_mcp_skill(held)
                 continue
             context += f"\n## {name} - {skill_info.get('title', name)}\n"
             context += f"Task: {info['task']}\n"
-            if latest is None and history is not None:
-                latest = _latest_skill_states(history)
-            if latest is not None and latest.get(name) == self._skill_loaded_message(name, info):
+            if latest.get(name, (None, None))[1] == self._skill_loaded_message(name, info):
                 context += _LOCAL_SKILL_IN_HISTORY_NOTE
             else:
                 context += self._snapshot(name, info)
@@ -1069,56 +1081,82 @@ class SkillManager:
             and cached[0] is snapshot and cached[1] == title
         ):
             return cached[2]
-        # Nothing inside may close the reminder — not the body, nor the
-        # frontmatter title or name in the heading: ACP replay strips
-        # reminders with a non-greedy match and would show the rest to the
-        # client, and the model reads any spelling of the closing tag as one.
-        # Same neutralization as the volatile tail the body used to ride in.
-        # The JSON name line escapes ``<`` instead, so it still reads back as
-        # exactly ``name``.
-        from ..prompts.builder import _CLOSING_REMINDER_RE
-
-        inner = _CLOSING_REMINDER_RE.sub(
-            r"<\\/system-reminder>",
-            f"## {name} - {title}\n{snapshot.rstrip()}",
-        )
-        message = (
-            f"{_STATE_OPEN}{_STATE_LOADED}{_state_name(name)}\n"
-            "This is the current version of this skill. It replaces any earlier "
-            "instructions of this skill in this conversation.\n"
-            f"{inner}\n"
-            "</system-reminder>"
-        )
+        message = _loaded_message(name, f"## {name} - {title}\n{snapshot.rstrip()}")
         info["_loaded_message"] = (snapshot, title, message)
         return message
+
+    def _mcp_loaded_message(self, name: str, info: dict, held: Any) -> str:
+        """The persistent message that loads an MCP skill's held bytes (#552).
+
+        The body is the block the tail and the activation result carry,
+        followed by a whole-line origin marker outside the ``<mcp-skill>``
+        wrapper: compaction, the session save and a restore read the marker
+        as this message's provenance, and a restore's block substitution
+        cannot remove it (docs/design/mcp-skill-body-in-history.md §2.1).
+        """
+        cached = info.get("_loaded_message")
+        if isinstance(cached, tuple) and len(cached) == 3 and cached[0] is held:
+            return cached[2]
+        from .provenance import result_marker
+
+        message = _loaded_message(
+            name,
+            f"## {name}\n{_render_mcp_skill(held).rstrip()}\n"
+            f"{result_marker([held.entry.label])}",
+        )
+        info["_loaded_message"] = (held, None, message)
+        return message
+
+    def _wanted_state(self, name: str, info: dict, pointed: Dict[str, int]) -> Optional[str]:
+        """The loaded message ``name`` needs in history, or ``None`` when it needs none.
+
+        An MCP skill needs none while an intact activation result holds its
+        current bytes (#593's pointer) or while nothing is held. The active
+        set decides; history only says whether the model already has it.
+        """
+        if info.get("mcp_key") is None and not name.startswith(MCP_SKILL_PREFIX):
+            return self._skill_loaded_message(name, info)
+        if name in pointed or info.get("mcp_key") is None or not self.mcp_skills:
+            return None
+        held = self.mcp_skills.held(info["mcp_key"], self.mcp_view)
+        if held is None:
+            return None
+        return self._mcp_loaded_message(name, info, held)
 
     def skill_state_messages(self, history: Optional[Sequence[Any]]) -> List[str]:
         """The skill-state messages to append to ``history`` now (#552).
 
-        A local or plugin skill's body is persisted in history once, as a
-        user ``<system-reminder>``, instead of riding in the uncached tail on
+        A skill's body is persisted in history once, as a user
+        ``<system-reminder>``, instead of riding in the uncached tail on
         every request. Only each skill's *latest* state message counts: an
         active skill whose latest one is not its current loaded message gets
         one (new activation, ``reload`` A → B → A, a compaction that removed
-        it, a restore whose file changed). A skill whose latest one loads it
-        but is no longer active gets a notice that it is not. Derived from
-        history alone, so a call that changes nothing returns ``[]``.
+        it, a restore whose file changed). An active MCP skill whose intact
+        ``activate_skill`` result holds its current bytes needs none: that
+        result is the copy, and it supersedes older state messages
+        (docs/design/mcp-skill-body-in-history.md §2.2).
 
-        MCP skills are not here: their content must stay in tool results,
-        where provenance and the restore-time withhold find it.
+        An inactive skill whose latest *record* is a load — a loaded message,
+        or an ``activate_skill`` result that :func:`provenance.mcp_activation_name`
+        reads — gets a notice that it is no longer active. A refused or
+        failed activation is not a load. Derived from history alone, so a
+        call that changes nothing returns ``[]``.
         """
-        latest = _latest_skill_states(history or ())
+        from .provenance import latest_mcp_activations
+
+        history = history or ()
+        latest = _latest_skill_states(history)
+        activations = latest_mcp_activations(history)
         out: List[str] = []
-        active = {
-            name: info for name, info in self.active_skills.items()
-            if info.get("mcp_key") is None and not name.startswith(MCP_SKILL_PREFIX)
-        }
-        for name, content in latest.items():
-            if name not in active and content.startswith(_STATE_OPEN + _STATE_LOADED):
+        for name in _latest_loads(latest, activations):
+            if name not in self.active_skills:
                 out.append(_skill_unloaded_message(name))
-        for name, info in active.items():
-            want = self._skill_loaded_message(name, info)
-            if latest.get(name) != want:
+        pointed = self.mcp_pointer_targets(
+            history, states=latest, activations=activations,
+        )
+        for name, info in self.active_skills.items():
+            want = self._wanted_state(name, info, pointed)
+            if want is not None and latest.get(name, (None, None))[1] != want:
                 out.append(want)
         return out
 
@@ -1276,17 +1314,61 @@ def _skill_unloaded_message(name: str) -> str:
     )
 
 
-def _latest_skill_states(history: Sequence[Any]) -> Dict[str, str]:
-    """Each skill's latest skill-state message content in ``history``, by name.
+def _latest_skill_states(history: Sequence[Any]) -> Dict[str, Tuple[int, str]]:
+    """Each skill's latest skill-state message in ``history``: its index and content.
 
     :func:`provenance.skill_state_name` decides what a state message is.
     """
-    latest: Dict[str, str] = {}
-    for message in history:
+    latest: Dict[str, Tuple[int, str]] = {}
+    for index, message in enumerate(history):
         name = _skill_state_name(message)
         if name is not None:
-            latest[name] = message["content"]
+            latest[name] = (index, message["content"])
     return latest
+
+
+def _latest_loads(
+    latest: Dict[str, Tuple[int, str]], results: Dict[str, int],
+) -> List[str]:
+    """Skills whose latest record in a history loads them.
+
+    ``latest`` is :func:`_latest_skill_states` and ``results`` is
+    :func:`provenance.latest_mcp_activations` of that history. A record is a
+    state message or an MCP ``activate_skill`` result that
+    :func:`provenance.mcp_activation_name` reads; the latest is the one with
+    the highest index. A refused, cancelled or failed activation returns
+    other text, so it is not a record and cannot supersede a notice.
+    """
+    from .provenance import is_loaded_state
+
+    loads: List[str] = []
+    for name in set(latest) | set(results):
+        state_index, content = latest.get(name, (-1, ""))
+        if results.get(name, -1) > state_index or is_loaded_state(content):
+            loads.append(name)
+    return sorted(loads)
+
+
+def _loaded_message(name: str, inner: str) -> str:
+    """A ``Skill loaded`` state message for ``name`` with ``inner`` as its body.
+
+    Nothing inside may close the reminder — not the body, nor a frontmatter
+    title in the heading: ACP replay strips reminders with a non-greedy
+    match and would show the rest to the client, and the model reads any
+    spelling of the closing tag as one. Same neutralization as the volatile
+    tail the body used to ride in. The JSON name line escapes ``<`` instead,
+    so it still reads back as exactly ``name``.
+    """
+    from ..prompts.builder import _CLOSING_REMINDER_RE
+
+    inner = _CLOSING_REMINDER_RE.sub(r"<\\/system-reminder>", inner)
+    return (
+        f"{_STATE_OPEN}{_STATE_LOADED}{_state_name(name)}\n"
+        "This is the current version of this skill. It replaces any earlier "
+        "instructions of this skill in this conversation.\n"
+        f"{inner}\n"
+        "</system-reminder>"
+    )
 
 
 def _activation_result_holds(content: str, skill_name: str, block: str) -> bool:

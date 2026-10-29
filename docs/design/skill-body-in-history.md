@@ -4,7 +4,7 @@
 
 **Status:** Built on branch `fix/552-local-skill-body-in-history`, 2026-10-28. Appendix A records the review.
 **Baseline:** Agentao `44502d73`. Peers: Codex `26ad281fd1c`, pi-mono `136b87e8a`.
-**Issue:** [#552](https://github.com/jin-bo/agentao/issues/552). #593 solved the path where the model activates an MCP skill with `activate_skill` and its result in history is intact. This document covers local and inline plugin skills. MCP skills stay as they are.
+**Issue:** [#552](https://github.com/jin-bo/agentao/issues/552). #593 solved the path where the model activates an MCP skill with `activate_skill` and its result in history is intact. This document covers local and inline plugin skills. MCP skills stay as they are here; [mcp-skill-body-in-history.md](mcp-skill-body-in-history.md) covers them.
 
 ## TL;DR
 
@@ -190,7 +190,7 @@ A sub-agent has its own `messages` and runner, and the same rules apply.
 
 ## 6. Out of scope
 
-- The MCP `spec.skills` and `/skills activate` paths. They first need provenance to recognise user-role skill messages, and the restore-time withhold to cover them.
+- The MCP `spec.skills` and `/skills activate` paths. They first need provenance to recognise user-role skill messages, and the restore-time withhold to cover them. Built later: [mcp-skill-body-in-history.md](mcp-skill-body-in-history.md).
 - Removing a deactivated skill's body from the request.
 - Measuring the cache gain: run #552's guanlan workload, 10 runs before and 10 after. Compare absolute cache-miss tokens, total input tokens, request count and per-request `volatile_tail_sections`.
 

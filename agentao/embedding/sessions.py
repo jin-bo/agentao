@@ -329,6 +329,19 @@ def withheld(labels: Any) -> str:
     return MCP_SKILL_WITHHELD + "\n" + result_marker(set(labels) or {UNKNOWN_ORIGIN})
 
 
+def withheld_state_message(content: str, labels: Any) -> str:
+    """An MCP skill's ``Skill loaded`` message with its body withheld (#552).
+
+    The first two lines — the reminder's opening and ``Skill loaded:
+    "<name>"`` — are kept, so the message is still that skill's latest
+    state message (docs/design/mcp-skill-body-in-history.md §2.5). The
+    placeholder carries the origin marker, so a second save and restore
+    keeps the same origins.
+    """
+    head = "\n".join(content.split("\n", 2)[:2])
+    return f"{head}\n{withheld(labels)}\n</system-reminder>"
+
+
 #: What a restored transcript shows in place of MCP skill content.
 MCP_SKILL_WITHHELD = (
     "[MCP skill content withheld: it was loaded in an earlier session, and its "
@@ -361,6 +374,18 @@ def withhold_mcp_skill_content(messages: Any) -> int:
     if not isinstance(messages, list):
         return 0
     for index, message in enumerate(messages):
+        # An MCP skill's ``Skill loaded`` message (#552): its body goes, its
+        # head line stays, so it is still a state message — readers of the
+        # user's words skip it, and the next sync tells the model the skill
+        # is no longer active.
+        if provenance.is_mcp_skill_state_message(message):
+            content = message["content"]
+            if provenance.is_loaded_state(content):
+                new = withheld_state_message(content, provenance.skill_origins([message]))
+                if new != content:
+                    messages[index] = {**message, "content": new}
+                    changed += 1
+            continue
         # By provenance: only results of the three tools that put a loaded
         # skill's content into the transcript (never spilled, so no
         # ``read_file`` of a spill is one). A ``read_file`` of a source file
@@ -412,8 +437,16 @@ def _gate_restored_origins(agent: Any, labels: set) -> None:
         messages = getattr(agent, "messages", None)
         for index, message in enumerate(messages or ()):
             origins = provenance.marker_origins(message)
-            if origins:
-                messages[index] = {**message, "content": withheld(origins)}
+            if not origins:
+                continue
+            if provenance.is_mcp_skill_state_message(message):
+                # Keep the head line, as the withhold above does.
+                content = withheld_state_message(
+                    message["content"], provenance.skill_origins([message]),
+                )
+            else:
+                content = withheld(origins)
+            messages[index] = {**message, "content": content}
     except Exception:  # pragma: no cover - defensive
         logger.exception("could not gate restored MCP skill origins")
 

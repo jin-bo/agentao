@@ -152,7 +152,11 @@ agent = Agentao(
   - **正文是激活时的快照。** 修改 `SKILL.md` 或资源目录后，要再次 `/skills activate <name>` 或运行 `/skills reload`（`/crystallize` 会运行它）才生效。新版本作为一条新的 `Skill loaded` 消息追加，并说明它取代之前的版本。每个技能只以最后一条这样的消息为准。
   - **取消激活会追加一条通知**：`Skill no longer active: "<name>"`，告诉模型不要再遵循之前的指令。旧正文留在历史里。
   - **压缩移除了正文时**（完整摘要、溢出时的最小历史裁剪），运行时会在下一次请求前重新追加一次。微压缩不会碰它。恢复的会话如果已经含有当前正文，不会再追加第二份。
-- **MCP 技能的正文**放在易变尾部，每次请求都会不走缓存地重发一遍，用完就取消激活。一个例外：模型用 `activate_skill` 激活的 MCP 技能，只要最近一次激活的结果仍原样留在历史里，尾部就只给出该技能的 `Task:` 和一行指向那条结果的提示，不再发第二份。技能激活期间，微压缩不会截短这条结果；同一技能更早的结果，以及技能取消激活后的这条结果，照旧截短。完整压缩或会话恢复之后，尾部会重新发送整块内容。MCP 技能的内容从不移进 user 消息，因为来源识别和恢复时的扣留都按返回它的工具来认。
+- **MCP 技能的正文同样只在历史里存一份。**
+  - 模型用 `activate_skill` 激活、且最近一次激活结果仍原样留在历史里时，这条结果就是那一份。尾部只给出该技能的 `Task:` 和一行指向它的提示。技能激活期间，微压缩不会截短这条结果；同一技能更早的结果，以及技能取消激活后的这条结果，照旧截短。
+  - 其他情况（`/skills activate`、`spec.skills`，或结果已被压缩删掉）下，运行时像本地技能一样追加一条 `Skill loaded` 消息，内含该技能带包装的整块内容。消息末尾有一行写明 MCP 服务器，压缩、会话保存和恢复都把它当作来源。
+  - 取消激活会追加一条 `Skill no longer active` 通知，模型激活的技能也一样。
+  - **恢复时扣留正文。** MCP 技能在恢复时从不重新激活，因为它的授权不会延续。恢复出来的 `Skill loaded` 消息保留首行，正文换成占位文字，下一次请求会告诉模型该技能已不再激活。要用就重新激活，会再次询问并重新加载。
 
 各段的顺序见 [`prompts/builder.py`](https://github.com/jin-bo/agentao/blob/main/agentao/prompts/builder.py)。
 
@@ -304,7 +308,7 @@ print(agent.skill_manager.get_skills_context())
 | `get_skill_content(name)` | `SKILL.md` 全文，或 `None` |
 | `activate_skill(name, task_description)` | 激活消息。名字未知或已禁用时返回 `Error: Unknown skill …` |
 | `deactivate_skill(name)` | 原本处于激活状态时返回 `True` |
-| `get_skills_context(*, history=None)` | 易变尾部里的已激活技能块。传入 `history` 时，最近一次 `activate_skill` 结果仍原样在其中的已激活 MCP 技能只得到一行指向提示，不再附整块内容；最后一条 `Skill loaded` 消息就是当前版本的本地技能也一样。 |
+| `get_skills_context(*, history=None)` | 易变尾部里的已激活技能块。传入 `history` 时，最近一次 `activate_skill` 结果仍原样在其中的已激活 MCP 技能只得到一行指向提示，不再附整块内容；最后一条 `Skill loaded` 消息就是当前版本的任何技能也一样。 |
 | `reload_skills()` | 重扫三层目录，返回已启用技能数。插件和 MCP 技能会保留 |
 | `disable_skill(name)` / `enable_skill(name)` | CLI 打印的那条消息（见[上文](#skills-config-json-怎样写入)） |
 

@@ -2,7 +2,9 @@
 
 An MCP skill's instructions enter the conversation through three tools —
 ``activate_skill`` (``<mcp-skill>``), ``read_skill_file`` and a verified
-``read_mcp_resource`` (``<mcp-skill-file>``) — and can be copied onward by
+``read_mcp_resource`` (``<mcp-skill-file>``) — and through the runtime's own
+``Skill loaded`` message for an MCP skill (#552), a user ``<system-reminder>``
+named ``mcp:…`` that ends with an origin marker. It can be copied onward by
 compaction, which folds a window into a ``[Conversation Summary]``. The result
 formatter never spills them to ``.agentao/tool-outputs/``
 (``_is_mcp_skill_content``), so no spilled file holds one: a ``read_file`` of
@@ -169,6 +171,22 @@ def is_skill_state_message(message: Any) -> bool:
     return skill_state_name(message) is not None
 
 
+def is_mcp_skill_state_message(message: Any) -> bool:
+    """Whether ``message`` is a state message of an MCP skill (#552).
+
+    Its name starts with ``mcp:``, a prefix local and plugin skills cannot
+    take, so its body — when it is a ``Skill loaded`` message — is
+    server-written content: the restore-time withhold must reach it.
+    """
+    name = skill_state_name(message)
+    return name is not None and name.startswith("mcp:")
+
+
+def is_loaded_state(content: str) -> bool:
+    """Whether a state message's ``content`` is a ``Skill loaded`` message (not a notice)."""
+    return content.startswith(SKILL_STATE_OPEN + SKILL_STATE_LOADED)
+
+
 def skill_state_head(content: str) -> str:
     """A skill-state message's first line: ``Skill loaded: "<name>"`` or the unloaded one."""
     return content[len(SKILL_STATE_OPEN):].split("\n", 1)[0]
@@ -281,6 +299,16 @@ def marker_origins(message: Any) -> Set[str]:
             return summary_origins(
                 "\n".join(m.group(1) for m in _PLACEHOLDER_MARKER.finditer(content))
             )
+    state = skill_state_name(message)
+    if state is not None and isinstance(content, str):
+        # A skill-state message (#552) quotes a SKILL.md: a local one is the
+        # skill author's text, and an MCP one's ``<mcp-skill>`` block is the
+        # server's. A marker line in either is content, not provenance. Only
+        # the runtime's own line after an MCP block — or a restore's
+        # placeholder in its place — counts.
+        if not state.startswith("mcp:"):
+            return set()
+        content = BLOCK.sub("", content)
     return summary_origins(content)
 
 
@@ -343,6 +371,9 @@ def skill_origins(messages: Iterable[Any]) -> Set[str]:
             continue
         marked = marker_origins(message)
         labels |= marked
+        if is_mcp_skill_state_message(message):
+            labels |= _state_message_origins(message, marked)
+            continue
         if not is_skill_message(message):
             continue
         content = message.get("content")
@@ -351,6 +382,27 @@ def skill_origins(messages: Iterable[Any]) -> Set[str]:
         # placeholder's marker names the server instead.
         labels.update(found or marked or [UNKNOWN_ORIGIN])
     return labels
+
+
+def _state_message_origins(message: Dict[str, Any], marked: Set[str]) -> Set[str]:
+    """Origins of an MCP skill-state message: the labels actually found on it.
+
+    The union of its wrappers' ``server=``, its markers (an explicit ``*``
+    in one is a found label, and keeps its gate) and the label its name
+    parses to. A helper's fallback ``*`` — :func:`content_origins` with no
+    wrapper, :func:`name_origin` on a name it cannot parse — is not found,
+    so a withheld placeholder or a notice, which have no wrapper, keep
+    their real label rather than widening to ``*``. Only when nothing is
+    found is the answer the unknown origin
+    (docs/design/mcp-skill-body-in-history.md §2.4).
+    """
+    content = message.get("content")
+    found = {html.unescape(f) for f in _SERVER_ATTR.findall(content)} if isinstance(content, str) else set()
+    found |= marked
+    label = name_origin(skill_state_name(message))
+    if label and label != UNKNOWN_ORIGIN:
+        found.add(label)
+    return found or {UNKNOWN_ORIGIN}
 
 
 def content_origins(content: Any) -> Set[str]:

@@ -156,7 +156,11 @@ Where each part goes in the request:
   - **The body is a snapshot, taken at activation.** An edit to `SKILL.md` or to the resource directories takes effect after `/skills activate <name>` again or `/skills reload` (which `/crystallize` runs). The new version is appended as a new `Skill loaded` message, which says it replaces the earlier one. Only each skill's latest such message counts.
   - **Deactivation appends a notice**, `Skill no longer active: "<name>"`, telling the model not to follow the earlier instructions. The old body stays in history.
   - **A compaction that removes the body** (a full summary, the minimal-history cut of an overflow) makes the runtime append it again before the next request, once. Microcompaction never touches it. A restored session that already holds the current body does not get a second copy.
-- **An MCP skill's body** goes into the volatile tail, which is re-sent uncached on every request, so deactivate it when you are done. One exception: when the model activated it with `activate_skill` and the latest such result is still in history unchanged, the tail gives the skill's `Task:` and a pointer to that result instead of a second copy. Microcompaction does not clip that result while the skill is active. It clips earlier results of the same skill, and the result once the skill is deactivated. After a full compaction or a restore, the tail sends the block again. An MCP skill's content is never moved into a user message, because provenance and the restore-time withhold find it by the tool that returned it.
+- **An MCP skill's body is stored in history once, too.**
+  - When the model activated it with `activate_skill` and its latest such result is still in history unchanged, that result is the copy. The tail gives the skill's `Task:` and a pointer to it. Microcompaction does not clip that result while the skill is active. It clips earlier results of the same skill, and the result once the skill is deactivated.
+  - Otherwise — `/skills activate`, `spec.skills`, or a result that a compaction removed — the runtime appends a `Skill loaded` message with the skill's wrapped block, as for a local skill. The message ends with a line naming the MCP server, which compaction, the session save and a restore read as its origin.
+  - Deactivation appends a `Skill no longer active` notice, also for a skill the model activated.
+  - **A restore withholds the body.** An MCP skill is never re-activated on restore, since its approval does not carry over. The restored `Skill loaded` message keeps its first line, and its body is replaced by a placeholder. The next request then tells the model the skill is no longer active. Activate it again to be asked and to reload it.
 
 See [`prompts/builder.py`](https://github.com/jin-bo/agentao/blob/main/agentao/prompts/builder.py) for the order of the sections.
 
@@ -306,7 +310,7 @@ print(agent.skill_manager.get_skills_context())
 | `get_skill_content(name)` | Full `SKILL.md` text, or `None` |
 | `activate_skill(name, task_description)` | The activation message. An unknown or disabled name returns `Error: Unknown skill …`. |
 | `deactivate_skill(name)` | `True` if the skill was active |
-| `get_skills_context(*, history=None)` | The active-skills block of the volatile tail. With `history`, an active MCP skill whose latest `activate_skill` result is in it unchanged gets a pointer instead of its block, and so does a local skill whose latest `Skill loaded` message there is its current one. |
+| `get_skills_context(*, history=None)` | The active-skills block of the volatile tail. With `history`, an active MCP skill whose latest `activate_skill` result is in it unchanged gets a pointer instead of its block, and so does any skill whose latest `Skill loaded` message there is its current one. |
 | `reload_skills()` | Re-scans the three layers and returns the enabled count. Plugin and MCP skills are kept. |
 | `disable_skill(name)` / `enable_skill(name)` | The message the CLI prints (see [above](#how-skills-config-json-is-written)) |
 
