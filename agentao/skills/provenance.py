@@ -116,10 +116,11 @@ def mcp_activation_head(skill_name: str) -> str:
     return f"\nSkill Activated: {skill_name}\n"
 
 
-#: What an active local or plugin skill gets in the active-skills block when
-#: its latest skill-state message in history loads its current snapshot
-#: (#552, docs/design/skill-body-in-history.md).
-LOCAL_SKILL_IN_HISTORY_NOTE = (
+#: What an active skill gets in the active-skills block when its latest
+#: skill-state message in history loads its current content: a local or
+#: plugin skill's snapshot, or an MCP skill's held bytes that no intact
+#: activation result holds (#552, docs/design/skill-body-in-history.md).
+SKILL_LOADED_IN_HISTORY_NOTE = (
     "The instructions and the file list of this skill are in its latest "
     "\"Skill loaded\" reminder earlier in this conversation. The skill is "
     "still active.\n"
@@ -196,7 +197,7 @@ def tail_points_into_history(tail: Any) -> bool:
     """Whether a volatile-tail message carries an active-skills pointer (#552)."""
     content = tail.get("content") if isinstance(tail, dict) else None
     return isinstance(content, str) and (
-        MCP_SKILL_IN_HISTORY_NOTE in content or LOCAL_SKILL_IN_HISTORY_NOTE in content
+        MCP_SKILL_IN_HISTORY_NOTE in content or SKILL_LOADED_IN_HISTORY_NOTE in content
     )
 
 

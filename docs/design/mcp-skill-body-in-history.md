@@ -97,7 +97,7 @@ Consequences, each covered by a test (§5, item 5):
   - a pointer to the result when `name in pointed`;
   - else a pointer to the state message when its latest state message equals `want`;
   - else the block.
-  - The local note (`LOCAL_SKILL_IN_HISTORY_NOTE`) already says "latest 'Skill loaded' reminder", so it can be reused as is.
+  - The local note (`SKILL_LOADED_IN_HISTORY_NOTE`, formerly `LOCAL_SKILL_IN_HISTORY_NOTE`) already says "latest 'Skill loaded' reminder", so it can be reused as is.
 
 ### 2.3 The runner
 
