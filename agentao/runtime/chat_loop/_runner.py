@@ -39,6 +39,7 @@ from ...context_manager import _LENGTH_FINISH_REASONS as _CM_LENGTH_FINISH_REASO
 from ...context_manager import is_context_too_long_error, is_request_too_large_error
 from ...skills.provenance import tail_points_into_history
 from ...llm._retry import (
+    api_error_text,
     _is_image_rejection,
     _is_image_unsupported,
     _is_input_rejection_status,
@@ -1499,11 +1500,12 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             # say "vision … not supported" must not strip them. Nor may a
             # tool-schema 400 that names an ``images`` parameter: the same
             # guard ``_is_image_rejection`` applies on the terminal path.
+            err_text = api_error_text(e)
             remove_older = (
-                _is_input_rejection_status(e) and not _is_tool_schema_error(str(e))
+                _is_input_rejection_status(e) and not _is_tool_schema_error(err_text)
             )
             if (
-                _is_image_unsupported(str(e))
+                _is_image_unsupported(err_text)
                 and (image_fallback_text or remove_older)
                 and self._history_has_images()
             ):

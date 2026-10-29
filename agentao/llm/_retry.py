@@ -177,6 +177,31 @@ def _classify_retry(exc: BaseException) -> Tuple[bool, Optional[int], Optional[s
     return (False, None, None)
 
 
+def api_error_text(exc: BaseException) -> str:
+    """An API error's text for the classifiers: ``str(exc)`` and its error body.
+
+    openai 3.38 shortened ``str()`` of an ``APIStatusError`` from
+    ``Error code: 400 - {<the whole error JSON>}`` to the message alone.
+    The JSON is where a gateway names the field it refused (``'param':
+    'include'``, a pydantic ``'loc'``) or puts the only overflow signal
+    (``'code': 'context_length_exceeded'``), so a classifier that read
+    ``str(exc)`` went blind to them. The SDK still keeps the body on
+    ``exc.body``. Its ``repr`` is appended unless the text already holds it
+    (openai before 3.38, the anthropic SDK), in the same Python-literal
+    spelling the old text had, so one pattern reads both.
+
+    Only a ``dict`` or ``list`` body counts: an object that merely answers
+    ``body`` (a ``MagicMock``) adds nothing. For display, keep ``str(exc)``.
+    """
+    text = str(exc)
+    body = getattr(exc, "body", None)
+    if isinstance(body, (dict, list)):
+        shown = repr(body)
+        if shown not in text:
+            text = f"{text} {shown}"
+    return text
+
+
 def _is_quota_exhausted(exc: BaseException) -> bool:
     """True when a 429 says the account is out of quota, not rate-limited.
 
@@ -398,7 +423,7 @@ def _is_image_rejection(exc: BaseException, sent_texts: Iterable[str] = ()) -> b
     """
     if not _is_input_rejection_status(exc):
         return False
-    text = str(exc)
+    text = api_error_text(exc)
     return (
         _IMAGE_WORD.search(text) is not None
         and not _is_tool_schema_error(text)

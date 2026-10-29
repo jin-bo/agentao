@@ -403,6 +403,7 @@ Design: `docs/design/llm-api-adapters.md`.
 **SDK facts:**
 - `openai` has no upper pin. A fresh install gets 3.x, but `uv.lock` has 2.x. To check 3.x, run `uv run --with 'openai==3.16.2' python -m pytest tests/ -n logical`.
 - Anthropic SDK facts (measured): it has no `temperature` parameter. It refuses a non-streaming request above about 21k `max_tokens`, so `chat()` consumes a stream. An in-stream `error` arrives as `APIStatusError(status_code=200)`.
+- **openai 3.38+ leaves the error JSON out of `str(exc)`.** A classifier reads `llm/_retry.py::api_error_text(exc)`, which adds `exc.body`. Show the user `str(exc)`.
 - **Ask the Models API in `prepare()`**, which runs before `_build_request_kwargs`. Never ask it at construction or in `build_request`.
 - **`usage.prompt_tokens` is the whole prompt.** On Anthropic it is `input_tokens + cache_creation + cache_read`. Do not copy this mapping to other adapters.
 - **Test a wire adapter against the real SDK.** Replace only the socket (`tests/support/anthropic_wire.py`, `tests/support/openai_responses_wire.py`). Keep fixtures on `stream_of`.

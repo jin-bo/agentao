@@ -331,8 +331,11 @@ def test_one_item_that_cannot_be_decrypted_is_not_the_endpoint_refusing_the_fiel
     wire = attach(llm, Wire((400, {"error": {
         "message": message, "type": "invalid_request_error",
         "code": "invalid_encrypted_content", "param": "input"}}), _final()))
-    with pytest.raises(Exception, match="invalid_encrypted_content"):
+    with pytest.raises(Exception) as caught:
         llm.chat_stream(HELLO)
+    # The provider's own error, read off the exception: openai 3.38 dropped
+    # the code from ``str(exc)``.
+    assert getattr(caught.value, "code", None) == "invalid_encrypted_content"
     llm.chat_stream(HELLO)
     assert len(wire.requests) == 2      # not re-sent as a "repair"
     assert [("include" in body) for body in wire.requests] == [True, True]

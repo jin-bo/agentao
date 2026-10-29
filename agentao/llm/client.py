@@ -43,6 +43,7 @@ from ._api_format import (
 from ._cache_control import resolve_cache_control
 from ._openai_completions import OpenAICompletionsAdapter
 from ._retry import (
+    api_error_text,
     BASE_BACKOFF_SECONDS,
     JITTER_FRACTION,
     MAX_BACKOFF_SECONDS,
@@ -796,7 +797,7 @@ class LLMClient(_LoggingMixin):
                 # unsupported temperature, …) is a one-shot fix-up, not a retry
                 # — it does not consume retry budget. Each repair latches, so
                 # it can fire at most once per model.
-                if self._adapter.repair_request(str(e), kwargs, stream=False):
+                if self._adapter.repair_request(api_error_text(e), kwargs, stream=False):
                     continue
 
                 retryable, status, retry_after = self._adapter.classify_retry(e)
@@ -939,7 +940,7 @@ class LLMClient(_LoggingMixin):
                 # active exception bound here, and ``acc.progress_made`` (set
                 # by ``_consume_stream`` before it propagated) decides whether
                 # a retry would duplicate already-emitted content.
-                err_str = str(e).lower()
+                err_str = api_error_text(e).lower()
 
                 # A rejected parameter — one-shot fix-up. Only safe at zero
                 # progress (otherwise we'd re-emit content via on_text_chunk).
