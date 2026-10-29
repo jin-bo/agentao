@@ -930,6 +930,7 @@ class SkillManager:
         history: Optional[Sequence[Any]],
         *,
         states: Optional[Dict[str, Tuple[int, str]]] = None,
+        activations: Optional[Dict[str, int]] = None,
     ) -> Dict[str, int]:
         """The ``history`` index of each activation result the tail points at.
 
@@ -942,12 +943,13 @@ class SkillManager:
         microcompaction keeps exactly these results whole (#552), so the two
         cannot disagree. A deactivated skill's result is not here, and is
         clipped like any other. ``states`` is :func:`_latest_skill_states`
-        of ``history`` when the caller already has it.
+        and ``activations`` :func:`provenance.latest_mcp_activations` of
+        ``history`` when the caller already has them.
         """
         if not history:
             return {}
         targets: Dict[str, int] = {}
-        latest: Optional[Dict[str, int]] = None
+        latest = activations
         for name, info in self.active_skills.items():
             if info.get("mcp_key") is None or not self.mcp_skills:
                 continue
@@ -958,8 +960,8 @@ class SkillManager:
                 from .provenance import latest_mcp_activations
 
                 latest = latest_mcp_activations(history)
-                if states is None:
-                    states = _latest_skill_states(history)
+            if states is None:
+                states = _latest_skill_states(history)
             index = latest.get(name)
             if index is not None and index > states.get(name, (-1, ""))[0] and _activation_result_holds(
                 history[index]["content"], name, _render_mcp_skill(held),
@@ -1140,14 +1142,18 @@ class SkillManager:
         failed activation is not a load. Derived from history alone, so a
         call that changes nothing returns ``[]``.
         """
+        from .provenance import latest_mcp_activations
+
         history = history or ()
         latest = _latest_skill_states(history)
+        activations = latest_mcp_activations(history)
         out: List[str] = []
-        loads = _latest_loads(history, latest)
-        for name in loads:
+        for name in _latest_loads(latest, activations):
             if name not in self.active_skills:
                 out.append(_skill_unloaded_message(name))
-        pointed = self.mcp_pointer_targets(history, states=latest)
+        pointed = self.mcp_pointer_targets(
+            history, states=latest, activations=activations,
+        )
         for name, info in self.active_skills.items():
             want = self._wanted_state(name, info, pointed)
             if want is not None and latest.get(name, (None, None))[1] != want:
@@ -1322,22 +1328,23 @@ def _latest_skill_states(history: Sequence[Any]) -> Dict[str, Tuple[int, str]]:
 
 
 def _latest_loads(
-    history: Sequence[Any], latest: Dict[str, Tuple[int, str]],
+    latest: Dict[str, Tuple[int, str]], results: Dict[str, int],
 ) -> List[str]:
-    """Skills whose latest record in ``history`` loads them.
+    """Skills whose latest record in a history loads them.
 
-    A record is a state message or an MCP ``activate_skill`` result that
+    ``latest`` is :func:`_latest_skill_states` and ``results`` is
+    :func:`provenance.latest_mcp_activations` of that history. A record is a
+    state message or an MCP ``activate_skill`` result that
     :func:`provenance.mcp_activation_name` reads; the latest is the one with
     the highest index. A refused, cancelled or failed activation returns
     other text, so it is not a record and cannot supersede a notice.
     """
-    from .provenance import latest_mcp_activations
+    from .provenance import is_loaded_state
 
-    results = latest_mcp_activations(history)
     loads: List[str] = []
     for name in set(latest) | set(results):
         state_index, content = latest.get(name, (-1, ""))
-        if results.get(name, -1) > state_index or content.startswith(_STATE_OPEN + _STATE_LOADED):
+        if results.get(name, -1) > state_index or is_loaded_state(content):
             loads.append(name)
     return sorted(loads)
 

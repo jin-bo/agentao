@@ -708,9 +708,10 @@ Where the code differs from, or settles, the text above:
   (`skills/manager.py::_activation_result_holds`) — the active-skills block gives that skill's
   `Task:` and a one-line pointer to its most recent result instead of the block. Earlier results
   of the same skill do not matter, and the latest one is found the same way by both sides
-  (`skills/provenance.py::latest_mcp_activations`). Anything else sends the block in the tail
-  as before: `/skills activate` and `spec.skills` (no tool result), a summary, a restore's
-  placeholder, a truncated result, a manifest re-approved since the latest activation. A wrong "not there"
+  (`skills/provenance.py::latest_mcp_activations`). Anything else — `/skills activate` and
+  `spec.skills` (no tool result), a summary, a restore's placeholder, a truncated result, a
+  manifest re-approved since the latest activation — gets a `Skill loaded` message in history
+  instead, and the tail points at that (`mcp-skill-body-in-history.md`). A wrong "not there"
   costs tokens; nothing looser than this anchored match counts, so another skill's result, a
   local `SKILL.md` that quotes the block, or a `Task:` the model wrote it into does not count.
   Microcompaction keeps whole exactly the results the tail points at: the agent answers
