@@ -18,6 +18,7 @@ imports it, and must not pull in the MCP SDK.
 from __future__ import annotations
 
 import html
+import json
 import re
 from typing import Any, Dict, Iterable, Optional, Set
 from urllib.parse import quote, unquote
@@ -130,21 +131,42 @@ SKILL_STATE_LOADED = "Skill loaded: "
 SKILL_STATE_UNLOADED = "Skill no longer active: "
 
 
+def skill_state_name(message: Any) -> Optional[str]:
+    """The skill a runtime ``Skill loaded`` / ``Skill no longer active`` note names, else ``None``.
+
+    This is the one recogniser of such notes (#552). The manager's "latest
+    state per skill" and every reader that skips them use it, so the two can
+    never disagree about a message. A note is a ``user`` message whose string
+    content starts with ``<system-reminder>`` and a newline, then one of the
+    two prefixes, then a JSON string and the end of the line. A user's own
+    turn starts with the date reminder, and a tool result or a file read is
+    not a user message, so neither is misread.
+    """
+    if not isinstance(message, dict) or message.get("role") != "user":
+        return None
+    content = message.get("content")
+    if not isinstance(content, str) or not content.startswith(SKILL_STATE_OPEN):
+        return None
+    first = skill_state_head(content)
+    for prefix in (SKILL_STATE_LOADED, SKILL_STATE_UNLOADED):
+        if first.startswith(prefix):
+            try:
+                name = json.loads(first[len(prefix):])
+            except ValueError:
+                return None
+            return name if isinstance(name, str) else None
+    return None
+
+
 def is_skill_state_message(message: Any) -> bool:
     """Whether ``message`` is a runtime ``Skill loaded`` / ``Skill no longer active`` note.
 
     Such a user message holds a skill's ``SKILL.md`` text, not anything the
     user wrote, so readers of "the user's own words" (memory
     crystallization, ``/crystallize`` evidence, the summarizer's originating
-    request) must skip it.
+    request) must skip it. See :func:`skill_state_name`.
     """
-    if not isinstance(message, dict) or message.get("role") != "user":
-        return False
-    content = message.get("content")
-    if not isinstance(content, str) or not content.startswith(SKILL_STATE_OPEN):
-        return False
-    first = content[len(SKILL_STATE_OPEN):]
-    return first.startswith(SKILL_STATE_LOADED) or first.startswith(SKILL_STATE_UNLOADED)
+    return skill_state_name(message) is not None
 
 
 def skill_state_head(content: str) -> str:

@@ -21,9 +21,8 @@ from .provenance import MCP_SKILL_IN_HISTORY_NOTE as _MCP_SKILL_IN_HISTORY_NOTE
 from .provenance import SKILL_STATE_LOADED as _STATE_LOADED
 from .provenance import SKILL_STATE_OPEN as _STATE_OPEN
 from .provenance import SKILL_STATE_UNLOADED as _STATE_UNLOADED
-from .provenance import is_skill_state_message as _is_skill_state_message
 from .provenance import mcp_activation_head as _mcp_activation_head
-from .provenance import skill_state_head as _skill_state_head
+from .provenance import skill_state_name as _skill_state_name
 
 logger = logging.getLogger(__name__)
 
@@ -1280,25 +1279,13 @@ def _skill_unloaded_message(name: str) -> str:
 def _latest_skill_states(history: Sequence[Any]) -> Dict[str, str]:
     """Each skill's latest skill-state message content in ``history``, by name.
 
-    A state message is a user message whose string content starts with a
-    reminder whose first line is ``Skill loaded:`` or ``Skill no longer
-    active:`` and a JSON name. A user's own turn starts with the date
-    reminder, and a tool result or a file read is not a user message, so
-    neither counts.
+    :func:`provenance.skill_state_name` decides what a state message is.
     """
     latest: Dict[str, str] = {}
     for message in history:
-        if not _is_skill_state_message(message):
-            continue
-        content = message["content"]
-        first = _skill_state_head(content)
-        prefix = _STATE_LOADED if first.startswith(_STATE_LOADED) else _STATE_UNLOADED
-        try:
-            name = json.loads(first[len(prefix):])
-        except ValueError:
-            continue
-        if isinstance(name, str):
-            latest[name] = content
+        name = _skill_state_name(message)
+        if name is not None:
+            latest[name] = message["content"]
     return latest
 
 

@@ -100,7 +100,7 @@ Do not follow this skill's instructions from earlier in this conversation.
 - 第一行中的名字用 JSON 编码，任何名字都能原样读回。
 - **加载消息里不放 `Task:`**，任务只出现在尾部。否则恢复时任务文本不同，比较永远不相等，正文会重复一份。
 - 正文中的 `</system-reminder` 转义为 `<\/system-reminder`。不转义的话，ACP 回放的非贪婪正则会在正文中提前结束，把剩余部分发给客户端。
-- 识别条件（`_latest_skill_states`）：`role == "user"`，内容是字符串，以 `<system-reminder>\n` 开头，第一行是两种前缀之一，后接合法的 JSON 字符串。用户自己的轮次以日期提醒开头，工具结果和读出的文件不是 user 消息，所以都不会被误认。
+- 识别条件（`provenance.skill_state_name`，唯一的识别函数）：`role == "user"`，内容是字符串，以 `<system-reminder>\n` 开头，第一行是两种前缀之一，后接一个占满该行其余部分的 JSON 字符串。管理器查找“最新状态”和所有跳过这些消息的读取方都调用它，因此对同一条消息不会有两种判断。用户自己的轮次以日期提醒开头，工具结果和读出的文件不是 user 消息，所以都不会被误认。
 
 ### 3.3 判重：只看最后一条
 
