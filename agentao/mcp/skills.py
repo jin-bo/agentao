@@ -32,6 +32,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import yaml
 
 from ..security.unicode_tags import strip_unicode_tags
+from ..skills.provenance import MCP_NAME_PREFIX
 from ..tools.base import SHELL_TOOL_NAME
 from .resources import (
     McpResourceError,
@@ -51,7 +52,7 @@ EXTENSION_ID = "io.modelcontextprotocol/skills"
 MIN_PROTOCOL_VERSION = "2026-07-28"
 
 #: Prefix of every model-facing MCP skill name, reserved for them (§5.3).
-NAME_PREFIX = "mcp:"
+NAME_PREFIX = MCP_NAME_PREFIX
 
 #: The spec's per-skill limits (hosts MUST support up to these).
 MAX_SKILL_FILES = 512
