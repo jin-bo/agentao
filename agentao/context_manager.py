@@ -175,6 +175,19 @@ def _is_tool_result(msg: Any) -> bool:
     return isinstance(msg, dict) and msg.get("role") == "tool"
 
 
+def _trailing_state_start(messages: List[Dict[str, Any]]) -> int:
+    """Index where the trailing run of skill-state notes (#552) begins.
+
+    ``len(messages)`` when the history does not end on one.
+    """
+    from .skills.provenance import is_skill_state_message
+
+    end = len(messages)
+    while end > 0 and is_skill_state_message(messages[end - 1]):
+        end -= 1
+    return end
+
+
 def _made_tool_calls(msg: Any) -> bool:
     """True for an assistant message that requested at least one tool call."""
     return (
@@ -936,6 +949,7 @@ class ContextManager:
 
     def _apply_keep_token_budget(
         self, messages: List[Dict[str, Any]], count_start: int,
+        end: Optional[int] = None,
     ) -> int:
         """Tighten the split-point search start with a token budget.
 
@@ -979,17 +993,22 @@ class ContextManager:
         if budget <= 0:
             return count_start
 
+        # ``end`` excludes trailing ``Skill loaded`` notes (#552): they are
+        # kept anyway (the window is a suffix), so they neither spend the
+        # budget nor count as the last message the floor keeps.
+        if end is None:
+            end = len(messages)
         # Accumulate backwards: the smallest i whose suffix still fits.
         spent = 0
-        token_start = len(messages)
-        for i in range(len(messages) - 1, -1, -1):
+        token_start = end
+        for i in range(end - 1, -1, -1):
             spent += self._count_message_tokens(messages[i])
             if spent > budget:
                 break
             token_start = i
 
         # Never past the last message: see the floor note in the docstring.
-        start = min(max(count_start, token_start), max(0, len(messages) - 1))
+        start = min(max(count_start, token_start), max(0, end - 1))
         if start > count_start:
             kept = len(messages) - start
             try:
@@ -1004,7 +1023,7 @@ class ContextManager:
 
     @staticmethod
     def _find_split_index(
-        messages: List[Dict[str, Any]], start: int
+        messages: List[Dict[str, Any]], start: int, end: Optional[int] = None,
     ) -> Optional[int]:
         """First safe split point at or after ``start``; ``None`` if there is none.
 
@@ -1021,17 +1040,26 @@ class ContextManager:
         compaction a silent permanent no-op.
 
         Never returns ``len(messages)``: that would leave nothing to keep.
+        Nor, given ``end``, an index at or past it: the messages from ``end``
+        on are trailing ``Skill loaded`` notes (#552), and a window of only
+        notes keeps nothing of the conversation, as in
+        :meth:`_minimal_history_start`.
         """
+        from .skills.provenance import is_skill_state_message
+
         if start < 0:
             start = 0
-        limit = len(messages) - 1
+        limit = (len(messages) if end is None else min(end, len(messages))) - 1
         preferred = None
         fallback = None
         for i in range(start, limit + 1):
             role = messages[i].get("role")
             if role == "tool":
                 continue
-            if role == "user":
+            # A ``Skill loaded`` note is a user message but not a request: a
+            # window opening on it would push the request into the summary
+            # (#552). It is still a safe cut.
+            if role == "user" and not is_skill_state_message(messages[i]):
                 preferred = i
                 break
             if fallback is None:
@@ -1157,9 +1185,19 @@ class ContextManager:
             self.KEEP_RECENT_MESSAGES,
             max(4, int(len(messages) * 0.60)),
         )
+        # Trailing ``Skill loaded`` / ``Skill no longer active`` notes (#552)
+        # do not count toward the kept window, as in
+        # :meth:`_minimal_history_start`: three notes after a tool exchange
+        # must not leave the window holding only the notes and summarize the
+        # request in flight. Floored at 1, so something is still summarized.
+        # The split itself never lands on a trailing note either: a run of
+        # tool results before the notes has no safe cut, as without them.
+        end = _trailing_state_start(messages)
         count_start = len(messages) - keep_count
-        start = self._apply_keep_token_budget(messages, count_start)
-        split_index = self._find_split_index(messages, start)
+        if end < len(messages):
+            count_start = max(1, end - keep_count)
+        start = self._apply_keep_token_budget(messages, count_start, end=end)
+        split_index = self._find_split_index(messages, start, end=end)
 
         if split_index is None:
             # Structural failure, not a summarization failure — but the caller
@@ -1415,14 +1453,23 @@ class ContextManager:
         A window that was already empty stays empty: ``keep_tail == 0`` asks
         for one, and that answer has to stay reachable.
         """
-        start = max(0, len(messages) - max(0, keep_tail))
-        if start >= len(messages) or not _is_tool_result(messages[start]):
+        if keep_tail <= 0:
+            return len(messages)
+
+        # Trailing ``Skill loaded`` / ``Skill no longer active`` notes do not
+        # count toward ``keep_tail`` (#552). They are always kept (the window
+        # is a suffix), and a window of only notes is as empty as no window:
+        # ``[request, note A, note B]`` must not keep just the two notes, nor
+        # ``[call, result, note]`` just the note.
+        end = _trailing_state_start(messages)
+        start = max(0, end - keep_tail)
+        if start >= end or not _is_tool_result(messages[start]):
             return start
 
         ahead = start
-        while ahead < len(messages) and _is_tool_result(messages[ahead]):
+        while ahead < end and _is_tool_result(messages[ahead]):
             ahead += 1
-        if ahead < len(messages):
+        if ahead < end:
             return ahead
 
         # Results all the way to the end. Walk back over the run they belong
@@ -2077,6 +2124,8 @@ class ContextManager:
         Each message renders to a *block* of lines (content and/or tool-call
         lines); ``_join_within_budget`` then decides how many blocks fit.
         """
+        from .skills.provenance import is_skill_state_message, skill_state_head
+
         blocks: List[List[str]] = []
         carry_text: Optional[str] = None
         origin_index: Optional[int] = None
@@ -2101,6 +2150,12 @@ class ContextManager:
                 # contains the marker substring is never truncated.
                 content = content.split(self.SUMMARY_END_MARKER)[0].rstrip()
                 is_carry = True
+            if is_skill_state_message(msg):
+                # Only the first line (``Skill loaded: "<name>"``): the runtime
+                # appends an active skill's body again after the compaction
+                # (#552), and a body restated in the summary would outlive a
+                # later deactivation, which finds no message to retract.
+                content = skill_state_head(content)
             if role == "tool":
                 tool_name = msg.get("name", "")
                 blocks.append([
@@ -2128,10 +2183,11 @@ class ContextManager:
                 carry_text = str(content)
                 continue
             blocks.append(block)
-            if role == "user" and block:
+            if role == "user" and block and not is_skill_state_message(msg):
                 # The most recent user message in the summarized window is the
                 # request whose work may straddle the cut point. Remembered so
-                # it can be reserved below.
+                # it can be reserved below. A ``Skill loaded`` note is a
+                # skill's body, not a request (#552).
                 origin_index = len(blocks) - 1
 
         total = self._summary_input_budget()

@@ -141,11 +141,11 @@ Callers and their `cause`: `/mode` (`cli/app.py::_apply_mode`, `"cli"`), ACP `se
 
 **The model gets its instructions in two messages. The second message is not in history.**
 - `agent.py::_build_system_prompt()` builds the stable prefix. The prefix is byte-identical across the turns of a session and ends at `<memory-stable>`. `builder.py::_build_sections()` sets the order. Plan mode suppresses the available agents.
-- `agent.py::_build_volatile_tail()` builds the volatile tail: active-skill bodies, todos, `<memory-context>` and the plan prompt (`_build_volatile_sections()`). It wraps them in one `<system-reminder>` and appends it to the **outgoing request** as a trailing `user` message.
+- `agent.py::_build_volatile_tail()` builds the volatile tail: the active-skills block (task lines, pointers, an MCP skill's body when history does not hold it), todos, `<memory-context>` and the plan prompt (`_build_volatile_sections()`). It wraps them in one `<system-reminder>` and appends it to the **outgoing request** as a trailing `user` message.
 
 Invariants (`docs/design/llm-api-adapters.md` §2.3):
 - **`messages_with_system` is the persistent prefix, never the request.** Only one place appends the tail: the `_send` in `_call_llm_with_overflow_recovery`.
-- **The tail is for the request only.** History never stores it. The date/time and background-notification reminders go into history on purpose.
+- **The tail is for the request only.** History never stores it. The date/time and background-notification reminders and the `Skill loaded` / `Skill no longer active` notes (#552) go into history on purpose.
 - **Record the Tier-1 token anchor against the persistent prefix**: `record_api_usage(prompt_tokens, len(persistent), tail_tokens=est(T))`. `tests/test_volatile_tail_request.py` pins this.
 - **The date/time is in neither message.** It is a `<system-reminder>` at the start of the user message (`chat_loop/_runner.py::run`). `tests/test_date_in_prompt.py` pins this.
 
@@ -210,6 +210,7 @@ Design: `docs/design/compaction-orchestration-plan.md`. Five entry points hand o
 
 **The last rung is not a plain tail slice. Do not simplify it back to one.**
 - `_minimal_history_start` repairs the boundary, so the window never opens on a `role: "tool"` message.
+- Trailing `Skill loaded` / `Skill no longer active` notes do not count toward `keep_tail` (#552). They stay in the window, but the window also keeps a real message before them. The full compaction's kept window and its token budget skip them the same way (`prepare_compaction`).
 - The repair drops leading results first. Only if that empties the window does it step back to the assistant that made the calls.
 - `prepare_minimal_history` reports the effective count.
 - `minimal_history_would_help` returns `skipped` when no cut is useful.
@@ -243,6 +244,11 @@ The skill manager discovers skills in `skills/`. Each subdirectory has a `SKILL.
   4. refuses to overwrite a file that it cannot read.
 - The lock does not serialize two processes that replace the same skill directory.
 - **The available-skills catalogue renders only when the agent has `activate_skill`** (`prompts/builder.py::_available_skills_block`). No such gate applies to the active-skills block.
+- **A local or plugin skill's body is in history, not in the tail** (#552, `docs/design/skill-body-in-history.md`). `ChatLoopRunner._sync_skill_state` appends what `SkillManager.skill_state_messages` reports: a `Skill loaded` snapshot or a `Skill no longer active` notice.
+  - **Only each skill's latest state message counts.** Never test whether an equal copy appears anywhere in history (A → B → A).
+  - Sync before the request is estimated, and again after any compaction that replaced history (the loop, both overflow rungs and the 413 retry).
+  - The loaded message carries no `Task:`, or a restore duplicates the body. It escapes `</system-reminder`, or ACP replay leaks the rest.
+  - **MCP skill content never goes into a user message.** Provenance and the restore-time withhold find it by the tool that returned it.
 - **The catalogue lists active skills too, and it must continue to do so** (0.4.27). The catalogue is in the cached prefix. It can change only when the *enabled set* changes, never on activation. `tests/test_skills_prompt.py` pins this.
 
 ### Memory system
