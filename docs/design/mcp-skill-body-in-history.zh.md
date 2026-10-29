@@ -2,7 +2,7 @@
 
 > English: [mcp-skill-body-in-history.md](mcp-skill-body-in-history.md)
 
-**状态：** 草案，2026-10-28。等待附录 A 第 1 轮所列问题澄清。§6 选定方案 (a)。尚未实施。
+**状态：** 设计评审通过（附录 A 第 1–2 轮），2026-10-28。§6 选定方案 (a)。尚未实施。
 **基线：** Agentao `96cca5b7`（#594 + #595）。
 **Issue：** [#552](https://github.com/jin-bo/agentao/issues/552)。本文承接 [skill-body-in-history.zh.md](skill-body-in-history.zh.md)：那份文档把本地和插件技能的正文移进了历史，留下了 MCP 路径（该文 §2.3、§6）。
 
@@ -66,7 +66,7 @@ This is the current version of this skill. It replaces any earlier instructions 
 一个技能在历史中的记录有三种：
 - 它的 `Skill loaded` 消息（任意版本）；
 - 它的 `Skill no longer active` 通知；
-- 对 MCP 技能而言，它的 `activate_skill` 结果。
+- 对 MCP 技能而言，`provenance.mcp_activation_name()` 认定为一次加载的 `activate_skill` 结果。该函数只匹配首行为 `Skill Activated: mcp:…` 的结果。被拒绝、被否决、被取消或执行失败的调用返回的是别的文字，不算加载，也不能取代之前的停用通知。恢复时被扣留的激活结果保留了这一首行，所以仍算一次加载，而该技能此时未激活，下一次同步会发停用通知。
 
 *最新记录*指下标最大的那一条。
 
@@ -90,6 +90,7 @@ pointed = mcp_pointer_targets(history)        # 与当前持有字节一致的�
 | 同上，之后压缩删掉了 B 结果 | 不再被指向。最新状态消息是 A 或通知，不等于 loaded(B)，所以追加一次 loaded(B)。再同步一次不再追加 |
 | 模型激活，结果完整，之后停用 | 最新记录是一次加载（工具结果）：追加一条通知。**这是模型路径的新行为**，现在不发通知 |
 | 停用后在同步前重新激活 | 处于激活状态，且最新记录仍然一致：不追加 |
+| 通知 → 模型重新激活失败（被拒绝或出错）→ 同步 | 失败的结果不算加载，技能也未激活：通知仍是最新记录，不追加，也不再发新通知 |
 
 - 通知循环必须使用完整的激活集合。它现在只用*本地*激活技能，所以一个最新消息为 "loaded" 的激活中 MCP 技能会被误发通知。
 - `get_skills_context` 的 MCP 分支：
@@ -111,11 +112,11 @@ pointed = mcp_pointer_targets(history)        # 与当前持有字节一致的�
 ### 2.4 来源
 
 - **新增：** `provenance.is_mcp_skill_state_message(m)`，即 `skill_state_name(m)` 以 `mcp:` 开头。它基于 #595 的唯一识别函数。
-- **这类消息的 `skill_origins`** 取实际提取到的 label 的并集：
-  - 各包装上的 `server=` 属性（直接用 `_SERVER_ATTR` 读取，**不用** `content_origins`，后者在没有包装时返回 `*`）；
-  - 消息上的标记（`marker_origins`）；
-  - `name_origin(name)`。
-  - 三者都为空时，才返回 `{UNKNOWN_ORIGIN}`。
+- **这类消息的 `skill_origins`** 取实际提取到的 label 的并集。辅助函数给出的*回退值* `*` 不算提取到的 label：
+  - 各包装上的 `server=` 属性，直接用 `_SERVER_ATTR` 读取。**不用** `content_origins`，后者在没有包装时返回 `*`。
+  - 消息上的标记（`marker_origins`）。标记中**明确**写出的 `*` 算提取到的 label，予以保留：它表示“服务器未知”，保持其门控含义。
+  - `name_origin(name)`，仅在它解析出 label 时采用。对无法解析的 `mcp:` 名称它返回 `UNKNOWN_ORIGIN`，这个回退值丢弃。
+  - 什么都没提取到时，才返回 `{UNKNOWN_ORIGIN}`。
   - 扣留后的占位消息和停用通知都没有包装，但名称和标记仍能给出 label，所以不会被扩大为 `*`。
 - **删除 `_record_mcp_activation`（`/skills activate`）。** 它记录的内容由状态消息替代，而它的文字也会变得不对。从命令执行到第一次同步之间，来源仍可从持有条目（`_mcp_session_origins`）和保存时的 `active_skills` 读到。有一个测试专门覆盖这段时间（§5 第 6 项）。
 
@@ -175,7 +176,11 @@ if is_mcp_skill_state_message(message) 且它是 loaded 消息:
    - 有 Skills 会话时，门控对 shell 发出询问；没有时，内容被扣留。
    - 再次 `/skills activate` 后，追加一条新的 loaded 消息。
    - **恢复 → 保存 → 再恢复：** 会话文件的 `mcp_skill_origins` 每次都恰好是原来的 label，没有多出 `*`。
-5. **状态转换（§2.2 的表）：** 每一行一个测试。断言不会误发通知、不会指向旧正文、不会重复追加。
+   - **来源边界情况：**
+     - 名称无法解析、标记有效：只得到标记中的 label；
+     - 标记明确写出 `*`：保留 `*`；
+     - 什么都没提取到：得到 `{*}`。
+5. **状态转换（§2.2 的表）：** 每一行一个测试，包括“停用 → 重新激活失败 → 同步”。断言不会误发通知、不会指向旧正文、不会重复追加。
 6. **第一次同步前保存：** 在 `/skills activate` 和 `spec.skills` 之后、任何一轮之前保存，`mcp_skill_origins` 记录了该 label。
 7. **模型路径：** `activate_skill` 结果完整时不追加状态消息，tail 指向该结果。
 8. **转义：** 服务器 SKILL.md 中的 `</system-reminder` 和 `</mcp-skill` 既不在 ACP 回放中泄漏，也不会提前关闭包装。
@@ -204,3 +209,7 @@ if is_mcp_skill_state_message(message) 且它是 loaded 消息:
   4. **压缩验收改为按条件：** 只有那一份确实被删掉时才追加。
   5. **收窄**关于 MCP 缓存收益的表述。
   6. **标题和范围**补充了压缩后的回退。
+- **2026-10-28，第 2 轮。** 设计评审通过，文档 PR 在 CI 通过后可以合并。补充的澄清：
+  1. **§2.4：** 对无法解析的名称，`name_origin()` 返回的 `UNKNOWN_ORIGIN` 是回退值，不是提取到的 label，从并集中丢弃。标记中明确写出的 `*` 予以保留。新增边界情况测试。
+  2. **§2.2：** 加载记录指 `mcp_activation_name()` 能读出的结果。被拒绝、被取消或执行失败的 `activate_skill` 结果不算，不能取代停用通知。新增“停用 → 重新激活失败 → 同步”用例。
+  - 本轮只评审了文档及其引用的现有代码，尚未验证实现。

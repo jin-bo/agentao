@@ -2,7 +2,7 @@
 
 > 中文：[mcp-skill-body-in-history.zh.md](mcp-skill-body-in-history.zh.md)
 
-**Status:** Draft, 2026-10-28. Waiting on the points in Appendix A, round 1. Option (a) of §6 is chosen. Not built.
+**Status:** Design review passed (Appendix A, rounds 1–2), 2026-10-28. Option (a) of §6 is chosen. Not built.
 **Baseline:** Agentao `96cca5b7` (#594 + #595).
 **Issue:** [#552](https://github.com/jin-bo/agentao/issues/552). This follows [skill-body-in-history.md](skill-body-in-history.md), which moved local and plugin skill bodies into history and left the MCP paths out (§2.3 and §6 of that document).
 
@@ -66,7 +66,7 @@ This is the current version of this skill. It replaces any earlier instructions 
 A skill's records in history are of three kinds:
 - its `Skill loaded` messages (any version);
 - its `Skill no longer active` notices;
-- for an MCP skill, its `activate_skill` results.
+- for an MCP skill, its `activate_skill` results that `provenance.mcp_activation_name()` reads as a load. That function only matches a result whose first line is `Skill Activated: mcp:…`. A refused, denied, cancelled or failed call returns other text, so it is not a load and cannot supersede an earlier notice. A restore's withheld activation keeps that head line, so it still counts as a load of a skill that is now inactive, and the next sync sends a notice.
 
 The *latest record* is the one with the highest index.
 
@@ -90,6 +90,7 @@ Consequences, each covered by a test (§5, item 5):
 | The same, then a compaction removes the B result | Not pointed. The latest state message is A or the notice, which is not loaded(B), so loaded(B) is appended once. A second sync appends nothing |
 | Model-activated, result intact, then deactivated | The latest record is a load (the result): one notice. **This is new for the model path**, which sends no notice today |
 | Deactivated, re-activated before a sync | Active, and the latest record still matches: nothing |
+| Notice → model re-activation fails (refused or an error) → sync | The failed result is not a load and the skill is not active: the notice stays the latest record, so nothing is appended and no new notice is sent |
 
 - The notice loop must use the full active set. Today it uses only the *local* active skills, so an active MCP skill whose latest message is "loaded" would wrongly get a notice.
 - `get_skills_context`, MCP branch:
@@ -111,11 +112,11 @@ Microcompaction touches only tool messages, so it never clips a state message. I
 ### 2.4 Provenance
 
 - **New:** `provenance.is_mcp_skill_state_message(m)`. It is `skill_state_name(m)` starting with `mcp:`, built on #595's single recogniser.
-- **`skill_origins` for such a message** is the union of the labels actually found:
-  - the `server=` attributes of its wrappers (read with `_SERVER_ATTR` directly, **not** `content_origins`, which returns `*` when there is no wrapper);
-  - its markers (`marker_origins`);
-  - `name_origin(name)`.
-  - Only when all three are empty is the answer `{UNKNOWN_ORIGIN}`.
+- **`skill_origins` for such a message** is the union of the labels actually found. A *fallback* `*` from a helper is not a found label:
+  - the `server=` attributes of its wrappers, read with `_SERVER_ATTR` directly. **Not** `content_origins`, which returns `*` when there is no wrapper.
+  - its markers (`marker_origins`). A marker that **explicitly** names `*` is a found label and is kept. It means "server unknown" and keeps its gating meaning.
+  - `name_origin(name)`, but only when it parsed a label. It returns `UNKNOWN_ORIGIN` for an `mcp:` name it cannot parse, and that fallback is dropped.
+  - Only when nothing was found is the answer `{UNKNOWN_ORIGIN}`.
   - A withheld placeholder and a notice have no wrapper, but the name and the marker still give the label. So they never widen to `*`.
 - **`_record_mcp_activation` (`/skills activate`) is removed.** It duplicated what the state message now records, and its text becomes false. Between the command and the first sync, the origin is still read from the held entry (`_mcp_session_origins`) and from `active_skills` at save. A test pins that window (§5, item 6).
 
@@ -175,7 +176,11 @@ Use real `mcp.types` models and `tests/support/skills_mcp_server.py`, no `MagicM
    - The gates ask for the shell (with a Skills session), and the content is withheld (without one).
    - After `/skills activate` again, a new loaded message is appended.
    - **Restore → save → restore:** the session file's `mcp_skill_origins` is exactly the original label each time, with no extra `*`.
-5. **Transitions (§2.2 table):** each row is one test. The assertions are: no wrong notice, no pointer to an older body, and no duplicate append.
+   - **Origin edge cases:**
+     - an unparseable `mcp:` name with a valid marker gives the marker's label only;
+     - a marker that explicitly names `*` keeps `*`;
+     - nothing found gives `{*}`.
+5. **Transitions (§2.2 table):** each row is one test, including "deactivate → re-activation fails → sync". The assertions are: no wrong notice, no pointer to an older body, and no duplicate append.
 6. **Save before the first sync:** after `/skills activate` and after `spec.skills`, a save before any turn records the label in `mcp_skill_origins`.
 7. **Model path:** with an intact `activate_skill` result, no state message is appended, and the tail points at the result.
 8. **Escapes:** `</system-reminder` and `</mcp-skill` in a server's SKILL.md neither leak in ACP replay nor close the wrapper.
@@ -204,3 +209,7 @@ The model's `activate_skill` path does not change while its result is intact. Th
   4. **Compaction acceptance is conditional:** append only when the copy was removed.
   5. **Narrower claim** about the cache gain for MCP.
   6. **Title and scope** include the fallback after compaction.
+- **2026-10-28, round 2.** Design review passed; the doc PR may merge after CI. Clarifications made:
+  1. **§2.4:** `name_origin()`'s `UNKNOWN_ORIGIN` for an unparseable name is a fallback, not a found label, and is dropped from the union. A marker that explicitly names `*` is kept. Edge-case tests were added.
+  2. **§2.2:** a load record is a result that `mcp_activation_name()` reads. A refused, cancelled or failed `activate_skill` result is not one and cannot supersede a notice. A "deactivate → re-activation fails → sync" case was added.
+  - This review covered the document and the existing code it cites, not an implementation.
