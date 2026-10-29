@@ -2705,7 +2705,9 @@ def parse_observed_context_limit(exc: Exception) -> Optional[tuple]:
     Falling back to the recovery ladder is the safe outcome; a wrong limit is
     a permanent silent degradation.
     """
-    msg = str(exc)
+    from .llm._retry import api_error_text
+
+    msg = api_error_text(exc)
     found = {}
     for pattern, name in _OBSERVED_LIMIT_PATTERNS:
         m = pattern.search(msg)
@@ -2731,7 +2733,9 @@ def is_context_too_long_error(exc: Exception) -> bool:
     checked first so a fallback overflow phrase can't misclassify a transient
     error as overflow and trigger a destructive history compaction.
     """
-    msg = str(exc)
+    from .llm._retry import api_error_text
+
+    msg = api_error_text(exc)
     if any(pat.search(msg) for pat in _NON_OVERFLOW_PATTERNS):
         return False
     return any(pat.search(msg) for pat in _OVERFLOW_PATTERNS)
