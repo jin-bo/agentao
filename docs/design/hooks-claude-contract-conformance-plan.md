@@ -882,7 +882,7 @@ The matrix (§12) must therefore cover the **combinations**, not the fields one 
 
 `StopHookResult.system_message` **exists** (`models.py:372`) and is set by the parser
 (`_output_parsing.py:180-182`) — and nothing in `agentao/` reads it. The only reader anywhere is a
-test (`tests/test_hooks_stop_suppress_output_and_system_message.py:37`). The same parser then *also*
+test (`tests/test_hooks_stop_suppress_output_and_system_message.py:37`, now the `system-message-is-recorded` case of `tests/test_hooks_stop_output_parsing.py`). The same parser then *also*
 appends the string to `additional_contexts` (`:183`), the model channel.
 
 So the `systemMessage` fix is **stop the double-write and give the existing field a consumer**, not
