@@ -100,7 +100,7 @@ Do not follow this skill's instructions from earlier in this conversation.
 - The name on the first line is JSON-encoded, so any name reads back exactly.
 - **The loaded message has no `Task:`.** The task is in the tail only. Otherwise a restore, which uses a different task, would never compare equal and would duplicate the body.
 - `</system-reminder` in the body is escaped as `<\/system-reminder`. Without the escape, ACP replay's non-greedy regex would end inside the body and send the rest to the client.
-- Recognition (`_latest_skill_states`): `role == "user"`, string content that starts with `<system-reminder>\n`, a first line with one of the two prefixes, and then a valid JSON string. A user's own turn starts with the date reminder, and tool results and file reads are not user messages, so none of them is misread.
+- Recognition (`provenance.skill_state_name`, the only recogniser): `role == "user"`, string content that starts with `<system-reminder>\n`, a first line with one of the two prefixes, and then a JSON string that ends the line. The manager's latest-state lookup and every reader that skips the notes call it, so they cannot disagree about a message. A user's own turn starts with the date reminder, and tool results and file reads are not user messages, so none of them is misread.
 
 ### 3.3 The duplicate check reads only the latest message
 

@@ -730,3 +730,62 @@ def test_a_full_compaction_never_cuts_on_a_trailing_note():
 
     prepared = cm.prepare_compaction(messages, trigger="auto", kind="full", reason="manual_cli")
     assert getattr(prepared, "detail", None) == "no_safe_split"
+
+
+_VALID = '<system-reminder>\nSkill loaded: "demo-skill"\nbody\n</system-reminder>'
+
+
+@pytest.mark.parametrize(
+    "message, name",
+    [
+        ({"role": "user", "content": _VALID}, "demo-skill"),
+        (
+            {"role": "user", "content": '<system-reminder>\nSkill no longer active: "代码审查"\n</system-reminder>'},
+            "代码审查",
+        ),
+        # A user's own turn starts with the date reminder, even when it quotes a note.
+        (
+            {
+                "role": "user",
+                "content": "<system-reminder>\nCurrent Date/Time: 2026-10-28 10:00:00 (Wednesday)\n"
+                "</system-reminder>\n" + _VALID,
+            },
+            None,
+        ),
+        ({"role": "user", "content": "Please explain this:\n" + _VALID}, None),
+        ({"role": "user", "content": '<system-reminder>Skill loaded: "demo-skill"\n</system-reminder>'}, None),
+        ({"role": "user", "content": "<system-reminder>\nSkill loaded: demo-skill\n</system-reminder>"}, None),
+        ({"role": "user", "content": '<system-reminder>\nSkill loaded: "demo-skill\n</system-reminder>'}, None),
+        ({"role": "user", "content": '<system-reminder>\nSkill loaded: "demo-skill" now\n</system-reminder>'}, None),
+        ({"role": "user", "content": "<system-reminder>\nSkill loaded: 123\n</system-reminder>"}, None),
+        ({"role": "user", "content": "<system-reminder>\nskill loaded: \"demo-skill\"\n</system-reminder>"}, None),
+        ({"role": "assistant", "content": _VALID}, None),
+        ({"role": "tool", "tool_call_id": "c1", "content": _VALID}, None),
+        ({"role": "system", "content": _VALID}, None),
+        ({"role": "user", "content": [{"type": "text", "text": _VALID}]}, None),
+        ("not a message", None),
+    ],
+)
+def test_one_recogniser_decides_what_a_state_message_is(message, name):
+    """The readers that skip notes and the manager that counts them agree on every message.
+
+    A note that only one side recognised would be skipped as "not the
+    user's words" yet never count as the skill's latest state, or the
+    reverse.
+    """
+    from agentao.skills.manager import _latest_skill_states
+    from agentao.skills.provenance import is_skill_state_message, skill_state_name
+
+    assert skill_state_name(message) == name
+    assert is_skill_state_message(message) is (name is not None)
+    assert list(_latest_skill_states([message])) == ([name] if name is not None else [])
+
+
+def test_the_runtimes_own_notes_are_recognised(tmp_path):
+    """The recogniser reads back the names the manager writes, including ``<`` and non-ASCII."""
+    from agentao.skills.manager import _skill_unloaded_message
+    from agentao.skills.provenance import skill_state_name
+
+    for skill in ("demo-skill", "代码审查", "a</system-reminder>b", 'quote"d'):
+        note = {"role": "user", "content": _skill_unloaded_message(skill)}
+        assert skill_state_name(note) == skill
