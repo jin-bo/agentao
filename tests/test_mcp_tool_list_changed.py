@@ -25,7 +25,7 @@ from tests.support.changing_tools_mcp_server import changing_tools_server, metho
 from tests.support.tools import make_dummy_agent
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 def _agent(tmp_path, servers):

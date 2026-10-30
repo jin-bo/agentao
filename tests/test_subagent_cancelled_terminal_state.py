@@ -37,7 +37,7 @@ from agentao.runtime.outcome import TurnOutcome
 from agentao.transport import EventType
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 class _FakeStream:
