@@ -127,6 +127,7 @@ testpaths = ["tests"]
 addopts = "--tb=short -m 'not slow'"
 markers = [
     "slow: tests that build / install / boot subprocess venvs (P0.7 clean-install smoke)",
+    "real_agentao_init: run without the conftest shim that fills Agentao(...) credentials in from env",
 ]
 
 [dependency-groups]

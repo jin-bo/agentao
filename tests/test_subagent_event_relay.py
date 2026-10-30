@@ -33,7 +33,8 @@ from agentao.host.models import (
 )
 from agentao.host.projection import SubagentRelay
 from agentao.llm.client import LLMClient
-from agentao.permissions import PermissionEngine
+
+from tests.support.subagents import make_parent
 
 
 pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
@@ -77,14 +78,8 @@ def _scripted_llm(monkeypatch):
 
 def _parent(tmp_path, *, relay=True, bg=False):
     (tmp_path / "a.txt").write_text("hi")
-    (tmp_path / "user").mkdir(exist_ok=True)
-    return Agentao(
-        working_directory=tmp_path, api_key="k",
-        base_url="https://test.local/v1", model="m",
-        enable_builtin_agents=True,
-        permission_engine=PermissionEngine(
-            project_root=tmp_path, user_root=tmp_path / "user",
-        ),
+    return make_parent(
+        tmp_path,
         bg_store=BackgroundTaskStore() if bg else None,
         relay_subagent_events=relay,
     )

@@ -21,9 +21,9 @@ from agentao.agent import Agentao
 from agentao.cancellation import AgentCancelledError, CancellationToken
 from agentao.host.projection import HostSubagentEmitter
 from agentao.outcome import TurnOutcome
-from agentao.permissions import PermissionEngine
 from agentao.transport import AgentEvent, EventType
 
+from tests.support.subagents import make_parent
 from tests.test_subagent_tool_call_id import _wrapper
 
 
@@ -40,15 +40,7 @@ class _Stream:
 
 @pytest.fixture
 def parent(tmp_path):
-    (tmp_path / "user").mkdir(exist_ok=True)
-    agent = Agentao(
-        working_directory=tmp_path, api_key="k",
-        base_url="https://test.local/v1", model="m",
-        enable_builtin_agents=True,
-        permission_engine=PermissionEngine(
-            project_root=tmp_path, user_root=tmp_path / "user",
-        ),
-    )
+    agent = make_parent(tmp_path)
     try:
         yield agent
     finally:

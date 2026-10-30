@@ -128,13 +128,16 @@ def _stub_llm_credentials(monkeypatch, _scrub_llm_env):
 
 
 @pytest.fixture(autouse=True)
-def _agentao_env_default_credentials(monkeypatch, _stub_llm_credentials):
+def _agentao_env_default_credentials(request, monkeypatch, _stub_llm_credentials):
     """Backfill explicit LLM kwargs on ``Agentao(...)`` from env.
 
     Mirrors what ``build_from_environment`` does, scoped per-test so
     production code under test never sees implicit env reads from
-    ``Agentao.__init__`` itself.
+    ``Agentao.__init__`` itself. A test marked ``real_agentao_init`` gets the
+    unpatched constructor, to test what it does without credentials.
     """
+    if request.node.get_closest_marker("real_agentao_init"):
+        return
     from agentao.agent import Agentao
     from agentao.embedding.factory import discover_llm_kwargs
 

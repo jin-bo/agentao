@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 
 import pytest
 
@@ -51,10 +50,20 @@ def _ev(session_id: str, *, tool_call_id: str = "tc", phase: str = "started"):
 def test_publish_without_subscriber_does_not_block():
     """Empty subscriber list short-circuits before touching the loop."""
     stream = EventStream()
-    t0 = time.monotonic()
-    for _ in range(100):
-        stream.publish(_ev("s-1"))
-    assert time.monotonic() - t0 < 0.1
+    # Bound but never run: a publish that tried to deliver through it would wait forever.
+    idle_loop = asyncio.new_event_loop()
+    stream.bind_loop(idle_loop)
+    try:
+        publisher = threading.Thread(
+            target=lambda: [stream.publish(_ev("s-1")) for _ in range(100)],
+            daemon=True,
+        )
+        publisher.start()
+        # A bound for a hang, not a speed check: loaded CI machines stay well under it.
+        publisher.join(timeout=5)
+        assert not publisher.is_alive()
+    finally:
+        idle_loop.close()
 
 
 # ---------------------------------------------------------------------------
