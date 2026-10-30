@@ -124,6 +124,9 @@ agent = Agentao(
 | `llm_client` | `LLMClient` | (constructed from credentials) | Inject a pre-built client to fully control logger / log file. **Mutually exclusive** with every raw model setting: `api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` / `prompt_cache` / `prompt_cache_ttl` / `api_format` (a host with its own client passes them to that client) |
 | `project_instructions` | `str` | (read from `<wd>/AGENTAO.md`) | Pass AGENTAO.md content directly — skips the disk read |
 
+The `openai-responses` wire preserves explicit `image_url.detail` values of `low`, `high` and `auto` when translating image parts. If detail is absent or unsupported, the adapter omits it; the endpoint applies its default. This translation leaves stored messages unchanged.
+
+
 ::: tip Async hosts use `arun()`
 `agent.chat(...)` is synchronous. Async hosts call `await agent.arun(user_message)`, which runs the turn on Agentao's own worker pool, not on the event loop's default executor. Cancellation, replay, and `max_iterations` semantics are identical across both surfaces. Why the pool is separate, and what that means for sizing: [2.3 Async hosts](./3-lifecycle#async-hosts-arun-and-the-turn-pool).
 :::

@@ -15,6 +15,8 @@ _Targeting 0.5.19. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **Responses image detail is preserved.** Explicit `image_url.detail` values of `low`, `high` and `auto` reach the Responses request instead of being omitted during translation. Absent or unsupported values keep the previous omission behavior; the stored message history is unchanged (#607).
+
 ---
 
 ## [0.5.18] — 2026-10-29

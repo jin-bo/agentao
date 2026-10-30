@@ -164,7 +164,11 @@ def _input_parts(content: Any) -> List[Dict[str, Any]]:
                     OPENAI_RESPONSES, "an image part needs a URL",
                 )})
                 continue
-            parts.append({"type": "input_image", "image_url": url})
+            image = {"type": "input_image", "image_url": url}
+            detail = (part.get("image_url") or {}).get("detail")
+            if detail in ("low", "high", "auto"):
+                image["detail"] = detail
+            parts.append(image)
         else:
             raise ValueError(
                 f"openai-responses: unsupported content part type {kind!r}"
