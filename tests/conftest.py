@@ -262,6 +262,31 @@ _preexisting_cwd_artifacts = pytest.StashKey[frozenset]()
 _leaked_cwd_artifacts = pytest.StashKey[list]()
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--shard", default=None, metavar="I/N",
+        help="Run only shard I of N (1-based). CI splits the slowest jobs this way.",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    spec = config.getoption("--shard")
+    if spec is None:
+        return
+    from tests.support.sharding import parse_shard, shard_of
+
+    try:
+        index, count = parse_shard(spec)
+    except ValueError as exc:
+        raise pytest.UsageError(str(exc)) from None
+    keep, drop = [], []
+    for item in items:
+        (keep if shard_of(item.nodeid, count) == index else drop).append(item)
+    if drop:
+        config.hook.pytest_deselected(items=drop)
+        items[:] = keep
+
+
 def pytest_sessionstart(session):
     session.config.stash[_preexisting_cwd_artifacts] = frozenset(
         name for name in _CWD_ARTIFACTS if (_REPO_ROOT / name).exists()
@@ -308,7 +333,15 @@ def _prompt_toolkit_without_a_console():
 
     Installed only when the real output cannot be created, so on a machine that has one
     nothing changes and the tests keep exercising the same code they always did.
+
+    Nothing to do without prompt_toolkit (the ``cli`` extra): the Typing gate job runs
+    its tests in a core-only environment, where no ``PromptSession`` can be built.
     """
+    try:
+        import prompt_toolkit  # noqa: F401 — probe for the cli extra
+    except ImportError:
+        yield
+        return
     from prompt_toolkit.application import create_app_session
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.output.defaults import create_output
