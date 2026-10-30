@@ -26,23 +26,17 @@ def _outcome(reason=None):
 
 
 class TestBudgetReasonsMap:
-    def test_length_truncated_is_max_tokens(self):
+    @pytest.mark.parametrize("reason, max_iterations_hit, stop_reason", [
+        pytest.param("length_truncated", False, "max_tokens", id="length-truncated"),
+        pytest.param("doom_loop", False, "max_turn_requests", id="doom-loop"),
+        # Not an incomplete_reason -- it rides the transport flag.
+        pytest.param(None, True, "max_turn_requests", id="iteration-budget"),
+    ])
+    def test_a_budget_reason_maps(self, reason, max_iterations_hit, stop_reason):
         assert _stop_reason_for(
-            cancelled=False, outcome=_outcome("length_truncated"),
-            max_iterations_hit=False,
-        ) == "max_tokens"
-
-    def test_doom_loop_is_max_turn_requests(self):
-        assert _stop_reason_for(
-            cancelled=False, outcome=_outcome("doom_loop"),
-            max_iterations_hit=False,
-        ) == "max_turn_requests"
-
-    def test_iteration_budget_is_max_turn_requests(self):
-        """Not an incomplete_reason -- it rides the transport flag."""
-        assert _stop_reason_for(
-            cancelled=False, outcome=_outcome(None), max_iterations_hit=True,
-        ) == "max_turn_requests"
+            cancelled=False, outcome=_outcome(reason),
+            max_iterations_hit=max_iterations_hit,
+        ) == stop_reason
 
 
 class TestReasonsThatStayEndTurn:

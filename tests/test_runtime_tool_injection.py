@@ -114,11 +114,15 @@ def test_add_tool_replace_on_absent_name_is_plain_add(tmp_path, caplog):
 # ── add_tool: reserved-name + shape guards ────────────────────────────────
 
 
-def test_add_tool_mcp_prefix_rejected(tmp_path):
+@pytest.mark.parametrize("name, match", [
+    pytest.param("mcp_alpha_ping", "reserved 'mcp_' prefix", id="mcp-prefix"),
+    pytest.param("", "non-empty string", id="empty-name"),
+])
+def test_add_tool_rejects_a_name(tmp_path, name, match):
     agent = make_dummy_agent(tmp_path)
     try:
-        with pytest.raises(ValueError, match="reserved 'mcp_' prefix"):
-            agent.add_tool(NamedTool("mcp_alpha_ping"))
+        with pytest.raises(ValueError, match=match):
+            agent.add_tool(NamedTool(name))
     finally:
         agent.close()
 
@@ -130,15 +134,6 @@ def test_add_tool_plan_name_rejected(tmp_path, replace):
     try:
         with pytest.raises(ValueError, match="reserved for plan mode"):
             agent.add_tool(NamedTool("plan_save"), replace=replace)
-    finally:
-        agent.close()
-
-
-def test_add_tool_empty_name_rejected(tmp_path):
-    agent = make_dummy_agent(tmp_path)
-    try:
-        with pytest.raises(ValueError, match="non-empty string"):
-            agent.add_tool(NamedTool(""))
     finally:
         agent.close()
 
@@ -164,30 +159,17 @@ def test_remove_tool_unknown_returns_false(tmp_path):
         agent.close()
 
 
-def test_remove_tool_mcp_prefix_rejected(tmp_path):
+@pytest.mark.parametrize("name, match", [
+    pytest.param("mcp_alpha_ping", "reserved 'mcp_' prefix", id="mcp-prefix"),
+    pytest.param("plan_finalize", "reserved for plan mode", id="plan-name"),
+    # A non-string name fails with a clear ValueError, not an AttributeError.
+    pytest.param(123, "must be a string", id="non-string"),
+])
+def test_remove_tool_rejects_a_name(tmp_path, name, match):
     agent = make_dummy_agent(tmp_path)
     try:
-        with pytest.raises(ValueError, match="reserved 'mcp_' prefix"):
-            agent.remove_tool("mcp_alpha_ping")
-    finally:
-        agent.close()
-
-
-def test_remove_tool_plan_name_rejected(tmp_path):
-    agent = make_dummy_agent(tmp_path)
-    try:
-        with pytest.raises(ValueError, match="reserved for plan mode"):
-            agent.remove_tool("plan_finalize")
-    finally:
-        agent.close()
-
-
-def test_remove_tool_non_string_raises_clean_error(tmp_path):
-    """A non-string name fails with a clear ValueError, not an AttributeError."""
-    agent = make_dummy_agent(tmp_path)
-    try:
-        with pytest.raises(ValueError, match="must be a string"):
-            agent.remove_tool(123)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match=match):
+            agent.remove_tool(name)
     finally:
         agent.close()
 

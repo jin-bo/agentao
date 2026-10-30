@@ -47,67 +47,44 @@ def _bind(tool: EditTool, root: Path) -> EditTool:
 # ---------------------------------------------------------------------------
 
 
-def test_smart_double_quotes_in_source_match_ascii_prompt(project_root):
-    target = project_root / "doc.py"
-    target.write_text('name = “world”\n', encoding='utf-8')  # source has smart quotes
+@pytest.mark.parametrize("source, old_text, new_text, expected", [
+    # The source has smart quotes, the prompt ASCII quotes.
+    pytest.param(
+        'name = “world”\n', 'name = "world"',
+        'name = "earth"', 'name = "earth"\n',
+        id='smart-double-quotes',
+    ),
+    # The source has an em-dash, the prompt an ASCII hyphen.
+    pytest.param(
+        'a — b\n', 'a - b',
+        'a - c', 'a - c\n',
+        id='em-dash',
+    ),
+    # The source has an NBSP between words, the prompt an ASCII space.
+    pytest.param(
+        'foo\xa0bar\n', 'foo bar',
+        'foo qux', 'foo qux\n',
+        id='nbsp',
+    ),
+    # Smart double quote + em-dash + NBSP + ideographic space, against all
+    # ASCII equivalents.
+    pytest.param(
+        'say “hi”—then\xa0pause\u3000end\n', 'say "hi"-then pause end',
+        'say "hi" then continue', 'say "hi" then continue\n',
+        id='mixed-typography',
+    ),
+])
+def test_typographic_source_matches_an_ascii_prompt(project_root, source, old_text, new_text, expected):
+    target = project_root / "doc.txt"
+    target.write_text(source, encoding='utf-8')
 
     tool = _bind(EditTool(), project_root)
-    result = tool.execute(
-        file_path="doc.py",
-        old_text='name = "world"',  # prompt uses ASCII quotes
-        new_text='name = "earth"',
-    )
+    result = tool.execute(file_path="doc.txt", old_text=old_text, new_text=new_text)
 
     assert "Replaced" in result
     assert _EDIT_SUFFIX_UNICODE in result
-    # File now contains the replacement (ASCII quotes from new_text)
-    assert target.read_text(encoding='utf-8') == 'name = "earth"\n'
-
-
-def test_em_dash_in_source_matches_ascii_hyphen(project_root):
-    target = project_root / "log.txt"
-    target.write_text('a — b\n', encoding='utf-8')  # em-dash
-
-    tool = _bind(EditTool(), project_root)
-    result = tool.execute(
-        file_path="log.txt",
-        old_text='a - b',  # ASCII hyphen
-        new_text='a - c',
-    )
-
-    assert _EDIT_SUFFIX_UNICODE in result
-    assert target.read_text(encoding='utf-8') == 'a - c\n'
-
-
-def test_nbsp_in_source_matches_ascii_space(project_root):
-    target = project_root / "x.txt"
-    target.write_text('foo bar\n', encoding='utf-8')  # NBSP between words
-
-    tool = _bind(EditTool(), project_root)
-    result = tool.execute(
-        file_path="x.txt",
-        old_text='foo bar',  # ASCII space
-        new_text='foo qux',
-    )
-
-    assert _EDIT_SUFFIX_UNICODE in result
-    assert target.read_text(encoding='utf-8') == 'foo qux\n'
-
-
-def test_mixed_typography_normalized(project_root):
-    target = project_root / "mixed.md"
-    # Source has: smart double quote + em-dash + NBSP + ideographic space
-    target.write_text('say “hi”—then pause　end\n', encoding='utf-8')
-
-    tool = _bind(EditTool(), project_root)
-    result = tool.execute(
-        file_path="mixed.md",
-        old_text='say "hi"-then pause end',  # all ASCII equivalents
-        new_text='say "hi" then continue',
-    )
-
-    assert _EDIT_SUFFIX_UNICODE in result
-    assert target.read_text(encoding='utf-8') == 'say "hi" then continue\n'
+    # The file now holds the replacement exactly as new_text spelled it.
+    assert target.read_text(encoding='utf-8') == expected
 
 
 # ---------------------------------------------------------------------------
@@ -123,70 +100,44 @@ class TestNfkcFolding:
     from pi-mono ``edit-diff.ts::normalizeForFuzzyMatch``.
     """
 
-    def test_fullwidth_punctuation_in_source_matches_ascii_prompt(self, project_root):
-        """The CJK case: source written with 全角 punctuation, prompt in 半角."""
-        target = project_root / "cjk.py"
-        target.write_text('print（"你好"）；\n', encoding='utf-8')
+    @pytest.mark.parametrize("source, old_text, new_text, expected", [
+        # The CJK case: source written with 全角 punctuation, prompt in 半角.
+        pytest.param(
+            'print（"你好"）；\n', 'print("你好");',
+            'print("世界")', 'print("世界")\n',
+            id='fullwidth-punctuation-in-source',
+        ),
+        pytest.param(
+            'ＴＯＴＡＬ＝４２\n', 'TOTAL=42',
+            'TOTAL=43', 'TOTAL=43\n',
+            id='fullwidth-alphanumerics',
+        ),
+        # Reverse direction: the *model* emitted 全角. Both sides normalize, so
+        # tier 3 must still land.
+        pytest.param(
+            'total = 42\n', 'ｔｏｔａｌ\u3000＝\u3000４２',
+            'total = 43', 'total = 43\n',
+            id='fullwidth-prompt-ascii-source',
+        ),
+        # Ordering regression. U+FE58 ``﹘`` (CJK compatibility small em-dash)
+        # has no table entry. NFKC folds it to U+2014, which the table then
+        # maps to ASCII ``-``. Table-first would strand it one step short and
+        # this falls to tier 4.
+        pytest.param(
+            'a ﹘ b\n', 'a - b',
+            'a + b', 'a + b\n',
+            id='nfkc-runs-before-the-codepoint-table',
+        ),
+    ])
+    def test_a_compatibility_form_folds(self, project_root, source, old_text, new_text, expected):
+        target = project_root / "doc.txt"
+        target.write_text(source, encoding='utf-8')
 
         tool = _bind(EditTool(), project_root)
-        result = tool.execute(
-            file_path="cjk.py",
-            old_text='print("你好");',
-            new_text='print("世界")',
-        )
+        result = tool.execute(file_path="doc.txt", old_text=old_text, new_text=new_text)
 
         assert _EDIT_SUFFIX_UNICODE in result
-        assert target.read_text(encoding='utf-8') == 'print("世界")\n'
-
-    def test_fullwidth_alphanumerics_fold_to_ascii(self, project_root):
-        target = project_root / "fw.txt"
-        target.write_text("ＴＯＴＡＬ＝４２\n", encoding='utf-8')
-
-        tool = _bind(EditTool(), project_root)
-        result = tool.execute(
-            file_path="fw.txt",
-            old_text="TOTAL=42",
-            new_text="TOTAL=43",
-        )
-
-        assert _EDIT_SUFFIX_UNICODE in result
-        assert target.read_text(encoding='utf-8') == "TOTAL=43\n"
-
-    def test_prompt_is_fullwidth_and_source_is_ascii(self, project_root):
-        """Reverse direction: the *model* emitted 全角. Both sides normalize,
-        so tier 3 must still land."""
-        target = project_root / "rev.txt"
-        target.write_text("total = 42\n", encoding='utf-8')
-
-        tool = _bind(EditTool(), project_root)
-        result = tool.execute(
-            file_path="rev.txt",
-            old_text="ｔｏｔａｌ　＝　４２",
-            new_text="total = 43",
-        )
-
-        assert _EDIT_SUFFIX_UNICODE in result
-        assert target.read_text(encoding='utf-8') == "total = 43\n"
-
-    def test_nfkc_runs_before_the_codepoint_table(self, project_root):
-        """Ordering regression.
-
-        U+FE58 ``﹘`` (CJK compatibility small em-dash) has no table entry.
-        NFKC folds it to U+2014, which the table then maps to ASCII ``-``.
-        Table-first would strand it one step short and this falls to tier 4.
-        """
-        target = project_root / "order.txt"
-        target.write_text("a ﹘ b\n", encoding='utf-8')
-
-        tool = _bind(EditTool(), project_root)
-        result = tool.execute(
-            file_path="order.txt",
-            old_text="a - b",
-            new_text="a + b",
-        )
-
-        assert _EDIT_SUFFIX_UNICODE in result
-        assert target.read_text(encoding='utf-8') == "a + b\n"
+        assert target.read_text(encoding='utf-8') == expected
 
     def test_fullwidth_on_both_sides_still_uses_tier_1(self, project_root):
         """NFKC must not steal a byte-exact match. A file and prompt that agree
