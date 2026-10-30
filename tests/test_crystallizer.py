@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 
 from agentao.memory.crystallizer import (
     MemoryCrystallizer,
@@ -104,26 +105,27 @@ def test_suggest_prompt_omits_skills_block_when_empty():
 # parse_noop_skip
 # ---------------------------------------------------------------------------
 
-def test_parse_noop_skip_legacy_bare_form():
-    assert parse_noop_skip("NO_PATTERN_FOUND") == (None, "")
-
-
-def test_parse_noop_skip_with_known_gate_and_reason():
-    out = parse_noop_skip(
-        "NO_PATTERN_FOUND:covered_by_existing_skill Already covered by pdf-merge."
-    )
-    assert out == ("covered_by_existing_skill", "Already covered by pdf-merge.")
-
-
-def test_parse_noop_skip_with_known_gate_no_reason():
-    out = parse_noop_skip("NO_PATTERN_FOUND:not_concrete_steps")
-    assert out == ("not_concrete_steps", "")
-
-
-def test_parse_noop_skip_unknown_gate_falls_back_to_legacy():
-    """Forward-compat: a model that emits a gate id we don't know about
-    must not crash the CLI — fall back to the legacy bare form."""
-    assert parse_noop_skip("NO_PATTERN_FOUND:not_a_real_gate some reason") == (None, "")
+@pytest.mark.parametrize("text, parsed", [
+    pytest.param("NO_PATTERN_FOUND", (None, ""), id="legacy-bare-form"),
+    pytest.param("NO_PATTERN_FOUND:covered_by_existing_skill Already covered by pdf-merge.",
+                 ("covered_by_existing_skill", "Already covered by pdf-merge."),
+                 id="known-gate-and-reason"),
+    pytest.param("NO_PATTERN_FOUND:not_concrete_steps", ("not_concrete_steps", ""),
+                 id="known-gate-no-reason"),
+    # Forward-compat: a model that emits a gate id we don't know about must
+    # not crash the CLI — fall back to the legacy bare form.
+    pytest.param("NO_PATTERN_FOUND:not_a_real_gate some reason", (None, ""),
+                 id="unknown-gate-falls-back-to-legacy"),
+    pytest.param("  NO_PATTERN_FOUND:ordinary_agent_knowledge boring  ",
+                 ("ordinary_agent_knowledge", "boring"), id="tolerates-whitespace"),
+    # Defense against models that paste the bare token plus a follow-up
+    # paragraph — only the first line is the signal.
+    pytest.param("NO_PATTERN_FOUND:too_session_specific one-off cleanup\n\n"
+                 "(extra commentary the model added)",
+                 ("too_session_specific", "one-off cleanup"), id="uses-only-first-line"),
+])
+def test_parse_noop_skip(text, parsed):
+    assert parse_noop_skip(text) == parsed
 
 
 def test_parse_noop_skip_real_draft_returns_none():
@@ -135,23 +137,6 @@ def test_parse_noop_skip_real_draft_returns_none():
 def test_parse_noop_skip_empty_returns_none():
     assert parse_noop_skip("") is None
     assert parse_noop_skip("   \n  ") is None
-
-
-def test_parse_noop_skip_tolerates_whitespace():
-    out = parse_noop_skip(
-        "  NO_PATTERN_FOUND:ordinary_agent_knowledge boring  "
-    )
-    assert out == ("ordinary_agent_knowledge", "boring")
-
-
-def test_parse_noop_skip_uses_only_first_line():
-    """Defense against models that paste the bare token plus a
-    follow-up paragraph — only the first line is the signal."""
-    out = parse_noop_skip(
-        "NO_PATTERN_FOUND:too_session_specific one-off cleanup\n\n"
-        "(extra commentary the model added)"
-    )
-    assert out == ("too_session_specific", "one-off cleanup")
 
 
 # ---------------------------------------------------------------------------
@@ -344,15 +329,16 @@ class TestExtractFromSummary:
         assert out[0].type == "constraint"
         assert out[0].scope == "project"
 
-    def test_extract_decision_english(self):
+    @pytest.mark.parametrize("summary, type_", [
+        pytest.param("We decided to use PostgreSQL for storage", "decision", id="decision-english"),
+        pytest.param("Workflow: write tests then implement", "workflow", id="workflow-english"),
+        pytest.param("不要直接 push 到 main 分支", "constraint", id="constraint-chinese"),
+        pytest.param("我们决定使用 Docker 部署服务", "decision", id="decision-chinese"),
+    ])
+    def test_extract_finds_the_type(self, summary, type_):
         c = MemoryCrystallizer()
-        out = c.extract_from_summary("We decided to use PostgreSQL for storage")
-        assert any(p.type == "decision" for p in out)
-
-    def test_extract_workflow_english(self):
-        c = MemoryCrystallizer()
-        out = c.extract_from_summary("Workflow: write tests then implement")
-        assert any(p.type == "workflow" for p in out)
+        out = c.extract_from_summary(summary)
+        assert any(p.type == type_ for p in out)
 
     def test_extract_preference_chinese(self):
         c = MemoryCrystallizer()
@@ -360,16 +346,6 @@ class TestExtractFromSummary:
         assert len(out) >= 1
         assert out[0].type == "preference"
         assert out[0].scope == "user"
-
-    def test_extract_constraint_chinese(self):
-        c = MemoryCrystallizer()
-        out = c.extract_from_summary("不要直接 push 到 main 分支")
-        assert any(p.type == "constraint" for p in out)
-
-    def test_extract_decision_chinese(self):
-        c = MemoryCrystallizer()
-        out = c.extract_from_summary("我们决定使用 Docker 部署服务")
-        assert any(p.type == "decision" for p in out)
 
     def test_extract_no_patterns_returns_empty(self):
         c = MemoryCrystallizer()

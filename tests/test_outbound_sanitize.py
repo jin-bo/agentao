@@ -64,21 +64,25 @@ class TestCanonicalizeToolArguments:
         raw = '{"b": 2, "a": 1}'
         assert canonicalize_tool_arguments(raw, tool_name="t") is raw
 
-    def test_repaired_input_emitted_as_compact_canonical(self):
+    @pytest.mark.parametrize("raw, canonical", [
         # Repair happened (single quotes), so we re-emit canonical compact
         # form — the original bytes were unusable anyway.
-        out = canonicalize_tool_arguments("{'b': 2, 'a': 1}", tool_name="t")
-        assert out == '{"b":2,"a":1}'
-
-    def test_repaired_python_literal_emitted_as_json(self):
-        out = canonicalize_tool_arguments("{'k': 1}", tool_name="t")
-        assert out == '{"k":1}'
-
-    def test_fenced_args_canonicalised(self):
-        out = canonicalize_tool_arguments(
-            '```json\n{"command": "ls"}\n```', tool_name="t"
-        )
-        assert out == '{"command":"ls"}'
+        pytest.param("{'b': 2, 'a': 1}", '{"b":2,"a":1}', id="repaired-input-is-compact"),
+        pytest.param("{'k': 1}", '{"k":1}', id="python-literal-becomes-json"),
+        pytest.param('```json\n{"command": "ls"}\n```', '{"command":"ls"}', id="fenced"),
+        # When repair forces re-serialization, ensure_ascii=False keeps
+        # non-ASCII bytes as-is for readable wire bytes and logs.
+        pytest.param("{'q': '你好'}", '{"q":"你好"}', id="non-ascii-preserved"),
+        pytest.param('{"k": 1,}', '{"k":1}', id="trailing-comma"),
+        # Outbound enables bracket-balance — a single missing ``}`` at the
+        # end is recoverable.
+        pytest.param('{"k": 1', '{"k":1}', id="simple-unclosed-brace"),
+        # Mid-value truncation is unrecoverable — the canonicaliser must
+        # still produce wire-valid JSON so the next API call succeeds.
+        pytest.param('{"command": "ls", "timeout":', "{}", id="complex-truncation-is-empty-object"),
+    ])
+    def test_repaired_arguments_are_canonical(self, raw, canonical):
+        assert canonicalize_tool_arguments(raw, tool_name="t") == canonical
 
     def test_unparseable_returns_empty_object_string(self, caplog):
         logger = logging.getLogger("test.outbound")
@@ -102,30 +106,6 @@ class TestCanonicalizeToolArguments:
         # Surrogate gone, output is wire-valid JSON, and round-trips.
         assert SURROGATE_RE.search(out) is None
         assert json.loads(out) == {"text": "ok�bad"}
-
-    def test_non_ascii_preserved_when_repair_needed(self):
-        # When repair forces re-serialization, ensure_ascii=False keeps
-        # non-ASCII bytes as-is for readable wire bytes and logs.
-        out = canonicalize_tool_arguments("{'q': '你好'}", tool_name="t")
-        assert out == '{"q":"你好"}'
-
-    def test_trailing_comma_repaired(self):
-        out = canonicalize_tool_arguments('{"k": 1,}', tool_name="t")
-        assert out == '{"k":1}'
-
-    def test_simple_unclosed_brace_recovered_via_bracket_balance(self):
-        # Outbound enables bracket-balance — a single missing ``}`` at the
-        # end is recoverable.
-        out = canonicalize_tool_arguments('{"k": 1', tool_name="t")
-        assert out == '{"k":1}'
-
-    def test_complex_truncation_falls_back_to_empty_object(self):
-        # Mid-value truncation is unrecoverable — the canonicaliser must
-        # still produce wire-valid JSON so the next API call succeeds.
-        out = canonicalize_tool_arguments(
-            '{"command": "ls", "timeout":', tool_name="t"
-        )
-        assert out == "{}"
 
 
 # ---------------------------------------------------------------------------
@@ -201,25 +181,16 @@ class TestSanitizeAssistantMessage:
 
 
 class TestSerializeToolCallCanonicalisation:
-    def test_manual_path_canonicalises_arguments(self):
-        tc = make_tool_call("call-1", "t", "{'k': 1}")
+    @pytest.mark.parametrize("raw, pydantic, wire", [
+        pytest.param("{'k': 1}", False, '{"k":1}', id="manual-path-canonicalises"),
+        pytest.param('```json\n{"x": 2}\n```', True, '{"x":2}', id="pydantic-path-canonicalises"),
+        pytest.param("{garbage", False, "{}", id="unparseable-becomes-empty-object"),
+        pytest.param('{"k":1}', False, '{"k":1}', id="already-canonical-unchanged"),
+    ])
+    def test_arguments_reach_history_canonical(self, raw, pydantic, wire):
+        tc = make_tool_call("call-1", "t", raw, pydantic=pydantic)
         out = _serialize_tool_call(tc)
-        assert out["function"]["arguments"] == '{"k":1}'
-
-    def test_pydantic_path_canonicalises_arguments(self):
-        tc = make_tool_call("call-2", "t", '```json\n{"x": 2}\n```', pydantic=True)
-        out = _serialize_tool_call(tc)
-        assert out["function"]["arguments"] == '{"x":2}'
-
-    def test_unparseable_args_become_empty_object(self):
-        tc = make_tool_call("call-3", "t", "{garbage")
-        out = _serialize_tool_call(tc)
-        assert out["function"]["arguments"] == "{}"
-
-    def test_already_canonical_args_unchanged(self):
-        tc = make_tool_call("call-4", "t", '{"k":1}')
-        out = _serialize_tool_call(tc)
-        assert out["function"]["arguments"] == '{"k":1}'
+        assert out["function"]["arguments"] == wire
 
     def test_surrogate_in_args_stripped(self):
         tc = make_tool_call("call-5", "t", '{"x": "a\ud800b"}')
@@ -263,13 +234,12 @@ class TestNonJsonRepairableValues:
         # path is acceptable, only the outbound result matters.
         assert any(r.levelname == "WARNING" for r in caplog.records)
 
-    def test_python_set_value_falls_back_to_empty_object(self):
-        out = canonicalize_tool_arguments("{'x': {1, 2}}", tool_name="t")
-        assert out == "{}"
-
-    def test_python_complex_value_falls_back_to_empty_object(self):
-        out = canonicalize_tool_arguments("{'x': 1+2j}", tool_name="t")
-        assert out == "{}"
+    @pytest.mark.parametrize("raw", [
+        pytest.param("{'x': {1, 2}}", id="set"),
+        pytest.param("{'x': 1+2j}", id="complex"),
+    ])
+    def test_python_value_falls_back_to_empty_object(self, raw):
+        assert canonicalize_tool_arguments(raw, tool_name="t") == "{}"
 
 
 # ---------------------------------------------------------------------------

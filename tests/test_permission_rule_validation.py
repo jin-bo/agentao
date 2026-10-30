@@ -137,55 +137,31 @@ class TestFields:
 
 
 class TestTypes:
-    def test_rule_is_not_an_object(self):
-        assert _reasons(["allow everything"]) == [
-            "rule must be an object, got str",
-        ]
-
-    def test_tool_is_not_a_string(self):
-        assert _reasons([{"tool": 7, "action": "allow"}]) == [
-            "'tool' must be a string, got int",
-        ]
-
-    def test_action_is_not_a_string(self):
-        assert _reasons([{"tool": "x", "action": 1}]) == [
-            "'action' must be a string, got int",
-        ]
-
-    def test_args_is_not_an_object(self):
-        assert _reasons([{"tool": "x", "action": "allow", "args": "^git "}]) == [
-            "'args' must be an object, got str",
-        ]
-
-    def test_args_value_is_not_a_string(self):
-        assert _reasons([{"tool": "x", "action": "allow", "args": {"command": 1}}]) == [
-            "'args.command' must be a regex string, got int",
-        ]
-
-    def test_domain_is_not_an_object(self):
-        assert _reasons([{"tool": "web_fetch", "action": "allow",
-                          "domain": "example.com"}]) == [
-            "'domain' must be an object, got str",
-        ]
-
-    def test_domain_allowlist_is_a_string_not_a_list(self):
-        """The quiet one — no exception anywhere, a deny just stops firing."""
-        assert _reasons([{"tool": "web_fetch", "action": "deny",
-                          "domain": {"allowlist": ".example.com"}}]) == [
-            "'domain.allowlist' must be a list of strings, got str",
-        ]
-
-    def test_domain_list_entry_is_not_a_string(self):
-        assert _reasons([{"tool": "web_fetch", "action": "deny",
-                          "domain": {"blocklist": [".ok.example", 7]}}]) == [
-            "'domain.blocklist[1]' must be a string, got int",
-        ]
-
-    def test_domain_url_arg_is_not_a_string(self):
-        assert _reasons([{"tool": "web_fetch", "action": "allow",
-                          "domain": {"url_arg": ["url"]}}]) == [
-            "'domain.url_arg' must be a string, got list",
-        ]
+    @pytest.mark.parametrize("rule, reason", [
+        pytest.param("allow everything", "rule must be an object, got str", id="rule-not-an-object"),
+        pytest.param({"tool": 7, "action": "allow"}, "'tool' must be a string, got int",
+                     id="tool-not-a-string"),
+        pytest.param({"tool": "x", "action": 1}, "'action' must be a string, got int",
+                     id="action-not-a-string"),
+        pytest.param({"tool": "x", "action": "allow", "args": "^git "},
+                     "'args' must be an object, got str", id="args-not-an-object"),
+        pytest.param({"tool": "x", "action": "allow", "args": {"command": 1}},
+                     "'args.command' must be a regex string, got int", id="args-value-not-a-string"),
+        pytest.param({"tool": "web_fetch", "action": "allow", "domain": "example.com"},
+                     "'domain' must be an object, got str", id="domain-not-an-object"),
+        # The quiet one — no exception anywhere, a deny just stops firing.
+        pytest.param({"tool": "web_fetch", "action": "deny", "domain": {"allowlist": ".example.com"}},
+                     "'domain.allowlist' must be a list of strings, got str",
+                     id="domain-allowlist-is-a-string-not-a-list"),
+        pytest.param({"tool": "web_fetch", "action": "deny",
+                      "domain": {"blocklist": [".ok.example", 7]}},
+                     "'domain.blocklist[1]' must be a string, got int",
+                     id="domain-list-entry-not-a-string"),
+        pytest.param({"tool": "web_fetch", "action": "allow", "domain": {"url_arg": ["url"]}},
+                     "'domain.url_arg' must be a string, got list", id="domain-url-arg-not-a-string"),
+    ])
+    def test_a_wrong_type_is_reported(self, rule, reason):
+        assert _reasons([rule]) == [reason]
 
     def test_multiple_problems_in_one_rule_are_all_reported(self):
         """One pass, not fail-fast — a user fixing a config wants the list."""

@@ -16,35 +16,28 @@ def guard():
 
 
 class TestNormalizeKey:
-    def test_basic(self, guard):
-        assert guard.normalize_key("User Preference") == "user_preference"
-
-    def test_special_chars(self, guard):
-        assert guard.normalize_key("my-key.name!") == "my_key_name"
-
-    def test_multiple_spaces(self, guard):
-        assert guard.normalize_key("  lots   of   spaces  ") == "lots_of_spaces"
+    @pytest.mark.parametrize("key, normalized", [
+        pytest.param("User Preference", "user_preference", id="basic"),
+        pytest.param("my-key.name!", "my_key_name", id="special-chars"),
+        pytest.param("  lots   of   spaces  ", "lots_of_spaces", id="multiple-spaces"),
+        pytest.param("version 3.2", "version_3_2", id="preserves-numbers"),
+        pytest.param("a___b", "a_b", id="underscores-collapsed"),
+        pytest.param("_hello_", "hello", id="leading-trailing-underscores-stripped"),
+    ])
+    def test_a_key_is_normalized(self, guard, key, normalized):
+        assert guard.normalize_key(key) == normalized
 
     def test_max_length(self, guard):
         long_key = "a" * 200
         assert len(guard.normalize_key(long_key)) <= 80
 
-    def test_empty_raises(self, guard):
+    @pytest.mark.parametrize("key", [
+        pytest.param("   ", id="blank"),
+        pytest.param("!@#$%", id="only-special-chars"),
+    ])
+    def test_a_key_that_normalizes_to_nothing_raises(self, guard, key):
         with pytest.raises(ValueError, match="empty"):
-            guard.normalize_key("   ")
-
-    def test_only_special_chars_raises(self, guard):
-        with pytest.raises(ValueError, match="empty"):
-            guard.normalize_key("!@#$%")
-
-    def test_preserves_numbers(self, guard):
-        assert guard.normalize_key("version 3.2") == "version_3_2"
-
-    def test_underscores_collapsed(self, guard):
-        assert guard.normalize_key("a___b") == "a_b"
-
-    def test_leading_trailing_underscores_stripped(self, guard):
-        assert guard.normalize_key("_hello_") == "hello"
+            guard.normalize_key(key)
 
 
 # ---------------------------------------------------------------------------
@@ -56,13 +49,13 @@ class TestValidateTitle:
     def test_basic(self, guard):
         assert guard.validate_title("  My Title  ") == "My Title"
 
-    def test_newline_raises(self, guard):
+    @pytest.mark.parametrize("title", [
+        pytest.param("line1\nline2", id="newline"),
+        pytest.param("line1\rline2", id="carriage-return"),
+    ])
+    def test_a_line_break_raises(self, guard, title):
         with pytest.raises(ValueError, match="single-line"):
-            guard.validate_title("line1\nline2")
-
-    def test_carriage_return_raises(self, guard):
-        with pytest.raises(ValueError, match="single-line"):
-            guard.validate_title("line1\rline2")
+            guard.validate_title(title)
 
     def test_max_length(self, guard):
         long_title = "x" * 200
@@ -97,33 +90,19 @@ class TestValidateContent:
 
 
 class TestDetectSensitive:
-    def test_private_key(self, guard):
+    @pytest.mark.parametrize("content", [
+        pytest.param("-----BEGIN RSA PRIVATE KEY-----\nxxx", id="private-key"),
+        pytest.param("Authorization: Bearer eyJhbGciOi.token.here", id="bearer-token"),
+        pytest.param("api_key = sk-1234567890abcdef", id="api-key-assignment"),
+        pytest.param("password: myS3cretP@ss!", id="password-assignment"),
+        pytest.param("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij", id="github-token"),
+        pytest.param("sk-abcdefghijklmnopqrstuvwxyz1234567890", id="openai-key"),
+        pytest.param("AKIAIOSFODNN7EXAMPLE", id="aws-key"),
+        pytest.param("secret=my_super_secret_value", id="secret-assignment"),
+    ])
+    def test_sensitive_content_is_refused(self, guard, content):
         with pytest.raises(SensitiveMemoryError):
-            guard.detect_sensitive("-----BEGIN RSA PRIVATE KEY-----\nxxx")
-
-    def test_bearer_token(self, guard):
-        with pytest.raises(SensitiveMemoryError):
-            guard.detect_sensitive("Authorization: Bearer eyJhbGciOi.token.here")
-
-    def test_api_key_assignment(self, guard):
-        with pytest.raises(SensitiveMemoryError):
-            guard.detect_sensitive("api_key = sk-1234567890abcdef")
-
-    def test_password_assignment(self, guard):
-        with pytest.raises(SensitiveMemoryError):
-            guard.detect_sensitive("password: myS3cretP@ss!")
-
-    def test_github_token(self, guard):
-        with pytest.raises(SensitiveMemoryError):
-            guard.detect_sensitive("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij")
-
-    def test_openai_key(self, guard):
-        with pytest.raises(SensitiveMemoryError):
-            guard.detect_sensitive("sk-abcdefghijklmnopqrstuvwxyz1234567890")
-
-    def test_aws_key(self, guard):
-        with pytest.raises(SensitiveMemoryError):
-            guard.detect_sensitive("AKIAIOSFODNN7EXAMPLE")
+            guard.detect_sensitive(content)
 
     def test_safe_content_passes(self, guard):
         # Should not raise
@@ -134,10 +113,6 @@ class TestDetectSensitive:
         # "token" as a concept (not assignment) should be OK
         guard.detect_sensitive("The tokenizer splits text into tokens")
 
-    def test_secret_in_assignment_form(self, guard):
-        with pytest.raises(SensitiveMemoryError):
-            guard.detect_sensitive("secret=my_super_secret_value")
-
 
 # ---------------------------------------------------------------------------
 # classify_scope
@@ -145,32 +120,19 @@ class TestDetectSensitive:
 
 
 class TestClassifyScope:
-    def test_explicit_user(self, guard):
-        assert guard.classify_scope("any_key", [], "user") == "user"
-
-    def test_explicit_project(self, guard):
-        assert guard.classify_scope("any_key", [], "project") == "project"
-
-    def test_user_tag(self, guard):
-        assert guard.classify_scope("pref", ["user", "lang"], None) == "user"
-
-    def test_user_key_prefix(self, guard):
-        assert guard.classify_scope("user_language", [], None) == "user"
-
-    def test_preference_tag(self, guard):
-        assert guard.classify_scope("lang", ["preference"], None) == "user"
-
-    def test_profile_tag(self, guard):
-        assert guard.classify_scope("name", ["profile"], None) == "user"
-
-    def test_personal_tag(self, guard):
-        assert guard.classify_scope("style", ["personal"], None) == "user"
-
-    def test_default_project(self, guard):
-        assert guard.classify_scope("build_cmd", ["project"], None) == "project"
-
-    def test_no_tags_default_project(self, guard):
-        assert guard.classify_scope("something", [], None) == "project"
+    @pytest.mark.parametrize("key, tags, explicit, scope", [
+        pytest.param("any_key", [], "user", "user", id="explicit-user"),
+        pytest.param("any_key", [], "project", "project", id="explicit-project"),
+        pytest.param("pref", ["user", "lang"], None, "user", id="user-tag"),
+        pytest.param("user_language", [], None, "user", id="user-key-prefix"),
+        pytest.param("lang", ["preference"], None, "user", id="preference-tag"),
+        pytest.param("name", ["profile"], None, "user", id="profile-tag"),
+        pytest.param("style", ["personal"], None, "user", id="personal-tag"),
+        pytest.param("build_cmd", ["project"], None, "project", id="default-project"),
+        pytest.param("something", [], None, "project", id="no-tags-default-project"),
+    ])
+    def test_a_scope_is_classified(self, guard, key, tags, explicit, scope):
+        assert guard.classify_scope(key, tags, explicit) == scope
 
 
 # ---------------------------------------------------------------------------
@@ -179,26 +141,17 @@ class TestClassifyScope:
 
 
 class TestClassifyType:
-    def test_explicit_type(self, guard):
-        assert guard.classify_type("key", [], "workflow") == "workflow"
-
-    def test_preference_tag(self, guard):
-        assert guard.classify_type("key", ["preference"], None) == "preference"
-
-    def test_workflow_tag(self, guard):
-        assert guard.classify_type("key", ["workflow"], None) == "workflow"
-
-    def test_decision_tag(self, guard):
-        assert guard.classify_type("key", ["decision"], None) == "decision"
-
-    def test_constraint_tag(self, guard):
-        assert guard.classify_type("key", ["constraint"], None) == "constraint"
-
-    def test_default_note(self, guard):
-        assert guard.classify_type("key", ["something"], None) == "note"
-
-    def test_no_tags_default_note(self, guard):
-        assert guard.classify_type("key", [], None) == "note"
+    @pytest.mark.parametrize("tags, explicit, type_", [
+        pytest.param([], "workflow", "workflow", id="explicit-type"),
+        pytest.param(["preference"], None, "preference", id="preference-tag"),
+        pytest.param(["workflow"], None, "workflow", id="workflow-tag"),
+        pytest.param(["decision"], None, "decision", id="decision-tag"),
+        pytest.param(["constraint"], None, "constraint", id="constraint-tag"),
+        pytest.param(["something"], None, "note", id="default-note"),
+        pytest.param([], None, "note", id="no-tags-default-note"),
+    ])
+    def test_a_type_is_classified(self, guard, tags, explicit, type_):
+        assert guard.classify_type("key", tags, explicit) == type_
 
 
 # ---------------------------------------------------------------------------

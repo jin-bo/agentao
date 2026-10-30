@@ -86,20 +86,15 @@ def _create_valid_skill(path: Path, name: str = "test-skill"):
 # ------------------------------------------------------------------
 
 class TestNormalizeSkillName:
-    def test_lowercase(self):
-        assert normalize_skill_name("My-Skill") == "my-skill"
-
-    def test_underscores_to_hyphens(self):
-        assert normalize_skill_name("my_skill") == "my-skill"
-
-    def test_spaces_to_hyphens(self):
-        assert normalize_skill_name("my skill") == "my-skill"
-
-    def test_strip_edges(self):
-        assert normalize_skill_name("  -my-skill- ") == "my-skill"
-
-    def test_collapse_hyphens(self):
-        assert normalize_skill_name("my--skill") == "my-skill"
+    @pytest.mark.parametrize("name, normalized", [
+        pytest.param("My-Skill", "my-skill", id="lowercase"),
+        pytest.param("my_skill", "my-skill", id="underscores-to-hyphens"),
+        pytest.param("my skill", "my-skill", id="spaces-to-hyphens"),
+        pytest.param("  -my-skill- ", "my-skill", id="strip-edges"),
+        pytest.param("my--skill", "my-skill", id="collapse-hyphens"),
+    ])
+    def test_a_name_is_normalized(self, name, normalized):
+        assert normalize_skill_name(name) == normalized
 
 
 # ------------------------------------------------------------------
@@ -107,41 +102,28 @@ class TestNormalizeSkillName:
 # ------------------------------------------------------------------
 
 class TestGitHubSkillSourceResolve:
-    def test_owner_repo(self):
-        spec = GitHubSkillSource().resolve("owner/repo")
-        assert spec.owner == "owner"
-        assert spec.repo == "repo"
-        assert spec.package_path == ""
-        assert spec.ref is None
+    @pytest.mark.parametrize("ref, owner, repo, package_path, git_ref", [
+        pytest.param("owner/repo", "owner", "repo", "", None, id="owner-repo"),
+        pytest.param("owner/repo@v1.2", "owner", "repo", "", "v1.2", id="with-ref"),
+        pytest.param("anthropics/skills:skills/pdf", "anthropics", "skills", "skills/pdf", None,
+                     id="with-package-path"),
+        pytest.param("anthropics/skills:skills/pdf@main", "anthropics", "skills", "skills/pdf", "main",
+                     id="with-package-path-and-ref"),
+    ])
+    def test_a_ref_resolves(self, ref, owner, repo, package_path, git_ref):
+        spec = GitHubSkillSource().resolve(ref)
+        assert spec.owner == owner
+        assert spec.repo == repo
+        assert spec.package_path == package_path
+        assert spec.ref == git_ref
 
-    def test_owner_repo_with_ref(self):
-        spec = GitHubSkillSource().resolve("owner/repo@v1.2")
-        assert spec.owner == "owner"
-        assert spec.repo == "repo"
-        assert spec.package_path == ""
-        assert spec.ref == "v1.2"
-
-    def test_owner_repo_with_package_path(self):
-        spec = GitHubSkillSource().resolve("anthropics/skills:skills/pdf")
-        assert spec.owner == "anthropics"
-        assert spec.repo == "skills"
-        assert spec.package_path == "skills/pdf"
-        assert spec.ref is None
-
-    def test_owner_repo_with_package_path_and_ref(self):
-        spec = GitHubSkillSource().resolve("anthropics/skills:skills/pdf@main")
-        assert spec.owner == "anthropics"
-        assert spec.repo == "skills"
-        assert spec.package_path == "skills/pdf"
-        assert spec.ref == "main"
-
-    def test_rejects_empty_package_path(self):
-        with pytest.raises(ValueError, match="Package path cannot be empty"):
-            GitHubSkillSource().resolve("owner/repo:")
-
-    def test_rejects_parent_package_path(self):
-        with pytest.raises(ValueError, match="relative path"):
-            GitHubSkillSource().resolve("owner/repo:../secret")
+    @pytest.mark.parametrize("ref, match", [
+        pytest.param("owner/repo:", "Package path cannot be empty", id="empty-package-path"),
+        pytest.param("owner/repo:../secret", "relative path", id="parent-package-path"),
+    ])
+    def test_a_bad_package_path_is_rejected(self, ref, match):
+        with pytest.raises(ValueError, match=match):
+            GitHubSkillSource().resolve(ref)
 
 
 # ------------------------------------------------------------------
@@ -159,50 +141,21 @@ class TestValidation:
         with pytest.raises(SkillValidationError, match="No SKILL.md"):
             installer._validate_package(pkg)
 
-    def test_no_frontmatter(self, tmp_path):
+    @pytest.mark.parametrize("skill_md, match", [
+        pytest.param("# Just a title\nNo frontmatter here.", "frontmatter", id="no-frontmatter"),
+        pytest.param("---\ndescription: test\n---\n# Test", "name", id="missing-name"),
+        pytest.param("---\nname: test\n---\n# Test", "description", id="missing-description"),
+        pytest.param("---\nname: test@skill!\ndescription: bad\n---\n# Test", "invalid characters",
+                     id="invalid-name-chars"),
+    ])
+    def test_a_bad_skill_md_is_rejected(self, tmp_path, skill_md, match):
         pkg = tmp_path / "pkg"
         pkg.mkdir()
-        (pkg / "SKILL.md").write_text("# Just a title\nNo frontmatter here.", encoding="utf-8")
+        (pkg / "SKILL.md").write_text(skill_md, encoding="utf-8")
         reg = SkillRegistry(tmp_path / "reg.json")
         installer = SkillInstaller(reg, FakeSource(pkg), "project", tmp_path)
 
-        with pytest.raises(SkillValidationError, match="frontmatter"):
-            installer._validate_package(pkg)
-
-    def test_missing_name(self, tmp_path):
-        pkg = tmp_path / "pkg"
-        pkg.mkdir()
-        (pkg / "SKILL.md").write_text(
-            "---\ndescription: test\n---\n# Test", encoding="utf-8"
-        )
-        reg = SkillRegistry(tmp_path / "reg.json")
-        installer = SkillInstaller(reg, FakeSource(pkg), "project", tmp_path)
-
-        with pytest.raises(SkillValidationError, match="name"):
-            installer._validate_package(pkg)
-
-    def test_missing_description(self, tmp_path):
-        pkg = tmp_path / "pkg"
-        pkg.mkdir()
-        (pkg / "SKILL.md").write_text(
-            "---\nname: test\n---\n# Test", encoding="utf-8"
-        )
-        reg = SkillRegistry(tmp_path / "reg.json")
-        installer = SkillInstaller(reg, FakeSource(pkg), "project", tmp_path)
-
-        with pytest.raises(SkillValidationError, match="description"):
-            installer._validate_package(pkg)
-
-    def test_invalid_name_chars(self, tmp_path):
-        pkg = tmp_path / "pkg"
-        pkg.mkdir()
-        (pkg / "SKILL.md").write_text(
-            "---\nname: test@skill!\ndescription: bad\n---\n# Test", encoding="utf-8"
-        )
-        reg = SkillRegistry(tmp_path / "reg.json")
-        installer = SkillInstaller(reg, FakeSource(pkg), "project", tmp_path)
-
-        with pytest.raises(SkillValidationError, match="invalid characters"):
+        with pytest.raises(SkillValidationError, match=match):
             installer._validate_package(pkg)
 
     def test_name_mismatch_skill_json(self, tmp_path):

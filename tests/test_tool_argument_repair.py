@@ -24,28 +24,15 @@ from tests.support.tool_calls import make_tool_call
 
 
 class TestEmptyAndNone:
-    def test_none_returns_empty_dict(self):
-        args, tags = parse_tool_arguments(None)
-        assert args == {}
-        assert tags == [TAG_EMPTY]
-
-    def test_empty_string_returns_empty_dict(self):
-        args, tags = parse_tool_arguments("")
-        assert args == {}
-        assert tags == [TAG_EMPTY]
-
-    def test_whitespace_returns_empty_dict(self):
-        args, tags = parse_tool_arguments("   \n\t  ")
-        assert args == {}
-        assert tags == [TAG_EMPTY]
-
-    def test_literal_none_string_returns_empty_dict(self):
-        args, tags = parse_tool_arguments("None")
-        assert args == {}
-        assert tags == [TAG_EMPTY]
-
-    def test_literal_null_string_returns_empty_dict(self):
-        args, tags = parse_tool_arguments("null")
+    @pytest.mark.parametrize("raw", [
+        pytest.param(None, id="none"),
+        pytest.param("", id="empty-string"),
+        pytest.param("   \n\t  ", id="whitespace"),
+        pytest.param("None", id="literal-None-string"),
+        pytest.param("null", id="literal-null-string"),
+    ])
+    def test_returns_empty_dict(self, raw):
+        args, tags = parse_tool_arguments(raw)
         assert args == {}
         assert tags == [TAG_EMPTY]
 
@@ -63,19 +50,14 @@ class TestStrictJSON:
 
 
 class TestCodeFence:
-    def test_json_fence_is_stripped(self):
-        args, tags = parse_tool_arguments('```json\n{"file_path": "x.py"}\n```')
-        assert args == {"file_path": "x.py"}
-        assert TAG_FENCE in tags
-
-    def test_bare_fence_is_stripped(self):
-        args, tags = parse_tool_arguments('```\n{"k": 1}\n```')
-        assert args == {"k": 1}
-        assert TAG_FENCE in tags
-
-    def test_uppercase_json_fence_is_stripped(self):
-        args, tags = parse_tool_arguments('```JSON\n{"k": 1}\n```')
-        assert args == {"k": 1}
+    @pytest.mark.parametrize("raw, expected", [
+        pytest.param('```json\n{"file_path": "x.py"}\n```', {"file_path": "x.py"}, id="json-fence"),
+        pytest.param('```\n{"k": 1}\n```', {"k": 1}, id="bare-fence"),
+        pytest.param('```JSON\n{"k": 1}\n```', {"k": 1}, id="uppercase-json-fence"),
+    ])
+    def test_fence_is_stripped(self, raw, expected):
+        args, tags = parse_tool_arguments(raw)
+        assert args == expected
         assert TAG_FENCE in tags
 
     def test_empty_fence_returns_empty_dict(self):
@@ -125,24 +107,15 @@ class TestPythonLiteral:
 
 
 class TestTrailingComma:
-    def test_trailing_comma_in_object(self):
-        args, tags = parse_tool_arguments('{"key": "value",}')
-        assert args == {"key": "value"}
-        assert TAG_TRAILING_COMMA in tags
-
-    def test_trailing_comma_in_array(self):
-        args, tags = parse_tool_arguments('{"a": [1, 2,]}')
-        assert args == {"a": [1, 2]}
-        assert TAG_TRAILING_COMMA in tags
-
-    def test_multiple_trailing_commas(self):
-        args, tags = parse_tool_arguments('{"a": 1, "b": 2,}')
-        assert args == {"a": 1, "b": 2}
-        assert TAG_TRAILING_COMMA in tags
-
-    def test_trailing_comma_with_whitespace_before_brace(self):
-        args, tags = parse_tool_arguments('{"a": 1,\n  }')
-        assert args == {"a": 1}
+    @pytest.mark.parametrize("raw, expected", [
+        pytest.param('{"key": "value",}', {"key": "value"}, id="in-object"),
+        pytest.param('{"a": [1, 2,]}', {"a": [1, 2]}, id="in-array"),
+        pytest.param('{"a": 1, "b": 2,}', {"a": 1, "b": 2}, id="after-several-members"),
+        pytest.param('{"a": 1,\n  }', {"a": 1}, id="whitespace-before-brace"),
+    ])
+    def test_trailing_comma_is_repaired(self, raw, expected):
+        args, tags = parse_tool_arguments(raw)
+        assert args == expected
         assert TAG_TRAILING_COMMA in tags
 
 
@@ -152,40 +125,28 @@ class TestBracketBalance:
         with pytest.raises(ValueError):
             parse_tool_arguments('{"key": "value"')
 
-    def test_bracket_balance_unclosed_brace_when_enabled(self):
-        args, tags = parse_tool_arguments(
-            '{"key": "value"', allow_bracket_balance=True
-        )
+    @pytest.mark.parametrize("raw", [
+        pytest.param('{"key": "value"', id="unclosed-brace"),
+        pytest.param('{"key": "value"}}', id="excess-close"),
+    ])
+    def test_bracket_balance_repairs_when_enabled(self, raw):
+        args, tags = parse_tool_arguments(raw, allow_bracket_balance=True)
         assert args == {"key": "value"}
         assert TAG_BRACKET_BALANCE in tags
 
-    def test_bracket_balance_strips_excess_close(self):
-        args, tags = parse_tool_arguments(
-            '{"key": "value"}}', allow_bracket_balance=True
-        )
-        assert args == {"key": "value"}
-        assert TAG_BRACKET_BALANCE in tags
-
-    def test_bracket_balance_unclosed_nested_array_still_raises(self):
+    @pytest.mark.parametrize("raw", [
         # Naive count balancing appends ``}]`` for ``{"a": [1, 2`` — wrong
         # order, still invalid. Honest behavior is to raise; the outbound
         # canonicaliser handles this with a last-resort ``{}``.
-        with pytest.raises(ValueError):
-            parse_tool_arguments('{"a": [1, 2', allow_bracket_balance=True)
-
-    def test_bracket_balance_glm_truncation_mid_value_raises(self):
+        pytest.param('{"a": [1, 2', id="unclosed-nested-array"),
         # Mid-value truncation cannot be recovered by bracket counting.
+        pytest.param('{"command": "ls -la", "timeout": 30, "background":',
+                     id="glm-truncation-mid-value"),
+        pytest.param('{"truncated": "val', id="unclosed-string"),
+    ])
+    def test_bracket_balance_unrepairable_still_raises(self, raw):
         with pytest.raises(ValueError):
-            parse_tool_arguments(
-                '{"command": "ls -la", "timeout": 30, "background":',
-                allow_bracket_balance=True,
-            )
-
-    def test_bracket_balance_unrepairable_still_raises(self):
-        with pytest.raises(ValueError):
-            parse_tool_arguments(
-                '{"truncated": "val', allow_bracket_balance=True
-            )
+            parse_tool_arguments(raw, allow_bracket_balance=True)
 
 
 class TestRejectNonJsonSerializableLiterals:
@@ -193,17 +154,14 @@ class TestRejectNonJsonSerializableLiterals:
     JSON cannot encode. The planner / permission engine / hooks must
     never see such values, so the python-literal tier rejects them."""
 
-    def test_python_bytes_value_rejected(self):
+    @pytest.mark.parametrize("raw", [
+        pytest.param("{'x': b'abc'}", id="bytes"),
+        pytest.param("{'x': {1, 2}}", id="set"),
+        pytest.param("{'x': {'y': {1, 2}}}", id="nested-set"),
+    ])
+    def test_a_value_json_cannot_encode_is_rejected(self, raw):
         with pytest.raises(ValueError):
-            parse_tool_arguments("{'x': b'abc'}")
-
-    def test_python_set_value_rejected(self):
-        with pytest.raises(ValueError):
-            parse_tool_arguments("{'x': {1, 2}}")
-
-    def test_python_nested_set_value_rejected(self):
-        with pytest.raises(ValueError):
-            parse_tool_arguments("{'x': {'y': {1, 2}}}")
+            parse_tool_arguments(raw)
 
     def test_python_serializable_literal_still_accepted(self):
         # Sanity: clean Python-repr dicts still pass.
@@ -245,13 +203,13 @@ class TestRejectNonDict:
         with pytest.raises(ValueError, match="must parse to an object"):
             parse_tool_arguments(raw)
 
-    def test_unparseable_garbage_is_rejected(self):
+    @pytest.mark.parametrize("raw", [
+        pytest.param("{this is not, json: at-all", id="garbage"),
+        pytest.param("```json\n{not valid\n```", id="malformed-after-fence-strip"),
+    ])
+    def test_unparseable_input_is_rejected(self, raw):
         with pytest.raises(ValueError):
-            parse_tool_arguments("{this is not, json: at-all")
-
-    def test_truly_malformed_after_fence_strip_is_rejected(self):
-        with pytest.raises(ValueError):
-            parse_tool_arguments("```json\n{not valid\n```")
+            parse_tool_arguments(raw)
 
     def test_non_string_non_dict_input_is_rejected(self):
         with pytest.raises(ValueError, match="must be a string or dict"):

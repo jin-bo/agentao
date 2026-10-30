@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
 
 from agentao.memory.manager import MemoryManager
 from agentao.memory.models import MemoryRecord, RecallCandidate
@@ -75,18 +76,13 @@ def test_tokenize_splits_and_filters_stopwords(tmp_path):
     assert "fox" in tokens
 
 
-def test_tokenize_lowercases(tmp_path):
+@pytest.mark.parametrize("text, expected", [
+    pytest.param("Python FastAPI", {"python", "fastapi"}, id="lowercases"),
+    pytest.param("path/to/file.py", {"path", "file"}, id="splits-on-special-chars"),
+])
+def test_tokenize_splits_and_lowercases(tmp_path, text, expected):
     ret, _ = _make_retriever(tmp_path)
-    tokens = ret.tokenize("Python FastAPI")
-    assert "python" in tokens
-    assert "fastapi" in tokens
-
-
-def test_tokenize_splits_on_special_chars(tmp_path):
-    ret, _ = _make_retriever(tmp_path)
-    tokens = ret.tokenize("path/to/file.py")
-    assert "path" in tokens
-    assert "file" in tokens
+    assert expected <= set(ret.tokenize(text))
 
 
 def test_tokenize_filters_single_char(tmp_path):
@@ -410,24 +406,18 @@ def test_cjk_segment_skips_latin_runs():
 # tokenize — normalization and CJK
 # ---------------------------------------------------------------------------
 
-def test_tokenize_plural_normalization(tmp_path):
+@pytest.mark.parametrize("text, expected", [
+    # Normalized forms are present alongside the originals.
+    pytest.param("keywords libraries", {"keyword", "keywords"}, id="plural-normalization"),
+    pytest.param("python v3", {"3", "v3"}, id="version-prefix"),
+    pytest.param("Python版本", {"python", "版本"}, id="cjk-with-latin"),
+    # jieba recognizes "使用" as a word.
+    pytest.param("使用 Python 开发", {"python", "使用"}, id="mixed-cjk-latin"),
+])
+def test_tokenize_normalizes(tmp_path, text, expected):
     ret, _ = _make_retriever(tmp_path)
-    tokens = ret.tokenize("keywords libraries")
-    # normalized forms should be present alongside originals
-    assert "keyword" in tokens
-    assert "keywords" in tokens  # original also retained
+    assert expected <= set(ret.tokenize(text))
 
-def test_tokenize_version_prefix(tmp_path):
-    ret, _ = _make_retriever(tmp_path)
-    tokens = ret.tokenize("python v3")
-    assert "3" in tokens    # normalized
-    assert "v3" in tokens   # original
-
-def test_tokenize_cjk_with_latin(tmp_path):
-    ret, _ = _make_retriever(tmp_path)
-    tokens = ret.tokenize("Python版本")
-    assert "python" in tokens
-    assert "版本" in tokens
 
 def test_tokenize_cjk_only(tmp_path):
     ret, _ = _make_retriever(tmp_path)
@@ -435,12 +425,6 @@ def test_tokenize_cjk_only(tmp_path):
     assert "版本" in tokens
     assert "管理" in tokens
     assert "本管" not in tokens  # bigram noise must be gone
-
-def test_tokenize_mixed_cjk_latin(tmp_path):
-    ret, _ = _make_retriever(tmp_path)
-    tokens = ret.tokenize("使用 Python 开发")
-    assert "python" in tokens
-    assert "使用" in tokens  # jieba recognizes "使用" as a word
 
 
 # ---------------------------------------------------------------------------
