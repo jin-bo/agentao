@@ -333,7 +333,15 @@ def _prompt_toolkit_without_a_console():
 
     Installed only when the real output cannot be created, so on a machine that has one
     nothing changes and the tests keep exercising the same code they always did.
+
+    Nothing to do without prompt_toolkit (the ``cli`` extra): the Typing gate job runs
+    its tests in a core-only environment, where no ``PromptSession`` can be built.
     """
+    try:
+        import prompt_toolkit  # noqa: F401 — probe for the cli extra
+    except ImportError:
+        yield
+        return
     from prompt_toolkit.application import create_app_session
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.output.defaults import create_output
