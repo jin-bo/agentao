@@ -39,7 +39,7 @@ from tests.support.stdio_mcp_server import calls as _calls, started as _started,
 _TEARDOWN_WARNINGS = ("cancel scope", "Error disconnecting")
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 @pytest.fixture

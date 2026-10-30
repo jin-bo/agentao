@@ -27,7 +27,7 @@ from agentao.transport import AgentEvent, EventType
 from tests.test_subagent_tool_call_id import _wrapper
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 class _Stream:

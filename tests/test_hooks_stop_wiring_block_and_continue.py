@@ -52,7 +52,8 @@ def test_force_continue_reissues_llm_call_and_emits_continue(tmp_path, monkeypat
             return StopHookResult(
                 force_continue=True,
                 follow_up_message="please retry",
-                stop_reason="please retry",
+                # Distinct from the follow-up, so the test sees which one is injected.
+                stop_reason="hook stop reason",
                 matched_rule_count=1,
             )
         return StopHookResult(matched_rule_count=1)
@@ -67,6 +68,7 @@ def test_force_continue_reissues_llm_call_and_emits_continue(tmp_path, monkeypat
     assert outcomes == ["continue", "allow"]
     user_msgs = [m for m in agent.messages if m["role"] == "user"]
     assert any("please retry" in (m.get("content") or "") for m in user_msgs)
+    assert not any("hook stop reason" in (m.get("content") or "") for m in user_msgs)
 
 
 def test_suppress_output_omits_stop_hook_echo_on_final_answer(tmp_path, monkeypatch):

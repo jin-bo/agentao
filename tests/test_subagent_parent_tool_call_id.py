@@ -30,7 +30,7 @@ from agentao.runtime.tool_executor import ToolExecutor
 from tests.support.host_events import NullTransport, make_plan
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 @pytest.fixture

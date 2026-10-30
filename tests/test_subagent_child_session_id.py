@@ -24,7 +24,7 @@ from agentao.host.projection import HostSubagentEmitter
 from agentao.permissions import PermissionEngine
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 @pytest.fixture
