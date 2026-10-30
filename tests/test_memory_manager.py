@@ -229,57 +229,6 @@ def test_clear_scoped_removes_only_project(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Session summaries
-# ---------------------------------------------------------------------------
-
-def test_save_session_summary(tmp_path):
-    mgr = _make_manager(tmp_path)
-    mgr.save_session_summary("A summary.", tokens_before=1000, messages_summarized=5)
-    summaries = mgr.get_recent_session_summaries()
-    assert len(summaries) == 1
-    assert "A summary." in summaries[0].summary_text
-
-
-def test_save_session_summary_noop_on_exception(tmp_path):
-    """save_session_summary must not raise even if store fails.
-
-    After Issue #16, the project-store fallback lives in
-    ``SQLiteMemoryStore.open_or_memory``; the test still demonstrates
-    that an unwritable path doesn't crash construction or subsequent
-    writes.
-    """
-    from agentao.memory import SQLiteMemoryStore
-    mgr = MemoryManager(
-        project_store=SQLiteMemoryStore.open_or_memory(
-            Path("/nonexistent/readonly/path/memory.db")
-        ),
-    )
-    mgr.save_session_summary("S.", tokens_before=0, messages_summarized=0)
-
-
-def test_clear_session_removes_summaries(tmp_path):
-    mgr = _make_manager(tmp_path)
-    mgr.save_session_summary("content", tokens_before=100, messages_summarized=3)
-    mgr.clear_session()
-    assert mgr.get_recent_session_summaries() == []
-
-
-def test_archive_session_returns_old_session_id(tmp_path):
-    mgr = _make_manager(tmp_path)
-    mgr.save_session_summary("content", tokens_before=100, messages_summarized=3)
-    old_id = mgr.archive_session()
-    assert old_id is not None
-    # New session has different id
-    assert mgr._session_id != old_id
-
-
-def test_archive_session_returns_none_when_empty(tmp_path):
-    mgr = _make_manager(tmp_path)
-    result = mgr.archive_session()
-    assert result is None
-
-
-# ---------------------------------------------------------------------------
 # write_version dirty-flag counter
 # ---------------------------------------------------------------------------
 

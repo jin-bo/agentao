@@ -21,7 +21,8 @@ from agentao.agent import Agentao
 from agentao.agents.bg_store import BackgroundTaskStore
 from agentao.host.models import SubagentLifecycleEvent
 from agentao.host.projection import HostSubagentEmitter
-from agentao.permissions import PermissionEngine
+
+from tests.support.subagents import make_parent
 
 
 pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
@@ -29,15 +30,7 @@ pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 @pytest.fixture
 def parent(tmp_path):
-    (tmp_path / "user").mkdir(exist_ok=True)
-    agent = Agentao(
-        working_directory=tmp_path, api_key="k",
-        base_url="https://test.local/v1", model="m",
-        enable_builtin_agents=True,
-        permission_engine=PermissionEngine(
-            project_root=tmp_path, user_root=tmp_path / "user",
-        ),
-    )
+    agent = make_parent(tmp_path)
     try:
         yield agent
     finally:
