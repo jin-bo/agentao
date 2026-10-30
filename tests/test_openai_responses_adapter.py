@@ -9,6 +9,7 @@ What this file cannot show is what a live server *does*: event order, which
 fields it fills, which ids it accepts back. Those are observed separately.
 """
 
+import copy
 import json
 from pathlib import Path
 
@@ -147,6 +148,36 @@ def test_history_becomes_items_rebuilt_key_by_key():
         {"type": "function_call_output", "call_id": "call_1", "output": "hello"},
         {"role": "system", "content": "[Conversation Summary] earlier"},
     ]
+
+
+@pytest.mark.parametrize("detail", ["low", "high", "auto"])
+@pytest.mark.parametrize("method", ["chat", "chat_stream"])
+def test_explicit_image_detail_reaches_the_real_sdk(detail, method):
+    messages = [{"role": "user", "content": [{
+        "type": "image_url", "image_url": {
+            "url": "data:image/png;base64,AAAA", "detail": detail,
+        },
+    }]}]
+    before = copy.deepcopy(messages)
+    llm = _llm()
+    wire = attach(llm, Wire(_says()))
+    getattr(llm, method)(messages)
+    assert wire.requests[0]["input"][0]["content"] == [{
+        "type": "input_image", "image_url": "data:image/png;base64,AAAA", "detail": detail,
+    }]
+    assert messages == before
+
+
+@pytest.mark.parametrize("detail", [None, "unsupported", 1, {}, []])
+def test_unknown_image_detail_keeps_the_previous_omission(detail):
+    llm = _llm()
+    wire = attach(llm, Wire(_says()))
+    llm.chat_stream([{"role": "user", "content": [{
+        "type": "image_url", "image_url": {"url": "https://example.test/image.png", "detail": detail},
+    }]}])
+    assert wire.requests[0]["input"][0]["content"] == [{
+        "type": "input_image", "image_url": "https://example.test/image.png",
+    }]
 
 
 @pytest.mark.parametrize("image_url", [{"url": ""}, {"url": None}, {}, None],

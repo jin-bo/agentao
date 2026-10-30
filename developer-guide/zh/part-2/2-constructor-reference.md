@@ -124,6 +124,9 @@ agent = Agentao(
 | `llm_client` | `LLMClient` | （由凭据自动构造） | 注入预构造客户端，完全控制 logger / 日志文件。**与所有原始模型设置互斥**：`api_key` / `base_url` / `model` / `temperature` / `max_tokens` / `extra_body` / `prompt_cache` / `prompt_cache_ttl` / `api_format`（自带 client 的 host 把它们传给该 client） |
 | `project_instructions` | `str` | （从 `<wd>/AGENTAO.md` 读） | 直接传 AGENTAO.md 内容，跳过磁盘读 |
 
+`openai-responses` 线路转换图片部分时，会保留显式设置的 `image_url.detail`：`low`、`high` 或 `auto`。未设置或不支持的值继续省略，由端点采用默认值；转换不会修改已保存的消息。
+
+
 ::: tip 异步宿主走 `arun()`
 `agent.chat(...)` 是同步的。异步宿主用 `await agent.arun(user_message)`，它在 Agentao 自己的工作线程池里跑这一轮，不占用事件循环的默认执行器。取消、replay、`max_iterations` 在两条接口上语义完全一致。线程池为什么独立、对容量规划意味着什么，见 [2.3 异步宿主](./3-lifecycle#异步宿主-arun-与轮次线程池)。
 :::
