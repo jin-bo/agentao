@@ -17,53 +17,32 @@ from agentao.prompts.helpers import load_project_instructions, strip_frontmatter
 # --- strip_frontmatter: unit cases -----------------------------------------
 
 
-def test_strips_leading_frontmatter_mapping():
-    content = "---\nname: my-rules\ndescription: project rules\n---\n# Heading\n\nBody text.\n"
-    assert strip_frontmatter(content) == "# Heading\n\nBody text.\n"
+@pytest.mark.parametrize("content, stripped", [
+    pytest.param("---\nname: my-rules\ndescription: project rules\n---\n# Heading\n\nBody text.\n",
+                 "# Heading\n\nBody text.\n", id="leading-mapping"),
+    pytest.param("---\r\nname: r\r\n---\r\nBody.\r\n", "Body.\r\n", id="crlf"),
+    pytest.param("---\nname: only\n---\n", "", id="frontmatter-only-no-body"),
+    pytest.param("---\nname: x\n---\nA\n\n---\n\nB\n", "A\n\n---\n\nB\n",
+                 id="body-internal-triple-dash-preserved"),
+])
+def test_a_frontmatter_mapping_is_stripped(content, stripped):
+    assert strip_frontmatter(content) == stripped
 
 
-def test_no_frontmatter_passthrough():
-    content = "# Heading\n\nUse uv, not pip.\n"
-    assert strip_frontmatter(content) == content
-
-
-def test_single_fence_is_not_frontmatter():
+@pytest.mark.parametrize("content", [
+    pytest.param("# Heading\n\nUse uv, not pip.\n", id="no-frontmatter"),
     # A lone opening fence with no closing fence is not frontmatter.
-    content = "---\n# Heading after a rule\n"
-    assert strip_frontmatter(content) == content
-
-
-def test_thematic_rule_wrapping_prose_is_kept():
+    pytest.param("---\n# Heading after a rule\n", id="single-fence"),
     # `---` ... `---` around prose parses to a YAML string, not a mapping —
     # stripping it would drop real content, so it must be kept verbatim.
-    content = "---\njust some prose between rules\n---\nmore text\n"
-    assert strip_frontmatter(content) == content
-
-
-def test_malformed_yaml_is_kept():
-    content = "---\nname: [unclosed\n---\nBody.\n"
-    assert strip_frontmatter(content) == content
-
-
-def test_empty_frontmatter_is_kept():
+    pytest.param("---\njust some prose between rules\n---\nmore text\n",
+                 id="thematic-rule-wrapping-prose"),
+    pytest.param("---\nname: [unclosed\n---\nBody.\n", id="malformed-yaml"),
     # Degenerate empty block parses to None (non-mapping) → keep untouched.
-    content = "---\n\n---\nBody.\n"
+    pytest.param("---\n\n---\nBody.\n", id="empty-frontmatter"),
+])
+def test_content_without_a_frontmatter_mapping_is_kept(content):
     assert strip_frontmatter(content) == content
-
-
-def test_crlf_frontmatter_stripped():
-    content = "---\r\nname: r\r\n---\r\nBody.\r\n"
-    assert strip_frontmatter(content) == "Body.\r\n"
-
-
-def test_frontmatter_only_no_body():
-    content = "---\nname: only\n---\n"
-    assert strip_frontmatter(content) == ""
-
-
-def test_body_internal_triple_dash_preserved():
-    content = "---\nname: x\n---\nA\n\n---\n\nB\n"
-    assert strip_frontmatter(content) == "A\n\n---\n\nB\n"
 
 
 # --- load_project_instructions: integration on disk ------------------------

@@ -63,28 +63,18 @@ def test_crlf_already_in_new_text_is_not_doubled(tmp_path, tool):
     assert p.read_bytes() == b"1\r\n1b\r\ntwo\r\n"
 
 
-def test_an_lf_file_is_unchanged(tmp_path, tool):
-    p = _write(tmp_path, b"one\ntwo\n")
+@pytest.mark.parametrize("data, old_text, new_text, expected", [
+    pytest.param(b"one\ntwo\n", "one\n", "1\n1b\n", b"1\n1b\ntwo\n", id="lf-file"),
+    pytest.param(b"one\r\ntwo\nthree\r\n", "two", "2\n2b", b"one\r\n2\n2b\nthree\r\n",
+                 id="mixed-file"),
+    pytest.param(b"single line", "single", "a\nb", b"a\nb line", id="file-without-line-endings"),
+])
+def test_a_file_that_is_not_pure_crlf_is_left_alone(tmp_path, tool, data, old_text, new_text, expected):
+    p = _write(tmp_path, data)
 
-    tool.execute(file_path="f.txt", old_text="one\n", new_text="1\n1b\n")
+    tool.execute(file_path="f.txt", old_text=old_text, new_text=new_text)
 
-    assert p.read_bytes() == b"1\n1b\ntwo\n"
-
-
-def test_a_mixed_file_is_left_alone(tmp_path, tool):
-    p = _write(tmp_path, b"one\r\ntwo\nthree\r\n")
-
-    tool.execute(file_path="f.txt", old_text="two", new_text="2\n2b")
-
-    assert p.read_bytes() == b"one\r\n2\n2b\nthree\r\n"
-
-
-def test_a_file_without_line_endings_is_left_alone(tmp_path, tool):
-    p = _write(tmp_path, b"single line")
-
-    tool.execute(file_path="f.txt", old_text="single", new_text="a\nb")
-
-    assert p.read_bytes() == b"a\nb line"
+    assert p.read_bytes() == expected
 
 
 def test_the_not_found_hint_sees_the_models_own_text(tmp_path, tool, monkeypatch):

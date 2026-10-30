@@ -163,31 +163,20 @@ class TestReplayHistoryMapping:
 
     # --- Skip rules ------------------------------------------------------
 
-    def test_system_messages_are_skipped(self):
+    @pytest.mark.parametrize("messages", [
+        pytest.param([], id="empty-message-list"),
+        pytest.param([{"role": "system", "content": "system prompt blob"}], id="system-message"),
+        pytest.param([{"role": "developer", "content": "ignore me"}], id="unknown-role"),
+        pytest.param(["not a dict", 42, None], id="non-dict-entries"),
+        pytest.param([{"role": "user", "content": "<system-reminder>only this</system-reminder>"}],
+                     id="user-message-that-is-only-a-system-reminder"),
+        pytest.param([{"role": "assistant", "content": ""}],
+                     id="assistant-empty-content-no-tool-calls"),
+        pytest.param([{"role": "tool", "content": "orphan"}], id="tool-message-without-tool-call-id"),
+    ])
+    def test_a_message_with_nothing_to_show_emits_nothing(self, messages):
         t, server = self._transport()
-        emitted = t.replay_history(
-            [{"role": "system", "content": "system prompt blob"}]
-        )
-        assert emitted == 0
-        assert server.notifications == []
-
-    def test_unknown_role_is_skipped(self):
-        t, server = self._transport()
-        emitted = t.replay_history(
-            [{"role": "developer", "content": "ignore me"}]
-        )
-        assert emitted == 0
-        assert server.notifications == []
-
-    def test_non_dict_entry_is_skipped(self):
-        t, server = self._transport()
-        emitted = t.replay_history(["not a dict", 42, None])
-        assert emitted == 0
-        assert server.notifications == []
-
-    def test_empty_message_list_emits_nothing(self):
-        t, server = self._transport()
-        assert t.replay_history([]) == 0
+        assert t.replay_history(messages) == 0
         assert server.notifications == []
 
     # --- User messages ---------------------------------------------------
@@ -213,19 +202,6 @@ class TestReplayHistoryMapping:
         )
         upd = self._last_update(server)
         assert upd["content"]["text"] == "real text"
-
-    def test_user_message_that_is_only_system_reminder_emits_nothing(self):
-        t, server = self._transport()
-        emitted = t.replay_history(
-            [
-                {
-                    "role": "user",
-                    "content": "<system-reminder>only this</system-reminder>",
-                }
-            ]
-        )
-        assert emitted == 0
-        assert server.notifications == []
 
     def test_user_message_with_list_content_flattens_text(self):
         t, server = self._transport()
@@ -253,12 +229,6 @@ class TestReplayHistoryMapping:
             "sessionUpdate": "agent_message_chunk",
             "content": {"type": "text", "text": "the answer"},
         }
-
-    def test_assistant_empty_content_no_tool_calls_emits_nothing(self):
-        t, server = self._transport()
-        emitted = t.replay_history([{"role": "assistant", "content": ""}])
-        assert emitted == 0
-        assert server.notifications == []
 
     # --- Assistant messages (tool calls) ---------------------------------
 
@@ -402,14 +372,6 @@ class TestReplayHistoryMapping:
                 {"type": "content", "content": {"type": "text", "text": "file contents here"}}
             ],
         }
-
-    def test_tool_message_with_no_tool_call_id_is_skipped(self):
-        t, server = self._transport()
-        emitted = t.replay_history(
-            [{"role": "tool", "content": "orphan"}]
-        )
-        assert emitted == 0
-        assert server.notifications == []
 
     def test_tool_message_with_empty_content_omits_content_field(self):
         t, server = self._transport()
