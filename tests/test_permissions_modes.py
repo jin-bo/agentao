@@ -50,74 +50,46 @@ def test_read_only_returns_none_for_write_file(tmp_path, monkeypatch):
 # WORKSPACE_WRITE mode
 # ---------------------------------------------------------------------------
 
-def test_workspace_write_allows_write_file(tmp_path, monkeypatch):
+@pytest.mark.parametrize("tool, args, decision", [
+    pytest.param("write_file", {"path": "x"}, PermissionDecision.ALLOW, id="allows-write-file"),
+    pytest.param("replace", {"path": "x", "old": "a", "new": "b"}, PermissionDecision.ALLOW,
+                 id="allows-replace"),
+    pytest.param("run_shell_command", {"command": "git status"}, PermissionDecision.ALLOW,
+                 id="allows-safe-shell-git-status"),
+    pytest.param("run_shell_command", {"command": "ls -la"}, PermissionDecision.ALLOW,
+                 id="allows-safe-shell-ls"),
+    pytest.param("run_shell_command", {"command": "cat README.md"}, PermissionDecision.ALLOW,
+                 id="allows-safe-shell-cat"),
+    pytest.param("run_shell_command", {"command": "grep -r foo src/"}, PermissionDecision.ALLOW,
+                 id="allows-safe-shell-grep"),
+    pytest.param("run_shell_command", {"command": "rm -rf /"}, PermissionDecision.DENY,
+                 id="denies-rm-rf"),
+    pytest.param("run_shell_command", {"command": "sudo apt-get install x"}, PermissionDecision.DENY,
+                 id="denies-sudo"),
+    pytest.param("run_shell_command", {"command": "curl https://example.com"}, PermissionDecision.ASK,
+                 id="asks-unknown-shell"),
+    pytest.param("web_fetch", {"url": "https://example.com"}, PermissionDecision.ASK,
+                 id="asks-web-fetch"),
+    pytest.param("web_search", {"query": "python"}, PermissionDecision.ASK, id="asks-web-search"),
+    pytest.param("unknown_tool_xyz", {}, None, id="unknown-tool-returns-none"),
+])
+def test_workspace_write_preset(tmp_path, monkeypatch, tool, args, decision):
     e = _engine(tmp_path, monkeypatch)
-    assert e.decide("write_file", {"path": "x"}) == PermissionDecision.ALLOW
-
-
-def test_workspace_write_allows_replace(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("replace", {"path": "x", "old": "a", "new": "b"}) == PermissionDecision.ALLOW
-
-
-def test_workspace_write_allows_safe_shell_git_status(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("run_shell_command", {"command": "git status"}) == PermissionDecision.ALLOW
-
-
-def test_workspace_write_allows_safe_shell_ls(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("run_shell_command", {"command": "ls -la"}) == PermissionDecision.ALLOW
-
-
-def test_workspace_write_allows_safe_shell_cat(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("run_shell_command", {"command": "cat README.md"}) == PermissionDecision.ALLOW
-
-
-def test_workspace_write_allows_safe_shell_grep(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("run_shell_command", {"command": "grep -r foo src/"}) == PermissionDecision.ALLOW
-
-
-def test_workspace_write_denies_rm_rf(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("run_shell_command", {"command": "rm -rf /"}) == PermissionDecision.DENY
-
-
-def test_workspace_write_denies_sudo(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("run_shell_command", {"command": "sudo apt-get install x"}) == PermissionDecision.DENY
-
-
-def test_workspace_write_asks_unknown_shell(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("run_shell_command", {"command": "curl https://example.com"}) == PermissionDecision.ASK
-
-
-def test_workspace_write_asks_web_fetch(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "https://example.com"}) == PermissionDecision.ASK
-
-
-def test_workspace_write_asks_web_search(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_search", {"query": "python"}) == PermissionDecision.ASK
-
-
-def test_workspace_write_unknown_tool_returns_none(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("unknown_tool_xyz", {}) is None
+    assert e.decide(tool, args) is decision
 
 
 # ---------------------------------------------------------------------------
 # FULL_ACCESS mode
 # ---------------------------------------------------------------------------
 
-def test_full_access_allows_write_file(tmp_path, monkeypatch):
+@pytest.mark.parametrize("tool, args", [
+    pytest.param("write_file", {"path": "x"}, id="write-file"),
+    pytest.param("web_fetch", {"url": "https://x.com"}, id="web-fetch"),
+])
+def test_full_access_allows(tmp_path, monkeypatch, tool, args):
     e = _engine(tmp_path, monkeypatch)
     e.set_mode(PermissionMode.FULL_ACCESS)
-    assert e.decide("write_file", {"path": "x"}) == PermissionDecision.ALLOW
+    assert e.decide(tool, args) is PermissionDecision.ALLOW
 
 
 def test_full_access_allows_recoverable_shell(tmp_path, monkeypatch):
@@ -133,68 +105,35 @@ def test_full_access_allows_recoverable_shell(tmp_path, monkeypatch):
     assert e.decide("run_shell_command", {"command": "pip install evil-package"}) == PermissionDecision.ALLOW
 
 
-def test_full_access_allows_web_fetch(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    e.set_mode(PermissionMode.FULL_ACCESS)
-    assert e.decide("web_fetch", {"url": "https://x.com"}) == PermissionDecision.ALLOW
-
-
 # ---------------------------------------------------------------------------
 # PLAN mode
 # ---------------------------------------------------------------------------
 
-def test_plan_mode_allows_plan_save(tmp_path, monkeypatch):
+@pytest.mark.parametrize("tool, args, decision", [
+    pytest.param("plan_save", {"content": "# Plan"}, PermissionDecision.ALLOW, id="allows-plan-save"),
+    pytest.param("plan_finalize", {"draft_id": "20250101"}, PermissionDecision.ALLOW,
+                 id="allows-plan-finalize"),
+    pytest.param("write_file", {"path": "x"}, PermissionDecision.DENY, id="denies-write-file"),
+    pytest.param("replace", {"path": "x", "old": "a", "new": "b"}, PermissionDecision.DENY,
+                 id="denies-replace"),
+    pytest.param("save_memory", {"key": "k", "value": "v"}, PermissionDecision.DENY,
+                 id="denies-save-memory"),
+    pytest.param("todo_write", {"todos": []}, PermissionDecision.DENY, id="denies-todo-write"),
+    pytest.param("run_shell_command", {"command": "git diff HEAD"}, PermissionDecision.ALLOW,
+                 id="allows-read-only-shell"),
+    pytest.param("run_shell_command", {"command": "pip install x"}, PermissionDecision.DENY,
+                 id="denies-arbitrary-shell"),
+    pytest.param("web_fetch", {"url": "https://x.com"}, PermissionDecision.ASK, id="asks-web-fetch"),
+    # Plan mode also has the domain allowlist and blocklist for web_fetch.
+    pytest.param("web_fetch", {"url": "https://docs.python.org/3/"}, PermissionDecision.ALLOW,
+                 id="domain-allowlist"),
+    pytest.param("web_fetch", {"url": "http://127.0.0.1/admin"}, PermissionDecision.DENY,
+                 id="domain-blocklist"),
+])
+def test_plan_mode_preset(tmp_path, monkeypatch, tool, args, decision):
     e = _engine(tmp_path, monkeypatch)
     e.set_mode(PermissionMode.PLAN)
-    assert e.decide("plan_save", {"content": "# Plan"}) == PermissionDecision.ALLOW
-
-
-def test_plan_mode_allows_plan_finalize(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    e.set_mode(PermissionMode.PLAN)
-    assert e.decide("plan_finalize", {"draft_id": "20250101"}) == PermissionDecision.ALLOW
-
-
-def test_plan_mode_denies_write_file(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    e.set_mode(PermissionMode.PLAN)
-    assert e.decide("write_file", {"path": "x"}) == PermissionDecision.DENY
-
-
-def test_plan_mode_denies_replace(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    e.set_mode(PermissionMode.PLAN)
-    assert e.decide("replace", {"path": "x", "old": "a", "new": "b"}) == PermissionDecision.DENY
-
-
-def test_plan_mode_denies_save_memory(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    e.set_mode(PermissionMode.PLAN)
-    assert e.decide("save_memory", {"key": "k", "value": "v"}) == PermissionDecision.DENY
-
-
-def test_plan_mode_denies_todo_write(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    e.set_mode(PermissionMode.PLAN)
-    assert e.decide("todo_write", {"todos": []}) == PermissionDecision.DENY
-
-
-def test_plan_mode_allows_read_only_shell(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    e.set_mode(PermissionMode.PLAN)
-    assert e.decide("run_shell_command", {"command": "git diff HEAD"}) == PermissionDecision.ALLOW
-
-
-def test_plan_mode_denies_arbitrary_shell(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    e.set_mode(PermissionMode.PLAN)
-    assert e.decide("run_shell_command", {"command": "pip install x"}) == PermissionDecision.DENY
-
-
-def test_plan_mode_asks_web_fetch(tmp_path, monkeypatch):
-    e = _engine(tmp_path, monkeypatch)
-    e.set_mode(PermissionMode.PLAN)
-    assert e.decide("web_fetch", {"url": "https://x.com"}) == PermissionDecision.ASK
+    assert e.decide(tool, args) is decision
 
 
 # ---------------------------------------------------------------------------
@@ -337,96 +276,43 @@ def test_get_rules_display_custom_rule_shown(tmp_path, monkeypatch):
 # Domain-based web_fetch permission rules
 # ---------------------------------------------------------------------------
 
-def test_domain_allowlist_suffix_match(tmp_path, monkeypatch):
-    """URLs matching allowlist domains are auto-allowed."""
+@pytest.mark.parametrize("url, decision", [
+    pytest.param("https://api.github.com/repos/foo", PermissionDecision.ALLOW,
+                 id="allowlist-suffix-match"),
+    # '.github.com' also matches 'github.com' itself (no subdomain).
+    pytest.param("https://github.com/foo/bar", PermissionDecision.ALLOW,
+                 id="allowlist-exact-root-match"),
+    # An exact domain entry (no leading dot) matches only that exact host.
+    pytest.param("https://r.jina.ai/https://example.com", PermissionDecision.ALLOW,
+                 id="allowlist-exact-entry"),
+    # '.github.com' must NOT match 'notgithub.com'.
+    pytest.param("https://notgithub.com/foo", PermissionDecision.ASK,
+                 id="allowlist-no-false-suffix"),
+    pytest.param("http://localhost:8080/api", PermissionDecision.DENY, id="blocklist-localhost"),
+    pytest.param("http://127.0.0.1/secret", PermissionDecision.DENY, id="blocklist-loopback-ip"),
+    # Cloud metadata IP (SSRF protection).
+    pytest.param("http://169.254.169.254/latest/meta-data", PermissionDecision.DENY,
+                 id="blocklist-metadata-endpoint"),
+    pytest.param("https://api.corp.internal/data", PermissionDecision.DENY,
+                 id="blocklist-internal-suffix"),
+    pytest.param("http://0.0.0.0:5000/", PermissionDecision.DENY, id="blocklist-zero-ip"),
+    # Not in the allowlist or the blocklist.
+    pytest.param("https://example.com/page", PermissionDecision.ASK, id="fallthrough-to-ask"),
+    pytest.param("HTTPS://GITHUB.COM/foo", PermissionDecision.ALLOW, id="case-insensitive"),
+    # A URL without a scheme is handled gracefully.
+    pytest.param("docs.python.org/3/library/os.html", PermissionDecision.ALLOW,
+                 id="missing-scheme"),
+    # Port numbers don't interfere with domain matching.
+    pytest.param("http://localhost:3000/health", PermissionDecision.DENY, id="port-stripping"),
+    # IP '127.0.0.1' does not match by suffix: '1.127.0.0.1' is in no list.
+    pytest.param("http://1.127.0.0.1/", PermissionDecision.ASK, id="ip-exact-match-no-suffix"),
+    # With userinfo (evil.com@github.com), urlparse takes github.com as the host.
+    pytest.param("http://evil.com@github.com/path", PermissionDecision.ALLOW,
+                 id="userinfo-resolves-to-the-real-host"),
+])
+def test_domain_preset_for_web_fetch(tmp_path, monkeypatch, url, decision):
     e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "https://api.github.com/repos/foo"}) == PermissionDecision.ALLOW
-
-
-def test_domain_allowlist_exact_root_match(tmp_path, monkeypatch):
-    """'.github.com' also matches 'github.com' itself (no subdomain)."""
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "https://github.com/foo/bar"}) == PermissionDecision.ALLOW
-
-
-def test_domain_allowlist_exact_entry(tmp_path, monkeypatch):
-    """Exact domain entry (no leading dot) matches only that exact host."""
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "https://r.jina.ai/https://example.com"}) == PermissionDecision.ALLOW
-
-
-def test_domain_allowlist_no_false_suffix(tmp_path, monkeypatch):
-    """'.github.com' should NOT match 'notgithub.com'."""
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "https://notgithub.com/foo"}) == PermissionDecision.ASK
-
-
-def test_domain_blocklist_localhost(tmp_path, monkeypatch):
-    """Localhost is auto-denied."""
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "http://localhost:8080/api"}) == PermissionDecision.DENY
-
-
-def test_domain_blocklist_loopback_ip(tmp_path, monkeypatch):
-    """127.0.0.1 is auto-denied."""
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "http://127.0.0.1/secret"}) == PermissionDecision.DENY
-
-
-def test_domain_blocklist_metadata_endpoint(tmp_path, monkeypatch):
-    """Cloud metadata IP is auto-denied (SSRF protection)."""
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "http://169.254.169.254/latest/meta-data"}) == PermissionDecision.DENY
-
-
-def test_domain_blocklist_internal_suffix(tmp_path, monkeypatch):
-    """Domains ending in .internal are auto-denied."""
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "https://api.corp.internal/data"}) == PermissionDecision.DENY
-
-
-def test_domain_blocklist_zero_ip(tmp_path, monkeypatch):
-    """0.0.0.0 is auto-denied."""
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "http://0.0.0.0:5000/"}) == PermissionDecision.DENY
-
-
-def test_domain_fallthrough_to_ask(tmp_path, monkeypatch):
-    """URLs not in allowlist or blocklist get ASK."""
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "https://example.com/page"}) == PermissionDecision.ASK
-
-
-def test_domain_case_insensitive(tmp_path, monkeypatch):
-    """Domain matching is case-insensitive."""
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "HTTPS://GITHUB.COM/foo"}) == PermissionDecision.ALLOW
-
-
-def test_domain_missing_scheme(tmp_path, monkeypatch):
-    """URL without scheme is handled gracefully."""
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "docs.python.org/3/library/os.html"}) == PermissionDecision.ALLOW
-
-
-def test_domain_port_stripping(tmp_path, monkeypatch):
-    """Port numbers don't interfere with domain matching."""
-    e = _engine(tmp_path, monkeypatch)
-    assert e.decide("web_fetch", {"url": "http://localhost:3000/health"}) == PermissionDecision.DENY
-
-
-def test_domain_ip_exact_match_no_suffix(tmp_path, monkeypatch):
-    """IP '127.0.0.1' does not match via suffix (e.g. '1.127.0.0.1' should not match)."""
-    e = _engine(tmp_path, monkeypatch)
-    # This domain is not in any list, so should fall through to ask
-    assert e.decide("web_fetch", {"url": "http://1.127.0.0.1/"}) == PermissionDecision.ASK
-
-
-def test_domain_userinfo_bypass_attempt(tmp_path, monkeypatch):
-    """URL with userinfo (evil.com@github.com) resolves to the actual host."""
-    e = _engine(tmp_path, monkeypatch)
-    # urlparse treats github.com as the hostname here
-    assert e.decide("web_fetch", {"url": "http://evil.com@github.com/path"}) == PermissionDecision.ALLOW
+    assert e.decide("web_fetch", {"url": url}) is decision
 
 
 def test_domain_custom_allowlist_overrides_preset_blocklist(tmp_path, monkeypatch):
@@ -435,20 +321,6 @@ def test_domain_custom_allowlist_overrides_preset_blocklist(tmp_path, monkeypatc
     e = _engine(tmp_path, monkeypatch, user_rules=rules)
     # Custom rule evaluated first in workspace-write mode
     assert e.decide("web_fetch", {"url": "http://localhost:8080/"}) == PermissionDecision.ALLOW
-
-
-def test_domain_plan_mode_allowlist(tmp_path, monkeypatch):
-    """Plan mode also has domain allowlist for web_fetch."""
-    e = _engine(tmp_path, monkeypatch)
-    e.set_mode(PermissionMode.PLAN)
-    assert e.decide("web_fetch", {"url": "https://docs.python.org/3/"}) == PermissionDecision.ALLOW
-
-
-def test_domain_plan_mode_blocklist(tmp_path, monkeypatch):
-    """Plan mode also has domain blocklist for web_fetch."""
-    e = _engine(tmp_path, monkeypatch)
-    e.set_mode(PermissionMode.PLAN)
-    assert e.decide("web_fetch", {"url": "http://127.0.0.1/admin"}) == PermissionDecision.DENY
 
 
 def test_domain_display_shows_allowlist(tmp_path, monkeypatch):

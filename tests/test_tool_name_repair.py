@@ -36,77 +36,45 @@ VALID = {
 # ---------------------------------------------------------------------------
 
 
-class TestExistingBehaviorStillWorks:
-    def test_lowercase_already_matches(self):
-        assert repair_tool_name("browser_click", VALID) == "browser_click"
+class TestStandaloneRepair:
+    @pytest.mark.parametrize("asked, repaired", [
+        pytest.param("browser_click", "browser_click", id="exact-name"),
+        pytest.param("TERMINAL", "terminal", id="uppercase"),
+        pytest.param("web-search", "web_search", id="dash-to-underscore"),
+        pytest.param("write file", "write_file", id="space-to-underscore"),
+        # Claude-style CamelCase + ``_tool`` variants.
+        pytest.param("BrowserClick", "browser_click", id="camel-case"),
+        pytest.param("BrowserClick_tool", "browser_click", id="camel-case-snake-tool-suffix"),
+        pytest.param("PatchTool", "patch", id="camel-case-class-suffix"),
+        # Hardest case: strip both '_tool' (trailing) and 'Tool' (CamelCase
+        # embedded) to reach 'todo'.
+        pytest.param("TodoTool_tool", "todo", id="class-and-snake-suffix"),
+        pytest.param("Patch_tool", "patch", id="snake-tool-suffix"),
+        pytest.param("patch-tool", "patch", id="dash-tool-suffix"),
+        pytest.param("ReadFile_tool", "read_file", id="multi-word-snake-tool-suffix"),
+        pytest.param("WriteFileTool", "write_file", id="multi-word-class-suffix"),
+        pytest.param("write-file_Tool", "write_file", id="mixed-separators-and-suffix"),
+    ])
+    def test_a_spelling_of_an_offered_name_is_repaired(self, asked, repaired):
+        assert repair_tool_name(asked, VALID) == repaired
 
-    def test_uppercase_simple(self):
-        assert repair_tool_name("TERMINAL", VALID) == "terminal"
-
-    def test_dash_to_underscore(self):
-        assert repair_tool_name("web-search", VALID) == "web_search"
-
-    def test_space_to_underscore(self):
-        assert repair_tool_name("write file", VALID) == "write_file"
-
-    def test_a_near_miss_is_not_guessed(self):
-        """``terminall`` is one character from ``terminal`` and is still not
-        dispatched to it (#261). Similarity cannot tell a typo from a different
-        tool, so the model is told the name was not found and re-issues the
-        call — one extra turn, no wrong tool."""
-        assert repair_tool_name("terminall", VALID) is None
-
-    def test_unknown_returns_none(self):
-        assert repair_tool_name("xyz_no_such_tool", VALID) is None
-
-
-class TestClassLikeEmissions:
-    """Regression coverage for Claude-style CamelCase + _tool variants."""
-
-    def test_camel_case_no_suffix(self):
-        assert repair_tool_name("BrowserClick", VALID) == "browser_click"
-
-    def test_camel_case_with_underscore_tool_suffix(self):
-        assert repair_tool_name("BrowserClick_tool", VALID) == "browser_click"
-
-    def test_camel_case_with_class_suffix(self):
-        assert repair_tool_name("PatchTool", VALID) == "patch"
-
-    def test_double_tacked_class_and_snake_suffix(self):
-        # Hardest case: TodoTool_tool — strip both '_tool' (trailing) and
-        # 'Tool' (CamelCase embedded) to reach 'todo'.
-        assert repair_tool_name("TodoTool_tool", VALID) == "todo"
-
-    def test_simple_name_with_tool_suffix(self):
-        assert repair_tool_name("Patch_tool", VALID) == "patch"
-
-    def test_simple_name_with_dash_tool_suffix(self):
-        assert repair_tool_name("patch-tool", VALID) == "patch"
-
-    def test_camel_case_preserves_multi_word_match(self):
-        assert repair_tool_name("ReadFile_tool", VALID) == "read_file"
-        assert repair_tool_name("WriteFileTool", VALID) == "write_file"
-
-    def test_mixed_separators_and_suffix(self):
-        assert repair_tool_name("write-file_Tool", VALID) == "write_file"
-
-
-class TestEdgeCases:
-    def test_empty_string(self):
-        assert repair_tool_name("", VALID) is None
-
-    def test_only_tool_suffix(self):
+    @pytest.mark.parametrize("asked", [
+        # ``terminall`` is one character from ``terminal`` and is still not
+        # dispatched to it (#261). Similarity cannot tell a typo from a
+        # different tool, so the model is told the name was not found and
+        # re-issues the call — one extra turn, no wrong tool.
+        pytest.param("terminall", id="near-miss-is-not-guessed"),
+        pytest.param("xyz_no_such_tool", id="unknown"),
+        pytest.param("", id="empty"),
         # '_tool' alone is not a valid name — must not match anything.
-        assert repair_tool_name("_tool", VALID) is None
+        pytest.param("_tool", id="only-tool-suffix"),
+        pytest.param("ThisIsNotRemotelyARealToolName_tool", id="long-unrelated"),
+    ])
+    def test_a_name_that_spells_nothing_offered_is_not_found(self, asked):
+        assert repair_tool_name(asked, VALID) is None
 
     def test_empty_valid_names(self):
         assert repair_tool_name("anything", set()) is None
-
-    def test_very_long_unrelated_name_does_not_match(self):
-        # Fuzzy cutoff 0.7 must reject obviously unrelated names.
-        assert repair_tool_name(
-            "ThisIsNotRemotelyARealToolName_tool", VALID
-        ) is None
 
     def test_list_valid_names_also_works(self):
         # API accepts any iterable, not just sets.
