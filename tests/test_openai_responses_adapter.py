@@ -150,7 +150,7 @@ def test_history_becomes_items_rebuilt_key_by_key():
     ]
 
 
-@pytest.mark.parametrize("detail", ["low", "high", "auto"])
+@pytest.mark.parametrize("detail", ["low", "high", "auto", "original"])
 @pytest.mark.parametrize("method", ["chat", "chat_stream"])
 def test_explicit_image_detail_reaches_the_real_sdk(detail, method):
     messages = [{"role": "user", "content": [{

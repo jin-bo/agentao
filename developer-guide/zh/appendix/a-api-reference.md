@@ -146,6 +146,8 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 代替，并在 `agentao.log` 里记一条警告。历史保持原样。此前适配器会在发送前抛错，
 这一轮和之后每一轮都如此。`chat(images=...)` 总是生成 `data:` URL，不会遇到这种情况。
 
+`openai-responses` 线路转换图片部分时，会保留显式设置的 `image_url.detail`：`low`、`high`、`auto` 或 `original`。未设置或不支持的值继续省略，由端点采用默认值；转换不会修改已保存的消息。
+
 ### 属性
 
 | 属性 | 类型 | 说明 |

@@ -157,6 +157,8 @@ with a warning in `agentao.log`. History is left as written. Before, the
 adapter raised before sending, on that turn and every later one.
 `chat(images=...)` always builds a `data:` URL, so it never meets this.
 
+The `openai-responses` wire preserves explicit `image_url.detail` values of `low`, `high`, `auto` and `original` when translating image parts. If detail is absent or unsupported, the adapter omits it; the endpoint applies its default. This translation leaves stored messages unchanged.
+
 ### Attributes
 
 | Attribute | Type | Notes |
