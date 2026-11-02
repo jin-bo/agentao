@@ -286,13 +286,34 @@ def test_a_part_this_wire_cannot_express_fails_loudly_rather_than_vanishing():
         translate_messages([{"role": "user", "content": [part]}])
 
 
+@pytest.mark.parametrize("image_url, source", [
+    (f"data:image/png;base64,{PNG}",
+     {"type": "base64", "media_type": "image/png", "data": PNG}),
+    ("https://example.test/cat.png", {"type": "url", "url": "https://example.test/cat.png"}),
+], ids=["data-url", "https-url"])
+def test_a_bare_string_image_url_is_taken_as_the_url(image_url, source):
+    """#613: ``.get`` on the string raised, on that request and every later one."""
+    history = [{"role": "user", "content": [{"type": "image_url", "image_url": image_url}]}]
+    before = copy.deepcopy(history)
+    llm = _llm()
+    wire = attach(llm, Wire(_ok()))
+    llm.chat_stream(history)
+    assert wire.requests[0]["messages"][0]["content"] == [{"type": "image", "source": source}]
+    assert history == before
+
+
 @pytest.mark.parametrize("image_url", [
     {"url": "file:///etc/passwd"},
     {"url": ""},
     {"url": None},
     {},
     None,
-], ids=["file-url", "empty", "none", "no-url", "no-image_url"])
+    "",
+    "file:///etc/passwd",
+    123,
+    ["https://example.test/cat.png"],
+], ids=["file-url", "empty", "none", "no-url", "no-image_url",
+        "empty-string", "file-url-string", "int", "list"])
 def test_an_image_this_wire_cannot_send_goes_out_as_a_note(image_url, caplog):
     """#485: raising was permanent — the part is in history, so every later
     request raised too. The note goes in the outbound copy only."""
@@ -311,6 +332,21 @@ def test_an_image_this_wire_cannot_send_goes_out_as_a_note(image_url, caplog):
     assert json.dumps(history) == before
     assert "anthropic-messages: an image part was sent as a text note" in caplog.text
     assert "/etc/passwd" not in caplog.text
+
+
+@pytest.mark.parametrize("image_url, reason", [
+    ("file:///etc/passwd", "an image must be a base64 data URL or an http(s) URL"),
+    ({"url": "file:///etc/passwd"}, "an image must be a base64 data URL or an http(s) URL"),
+    (123, "an image part needs a URL"),
+    ({"url": ""}, "an image part needs a URL"),
+], ids=["string-scheme", "dict-scheme", "wrong-shape", "empty"])
+def test_the_logged_reason_names_what_is_wrong_with_the_image(image_url, reason, caplog):
+    """A wrong shape is not reported as a wrong URL scheme (#613)."""
+    with caplog.at_level(logging.WARNING, logger="agentao.llm._image_parts"):
+        translate_messages([{"role": "user", "content": [
+            {"type": "image_url", "image_url": image_url},
+        ]}])
+    assert reason in caplog.text
 
 
 def test_ids_that_would_collide_after_the_rewrite_stay_distinct_and_paired():

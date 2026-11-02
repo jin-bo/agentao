@@ -146,7 +146,18 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 代替，并在 `agentao.log` 里记一条警告。历史保持原样。此前适配器会在发送前抛错，
 这一轮和之后每一轮都如此。`chat(images=...)` 总是生成 `data:` URL，不会遇到这种情况。
 
-`openai-responses` 线路转换图片部分时，会保留显式设置的 `image_url.detail`：`low`、`high`、`auto` 或 `original`。未设置或不支持的值继续省略，由端点采用默认值；转换不会修改已保存的消息。
+**各线路上 `image_url` 的形状与 `detail`**（0.5.19+）。OpenAI 的形状是对象
+`{"url": ..., "detail": ...}`。会转换图片部分的两个适配器也把纯字符串当作 URL。
+其他值按上面的提示发出，并记一条警告。此前字符串或其他非对象的值会抛错，
+这一轮和之后每一轮都如此（#613）。
+
+| 线路 | `image_url` 为纯字符串 | `detail` |
+|---|---|---|
+| `openai-completions` | 原样发送。这条线路不转换内容部分。 | 原样发送，不校验 |
+| `anthropic-messages` | 当作 URL | 不发送（Anthropic 没有对应字段） |
+| `openai-responses` | 当作 URL | `low`、`high`、`auto` 或 `original` 会发送。其他值不发送，并在 `agentao.log` 里记一条警告，由端点采用默认值。 |
+
+所有线路上，历史都保持原样。
 
 ### 属性
 

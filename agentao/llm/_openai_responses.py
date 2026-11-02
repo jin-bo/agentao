@@ -38,7 +38,7 @@ import re
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from ._api_format import OPENAI_RESPONSES
-from ._image_parts import unsendable_image_note
+from ._image_parts import image_url_fields, log_dropped_detail, unsendable_image_note
 from ._retry import (
     QUOTA_EXHAUSTED_CODES,
     StreamEndedEarlyError,
@@ -141,6 +141,10 @@ def _is_function_call(item: Any) -> bool:
 
 # -- request translation ------------------------------------------------------
 
+#: ``ImageDetail`` of the Responses API. openai 2.x types list the first three
+#: and 3.x adds ``original``. The SDK does not check the value at runtime.
+_IMAGE_DETAILS = ("low", "high", "auto", "original")
+
 
 def _input_parts(content: Any) -> List[Dict[str, Any]]:
     """Canonical user content → ``input_text`` / ``input_image`` parts."""
@@ -156,8 +160,7 @@ def _input_parts(content: Any) -> List[Dict[str, Any]]:
             if isinstance(text, str) and text:
                 parts.append({"type": "input_text", "text": text})
         elif kind == "image_url":
-            image_url = part.get("image_url") or {}
-            url = image_url.get("url")
+            url, detail = image_url_fields(part)
             if not isinstance(url, str) or not url:
                 # Not raised: the part is in history, so a raise here would
                 # fail every later request too (#485).
@@ -166,9 +169,10 @@ def _input_parts(content: Any) -> List[Dict[str, Any]]:
                 )})
                 continue
             image = {"type": "input_image", "image_url": url}
-            detail = image_url.get("detail")
-            if detail in ("low", "high", "auto", "original"):
+            if detail in _IMAGE_DETAILS:
                 image["detail"] = detail
+            elif detail is not None:
+                log_dropped_detail(OPENAI_RESPONSES, detail)
             parts.append(image)
         else:
             raise ValueError(
