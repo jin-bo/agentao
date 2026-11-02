@@ -284,10 +284,14 @@ UNTRANSLATABLE = [
     ([{"type": "input_audio", "input_audio": {"data": "SECRET", "format": "wav"}}],
      "this wire cannot send type 'input_audio'"),
     ([{"text": "SECRET"}], "this wire cannot send a part with no type"),
+    ([{"type": 5, "text": "SECRET"}], "this wire cannot send a part whose type is a int"),
     (["SECRET"], "a content part is a str"),
     ({"type": "text", "text": "SECRET"}, "message content is a dict"),
+    ([{"type": "text", "text": {"value": "SECRET"}}], "a text part's text is a dict"),
 ]
-UNTRANSLATABLE_IDS = ["unknown-type", "no-type", "non-object-part", "object-content"]
+UNTRANSLATABLE_IDS = [
+    "unknown-type", "no-type", "non-string-type", "non-object-part", "object-content", "non-string-text",
+]
 
 
 @pytest.mark.parametrize("content, reason", UNTRANSLATABLE, ids=UNTRANSLATABLE_IDS)
@@ -324,6 +328,24 @@ def test_the_note_covers_every_role_the_adapter_translates():
     assert result["type"] == "tool_result"
     assert result["content"] == [note, {"type": "text", "text": "pong"}]
     assert UNSENDABLE_CONTENT_NOTE in json.dumps(turns[2]["content"][1:])
+
+
+def test_an_image_in_a_text_only_slot_goes_out_as_a_note(caplog):
+    """The system prompt and an assistant turn take no image block. A leading
+    system image raised ``KeyError`` on every request, and an assistant image
+    was a 400 on every request (#615)."""
+    image = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+    note = {"type": "text", "text": UNSENDABLE_CONTENT_NOTE}
+    with caplog.at_level(logging.WARNING, logger="agentao.llm._image_parts"):
+        system, turns = translate_messages([
+            {"role": "system", "content": [image]},
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": [{"type": "text", "text": "a"}, image]},
+        ])
+    assert system == UNSENDABLE_CONTENT_NOTE
+    assert turns[1]["content"] == [{"type": "text", "text": "a"}, note]
+    assert "the system prompt takes text only, not type 'image'" in caplog.text
+    assert "an assistant turn takes text only, not type 'image'" in caplog.text
 
 
 @pytest.mark.parametrize("image_url, source", [

@@ -72,7 +72,9 @@ def describe_part(value: Any) -> str:
     """A short, log-safe label for a part or its ``type``: never the content."""
     if isinstance(value, dict):
         kind = value.get("type")
-        return f"type {kind[:32]!r}" if isinstance(kind, str) else "a part with no type"
+        if isinstance(kind, str):
+            return f"type {kind[:32]!r}"
+        return "a part with no type" if kind is None else f"a part whose type is a {type(kind).__name__}"
     return f"a {type(value).__name__}"
 
 

@@ -177,7 +177,9 @@ def _input_parts(content: Any) -> List[Dict[str, Any]]:
         kind = part.get("type")
         if kind == "text":
             text = part.get("text")
-            if isinstance(text, str) and text:
+            if not isinstance(text, str):
+                parts.append(_note_part(f"a text part's text is a {type(text).__name__}"))
+            elif text:
                 parts.append({"type": "input_text", "text": text})
         elif kind == "image_url":
             url, detail = image_url_fields(part)
@@ -216,8 +218,10 @@ def _text_of(content: Any) -> str:
     lines: List[str] = []
     for part in content:
         if isinstance(part, dict) and part.get("type") == "text":
-            if isinstance(part.get("text"), str):
-                lines.append(part["text"])
+            text = part.get("text")
+            lines.append(text if isinstance(text, str) else unsendable_content_note(
+                OPENAI_RESPONSES, f"a text part's text is a {type(text).__name__}",
+            ))
             continue
         lines.append(unsendable_content_note(
             OPENAI_RESPONSES, f"this item takes text only, not {describe_part(part)}",

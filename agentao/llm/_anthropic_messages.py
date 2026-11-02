@@ -230,7 +230,11 @@ def _content_blocks(content: Any) -> List[Dict[str, Any]]:
         marker = part.get("cache_control")
         if kind == "text":
             text = part.get("text")
-            if isinstance(text, str) and text.strip():
+            if not isinstance(text, str):
+                blocks.append(_text_block(unsendable_content_note(
+                    ANTHROPIC_MESSAGES, f"a text part's text is a {type(text).__name__}",
+                ), marker))
+            elif text.strip():
                 blocks.append(_text_block(text, marker))
         elif kind == "image_url":
             # ``detail`` has no Anthropic field, so it is not sent.
@@ -270,6 +274,23 @@ def _content_blocks(content: Any) -> List[Dict[str, Any]]:
     return blocks
 
 
+def _text_only(blocks: List[Dict[str, Any]], where: str) -> List[Dict[str, Any]]:
+    """``blocks`` for a slot that takes text only: the system prompt or an
+    assistant turn. An image there is refused by the API, on this request and
+    every later one, because the part is in history, so it goes out as a note
+    instead (#615)."""
+    return [
+        block if block["type"] == "text" else _text_block(
+            unsendable_content_note(
+                ANTHROPIC_MESSAGES,
+                f"{where} takes text only, not type {block['type']!r}",
+            ),
+            block.get("cache_control"),
+        )
+        for block in blocks
+    ]
+
+
 def _thinking_blocks(carrier: Any) -> List[Dict[str, Any]]:
     """The signed blocks off an assistant dict, whole ones only.
 
@@ -299,7 +320,7 @@ def _assistant_blocks(message: Dict[str, Any], ids: Dict[str, str]) -> List[Dict
     # Thinking leads: with thinking on, the API requires the assistant turn of
     # a tool loop to *start* with its thinking block.
     blocks = _thinking_blocks(message.get(ANTHROPIC_THINKING_BLOCKS))
-    blocks.extend(_content_blocks(message.get("content")))
+    blocks.extend(_text_only(_content_blocks(message.get("content")), "an assistant turn"))
     for call in message.get("tool_calls") or []:
         if not isinstance(call, dict):
             continue
@@ -360,7 +381,7 @@ def translate_messages(
     system: Any = None
     rest = messages
     if messages and messages[0].get("role") in ("system", "developer"):
-        lifted = _content_blocks(messages[0].get("content"))
+        lifted = _text_only(_content_blocks(messages[0].get("content")), "the system prompt")
         rest = messages[1:]
         # A breakpoint the caller put on the system *message* moves onto its
         # last block, as for any other message below. It was already charged

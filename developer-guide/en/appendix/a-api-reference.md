@@ -180,11 +180,18 @@ content. This covers:
   on `openai-completions`
 - a part that is not an object, or a part with no `type`
 - a `content` that is neither text nor a list
+- a `text` part whose `text` is not a string
+- on `anthropic-messages`, an image in the system prompt or an assistant turn,
+  which take text only
 - on `openai-responses`, any non-text part in an assistant turn or a tool
   result, which take text only
 
-Before, the first three raised before sending, on that turn and every later
-one. On `openai-responses`, the rest were dropped without a trace. History
+Before, each of these either raised before sending, on that turn and every
+later one, or was dropped without a trace. An unknown part type raised on both
+wires. A non-string `text` was dropped on both. On `anthropic-messages`, a
+non-object part or `content` raised, an image in a leading system message
+raised, and an image in an assistant turn was sent as an image block where the
+API takes text. On `openai-responses`, the other cases were dropped. History
 is left as written, so after a switch back to a wire that can send the part,
 the part goes out again (#615). `openai-completions` does not translate parts:
 it sends them as written, and the provider decides. Only these shape and

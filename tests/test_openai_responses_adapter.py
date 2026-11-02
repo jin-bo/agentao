@@ -224,9 +224,11 @@ def test_an_image_part_with_no_url_goes_out_as_a_note(image_url):
     ([{"type": "input_audio", "input_audio": {"data": "SECRET", "format": "wav"}}],
      "this wire cannot send type 'input_audio'"),
     ([{"text": "SECRET"}], "this wire cannot send a part with no type"),
+    ([{"type": 5, "text": "SECRET"}], "this wire cannot send a part whose type is a int"),
     (["SECRET"], "a content part is a str"),
     ({"type": "text", "text": "SECRET"}, "message content is a dict"),
-], ids=["unknown-type", "no-type", "non-object-part", "object-content"])
+    ([{"type": "text", "text": {"value": "SECRET"}}], "a text part's text is a dict"),
+], ids=["unknown-type", "no-type", "non-string-type", "non-object-part", "object-content", "non-string-text"])
 def test_a_part_this_wire_cannot_express_never_vanishes_silently(content, reason, caplog):
     """#615: an unknown type raised, and a non-object part or content was
     dropped without a trace. Both go out as a note with a warning now, and
