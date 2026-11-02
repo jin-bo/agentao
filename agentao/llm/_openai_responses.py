@@ -156,7 +156,8 @@ def _input_parts(content: Any) -> List[Dict[str, Any]]:
             if isinstance(text, str) and text:
                 parts.append({"type": "input_text", "text": text})
         elif kind == "image_url":
-            url = (part.get("image_url") or {}).get("url")
+            image_url = part.get("image_url") or {}
+            url = image_url.get("url")
             if not isinstance(url, str) or not url:
                 # Not raised: the part is in history, so a raise here would
                 # fail every later request too (#485).
@@ -164,7 +165,11 @@ def _input_parts(content: Any) -> List[Dict[str, Any]]:
                     OPENAI_RESPONSES, "an image part needs a URL",
                 )})
                 continue
-            parts.append({"type": "input_image", "image_url": url})
+            image = {"type": "input_image", "image_url": url}
+            detail = image_url.get("detail")
+            if detail in ("low", "high", "auto", "original"):
+                image["detail"] = detail
+            parts.append(image)
         else:
             raise ValueError(
                 f"openai-responses: unsupported content part type {kind!r}"
