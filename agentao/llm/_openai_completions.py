@@ -152,7 +152,7 @@ def _with_object_image_urls(messages: List[Dict[str, Any]]) -> List[Dict[str, An
     """
     out: Optional[List[Dict[str, Any]]] = None
     for index, message in enumerate(messages):
-        content = message.get("content") if isinstance(message, dict) else None
+        content = message.get("content")
         if not isinstance(content, list):
             continue
         parts: Optional[List[Any]] = None
