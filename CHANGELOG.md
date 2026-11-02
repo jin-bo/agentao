@@ -17,6 +17,7 @@ _Targeting 0.5.19. Add entries under the relevant heading as work lands._
 
 - **Responses image detail is preserved.** Explicit `image_url.detail` values of `low`, `high`, `auto` and `original` reach the Responses request instead of being omitted during translation. Absent or unsupported values keep the previous omission behavior; the stored message history is unchanged (#607).
 - **A bare-string `image_url` no longer blocks the session.** On `anthropic-messages` and `openai-responses`, a string `image_url` is taken as the URL. Any other value that is not an object goes out as the unsendable-image note. Before, both raised on that turn and every later one. `openai-responses` now logs a warning when it drops a `detail` value. The developer-guide appendix shows how each wire handles `image_url` and `detail` (#613).
+- **A part a wire cannot express no longer blocks the session.** On `anthropic-messages` and `openai-responses`, an unknown part type (for example `input_audio` from `openai-completions` after a provider switch), a part that is not an object, and a `content` that is neither text nor a list go out as a text note, with a warning in `agentao.log`. Before, they raised on that turn and every later one. On `openai-responses`, a non-object part, and a non-text part in an assistant turn or a tool result, were dropped silently. They now get the note too. History is unchanged, so switching back to a wire that can send the part sends it again (#615).
 
 ---
 

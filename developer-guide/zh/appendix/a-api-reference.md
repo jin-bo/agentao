@@ -159,6 +159,20 @@ CLI 风格的自动发现工厂：读 `.env`、`LLM_PROVIDER` 前缀的 env 变�
 
 所有线路上，历史都保持原样。
 
+**线路无法表达的内容部分**（0.5.19+）。在 `anthropic-messages` 和 `openai-responses`
+上，线路没有对应形式的部分会以
+`[Content omitted: this part cannot be sent to the current model, so it cannot be viewed.]`
+代替发出，并在 `agentao.log` 里记一条警告。警告写出该部分的类型，从不写内容。包括：
+- 不认识的部分类型，比如 `input_audio`、`file`，它们在 `openai-completions` 上是合法的
+- 不是对象的部分，或没有 `type` 的部分
+- 既不是文本也不是列表的 `content`
+- `openai-responses` 上，助手消息或工具结果里的非文本部分（这两处只能放文本）
+
+此前前三种会在发送前抛错，这一轮和之后每一轮都如此。`openai-responses` 上的其余情况则被静默丢弃。
+历史保持原样，所以切回能发送该部分的线路后，它会照原样再次发出（#615）。
+`openai-completions` 不转换内容部分，原样发送，由服务商判断。只有这些格式和兼容性问题会换成提示，
+其他转换错误仍然抛出。
+
 ### 属性
 
 | 属性 | 类型 | 说明 |

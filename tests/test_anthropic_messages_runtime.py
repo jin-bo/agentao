@@ -493,3 +493,45 @@ def test_a_wire_switch_re_reads_which_extra_body_keys_are_structural(caplog):
                   if "structural request fields" in r.getMessage()]
     assert len(structural) == 1
     assert "system" in structural[0] and "top_k" not in structural[0]
+
+
+def test_a_part_only_another_wire_can_send_survives_a_switch_there_and_back():
+    """#615: ``input_audio`` is a Chat Completions part. After a switch to
+    ``anthropic-messages`` it raised before sending, on every later turn. Now
+    the Anthropic requests carry a note, and after the switch back the part
+    goes out again exactly as written."""
+    from agentao.llm._image_parts import UNSENDABLE_CONTENT_NOTE
+
+    audio = {"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}}
+    agent = Agentao(
+        api_key="k1", base_url="https://other.test/v1", model="gpt-x",
+        api_format="openai-completions", working_directory=Path.cwd(),
+    )
+    try:
+        agent.add_message("user", [{"type": "text", "text": "listen"}, audio])
+        sent = []
+        agent.llm.client = _completions_wire(sent)
+        assert agent.chat("first") == "over completions"
+        assert audio in sent[0][1]["messages"][1]["content"]
+
+        agent.set_provider("k2", base_url="https://api.example.test", model="claude-test",
+                           api_format="anthropic-messages")
+        wire = attach(agent.llm, Wire(*[stream_of(
+            message_start(input_tokens=10), text_block(0, "ok"), message_end("end_turn"),
+        ) for _ in range(2)]))
+        assert agent.chat("second") == "ok"
+        assert agent.chat("third") == "ok"
+        for body in wire.requests:
+            first_user = body["messages"][0]["content"]
+            assert {"type": "text", "text": UNSENDABLE_CONTENT_NOTE} in first_user
+            assert "UklGRg==" not in json.dumps(body)
+
+        agent.set_provider("k1", base_url="https://other.test/v1", model="gpt-x",
+                           api_format="openai-completions")
+        again = []
+        agent.llm.client = _completions_wire(again)
+        assert agent.chat("fourth") == "over completions"
+        assert audio in again[0][1]["messages"][1]["content"]
+        assert agent.messages[0]["content"][1] == audio
+    finally:
+        agent.close()

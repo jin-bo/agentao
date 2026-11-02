@@ -171,6 +171,25 @@ value raised on that turn and every later one (#613).
 
 On every wire, history is left as written.
 
+**Parts a wire cannot express** (0.5.19+). On `anthropic-messages` and
+`openai-responses`, a part that the wire has no form for goes out as
+`[Content omitted: this part cannot be sent to the current model, so it cannot be viewed.]`,
+with a warning in `agentao.log` that names the part's type, never its
+content. This covers:
+- an unknown part type, for example `input_audio` or `file`, which are valid
+  on `openai-completions`
+- a part that is not an object, or a part with no `type`
+- a `content` that is neither text nor a list
+- on `openai-responses`, any non-text part in an assistant turn or a tool
+  result, which take text only
+
+Before, the first three raised before sending, on that turn and every later
+one. On `openai-responses`, the rest were dropped without a trace. History
+is left as written, so after a switch back to a wire that can send the part,
+the part goes out again (#615). `openai-completions` does not translate parts:
+it sends them as written, and the provider decides. Only these shape and
+compatibility cases become notes. Any other translation error still raises.
+
 ### Attributes
 
 | Attribute | Type | Notes |

@@ -38,7 +38,13 @@ import re
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from ._api_format import OPENAI_RESPONSES
-from ._image_parts import image_url_fields, log_dropped_detail, unsendable_image_note
+from ._image_parts import (
+    describe_part,
+    image_url_fields,
+    log_dropped_detail,
+    unsendable_content_note,
+    unsendable_image_note,
+)
 from ._retry import (
     QUOTA_EXHAUSTED_CODES,
     StreamEndedEarlyError,
@@ -146,13 +152,27 @@ def _is_function_call(item: Any) -> bool:
 _IMAGE_DETAILS = ("low", "high", "auto", "original")
 
 
+def _note_part(reason: str) -> Dict[str, Any]:
+    return {"type": "input_text", "text": unsendable_content_note(OPENAI_RESPONSES, reason)}
+
+
 def _input_parts(content: Any) -> List[Dict[str, Any]]:
-    """Canonical user content → ``input_text`` / ``input_image`` parts."""
+    """Canonical user content → ``input_text`` / ``input_image`` parts.
+
+    A part this wire cannot express goes out as a note, never raised and never
+    dropped silently: the part is in history, so a raise would fail every later
+    request (#485, #615).
+    """
+    if content is None:
+        return []
     if isinstance(content, str):
         return [{"type": "input_text", "text": content}] if content else []
+    if not isinstance(content, list):
+        return [_note_part(f"message content is a {type(content).__name__}")]
     parts: List[Dict[str, Any]] = []
-    for part in content if isinstance(content, list) else []:
+    for part in content:
         if not isinstance(part, dict):
+            parts.append(_note_part(f"a content part is {describe_part(part)}"))
             continue
         kind = part.get("type")
         if kind == "text":
@@ -175,23 +195,34 @@ def _input_parts(content: Any) -> List[Dict[str, Any]]:
                 log_dropped_detail(OPENAI_RESPONSES, detail)
             parts.append(image)
         else:
-            raise ValueError(
-                f"openai-responses: unsupported content part type {kind!r}"
-            )
+            parts.append(_note_part(f"this wire cannot send {describe_part(part)}"))
     return parts
 
 
 def _text_of(content: Any) -> str:
-    """Flatten content to text — what an assistant turn and a tool result are."""
+    """Flatten content to text — what an assistant turn and a tool result are.
+
+    Only text survives on these items. Any other part becomes a note line
+    rather than vanishing (#615).
+    """
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content
     if not isinstance(content, list):
-        return ""
-    return "\n".join(
-        part["text"] for part in content
-        if isinstance(part, dict) and part.get("type") == "text"
-        and isinstance(part.get("text"), str)
-    )
+        return unsendable_content_note(
+            OPENAI_RESPONSES, f"message content is a {type(content).__name__}",
+        )
+    lines: List[str] = []
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "text":
+            if isinstance(part.get("text"), str):
+                lines.append(part["text"])
+            continue
+        lines.append(unsendable_content_note(
+            OPENAI_RESPONSES, f"this item takes text only, not {describe_part(part)}",
+        ))
+    return "\n".join(lines)
 
 
 def _reasoning_items(carrier: Any) -> List[Dict[str, Any]]:

@@ -56,7 +56,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ._api_format import ANTHROPIC_MESSAGES
 from ._cache_control import apply_cache_control
-from ._image_parts import image_url_fields, unsendable_image_note
+from ._image_parts import (
+    describe_part,
+    image_url_fields,
+    unsendable_content_note,
+    unsendable_image_note,
+)
 from ._retry import (
     RETRYABLE_STATUS_CODES,
     StreamEndedEarlyError,
@@ -202,20 +207,25 @@ def _content_blocks(content: Any) -> List[Dict[str, Any]]:
     produces) or an ``http(s)`` URL, which the API fetches itself. Any other
     image is sent as a text note saying it was omitted, never dropped silently
     and never raised: the part is in history, so a raise would fail every later
-    request (#485). Any other part type still raises.
+    request (#485). A part this wire cannot express (an unknown type, a part
+    that is not an object, a ``content`` that is neither text nor a list) gets
+    the same treatment with its own note (#615).
     """
     if content is None:
         return []
     if isinstance(content, str):
         return [_text_block(content)] if content.strip() else []
     if not isinstance(content, list):
-        raise ValueError(
-            f"anthropic-messages: unsupported message content {type(content).__name__}"
-        )
+        return [_text_block(unsendable_content_note(
+            ANTHROPIC_MESSAGES, f"message content is a {type(content).__name__}",
+        ))]
     blocks: List[Dict[str, Any]] = []
     for part in content:
         if not isinstance(part, dict):
-            raise ValueError("anthropic-messages: content parts must be objects")
+            blocks.append(_text_block(unsendable_content_note(
+                ANTHROPIC_MESSAGES, f"a content part is {describe_part(part)}",
+            )))
+            continue
         kind = part.get("type")
         marker = part.get("cache_control")
         if kind == "text":
@@ -254,9 +264,9 @@ def _content_blocks(content: Any) -> List[Dict[str, Any]]:
                 block["cache_control"] = marker
             blocks.append(block)
         else:
-            raise ValueError(
-                f"anthropic-messages: unsupported content part type {kind!r}"
-            )
+            blocks.append(_text_block(unsendable_content_note(
+                ANTHROPIC_MESSAGES, f"this wire cannot send {describe_part(part)}",
+            ), marker))
     return blocks
 
 
