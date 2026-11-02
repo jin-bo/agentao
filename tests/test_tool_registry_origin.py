@@ -24,7 +24,7 @@ from tests.support.stdio_mcp_server import stdio_server
 from tests.support.tools import NamedTool, make_dummy_agent
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 # ── the registry ────────────────────────────────────────────────────────────

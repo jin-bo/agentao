@@ -38,7 +38,7 @@ from tests.support.mcp_skills import (
     _serve,
 )
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 @pytest.fixture

@@ -16,67 +16,44 @@ from agentao.mcp.tool import (
 # _sanitize_name
 # ---------------------------------------------------------------------------
 
-def test_sanitize_name_replaces_hyphens():
-    assert _sanitize_name("my-tool") == "my_tool"
-
-
-def test_sanitize_name_replaces_spaces():
-    assert _sanitize_name("my tool") == "my_tool"
-
-
-def test_sanitize_name_replaces_dots():
-    assert _sanitize_name("my.tool") == "my_tool"
-
-
-def test_sanitize_name_keeps_underscores():
-    assert _sanitize_name("my_tool") == "my_tool"
-
-
-def test_sanitize_name_keeps_alphanumeric():
-    assert _sanitize_name("myTool123") == "myTool123"
-
-
-def test_sanitize_name_empty_string():
-    assert _sanitize_name("") == ""
+@pytest.mark.parametrize("name, sanitized", [
+    pytest.param("my-tool", "my_tool", id="replaces-hyphens"),
+    pytest.param("my tool", "my_tool", id="replaces-spaces"),
+    pytest.param("my.tool", "my_tool", id="replaces-dots"),
+    pytest.param("my_tool", "my_tool", id="keeps-underscores"),
+    pytest.param("myTool123", "myTool123", id="keeps-alphanumeric"),
+    pytest.param("", "", id="empty-string"),
+])
+def test_sanitize_name(name, sanitized):
+    assert _sanitize_name(name) == sanitized
 
 
 # ---------------------------------------------------------------------------
 # make_mcp_tool_name
 # ---------------------------------------------------------------------------
 
-def test_make_mcp_tool_name_format():
-    assert make_mcp_tool_name("github", "create_issue") == "mcp_github_create_issue"
-
-
-def test_make_mcp_tool_name_sanitizes_server():
-    assert make_mcp_tool_name("my-server", "list") == "mcp_my_server_list"
-
-
-def test_make_mcp_tool_name_sanitizes_tool():
-    assert make_mcp_tool_name("server", "get-item") == "mcp_server_get_item"
+@pytest.mark.parametrize("server, tool, name", [
+    pytest.param("github", "create_issue", "mcp_github_create_issue", id="format"),
+    pytest.param("my-server", "list", "mcp_my_server_list", id="sanitizes-server"),
+    pytest.param("server", "get-item", "mcp_server_get_item", id="sanitizes-tool"),
+])
+def test_make_mcp_tool_name(server, tool, name):
+    assert make_mcp_tool_name(server, tool) == name
 
 
 # ---------------------------------------------------------------------------
 # parse_mcp_tool_name
 # ---------------------------------------------------------------------------
 
-def test_parse_mcp_tool_name_valid():
-    server, tool = parse_mcp_tool_name("mcp_github_create_issue")
-    assert server == "github"
-    assert tool == "create_issue"
-
-
-def test_parse_mcp_tool_name_underscore_in_tool():
-    server, tool = parse_mcp_tool_name("mcp_myserver_do_something_complex")
-    assert server == "myserver"
-    assert tool == "do_something_complex"
-
-
-def test_parse_mcp_tool_name_no_underscore_after_prefix():
+@pytest.mark.parametrize("name, server, tool", [
+    pytest.param("mcp_github_create_issue", "github", "create_issue", id="valid"),
+    pytest.param("mcp_myserver_do_something_complex", "myserver", "do_something_complex",
+                 id="underscore-in-tool"),
     # "mcp_" + rest with no underscore → both return rest
-    server, tool = parse_mcp_tool_name("mcp_onlyone")
-    assert server == "onlyone"
-    assert tool == "onlyone"
+    pytest.param("mcp_onlyone", "onlyone", "onlyone", id="no-underscore-after-prefix"),
+])
+def test_parse_mcp_tool_name(name, server, tool):
+    assert parse_mcp_tool_name(name) == (server, tool)
 
 
 def test_parse_mcp_tool_name_invalid_prefix():

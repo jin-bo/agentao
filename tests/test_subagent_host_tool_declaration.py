@@ -35,7 +35,7 @@ from agentao.transport import EventType
 from tests.support.tools import NamedTool
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 def _parent(tmp_path, **kwargs):

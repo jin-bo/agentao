@@ -100,45 +100,23 @@ def test_session_prompt_before_initialize_raises_server_not_initialized(server):
 # Params shape validation
 # ---------------------------------------------------------------------------
 
-def test_params_must_be_dict(initialized_server):
-    with pytest.raises(TypeError, match="JSON object"):
-        acp_session_prompt.handle_session_prompt(initialized_server, [])
-
-
-def test_missing_session_id_raises_type_error(initialized_server):
-    with pytest.raises(TypeError, match="sessionId must be a non-empty string"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server, {"prompt": [{"type": "text", "text": "hi"}]}
-        )
-
-
-def test_empty_session_id_raises_type_error(initialized_server):
-    with pytest.raises(TypeError, match="sessionId must be a non-empty string"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server,
-            {"sessionId": "", "prompt": [{"type": "text", "text": "hi"}]},
-        )
-
-
-def test_missing_prompt_raises_type_error(initialized_server):
-    with pytest.raises(TypeError, match="prompt must be a JSON array"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server, {"sessionId": "sess_x"}
-        )
-
-
-def test_prompt_not_list_raises_type_error(initialized_server):
-    with pytest.raises(TypeError, match="prompt must be a JSON array"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server, {"sessionId": "sess_x", "prompt": "hello"}
-        )
-
-
-def test_prompt_empty_list_raises_type_error(initialized_server):
-    with pytest.raises(TypeError, match="prompt must not be empty"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server, {"sessionId": "sess_x", "prompt": []}
-        )
+@pytest.mark.parametrize("params, match", [
+    pytest.param([],
+                 "JSON object", id="params-must-be-dict"),
+    pytest.param({"prompt": [{"type": "text", "text": "hi"}]},
+                 "sessionId must be a non-empty string", id="missing-session-id"),
+    pytest.param({"sessionId": "", "prompt": [{"type": "text", "text": "hi"}]},
+                 "sessionId must be a non-empty string", id="empty-session-id"),
+    pytest.param({"sessionId": "sess_x"},
+                 "prompt must be a JSON array", id="missing-prompt"),
+    pytest.param({"sessionId": "sess_x", "prompt": "hello"},
+                 "prompt must be a JSON array", id="prompt-not-list"),
+    pytest.param({"sessionId": "sess_x", "prompt": []},
+                 "prompt must not be empty", id="prompt-empty-list"),
+])
+def test_malformed_params_are_rejected(initialized_server, params, match):
+    with pytest.raises(TypeError, match=match):
+        acp_session_prompt.handle_session_prompt(initialized_server, params)
 
 
 # ---------------------------------------------------------------------------
@@ -249,31 +227,17 @@ def test_resource_link_falls_back_to_name_then_uri(session_with_agent):
 # ContentBlock parsing — rejection
 # ---------------------------------------------------------------------------
 
-def test_non_object_block_raises_type_error(initialized_server):
-    with pytest.raises(TypeError, match="prompt\\[0\\] must be a JSON object"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server,
-            {"sessionId": "sess_x", "prompt": ["not an object"]},
-        )
-
-
-def test_text_block_missing_text_raises(initialized_server):
-    with pytest.raises(TypeError, match="\\.text must be a string"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server,
-            {"sessionId": "sess_x", "prompt": [{"type": "text"}]},
-        )
-
-
-def test_resource_link_missing_uri_raises(initialized_server):
-    with pytest.raises(TypeError, match="uri must be a non-empty string"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server,
-            {
-                "sessionId": "sess_x",
-                "prompt": [{"type": "resource_link", "name": "x"}],
-            },
-        )
+@pytest.mark.parametrize("params, match", [
+    pytest.param({"sessionId": "sess_x", "prompt": ["not an object"]},
+                 "prompt\\[0\\] must be a JSON object", id="non-object-block"),
+    pytest.param({"sessionId": "sess_x", "prompt": [{"type": "text"}]},
+                 "\\.text must be a string", id="text-block-missing-text"),
+    pytest.param({"sessionId": "sess_x", "prompt": [{"type": "resource_link", "name": "x"}]},
+                 "uri must be a non-empty string", id="resource-link-missing-uri"),
+])
+def test_a_malformed_block_is_rejected(initialized_server, params, match):
+    with pytest.raises(TypeError, match=match):
+        acp_session_prompt.handle_session_prompt(initialized_server, params)
 
 
 def test_image_block_forwarded_to_agent(session_with_agent):
@@ -304,26 +268,20 @@ def test_text_only_prompt_passes_no_images(session_with_agent):
     assert fake.received_images[0] is None
 
 
-def test_image_block_missing_data_rejected(initialized_server):
-    with pytest.raises(TypeError, match="data must be a non-empty"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server,
-            {
-                "sessionId": "sess_x",
-                "prompt": [{"type": "image", "mimeType": "image/png"}],
-            },
-        )
-
-
-def test_image_block_missing_mimetype_rejected(initialized_server):
-    with pytest.raises(TypeError, match="mimeType must be an 'image/"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server,
-            {
-                "sessionId": "sess_x",
-                "prompt": [{"type": "image", "data": "QUJD"}],
-            },
-        )
+@pytest.mark.parametrize("params, match", [
+    pytest.param({"sessionId": "sess_x", "prompt": [{"type": "image", "mimeType": "image/png"}]},
+                 "data must be a non-empty", id="image-block-missing-data"),
+    pytest.param({"sessionId": "sess_x", "prompt": [{"type": "image", "data": "QUJD"}]},
+                 "mimeType must be an 'image/", id="image-block-missing-mimetype"),
+    pytest.param({"sessionId": "sess_x", "prompt": [{"type": "image", "data": "QUJD", "mimeType": "text/html"}]},
+                 "mimeType must be an 'image/", id="image-block-non-image-mimetype"),
+    # '!!!!' is not valid base64.
+    pytest.param({"sessionId": "sess_x", "prompt": [{"type": "image", "data": "!!!!", "mimeType": "image/png"}]},
+                 "not valid base64", id="image-block-invalid-base64"),
+])
+def test_a_malformed_image_block_is_rejected(initialized_server, params, match):
+    with pytest.raises(TypeError, match=match):
+        acp_session_prompt.handle_session_prompt(initialized_server, params)
 
 
 @pytest.mark.parametrize("extra_field, value", [
@@ -351,29 +309,6 @@ def test_image_block_rejects_extra_fields(initialized_server, extra_field, value
                     "mimeType": "image/png",
                     extra_field: value,
                 }],
-            },
-        )
-
-
-def test_image_block_non_image_mimetype_rejected(initialized_server):
-    with pytest.raises(TypeError, match="mimeType must be an 'image/"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server,
-            {
-                "sessionId": "sess_x",
-                "prompt": [{"type": "image", "data": "QUJD", "mimeType": "text/html"}],
-            },
-        )
-
-
-def test_image_block_invalid_base64_rejected(initialized_server):
-    with pytest.raises(TypeError, match="not valid base64"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server,
-            {
-                "sessionId": "sess_x",
-                # '!!!!' is not valid base64.
-                "prompt": [{"type": "image", "data": "!!!!", "mimeType": "image/png"}],
             },
         )
 
@@ -530,37 +465,17 @@ def test_image_block_with_unsupported_content_rejected(session_with_agent, data,
     assert fake.chat_calls == []
 
 
-def test_audio_block_rejected_explicitly(initialized_server):
-    with pytest.raises(TypeError, match="not yet supported"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server,
-            {
-                "sessionId": "sess_x",
-                "prompt": [{"type": "audio", "data": "base64..."}],
-            },
-        )
-
-
-def test_embedded_resource_rejected_explicitly(initialized_server):
-    with pytest.raises(TypeError, match="not yet supported"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server,
-            {
-                "sessionId": "sess_x",
-                "prompt": [{"type": "resource", "resource": {}}],
-            },
-        )
-
-
-def test_unknown_block_type_rejected(initialized_server):
-    with pytest.raises(TypeError, match="unknown block type"):
-        acp_session_prompt.handle_session_prompt(
-            initialized_server,
-            {
-                "sessionId": "sess_x",
-                "prompt": [{"type": "mystery"}],
-            },
-        )
+@pytest.mark.parametrize("params, match", [
+    pytest.param({"sessionId": "sess_x", "prompt": [{"type": "audio", "data": "base64..."}]},
+                 "not yet supported", id="audio-block"),
+    pytest.param({"sessionId": "sess_x", "prompt": [{"type": "resource", "resource": {}}]},
+                 "not yet supported", id="embedded-resource"),
+    pytest.param({"sessionId": "sess_x", "prompt": [{"type": "mystery"}]},
+                 "unknown block type", id="unknown-block-type"),
+])
+def test_an_unsupported_block_is_rejected(initialized_server, params, match):
+    with pytest.raises(TypeError, match=match):
+        acp_session_prompt.handle_session_prompt(initialized_server, params)
 
 
 # ---------------------------------------------------------------------------

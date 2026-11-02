@@ -25,7 +25,7 @@ from agentao.cancellation import CancellationToken
 from agentao.permissions import PermissionEngine
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 def _agent(tmp_path, store, name="a"):

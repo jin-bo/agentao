@@ -28,10 +28,17 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MYPY_BIN = shutil.which("mypy")
-mypy_required = pytest.mark.skipif(
-    MYPY_BIN is None,
-    reason="mypy not installed; install with `uv sync --group dev`",
-)
+def mypy_required(test):
+    """Skip without mypy, and mark ``mypy``.
+
+    CI runs the ``mypy`` tests in the Typing gate job only (Ubuntu, Python 3.12), and its
+    test jobs leave them out. A local default run still has them.
+    """
+    skip = pytest.mark.skipif(
+        MYPY_BIN is None,
+        reason="mypy not installed; install with `uv sync --group dev`",
+    )
+    return pytest.mark.mypy(skip(test))
 
 
 @mypy_required

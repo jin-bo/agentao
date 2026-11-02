@@ -25,7 +25,7 @@ from agentao.agents.bg_store import BackgroundTaskStore
 from agentao.runtime.chat_loop import ChatLoopRunner
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 @pytest.fixture

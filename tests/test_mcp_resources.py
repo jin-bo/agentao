@@ -26,7 +26,7 @@ from agentao.tooling.registry import MCP_RESOURCE_TOOL_NAMES as REGISTRY_NAMES
 from tests.support.resource_mcp_server import PNG, methods, resource_server, started
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 def _manager(configs):

@@ -74,6 +74,14 @@ class TestRequiredArgs:
         with pytest.raises(ValueError, match="model"):
             LLMClient(api_key="k", base_url="https://x", model="")
 
+    @pytest.mark.real_agentao_init
+    def test_agentao_requires_credentials_without_an_llm_client(self, tmp_path):
+        """The constructor reads no env either: without credentials it refuses."""
+        from agentao.agent import Agentao
+
+        with pytest.raises(ValueError, match="api_key, base_url, and model are required"):
+            Agentao(working_directory=tmp_path)
+
     def test_permission_engine_requires_project_root(self):
         with pytest.raises(TypeError):
             PermissionEngine()  # type: ignore[call-arg]

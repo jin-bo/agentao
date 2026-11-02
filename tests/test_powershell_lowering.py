@@ -114,28 +114,24 @@ def test_an_assignment_forms_no_command_and_is_refused_by_kind():
 # ------------------------------------------------------------------- the steps
 
 
-def test_a_unicode_syntax_alias_refuses_before_parsing():
-    """Step 1: PowerShell treats these as syntax even inside what tree-sitter calls one token."""
-    exc = _refusal("Get-Content \u2018foo\u2019")
-    assert exc is not None and exc.step == 1
-
-
-def test_a_requires_directive_refuses_although_it_is_only_a_comment():
-    """Step 4: it runs before the body and can load modules, so `comment` is not harmless."""
-    exc = _refusal("#Requires -Modules Evil\nGet-Date")
-    assert exc is not None and exc.step == 4
-
-
-def test_a_recovered_parse_is_a_parse_of_something_else():
-    """Step 3: tree-sitter recovers from errors, and the tree it recovers is not the script."""
-    exc = _refusal("Get-Content 'unterminated")
-    assert exc is not None and exc.step == 3
-
-
-def test_an_attached_parameter_value_is_refused():
-    """Step 7: `-Path:x` needs PowerShell's own binding rules to say what the argv becomes."""
-    exc = _refusal("Get-ChildItem -Path:C:\\Windows")
-    assert exc is not None and exc.step == 7
+@pytest.mark.parametrize("script, step", [
+    # Step 1: PowerShell treats these as syntax even inside what tree-sitter
+    # calls one token.
+    pytest.param("Get-Content \u2018foo\u2019", 1, id="unicode-syntax-alias-before-parsing"),
+    # Step 4: it runs before the body and can load modules, so `comment` is
+    # not harmless.
+    pytest.param("#Requires -Modules Evil\nGet-Date", 4,
+                 id="requires-directive-although-only-a-comment"),
+    # Step 3: tree-sitter recovers from errors, and the tree it recovers is
+    # not the script.
+    pytest.param("Get-Content 'unterminated", 3, id="recovered-parse"),
+    # Step 7: `-Path:x` needs PowerShell's own binding rules to say what the
+    # argv becomes.
+    pytest.param("Get-ChildItem -Path:C:\\Windows", 7, id="attached-parameter-value"),
+])
+def test_a_step_refuses(script, step):
+    exc = _refusal(script)
+    assert exc is not None and exc.step == step
 
 
 def test_an_expandable_string_is_refused_but_a_verbatim_one_is_not():

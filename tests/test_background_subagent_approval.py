@@ -33,7 +33,7 @@ from agentao.agents.bg_store import BackgroundTaskStore
 from agentao.permissions import PermissionEngine, PermissionMode
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 def _write_call(target):

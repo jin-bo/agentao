@@ -15,14 +15,15 @@ contract that replaced them —
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
-from agentao.compaction.coordinator import CompactionCoordinator, CompactionRequest
+from agentao.compaction.coordinator import CompactionRequest
 from agentao.compaction.types import CompactionOutcome
 from agentao.context_manager import ContextManager, PrepareRejected
+
+from tests.support.compaction import make_coordinator_agent
 
 
 # ---------------------------------------------------------------------------
@@ -36,23 +37,6 @@ def _make_cm(max_tokens=200_000, memory_manager=None):
     return ContextManager(
         llm, Mock(), max_tokens=max_tokens, memory_manager=memory_manager,
     )
-
-
-def _make_agent(cm, messages):
-    events = []
-    agent = SimpleNamespace(
-        messages=messages,
-        context_manager=cm,
-        transport=SimpleNamespace(emit=events.append),
-        llm=SimpleNamespace(logger=Mock()),
-        _plugin_hook_rules=[],
-        _last_session_summary_id=None,
-        _turn_finish_reason_missing=False,
-        _build_system_prompt=lambda: "sys",
-        memory_manager=None,
-    )
-    agent.compaction_coordinator = CompactionCoordinator(agent)
-    return agent, events
 
 
 def _kinds(events):
@@ -79,7 +63,7 @@ def _history(n=12):
 def test_every_non_skipped_status_emits_exactly_one_settled_event(status):
     cm = _make_cm()
     msgs = _history()
-    agent, events = _make_agent(cm, msgs)
+    agent, events = make_coordinator_agent(cm, msgs)
     result = msgs + [{"role": "user", "content": "new"}] if status == "success" else msgs
     cm._run_compaction = lambda m, **kw: CompactionOutcome(
         status=status,
@@ -119,7 +103,7 @@ def test_skipped_emits_nothing_at_all():
     cm = _make_cm()
 
     # (a) breaker open, kind == full
-    agent, events = _make_agent(cm, _history())
+    agent, events = make_coordinator_agent(cm, _history())
     cm._consecutive_compact_failures = cm.CIRCUIT_BREAKER_LIMIT
     run = agent.compaction_coordinator.run(
         CompactionRequest("auto", "full", "compression_threshold"),
@@ -131,7 +115,7 @@ def test_skipped_emits_nothing_at_all():
 
     # (b) microcompaction with nothing left to clip
     cm2 = _make_cm()
-    agent2, events2 = _make_agent(cm2, [{"role": "user", "content": "short"}])
+    agent2, events2 = make_coordinator_agent(cm2, [{"role": "user", "content": "short"}])
     run2 = agent2.compaction_coordinator.run(
         CompactionRequest("auto", "microcompact", "microcompact_threshold"),
         system_prompt="sys",
@@ -142,7 +126,7 @@ def test_skipped_emits_nothing_at_all():
 
     # (c) suppressed by the cancellation latch
     cm3 = _make_cm()
-    agent3, events3 = _make_agent(cm3, _history())
+    agent3, events3 = make_coordinator_agent(cm3, _history())
     agent3.compaction_coordinator._cancel_latch.add(("full", "compression_threshold"))
     run3 = agent3.compaction_coordinator.run(
         CompactionRequest("auto", "full", "compression_threshold"),
@@ -156,7 +140,7 @@ def test_skipped_emits_nothing_at_all():
     # so this is the one that reaches ``_emit``. Four large messages over the
     # threshold is enough to reach it for real.
     cm4 = _make_cm()
-    agent4, events4 = _make_agent(cm4, _history(2))
+    agent4, events4 = make_coordinator_agent(cm4, _history(2))
     run4 = agent4.compaction_coordinator.run(
         CompactionRequest("auto", "full", "compression_threshold"),
         system_prompt="sys",
@@ -179,7 +163,7 @@ def test_success_is_not_inferred_from_message_count():
         {"role": "tool", "name": "read_file", "content": "z" * 50_000},
         {"role": "assistant", "content": "ok"},
     ] + [{"role": "tool", "name": "read_file", "content": "small"} for _ in range(6)]
-    agent, events = _make_agent(cm, msgs)
+    agent, events = make_coordinator_agent(cm, msgs)
 
     run = agent.compaction_coordinator.run(
         CompactionRequest("auto", "microcompact", "microcompact_threshold"),
@@ -203,7 +187,7 @@ def test_context_compressed_payload_keys_and_unit_are_unchanged():
     """
     cm = _make_cm()
     msgs = _history()
-    agent, events = _make_agent(cm, msgs)
+    agent, events = make_coordinator_agent(cm, msgs)
     compacted = [{"role": "system", "content": "[Compact Boundary]"}] + msgs[-2:]
     cm._run_compaction = lambda m, **kw: CompactionOutcome(
         status="success", trigger="auto", kind="full",
@@ -252,7 +236,7 @@ def test_a_full_compaction_that_wrote_a_summary_emits_both_events(tmp_path):
     )
     cm = _make_cm(memory_manager=mem)
     cm._summarize_formatted = lambda _formatted, *, cancellation_token=None, accept_truncated=False: "a summary"
-    agent, events = _make_agent(cm, _history())
+    agent, events = make_coordinator_agent(cm, _history())
     agent.memory_manager = mem
     agent._session_id = "sess-1"
 
@@ -288,7 +272,7 @@ def test_overflow_rungs_carry_no_tokens_on_the_old_event():
     """
     cm = _make_cm()
     msgs = _history()
-    agent, events = _make_agent(cm, msgs)
+    agent, events = make_coordinator_agent(cm, msgs)
     cm._run_compaction = lambda m, **kw: CompactionOutcome(
         status="success", trigger="auto", kind="full", reason="api_overflow",
         messages=msgs[-2:], pre_tokens=900, post_tokens=10,
@@ -308,7 +292,7 @@ def test_overflow_rungs_carry_no_tokens_on_the_old_event():
 def test_minimal_history_goes_through_context_manager():
     cm = _make_cm()
     msgs = _history(4)
-    agent, events = _make_agent(cm, msgs)
+    agent, events = make_coordinator_agent(cm, msgs)
 
     run = agent.compaction_coordinator.run(
         CompactionRequest("auto", "minimal_history", "api_overflow_after_compression"),
@@ -435,7 +419,7 @@ def test_minimal_history_stands_down_when_the_valid_window_is_everything():
     ids = [f"c{i}" for i in range(20)]
     msgs = [_call(*ids)] + [_result(i) for i in ids]
     before = list(msgs)
-    agent, events = _make_agent(cm, msgs)
+    agent, events = make_coordinator_agent(cm, msgs)
 
     run = agent.compaction_coordinator.run(
         CompactionRequest("auto", "minimal_history", "api_overflow_after_compression"),
@@ -455,7 +439,7 @@ def test_minimal_history_stands_down_rather_than_keep_nothing():
     be asked to answer a system prompt."""
     cm = _make_cm()
     msgs = [{"role": "user", "content": "do it"}, _result("c1"), _result("c2")]
-    agent, _events = _make_agent(cm, msgs)
+    agent, _events = make_coordinator_agent(cm, msgs)
 
     run = agent.compaction_coordinator.run(
         CompactionRequest("auto", "minimal_history", "api_overflow_after_compression"),
@@ -472,7 +456,7 @@ def test_minimal_history_stands_down_on_a_call_whose_result_never_arrived():
     the history to admit. Strict APIs reject that window too."""
     cm = _make_cm()
     msgs = [{"role": "user", "content": "u"}, _call("c1", "c2", "c3"), _result("c1")]
-    agent, _events = _make_agent(cm, msgs)
+    agent, _events = make_coordinator_agent(cm, msgs)
 
     run = agent.compaction_coordinator.run(
         CompactionRequest("auto", "minimal_history", "api_overflow_after_compression"),
@@ -495,7 +479,7 @@ def test_minimal_history_run_leaves_no_orphan_in_agent_messages():
         _result("c1"),
         _result("c2"),
     ]
-    agent, _events = _make_agent(cm, msgs)
+    agent, _events = make_coordinator_agent(cm, msgs)
 
     run = agent.compaction_coordinator.run(
         CompactionRequest("auto", "minimal_history", "api_overflow_after_compression"),

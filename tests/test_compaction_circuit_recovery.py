@@ -20,13 +20,14 @@ What replaces it:
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
-from agentao.compaction.coordinator import CompactionCoordinator, CompactionRequest
+from agentao.compaction.coordinator import CompactionRequest
 from agentao.context_manager import ContextManager
+
+from tests.support.compaction import make_coordinator_agent
 
 
 def _make_cm(max_tokens=200_000):
@@ -44,23 +45,6 @@ def _history(n=12):
     return out
 
 
-def _agent(cm, messages):
-    events = []
-    agent = SimpleNamespace(
-        messages=messages,
-        context_manager=cm,
-        transport=SimpleNamespace(emit=events.append),
-        llm=SimpleNamespace(logger=Mock()),
-        _plugin_hook_rules=[],
-        _last_session_summary_id=None,
-        _turn_finish_reason_missing=False,
-        _build_system_prompt=lambda: "sys",
-        memory_manager=None,
-    )
-    agent.compaction_coordinator = CompactionCoordinator(agent)
-    return agent, events
-
-
 def _trip(cm):
     """Three consecutive failed summarizations on the automatic path."""
     cm._summarize_formatted = lambda _f, *, cancellation_token=None, accept_truncated=False: ""
@@ -76,7 +60,7 @@ def _trip(cm):
 def test_threshold_attempts_pause_once_the_breaker_is_open():
     cm = _make_cm()
     _trip(cm)
-    agent, events = _agent(cm, _history())
+    agent, events = make_coordinator_agent(cm, _history())
 
     run = agent.compaction_coordinator.run(
         CompactionRequest("auto", "full", "compression_threshold"),
@@ -96,7 +80,7 @@ def test_manual_and_overflow_are_allowed_through_as_probes(trigger, reason):
     cm = _make_cm()
     _trip(cm)
     cm._summarize_formatted = lambda _f, *, cancellation_token=None, accept_truncated=False: "a fresh summary"
-    agent, events = _agent(cm, _history())
+    agent, events = make_coordinator_agent(cm, _history())
 
     run = agent.compaction_coordinator.run(
         CompactionRequest(trigger, "full", reason),
@@ -114,7 +98,7 @@ def test_a_failed_probe_leaves_the_breaker_exactly_as_it_was():
     cm = _make_cm()
     _trip(cm)
     before = cm.circuit_breaker_failures
-    agent, _events = _agent(cm, _history())
+    agent, _events = make_coordinator_agent(cm, _history())
 
     run = agent.compaction_coordinator.run(
         CompactionRequest("manual", "full", "manual_cli"),
@@ -131,7 +115,7 @@ def test_threshold_resumes_after_a_probe_succeeds():
     """The whole point — the pause has to be exitable."""
     cm = _make_cm()
     _trip(cm)
-    agent, _events = _agent(cm, _history())
+    agent, _events = make_coordinator_agent(cm, _history())
 
     paused = agent.compaction_coordinator.run(
         CompactionRequest("auto", "full", "compression_threshold"),

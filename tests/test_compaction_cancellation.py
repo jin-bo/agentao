@@ -27,10 +27,11 @@ from unittest.mock import Mock
 import pytest
 
 from agentao.cancellation import AgentCancelledError, CancellationToken
-from agentao.compaction.coordinator import CompactionCoordinator, CompactionRequest
+from agentao.compaction.coordinator import CompactionRequest
 from agentao.context_manager import ContextManager
 from agentao.runtime.chat_loop import ChatLoopRunner
 
+from tests.support.compaction import make_coordinator_agent
 from tests.support.host_events import CapturingTransport
 from tests.support.stop_precompact import make_bare_agent
 
@@ -149,23 +150,6 @@ def test_without_a_token_a_failed_summary_is_still_a_failure():
 # -- the coordinator ------------------------------------------------------------
 
 
-def _agent(cm, messages):
-    events: List[Any] = []
-    agent = SimpleNamespace(
-        messages=messages,
-        context_manager=cm,
-        transport=SimpleNamespace(emit=events.append),
-        llm=SimpleNamespace(logger=Mock()),
-        _plugin_hook_rules=[],
-        _last_session_summary_id=None,
-        _turn_finish_reason_missing=False,
-        _build_system_prompt=lambda: "sys",
-        memory_manager=None,
-    )
-    agent.compaction_coordinator = CompactionCoordinator(agent)
-    return agent, events
-
-
 def test_a_cancelled_compaction_raises_through_the_coordinator_and_settles_nothing():
     token = CancellationToken()
 
@@ -175,7 +159,7 @@ def test_a_cancelled_compaction_raises_through_the_coordinator_and_settles_nothi
 
     cm = _cm(chat)
     history = _history()
-    agent, events = _agent(cm, history)
+    agent, events = make_coordinator_agent(cm, history)
     with pytest.raises(AgentCancelledError):
         agent.compaction_coordinator.run(
             CompactionRequest("auto", "full", "compression_threshold"),

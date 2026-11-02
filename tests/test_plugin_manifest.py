@@ -80,23 +80,16 @@ class TestParseMinimal:
 
 
 class TestNameValidation:
-    def test_missing_name(self, parser, tmp_plugin):
+    @pytest.mark.parametrize("manifest, word", [
+        pytest.param({"version": "1.0"}, "name", id="missing-name"),
+        pytest.param({"name": "  "}, "empty", id="empty-name"),
+        pytest.param({"name": "bad name"}, "space", id="name-with-spaces"),
+    ])
+    def test_a_bad_name_is_reported(self, parser, tmp_plugin, manifest, word):
         plugin_dir, write = tmp_plugin
-        write({"version": "1.0"})
+        write(manifest)
         _, _, errors = parser.parse_file(plugin_dir)
-        assert any("name" in e.message.lower() for e in errors)
-
-    def test_empty_name(self, parser, tmp_plugin):
-        plugin_dir, write = tmp_plugin
-        write({"name": "  "})
-        _, _, errors = parser.parse_file(plugin_dir)
-        assert any("empty" in e.message.lower() for e in errors)
-
-    def test_name_with_spaces(self, parser, tmp_plugin):
-        plugin_dir, write = tmp_plugin
-        write({"name": "bad name"})
-        _, _, errors = parser.parse_file(plugin_dir)
-        assert any("space" in e.message.lower() for e in errors)
+        assert any(word in e.message.lower() for e in errors)
 
 
 # ======================================================================

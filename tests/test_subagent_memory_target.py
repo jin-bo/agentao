@@ -48,7 +48,7 @@ from agentao.tools import SaveMemoryTool
 from tests.support.tools import NamedTool
 
 
-pytestmark = pytest.mark.usefixtures("isolated_home")
+pytestmark = pytest.mark.usefixtures("isolated_home", "isolated_skill_dirs")
 
 
 # Where a sub-agent's bare manager used to open a store of its own
