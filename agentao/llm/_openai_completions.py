@@ -135,6 +135,43 @@ def _with_wire_tool_ids(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def _with_object_image_urls(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """``messages`` with a bare-string ``image_url`` sent as ``{"url": ...}``.
+
+    The Chat Completions schema takes an object there. A string is a shape
+    some callers write, and the other two wires take it as the URL (#613).
+    Gemini's OpenAI-compatible endpoint refuses it with a 400 that does not
+    read as an image rejection: its only "image" is the echoed
+    ``data:image/...`` URL, which ``_IMAGE_WORD`` skips on purpose. The part
+    is in history, so every later turn failed the same way (#616).
+
+    Only that one shape changes. Any other part goes out as written, and the
+    provider decides. Copy-on-change: **the same list** when nothing changes,
+    and the same dict for every message and part left alone, so history and
+    any object a host still holds are never mutated.
+    """
+    out: Optional[List[Dict[str, Any]]] = None
+    for index, message in enumerate(messages):
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        parts: Optional[List[Any]] = None
+        for position, part in enumerate(content):
+            if (
+                isinstance(part, dict)
+                and part.get("type") == "image_url"
+                and isinstance(part.get("image_url"), str)
+            ):
+                if parts is None:
+                    parts = list(content)
+                parts[position] = {**part, "image_url": {"url": part["image_url"]}}
+        if parts is not None:
+            if out is None:
+                out = list(messages)
+            out[index] = {**message, "content": parts}
+    return messages if out is None else out
+
+
 class OpenAICompletionsAdapter:
     """Chat Completions over the official ``openai`` SDK."""
 
@@ -189,7 +226,7 @@ class OpenAICompletionsAdapter:
     ) -> Dict[str, Any]:
         """The ``.create(**kwargs)`` dict. See ``LLMClient._build_request_kwargs``."""
         owner = self._owner
-        messages = _with_wire_tool_ids(messages)
+        messages = _with_object_image_urls(_with_wire_tool_ids(messages))
         if cache_boundary is not None and owner.cache_control is not None:
             messages, tools = apply_cache_control(
                 messages, tools, owner.cache_control,

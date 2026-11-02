@@ -159,13 +159,19 @@ adapter raised before sending, on that turn and every later one.
 
 **The shape of `image_url` and `detail` on each wire** (0.5.19+). The OpenAI
 shape is an object, `{"url": ..., "detail": ...}`. The two adapters that
-translate image parts also take a bare string as the URL. Any other value goes
-out as the note above, with a warning. Before, a string or another non-object
-value raised on that turn and every later one (#613).
+translate image parts, `anthropic-messages` and `openai-responses`, take a bare
+string as the URL and send any other non-object value as the note above, with a
+warning. Before, a string or another non-object value raised on that turn and
+every later one (#613).
+`openai-completions` only normalizes a bare-string `image_url` to
+`{"url": ...}`, the shape its schema takes. Every other part goes out as
+written, other bad values included, with no note. Before, the string went out
+as written. Gemini's OpenAI-compatible endpoint answers it with a 400 that does
+not read as an image rejection, so every later turn failed (#616).
 
 | Wire | `image_url` as a bare string | `detail` |
 |---|---|---|
-| `openai-completions` | Sent unchanged. This wire does not translate parts. | Sent unchanged, not checked |
+| `openai-completions` | Sent as `{"url": ...}` | Sent unchanged, not checked |
 | `anthropic-messages` | Taken as the URL | Not sent (no Anthropic field) |
 | `openai-responses` | Taken as the URL | `low`, `high`, `auto` or `original` is sent. Any other value is omitted with a warning in `agentao.log`, and the endpoint applies its default. |
 
@@ -193,8 +199,9 @@ non-object part or `content` raised, an image in a leading system message
 raised, and an image in an assistant turn was sent as an image block where the
 API takes text. On `openai-responses`, the other cases were dropped. History
 is left as written, so after a switch back to a wire that can send the part,
-the part goes out again (#615). `openai-completions` does not translate parts:
-it sends them as written, and the provider decides. Only these shape and
+the part goes out again (#615). None of these cases gets a note on
+`openai-completions`. Apart from normalizing a bare-string `image_url` (above),
+it sends every part as written, and the provider decides. Only these shape and
 compatibility cases become notes. Any other translation error still raises.
 
 ### Attributes
