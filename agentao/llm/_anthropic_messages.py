@@ -56,7 +56,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ._api_format import ANTHROPIC_MESSAGES
 from ._cache_control import apply_cache_control
-from ._image_parts import image_url_fields, unsendable_image_note
+from ._image_parts import (
+    describe_part,
+    image_url_fields,
+    unsendable_content_note,
+    unsendable_image_note,
+)
 from ._retry import (
     RETRYABLE_STATUS_CODES,
     StreamEndedEarlyError,
@@ -202,25 +207,34 @@ def _content_blocks(content: Any) -> List[Dict[str, Any]]:
     produces) or an ``http(s)`` URL, which the API fetches itself. Any other
     image is sent as a text note saying it was omitted, never dropped silently
     and never raised: the part is in history, so a raise would fail every later
-    request (#485). Any other part type still raises.
+    request (#485). A part this wire cannot express (an unknown type, a part
+    that is not an object, a ``content`` that is neither text nor a list) gets
+    the same treatment with its own note (#615).
     """
     if content is None:
         return []
     if isinstance(content, str):
         return [_text_block(content)] if content.strip() else []
     if not isinstance(content, list):
-        raise ValueError(
-            f"anthropic-messages: unsupported message content {type(content).__name__}"
-        )
+        return [_text_block(unsendable_content_note(
+            ANTHROPIC_MESSAGES, f"message content is a {type(content).__name__}",
+        ))]
     blocks: List[Dict[str, Any]] = []
     for part in content:
         if not isinstance(part, dict):
-            raise ValueError("anthropic-messages: content parts must be objects")
+            blocks.append(_text_block(unsendable_content_note(
+                ANTHROPIC_MESSAGES, f"a content part is {describe_part(part)}",
+            )))
+            continue
         kind = part.get("type")
         marker = part.get("cache_control")
         if kind == "text":
             text = part.get("text")
-            if isinstance(text, str) and text.strip():
+            if not isinstance(text, str):
+                blocks.append(_text_block(unsendable_content_note(
+                    ANTHROPIC_MESSAGES, f"a text part's text is a {type(text).__name__}",
+                ), marker))
+            elif text.strip():
                 blocks.append(_text_block(text, marker))
         elif kind == "image_url":
             # ``detail`` has no Anthropic field, so it is not sent.
@@ -254,10 +268,27 @@ def _content_blocks(content: Any) -> List[Dict[str, Any]]:
                 block["cache_control"] = marker
             blocks.append(block)
         else:
-            raise ValueError(
-                f"anthropic-messages: unsupported content part type {kind!r}"
-            )
+            blocks.append(_text_block(unsendable_content_note(
+                ANTHROPIC_MESSAGES, f"this wire cannot send {describe_part(part)}",
+            ), marker))
     return blocks
+
+
+def _text_only(blocks: List[Dict[str, Any]], where: str) -> List[Dict[str, Any]]:
+    """``blocks`` for a slot that takes text only: the system prompt or an
+    assistant turn. An image there is refused by the API, on this request and
+    every later one, because the part is in history, so it goes out as a note
+    instead (#615)."""
+    return [
+        block if block["type"] == "text" else _text_block(
+            unsendable_content_note(
+                ANTHROPIC_MESSAGES,
+                f"{where} takes text only, not type {block['type']!r}",
+            ),
+            block.get("cache_control"),
+        )
+        for block in blocks
+    ]
 
 
 def _thinking_blocks(carrier: Any) -> List[Dict[str, Any]]:
@@ -289,7 +320,7 @@ def _assistant_blocks(message: Dict[str, Any], ids: Dict[str, str]) -> List[Dict
     # Thinking leads: with thinking on, the API requires the assistant turn of
     # a tool loop to *start* with its thinking block.
     blocks = _thinking_blocks(message.get(ANTHROPIC_THINKING_BLOCKS))
-    blocks.extend(_content_blocks(message.get("content")))
+    blocks.extend(_text_only(_content_blocks(message.get("content")), "an assistant turn"))
     for call in message.get("tool_calls") or []:
         if not isinstance(call, dict):
             continue
@@ -350,7 +381,7 @@ def translate_messages(
     system: Any = None
     rest = messages
     if messages and messages[0].get("role") in ("system", "developer"):
-        lifted = _content_blocks(messages[0].get("content"))
+        lifted = _text_only(_content_blocks(messages[0].get("content")), "the system prompt")
         rest = messages[1:]
         # A breakpoint the caller put on the system *message* moves onto its
         # last block, as for any other message below. It was already charged

@@ -22,7 +22,7 @@ import agentao.llm.client as client_mod
 from agentao import Agentao
 from agentao.cancellation import CancellationToken
 from agentao.llm._api_format import API_FORMATS, resolve_api_format
-from agentao.llm._image_parts import UNSENDABLE_IMAGE_NOTE
+from agentao.llm._image_parts import UNSENDABLE_CONTENT_NOTE, UNSENDABLE_IMAGE_NOTE
 from agentao.llm._openai_responses import (
     ResponsesProtocolError, ResponsesStreamError, compose_tool_id, split_tool_id,
     translate_messages,
@@ -218,6 +218,48 @@ def test_an_image_part_with_no_url_goes_out_as_a_note(image_url):
         {"type": "input_text", "text": "look"},
         {"type": "input_text", "text": UNSENDABLE_IMAGE_NOTE},
     ]}]
+
+
+@pytest.mark.parametrize("content, reason", [
+    ([{"type": "input_audio", "input_audio": {"data": "SECRET", "format": "wav"}}],
+     "this wire cannot send type 'input_audio'"),
+    ([{"text": "SECRET"}], "this wire cannot send a part with no type"),
+    ([{"type": 5, "text": "SECRET"}], "this wire cannot send a part whose type is a int"),
+    (["SECRET"], "a content part is a str"),
+    ({"type": "text", "text": "SECRET"}, "message content is a dict"),
+    ([{"type": "text", "text": {"value": "SECRET"}}], "a text part's text is a dict"),
+], ids=["unknown-type", "no-type", "non-string-type", "non-object-part", "object-content", "non-string-text"])
+def test_a_part_this_wire_cannot_express_never_vanishes_silently(content, reason, caplog):
+    """#615: an unknown type raised, and a non-object part or content was
+    dropped without a trace. Both go out as a note with a warning now, and
+    history keeps the part for a wire that can send it."""
+    history = [{"role": "user", "content": content}]
+    before = copy.deepcopy(history)
+    llm = _llm()
+    wire = attach(llm, Wire(_says()))
+    with caplog.at_level(logging.WARNING, logger="agentao.llm._image_parts"):
+        llm.chat_stream(history)
+    assert wire.requests[0]["input"] == [{"role": "user", "content": UNSENDABLE_CONTENT_NOTE}]
+    assert history == before
+    assert f"openai-responses: a content part was sent as a text note: {reason}" in caplog.text
+    assert "SECRET" not in caplog.text
+
+
+def test_a_text_only_item_keeps_a_note_for_a_part_it_cannot_carry():
+    """Assistant text and tool output take text only. A non-text part there
+    was dropped without a trace (#615)."""
+    image = {"type": "image_url", "image_url": {"url": "https://example.test/x.png"}}
+    items = translate_messages([
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [{"type": "text", "text": "look"}, image]},
+        {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "call_1", "type": "function",
+             "function": {"name": "ping", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "call_1", "name": "ping", "content": [image]},
+    ])
+    assert items[1] == {"role": "assistant", "content": f"look\n{UNSENDABLE_CONTENT_NOTE}"}
+    output = next(i for i in items if i.get("type") == "function_call_output")
+    assert output["output"] == UNSENDABLE_CONTENT_NOTE
 
 
 def test_translation_does_not_touch_history():

@@ -1,12 +1,22 @@
-"""What a wire adapter sends in place of an image part it cannot translate.
+"""What a wire adapter sends in place of a part it cannot translate.
 
-An image part is in history before the model is ever called, so an adapter
-that *raised* on one would raise again on every later request, and the
-session would be stuck until ``/clear`` (#485). The part can only come from a
-host writing history, or a session file written or edited elsewhere:
-``chat(images=...)`` always builds a ``data:`` URL. The adapter therefore
-sends this note in the outbound copy instead — history keeps what the host
-wrote — and says so in ``agentao.log``.
+A part is in history before the model is ever called, so an adapter that
+*raised* on one would raise again on every later request, and the session
+would be stuck until ``/clear`` (#485, #615). The adapter therefore sends a
+note in the outbound copy instead and says so in ``agentao.log``. History keeps
+what the host wrote, so switching back to a wire that can send the part sends
+it again.
+
+Two notes: one for an image whose URL the wire cannot send, one for any other
+part the wire cannot express (an unknown part type, a part that is not an
+object, a ``content`` that is neither text nor a list). Such parts come from a
+host writing history (``add_message``, ``agent.messages``), from a session
+file written or edited elsewhere, or from a part that is valid on another
+wire (``input_audio`` on ``openai-completions``) after a provider switch.
+``chat(images=...)`` always builds a ``data:`` URL.
+
+Only these recognised shape and compatibility cases become notes. Any other
+error in translation still raises.
 """
 
 from __future__ import annotations
@@ -51,6 +61,29 @@ def log_dropped_detail(wire: str, detail: Any) -> None:
 UNSENDABLE_IMAGE_NOTE = (
     "[Image omitted: its URL cannot be sent to the model, so it cannot be viewed.]"
 )
+
+
+UNSENDABLE_CONTENT_NOTE = (
+    "[Content omitted: this part cannot be sent to the current model, so it cannot be viewed.]"
+)
+
+
+def describe_part(value: Any) -> str:
+    """A short, log-safe label for a part or its ``type``: never the content."""
+    if isinstance(value, dict):
+        kind = value.get("type")
+        if isinstance(kind, str):
+            return f"type {kind[:32]!r}"
+        return "a part with no type" if kind is None else f"a part whose type is a {type(kind).__name__}"
+    return f"a {type(value).__name__}"
+
+
+def unsendable_content_note(wire: str, reason: str) -> str:
+    """Log why a part was replaced, and return the note to send."""
+    logger.warning(
+        "%s: a content part was sent as a text note: %s", wire, reason
+    )
+    return UNSENDABLE_CONTENT_NOTE
 
 
 def unsendable_image_note(wire: str, reason: str) -> str:
