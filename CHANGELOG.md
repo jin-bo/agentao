@@ -16,6 +16,7 @@ _Targeting 0.5.19. Add entries under the relevant heading as work lands._
 ### Fixed
 
 - **Responses image detail is preserved.** Explicit `image_url.detail` values of `low`, `high`, `auto` and `original` reach the Responses request instead of being omitted during translation. Absent or unsupported values keep the previous omission behavior; the stored message history is unchanged (#607).
+- **A bare-string `image_url` no longer blocks the session.** On `anthropic-messages` and `openai-responses`, a string `image_url` is taken as the URL. Any other value that is not an object goes out as the unsendable-image note. Before, both raised on that turn and every later one. `openai-responses` now logs a warning when it drops a `detail` value. The developer-guide appendix shows how each wire handles `image_url` and `detail` (#613).
 
 ---
 

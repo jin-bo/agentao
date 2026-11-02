@@ -56,7 +56,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ._api_format import ANTHROPIC_MESSAGES
 from ._cache_control import apply_cache_control
-from ._image_parts import unsendable_image_note
+from ._image_parts import image_url_fields, unsendable_image_note
 from ._retry import (
     RETRYABLE_STATUS_CODES,
     StreamEndedEarlyError,
@@ -223,7 +223,8 @@ def _content_blocks(content: Any) -> List[Dict[str, Any]]:
             if isinstance(text, str) and text.strip():
                 blocks.append(_text_block(text, marker))
         elif kind == "image_url":
-            url = (part.get("image_url") or {}).get("url", "")
+            # ``detail`` has no Anthropic field, so it is not sent.
+            url, _ = image_url_fields(part)
             match = _DATA_URL.match(url) if isinstance(url, str) else None
             if match is not None:
                 source: Dict[str, Any] = {
@@ -239,10 +240,14 @@ def _content_blocks(content: Any) -> List[Dict[str, Any]]:
             else:
                 # Not raised: the part is in history, so a raise here would
                 # fail every later request too (#485).
-                blocks.append(_text_block(unsendable_image_note(
-                    ANTHROPIC_MESSAGES,
-                    "an image must be a base64 data URL or an http(s) URL",
-                ), marker))
+                reason = (
+                    "an image must be a base64 data URL or an http(s) URL"
+                    if isinstance(url, str) and url
+                    else "an image part needs a URL"
+                )
+                blocks.append(_text_block(
+                    unsendable_image_note(ANTHROPIC_MESSAGES, reason), marker,
+                ))
                 continue
             block: Dict[str, Any] = {"type": "image", "source": source}
             if marker is not None:

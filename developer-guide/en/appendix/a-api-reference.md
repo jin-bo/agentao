@@ -157,7 +157,19 @@ with a warning in `agentao.log`. History is left as written. Before, the
 adapter raised before sending, on that turn and every later one.
 `chat(images=...)` always builds a `data:` URL, so it never meets this.
 
-The `openai-responses` wire preserves explicit `image_url.detail` values of `low`, `high`, `auto` and `original` when translating image parts. If detail is absent or unsupported, the adapter omits it; the endpoint applies its default. This translation leaves stored messages unchanged.
+**The shape of `image_url` and `detail` on each wire** (0.5.19+). The OpenAI
+shape is an object, `{"url": ..., "detail": ...}`. The two adapters that
+translate image parts also take a bare string as the URL. Any other value goes
+out as the note above, with a warning. Before, a string or another non-object
+value raised on that turn and every later one (#613).
+
+| Wire | `image_url` as a bare string | `detail` |
+|---|---|---|
+| `openai-completions` | Sent unchanged. This wire does not translate parts. | Sent unchanged, not checked |
+| `anthropic-messages` | Taken as the URL | Not sent (no Anthropic field) |
+| `openai-responses` | Taken as the URL | `low`, `high`, `auto` or `original` is sent. Any other value is omitted with a warning in `agentao.log`, and the endpoint applies its default. |
+
+On every wire, history is left as written.
 
 ### Attributes
 

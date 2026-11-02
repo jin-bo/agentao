@@ -11,6 +11,7 @@ fields it fills, which ids it accepts back. Those are observed separately.
 
 import copy
 import json
+import logging
 from pathlib import Path
 
 import httpx
@@ -168,20 +169,44 @@ def test_explicit_image_detail_reaches_the_real_sdk(detail, method):
     assert messages == before
 
 
-@pytest.mark.parametrize("detail", [None, "unsupported", 1, {}, []])
-def test_unknown_image_detail_keeps_the_previous_omission(detail):
+@pytest.mark.parametrize("method", ["chat", "chat_stream"])
+@pytest.mark.parametrize("detail", [None, "unsupported", "High", 1, {}, []])
+def test_unknown_image_detail_is_omitted_and_logged(detail, method, caplog):
+    """#613: a value the host wrote is not dropped without a trace. A part
+    with no detail logs nothing."""
     llm = _llm()
     wire = attach(llm, Wire(_says()))
-    llm.chat_stream([{"role": "user", "content": [{
-        "type": "image_url", "image_url": {"url": "https://example.test/image.png", "detail": detail},
-    }]}])
+    with caplog.at_level(logging.WARNING, logger="agentao.llm._image_parts"):
+        getattr(llm, method)([{"role": "user", "content": [{
+            "type": "image_url",
+            "image_url": {"url": "https://example.test/image.png", "detail": detail},
+        }]}])
     assert wire.requests[0]["input"][0]["content"] == [{
         "type": "input_image", "image_url": "https://example.test/image.png",
     }]
+    dropped = "openai-responses: image detail" in caplog.text
+    assert dropped is (detail is not None)
+    assert "example.test" not in caplog.text
 
 
-@pytest.mark.parametrize("image_url", [{"url": ""}, {"url": None}, {}, None],
-                         ids=["empty", "none", "no-url", "no-image_url"])
+def test_a_bare_string_image_url_is_taken_as_the_url():
+    """#613: ``.get`` on the string raised, on that request and every later one."""
+    history = [{"role": "user", "content": [
+        {"type": "image_url", "image_url": "data:image/png;base64,AAAA"},
+    ]}]
+    before = copy.deepcopy(history)
+    llm = _llm()
+    wire = attach(llm, Wire(_says()))
+    llm.chat_stream(history)
+    assert wire.requests[0]["input"][0]["content"] == [
+        {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+    ]
+    assert history == before
+
+
+@pytest.mark.parametrize("image_url", [{"url": ""}, {"url": None}, {}, None, "", 123, ["x"]],
+                         ids=["empty", "none", "no-url", "no-image_url",
+                              "empty-string", "int", "list"])
 def test_an_image_part_with_no_url_goes_out_as_a_note(image_url):
     """#485: raising was permanent — the part is in history, so every later
     request raised too."""
