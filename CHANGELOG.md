@@ -13,6 +13,8 @@ _Targeting 0.5.19. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **The default context window is 256K tokens, up from 200K.** The default applies to `Agentao(max_context_tokens=)`, `ContextManager`, the CLI's `AGENTAO_CONTEXT_TOKENS`, and sub-agents whose parent sets no value. Current mainstream models have windows of 256K to 1M tokens, so 200K started compaction early. The value is 256,000, not 262,144, so it fits in a 262,144-token window. A model with a smaller real window is still narrowed by `effective_max_tokens` (an overflow error, or the Models API on `anthropic-messages`). To keep the old budget, set `AGENTAO_CONTEXT_TOKENS=200000` or pass `max_context_tokens=200_000`.
+
 ### Fixed
 
 - **Responses image detail is preserved.** Explicit `image_url.detail` values of `low`, `high`, `auto` and `original` reach the Responses request instead of being omitted during translation. Absent or unsupported values keep the previous omission behavior; the stored message history is unchanged (#607).

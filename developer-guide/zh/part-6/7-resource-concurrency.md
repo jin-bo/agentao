@@ -20,7 +20,7 @@ Agent 是**资源不可预测**的工作负载——一轮简单问答可能 200
 
 ```python
 agent = Agentao(
-    max_context_tokens=128_000,   # 默认 200_000
+    max_context_tokens=128_000,   # 默认 256_000
 )
 ```
 

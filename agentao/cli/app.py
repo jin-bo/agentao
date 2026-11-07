@@ -306,7 +306,7 @@ class AgentaoCLI:
         provider = resolve_provider_name()
         self.current_provider = provider
 
-        context_limit = int(os.getenv("AGENTAO_CONTEXT_TOKENS", "200000"))
+        context_limit = int(os.getenv("AGENTAO_CONTEXT_TOKENS", "256000"))
 
         self.allow_all_tools = False
         # The mode in force when "2" granted full access for the session.

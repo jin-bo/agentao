@@ -116,7 +116,7 @@ agent = Agentao(
 | `transport` | `CoreTransport` | `NullTransport()` | UI 桥：事件流 + 工具确认 + ask_user + 最大迭代回调，详见 [第 4 部分](/zh/part-4/) |
 | `permission_engine` | `PermissionEngine` | `None`——没有引擎，不执行任何规则（`build_from_environment` 会建一个根在 `working_directory` 的） | 规则级权限引擎；权限模式和 `set_permission_mode` 都需要它，详见 [5.4](/zh/part-5/4-permissions) |
 | `permission_mode` | `str` | `None`——什么都不建 | `"read-only"` / `"workspace-write"` / `"full-access"`（不接受 `"plan"`）：以该模式构造 `PermissionEngine(project_root=working_directory, rules=[])`，不读取任何规则文件，并以该模式启动、不发事件。与 `permission_engine` 互斥。详见 [5.4](/zh/part-5/4-permissions) |
-| `max_context_tokens` | `int` | `200_000` | 超过即触发对话压缩 |
+| `max_context_tokens` | `int` | `256_000` | 超过即触发对话压缩 |
 | `extra_mcp_servers` | `Dict[str,Dict]` | `None` | 给单个会话注入 MCP 服务器，不动 `.agentao/mcp.json`；同名会覆盖。适合按租户切换 token |
 | `extra_tools` | `Sequence[Tool]` | `None` | 注入 / 替换工具（实例；最后注册，同名覆盖内置）。见 [5.1](/zh/part-5/1-custom-tools) |
 | `disable_tools` | `Iterable[str]` | `None` | 按名跳过这些内置工具（未知名 → `ValueError`）。**与 `enabled_tools` 互斥** |

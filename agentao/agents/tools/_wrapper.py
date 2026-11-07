@@ -778,7 +778,7 @@ class AgentToolWrapper(Tool):
                 # and cancel the same tasks the parent's do.
                 bg_store=self._bg_store,
                 transport=transport,
-                max_context_tokens=self._max_context_tokens or 200_000,
+                max_context_tokens=self._max_context_tokens or 256_000,
             )
         except BaseException:
             # Best effort, so the constructor's exception is the one that

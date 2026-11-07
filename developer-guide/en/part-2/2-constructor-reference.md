@@ -116,7 +116,7 @@ agent = Agentao(
 | `transport` | `CoreTransport` | `NullTransport()` | UI bridge: events + confirm + ask_user + max-iter fallback. See [Part 4](/en/part-4/) |
 | `permission_engine` | `PermissionEngine` | `None` — no engine, no rule evaluated (`build_from_environment` builds one rooted at `working_directory`) | Rule-based gating; modes and `set_permission_mode` need one. See [5.4](/en/part-5/4-permissions) |
 | `permission_mode` | `str` | `None` — builds nothing | `"read-only"` / `"workspace-write"` / `"full-access"` (`"plan"` is refused): builds `PermissionEngine(project_root=working_directory, rules=[])` in that mode, reading no rule file, and starts in it without emitting an event. Mutually exclusive with `permission_engine`. See [5.4](/en/part-5/4-permissions) |
-| `max_context_tokens` | `int` | `200_000` | Triggers conversation compression beyond this |
+| `max_context_tokens` | `int` | `256_000` | Triggers conversation compression beyond this |
 | `extra_mcp_servers` | `Dict[str,Dict]` | `None` | Per-session MCP servers without touching `.agentao/mcp.json`. Same-name keys override. Useful for per-tenant tokens |
 | `extra_tools` | `Sequence[Tool]` | `None` | Inject / replace tools (instances; register last, same name overrides a built-in). See [5.1](/en/part-5/1-custom-tools) |
 | `disable_tools` | `Iterable[str]` | `None` | Skip these built-ins by name (unknown name → `ValueError`). **Mutually exclusive with `enabled_tools`** |

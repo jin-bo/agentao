@@ -20,7 +20,7 @@ Agents are **unpredictable workloads** — a simple Q&A may take 200 ms; a compl
 
 ```python
 agent = Agentao(
-    max_context_tokens=128_000,   # default 200_000
+    max_context_tokens=128_000,   # default 256_000
 )
 ```
 
