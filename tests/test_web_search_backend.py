@@ -17,6 +17,7 @@ from agentao.tools.web import WebSearchTool
 def _clear_keys(monkeypatch):
     monkeypatch.delenv("BOCHA_API_KEY", raising=False)
     monkeypatch.delenv("JINA_API_KEY", raising=False)
+    monkeypatch.delenv("KEENABLE_API_KEY", raising=False)
 
 
 # ── Backend resolution / chain construction ────────────────────────────────
@@ -398,3 +399,49 @@ def test_ddg_challenge_surfaces_as_error_when_sole_backend(monkeypatch):
     assert out.startswith("Error performing duckduckgo search:")
     assert "bot-challenge" in out
     assert "No search results found" not in out
+
+
+# ── Keenable ───────────────────────────────────────────────────────────────
+
+
+class _FakeKeenableClient(_FakeClient):
+    def post(self, url, json=None, headers=None):
+        _FakeKeenableClient.last_kwargs = {"url": url, "json": json, "headers": headers}
+        return _FakeResp(
+            {
+                "results": [
+                    {"title": "K1", "url": "https://k1", "description": "short", "snippet": "long"},
+                    {"title": "K2", "url": "https://k2", "description": "", "snippet": "y" * 500},
+                    {"title": "no url"},
+                ]
+            }
+        )
+
+
+def test_keenable_keyless_uses_public_endpoint(monkeypatch):
+    _clear_keys(monkeypatch)
+    monkeypatch.setattr(httpx, "Client", _FakeKeenableClient)
+    tool = WebSearchTool(backend="keenable")
+    assert tool._chain == ["keenable"]
+    out = tool._search_keenable("hello", num_results=5)
+
+    kw = _FakeKeenableClient.last_kwargs
+    assert kw["url"] == "https://api.keenable.ai/v1/search/public"
+    assert kw["json"] == {"query": "hello", "max_results": 5}
+    assert kw["headers"]["X-Keenable-Title"] == "Agentao"
+    assert "X-API-Key" not in kw["headers"]
+    assert "1. K1" in out and "short" in out and "long" not in out
+    assert "2. K2" in out and "…" in out
+    assert "no url" not in out
+
+
+def test_keenable_key_uses_keyed_endpoint_and_joins_auto_chain(monkeypatch):
+    _clear_keys(monkeypatch)
+    monkeypatch.setenv("KEENABLE_API_KEY", "kk")
+    monkeypatch.setattr(httpx, "Client", _FakeKeenableClient)
+    tool = WebSearchTool()
+    assert tool._chain == ["keenable", "duckduckgo"]
+    tool._search_keenable("q", num_results=3)
+    kw = _FakeKeenableClient.last_kwargs
+    assert kw["url"] == "https://api.keenable.ai/v1/search"
+    assert kw["headers"]["X-API-Key"] == "kk"

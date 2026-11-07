@@ -1117,7 +1117,7 @@ class WebSearchTool(Tool):
     #: reliable: see ``_search_duckduckgo`` for the bot-challenge guard.
     #: ``jina`` and ``bocha`` both need a key. (``s.jina.ai`` *was* keyless when
     #: this backend landed; measured 2026-07-22 it answers 401 without one.)
-    _KNOWN_BACKENDS = ("jina", "bocha", "duckduckgo")
+    _KNOWN_BACKENDS = ("jina", "bocha", "keenable", "duckduckgo")
 
     def __init__(
         self,
@@ -1171,6 +1171,9 @@ class WebSearchTool(Tool):
         self._jina_api_key = (
             jina_api_key if jina_api_key is not None else os.getenv("JINA_API_KEY")
         )
+        # Keenable works keyless (public endpoint); a key moves it to the keyed
+        # endpoint and also enrolls it in the auto chain.
+        self._keenable_api_key = os.getenv("KEENABLE_API_KEY") or None
         if backend is not None and backend not in self._KNOWN_BACKENDS:
             raise ValueError(
                 f"WebSearchTool(backend=): unknown backend {backend!r}; "
@@ -1192,6 +1195,8 @@ class WebSearchTool(Tool):
                 chain.append("jina")
             if self._bocha_api_key:
                 chain.append("bocha")
+            if self._keenable_api_key:
+                chain.append("keenable")
             chain.append("duckduckgo")
             self._chain = chain
         # ``_provider`` = the primary (first attempted) backend. Kept for
@@ -1284,7 +1289,45 @@ class WebSearchTool(Tool):
             return self._search_bocha(query, num_results)
         if backend == "jina":
             return self._search_jina(query, num_results)
+        if backend == "keenable":
+            return self._search_keenable(query, num_results)
         return self._search_duckduckgo(query, num_results)
+
+    def _search_keenable(self, query: str, num_results: int) -> str:
+        """Query Keenable. Keyless via the public endpoint; with
+        ``KEENABLE_API_KEY`` it uses the keyed endpoint. Raises on HTTP / parse
+        failure so ``execute`` can fall back."""
+        import httpx
+
+        headers = {"Content-Type": "application/json", "X-Keenable-Title": "Agentao"}
+        if self._keenable_api_key:
+            headers["X-API-Key"] = self._keenable_api_key
+            url = "https://api.keenable.ai/v1/search"
+        else:
+            url = "https://api.keenable.ai/v1/search/public"
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                url, json={"query": query, "max_results": num_results}, headers=headers
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        raw_results = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(raw_results, list):
+            raise ValueError("keenable: unexpected response shape (no 'results' list)")
+
+        items = [
+            {
+                "title": item.get("title"),
+                "url": item.get("url"),
+                # ``description`` is short; ``snippet`` can be long and is
+                # capped by ``_format_search_results``.
+                "snippet": item.get("description") or item.get("snippet") or "",
+            }
+            for item in raw_results[:num_results]
+            if isinstance(item, dict) and item.get("url")
+        ]
+        return _format_search_results(query, items)
 
     def _search_bocha(self, query: str, num_results: int) -> str:
         """Query Bocha. Raises on HTTP / parse failure so ``execute`` can fall back."""
