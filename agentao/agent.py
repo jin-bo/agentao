@@ -188,7 +188,7 @@ class Agentao:
         # have bound the callback to ``max_context_tokens`` without a word.
         # Behind the ``*`` that call is a ``TypeError`` at the call site.
         *,
-        max_context_tokens: int = 200_000,
+        max_context_tokens: int = 256_000,
         permission_engine: Optional[PermissionEngine] = None,
         # Build an engine in this mode (``"read-only"`` /
         # ``"workspace-write"`` / ``"full-access"``; ``"plan"`` is refused).
@@ -273,7 +273,7 @@ class Agentao:
                        ``subscribe()`` is optional; only ``astream()`` needs it.
                        If omitted, a NullTransport is used (silent /
                        headless mode: every confirmation is approved).
-            max_context_tokens: Maximum context window tokens (default 200K).
+            max_context_tokens: Maximum context window tokens (default 256K).
             permission_engine: Optional PermissionEngine for rule-based tool access.
             permission_mode: ``"read-only"`` / ``"workspace-write"`` /
                 ``"full-access"`` (or the matching ``PermissionMode``);

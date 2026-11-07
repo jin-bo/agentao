@@ -11,8 +11,8 @@
 
 Context Window Status:
   Estimated tokens: 47,231 (last request, as the API counted it)
-  Max tokens:       200,000
-  Usage:            23.6%
+  Max tokens:       256,000
+  Usage:            18.4%
   Messages:         54
   Compact failures: 0/3
   Last compact:     2026-04-30 14:08:12  82,419 → 31,204 tokens | 21 summarized, 18 kept
@@ -22,7 +22,7 @@ Context Window Status:
 | Field | Meaning |
 |-------|---------|
 | Estimated tokens | One of two quantities, and the line says which. `(last request, as the API counted it)` — the exact size of the last request sent, one step behind: the reply and any tool results appended since are not in it. `(local estimate)` — a local estimate of the history as it stands, shown before the first response and right after a compaction. The compaction thresholds use neither alone: they take the API count for what was already sent and estimate only what was appended since |
-| Max tokens | Configured upper bound (default 200,000) |
+| Max tokens | Configured upper bound (default 256,000) |
 | Effective | Shown only when the provider has said something about the window: `min(configured, observed, reported)`, with each input named — `provider asserted N` (learned from an overflow error) and `Models API reports N` (the model's `max_input_tokens`; today only the `anthropic-messages` wire asks). Yellow when it is below Max tokens — that is why compaction fires earlier than the configured number suggests |
 | Usage | `Estimated / Effective` (`Effective` is `Max` when the line is absent). Color: green (<55%), yellow (<65%), red (>=65%) |
 | Messages | Number of messages in `agent.messages` |
@@ -48,14 +48,14 @@ What it does:
 
 - Sets `context_manager.max_tokens` for **this session**
 - Affects when auto-compaction triggers (compaction fires before approaching this number)
-- Is a **ceiling**, not the last word: the budget actually used is the smaller of this, a limit the provider stated in a context-overflow error, and — on the `anthropic-messages` wire — the `max_input_tokens` its Models API reports for the model. Both can only narrow it; a model advertising 1M does not raise a 200K setting
+- Is a **ceiling**, not the last word: the budget actually used is the smaller of this, a limit the provider stated in a context-overflow error, and — on the `anthropic-messages` wire — the `max_input_tokens` its Models API reports for the model. Both can only narrow it; a model advertising 1M does not raise a 256K setting
 - Resets on restart — to make it persistent, set the `AGENTAO_CONTEXT_TOKENS` environment variable (see [10. Configuration Reference](./10-config-reference))
 
 Minimum: 1,000. Below that the CLI refuses.
 
 When to lower:
 - You want compaction to kick in earlier (cheaper turns at the cost of more summarization)
-- You're using a smaller model with a smaller real context window than 200K
+- You're using a smaller model with a smaller real context window than 256K
 
 When to raise:
 - You're on a 1M-context model and want fewer compactions

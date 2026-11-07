@@ -75,7 +75,7 @@ All commands start with `/`:
   - `/memory crystallize` - Extract review candidates from this session
   - `/memory review [approve|reject <id>]` - Review crystallized memory candidates
 - `/context` - Show context window token usage and limit
-  - `/context limit <n>` - Set max context tokens (default: 200,000)
+  - `/context limit <n>` - Set max context tokens (default: 256,000)
 - `/compact` - Summarize older history now into a compact block (manual compaction; takes no arguments)
 - `/image <path>` - Attach an image to your next message (vision models)
   - `/image` - List images staged for the next message

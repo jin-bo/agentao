@@ -41,7 +41,7 @@ Agentao(
     enabled_tools: Iterable[str] | None = None,             # 白名单（与 disable_tools 互斥）
     permission_engine: PermissionEngine | None = None,
     permission_mode: str | None = None,         # "read-only" | "workspace-write" | "full-access"；构造引擎（rules=[]）
-    max_context_tokens: int = 200_000,
+    max_context_tokens: int = 256_000,
     plan_session: PlanSession | None = None,
     # 嵌入式 harness 显式注入
     llm_client: LLMClient | None = None,

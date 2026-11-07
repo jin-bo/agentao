@@ -226,7 +226,7 @@ def _compose_detail(internal: Optional[str], decision: Optional[str]) -> Optiona
 class ContextManager:
     """Manages context window size, compression, and memory recall."""
 
-    DEFAULT_MAX_TOKENS = 200_000
+    DEFAULT_MAX_TOKENS = 256_000
     COMPRESSION_THRESHOLD = 0.80    # Full LLM compression at 80%
     MICROCOMPACT_THRESHOLD = 0.55   # Cheap tool-result clearing at 55%
     KEEP_RECENT_MESSAGES = 20       # Hard cap on verbatim-kept messages
@@ -249,7 +249,7 @@ class ContextManager:
         Args:
             llm_client: LLMClient instance (borrowed from agent)
             memory_tool: SaveMemoryTool instance (borrowed from agent)
-            max_tokens: Maximum context window tokens (default 200K)
+            max_tokens: Maximum context window tokens (default 256K)
         """
         self.llm_client = llm_client
         self.memory_tool = memory_tool

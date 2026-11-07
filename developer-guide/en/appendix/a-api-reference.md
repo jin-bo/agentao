@@ -41,7 +41,7 @@ Agentao(
     enabled_tools: Iterable[str] | None = None,             # allowlist (mutually excl. w/ disable_tools)
     permission_engine: PermissionEngine | None = None,
     permission_mode: str | None = None,         # "read-only" | "workspace-write" | "full-access"; builds an engine (rules=[])
-    max_context_tokens: int = 200_000,
+    max_context_tokens: int = 256_000,
     plan_session: PlanSession | None = None,
     # Embedded-harness explicit injections
     llm_client: LLMClient | None = None,
