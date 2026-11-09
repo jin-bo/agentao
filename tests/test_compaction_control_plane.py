@@ -298,6 +298,9 @@ def test_the_other_two_kinds_are_cancellable_too(tmp_path, kind, reason):
         {"role": "tool", "tool_call_id": i, "name": "read_file", "content": "s"}
         for i in _ids[1:]
     ]
+    if kind == "microcompact":
+        # A clip takes only results a model reply follows (#625).
+        msgs.append({"role": "assistant", "content": "read"})
     before = copy.deepcopy(msgs)
     seen = []
 

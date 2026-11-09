@@ -42,7 +42,7 @@ def test_pre_compact_fires_before_mutation_and_message_still_compacts(
     compacted_marker = [{"role": "user", "content": "[compacted]"}]
     monkeypatch.setattr(
         agent.context_manager, "microcompact_messages",
-        lambda messages: list(compacted_marker),
+        lambda messages, **kwargs: list(compacted_marker),
     )
 
     # Seed agent.messages with something pre-mutation so we can detect
@@ -59,7 +59,7 @@ def test_pre_compact_fires_before_mutation_and_message_still_compacts(
     ] + [
         {"role": "tool", "name": "read_file", "content": _oversized}
         for _ in range(agent.context_manager.MICROCOMPACT_PRESERVE_RECENT + 1)
-    ]
+    ] + [{"role": "assistant", "content": "read"}]
     pre_len = len(agent.messages)
     messages_with_system = [
         {"role": "system", "content": "sys"}

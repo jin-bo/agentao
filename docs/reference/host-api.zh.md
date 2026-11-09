@@ -251,7 +251,7 @@ outcome = agent.compact(reason="api_overflow")         # 代表溢出恢复阶�
 
 返回 `CompactionOutcome`（`agentao.compaction.types`）—— `status` 取
 `success | cancelled | failed | skipped`，`detail` 指明具体是哪一种
-（`circuit_open`、`history_too_short`、`no_safe_split`、`summary_empty`、
+（`circuit_open`、`history_too_short`、`nothing_to_shed`、`no_safe_split`、`summary_empty`、
 `summary_truncated` …）。
 **除 `success` 外，任何状态下历史都逐字节不变。** 两个 token 字段都**不含**
 system prompt，没有估算的路径上为 `None`。
@@ -300,8 +300,8 @@ agent = Agentao(..., compaction_controller=controller)
 `ctx.can_provide_summary`（即 `kind == "full"`）时合法。
 
 契约是 **fail-open，而且这是硬规则**：抛异常、返回 awaitable（v1 是同步的）、
-未知 `action`、或 `provide_summary` 不带文本，一律按 allow 处理并告警。五个压缩
-入口里有**两个就是 API 溢出恢复阶梯**，controller 里逸出一个异常会把「上下文太长」
+未知 `action`、或 `provide_summary` 不带文本，一律按 allow 处理并告警。六个压缩
+入口里有**三个就是 API 溢出恢复阶梯**，controller 里逸出一个异常会把「上下文太长」
 变成「这一轮直接崩」。没有超时——它挂住就挂住这一轮，和 host 其它回调一样。
 
 host 摘要在提交前会被校验（非空、是 `str`、不超过 `ctx.max_summary_tokens`、
@@ -315,6 +315,7 @@ host 摘要在提交前会被校验（非空、是 `str`、不超过 `ctx.max_su
 |---|---|
 | 微压缩 | 跳过这一趟；不报错；本轮不再问 |
 | 阈值压缩 | 本轮不再问；若 API 随后真的溢出，会**再问一次**，`reason=api_overflow`——那是另一个问题 |
+| 溢出且完整压缩未成功（0.5.20+） | 完整压缩找不到切点或失败时（被取消时不会），以 `kind=microcompact`、`reason=api_overflow` 询问。`tool_results_to_clip` 可能包含模型还没读过的结果。取消后返回 provider 的错误 |
 | API 溢出（两级都是） | 把 provider 自己的 context-length 错误返回给调用方，**不会**悄悄落到 `messages[-2:]` |
 | 无信息的 `413`（0.5.17+） | 把 provider 的 `413` 返回给调用方。正文既不说 token 溢出、也不提图片的 `413` 同样以 `reason=api_overflow` 询问，但只压缩一次、重试一次：不进入最小历史裁剪，也不单凭这个错误删除图片 |
 | 手动 `/compact` | 报 cancelled；紧接着重试会照常分发（它从不进闩锁） |

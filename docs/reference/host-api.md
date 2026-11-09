@@ -317,7 +317,7 @@ outcome = agent.compact(reason="api_overflow")         # on behalf of the ladder
 Returns a `CompactionOutcome`
 (`agentao.compaction.types`) — `status` is
 `success | cancelled | failed | skipped`, with `detail` naming the case
-(`circuit_open`, `history_too_short`, `no_safe_split`, `summary_empty`,
+(`circuit_open`, `history_too_short`, `nothing_to_shed`, `no_safe_split`, `summary_empty`,
 `summary_truncated`, …).
 **History is byte-identical on every status but `success`.** Both token
 fields exclude the system prompt and are `None` where no estimate exists.
@@ -373,7 +373,7 @@ needs the text reads `agent.messages`. `provide_summary` is legal only when
 
 The contract is **fail-open, and that is a hard rule**: a raise, an awaitable
 (v1 is synchronous), an unknown `action`, or `provide_summary` with no text
-are all treated as `allow` with a warning. Two of the five compaction entry
+are all treated as `allow` with a warning. Three of the six compaction entry
 points *are* the API-overflow recovery ladder, so an exception escaping a
 controller would turn "context too long" into "the turn crashes". There is no
 timeout — if it hangs, it hangs the turn, exactly like the host's other
@@ -393,6 +393,7 @@ case.
 |---|---|
 | Microcompaction | that pass is skipped; no error; not re-asked this turn |
 | Threshold | not re-asked this turn; if the API then overflows the host is asked **again**, with `reason=api_overflow` — a different question |
+| Overflow, full compaction did not succeed (0.5.20+) | asked with `kind=microcompact`, `reason=api_overflow` when the full compaction found no cut or failed, but not when it was cancelled. `tool_results_to_clip` can count results that the model has not read yet. A cancel returns the provider's error |
 | API overflow (either rung) | the provider's context-length error is returned to the caller. It does **not** fall through to `messages[-2:]` |
 | A bare `413` (0.5.17+) | the provider's `413` is returned to the caller. A `413` whose body names no token overflow and no image asks with `reason=api_overflow` too, but gets one compaction and one retry only: never minimal history, never image removal on that error alone |
 | Manual `/compact` | reported as cancelled; an immediate retry dispatches normally (it never latches) |

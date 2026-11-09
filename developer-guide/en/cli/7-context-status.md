@@ -76,6 +76,8 @@ The summary lives both in the live message history (so the next turn sees it) an
 
 **The request of the turn in progress survives.** If the cut lands inside a turn, the request that started the turn goes back after the summary, word for word, with a note that tells the model to continue the work. This also applies to the last overflow step, which keeps no summary. A request larger than 10% of the context window keeps its start and its end, and states how much is missing. Images are not kept. A `/compact` after the model has answered keeps no copy. The next compaction after a later request drops the copy. You do not need a prefix for this: `[PIN]` no longer has a special meaning.
 
+**Results the model has not read stay whole.** A large batch of parallel tool calls can fill the kept window. The cut then moves back to the assistant message that asked for them, so older history is still summarized. No compaction clips those results, even if the request stays over the limit. The cheaper pass at 55-80% of the window clips them only after the model has read them, and it saves no copy. If the provider refuses the request, compaction clips them to 3,000 characters, except the newest 5, and each clipped result names a full copy in `.agentao/tool-outputs/` that the model can read. MCP skill content is clipped with no copy. A request that fans out at its very first step has nothing to summarize, so it gets only the clip.
+
 While step 2 runs (it can take a minute), the turn's `Thinking…` spinner reads `Compacting context (12s)`; when it finishes you see `Context compacted · 54 → 19 messages · 14s` (or `Compaction made no change — <reason> · 14s`) and the spinner goes back to `Thinking…`. If repeated failures have paused automatic compaction, a line says so.
 
 The "circuit breaker" is a safety: if compaction itself fails (LLM timeout, parse error) more than `CIRCUIT_BREAKER_LIMIT` times in a row, auto-compaction disables for the rest of the session — better to refuse a turn than spiral.
@@ -109,7 +111,7 @@ When to use it:
 Edge cases:
 
 - Fewer than 5 messages → `Not enough conversation history to compact yet.` (nothing to summarize).
-- If compaction can't make progress — circuit breaker open, no safe split point, or the summarization LLM call failed — you get `Compaction made no change …` and history is left untouched (check `agentao.log`).
+- If compaction can't make progress — circuit breaker open, no safe split point, older messages that are only the request and earlier summaries, or the summarization LLM call failed — you get `Compaction made no change …` and history is left untouched (check `agentao.log`).
 - Same lossiness as auto-compaction: anything not in the summary or in re-injected files is gone from the agent's perspective.
 
 ## `/status` quick-reference (full content in chapter 1)

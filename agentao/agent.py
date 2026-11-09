@@ -974,6 +974,9 @@ class Agentao:
         # Microcompaction keeps whole exactly the results the active-skills
         # block points at (#552).
         self.context_manager.mcp_pointer_provider = self._mcp_pointer_indices
+        # An overflow clips results the model has not read, each with a saved
+        # copy under this session's working directory (#625).
+        self.context_manager.clipped_result_saver = self._save_clipped_tool_result
         self.tool_runner.set_mcp_skill_gate(
             self._mcp_skill_gate,
             begin_batch=self._mcp_skill_begin_batch,
@@ -1021,6 +1024,14 @@ class Agentao:
         if mcp_skills is not None:
             origins |= set(mcp_skills.origins(getattr(manager, "mcp_view", None)))
         return origins
+
+    def _save_clipped_tool_result(self, tool_name: str, content: str) -> Optional[str]:
+        """The note naming a saved copy of a result about to be clipped, or ``None``."""
+        from .runtime.tool_result_formatter import save_clipped_result
+
+        return save_clipped_result(
+            tool_name, content, self.working_directory, self.llm.logger,
+        )
 
     def _mcp_pointer_indices(self, messages: list) -> Optional[set]:
         """Indices in ``messages`` the active-skills block points at (#552).

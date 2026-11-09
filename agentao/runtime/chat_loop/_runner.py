@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 from xml.sax.saxutils import quoteattr
 
 from ...cancellation import AgentCancelledError, CancellationToken
-from ...compaction.coordinator import CompactionRequest
+from ...compaction.coordinator import CompactionRequest, CompactionRun
 from ...compaction.request import turn_reminder
 from ...context_manager import _LENGTH_FINISH_REASONS as _CM_LENGTH_FINISH_REASONS
 from ...context_manager import is_context_too_long_error, is_request_too_large_error
@@ -1570,6 +1570,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 measure_system_tokens=False,
                 cancellation_token=token,
             )
+            run = self._clip_if_not_compacted(run)
             if run.outcome.status == "cancelled":
                 # The host said no to the *overflow* question, which is a
                 # separate question from the threshold one it may have
@@ -1647,6 +1648,32 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     return self._llm_error_outcome(
                         e2, "LLM call failed after compression"
                     )
+
+    def _clip_if_not_compacted(self, run: "CompactionRun") -> "CompactionRun":
+        """Clip tool results when an overflow's full compaction did not succeed (#625).
+
+        A first request that fans out, or a compaction that already holds only
+        the newest run, leaves nothing to summarize: the size is in the results
+        themselves. Sending the same request again can only fail, and the last
+        rung has to keep the whole run too. So this clips them, with a saved copy
+        of each, even though the model has not read them. A summarizer failure
+        gets the clip as well: it keeps more history than the last rung would.
+
+        Not on a 413, which does not say that tokens are the problem
+        (:meth:`_recover_request_too_large`).
+
+        Through the coordinator, so the hooks and the host can refuse it. A host's
+        cancel of the full compaction stands, and no clip runs after it. With
+        nothing to clip, the outcome is ``skipped`` and the ladder goes on.
+        """
+        if run.outcome.status in ("success", "cancelled"):
+            return run
+        return self._agent.compaction_coordinator.run(
+            CompactionRequest("auto", "microcompact", "api_overflow"),
+            system_prompt=run.system_prompt,
+            messages_with_system=run.messages_with_system,
+            measure_system_tokens=False,
+        )
 
     def _recover_request_too_large(
         self,

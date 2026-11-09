@@ -329,7 +329,7 @@ class CompactionCoordinator:
                 return self._skipped(request, "circuit_open")
 
         if request.kind == "microcompact" and not cm.microcompact_would_mutate(
-            agent.messages
+            agent.messages, overflow=request.reason == "api_overflow",
         ):
             # Being *in* the band says nothing about there being anything
             # left to shorten: once every old tool result is at or under the
@@ -388,7 +388,8 @@ class CompactionCoordinator:
         # ``_run_compaction`` — but history is still rewritten behind a
         # ``ContextManager`` method, never here.
         if request.kind == "microcompact":
-            prep = cm.prepare_microcompact(agent.messages)
+            overflow = request.reason == "api_overflow"
+            prep = cm.prepare_microcompact(agent.messages, overflow=overflow)
             cancelled = self._ask(
                 request,
                 decide,
@@ -402,7 +403,11 @@ class CompactionCoordinator:
                 trigger=request.trigger,
                 kind=request.kind,
                 reason=request.reason,
-                messages=cm.microcompact_messages(agent.messages),
+                # On an overflow the provider has refused the request, so this
+                # clips results the model has not read: each one is saved first.
+                messages=cm.microcompact_messages(
+                    agent.messages, overflow=overflow,
+                ),
                 # Both null deliberately. Microcompaction runs on every
                 # iteration inside its band; two extra full-history estimates
                 # there is the cost this design refuses to add. Read the old
@@ -487,7 +492,7 @@ class CompactionCoordinator:
     def dispatch_pre_compact(self, request: CompactionRequest) -> Optional[str]:
         """Fire matching ``PreCompact`` command hooks; return a cancel reason.
 
-        One implementation for all five entry points. There used to be two —
+        One implementation for all six entry points. There used to be two —
         the chat loop's and the CLI's — which is how manual ``/compact`` came
         to emit a replay event saying ``manual`` beside a hook payload saying
         ``auto`` for the same compaction.
@@ -496,7 +501,7 @@ class CompactionCoordinator:
         none), or ``None`` for allow. Everything that is not an explicit
         ``{"hookSpecificOutput": {"compactionDecision": "cancel"}}`` on stdout
         means allow, **including a raised exception here**: this whole method
-        is wrapped, because two of the five entry points are the API-overflow
+        is wrapped, because three of the six entry points are the API-overflow
         recovery ladder and a control-plane error must never be able to end
         the turn it exists to save.
         """
@@ -726,13 +731,13 @@ class CompactionCoordinator:
         unconditionally and therefore reported compactions that returned
         history unchanged.
 
-        Three of the four skipped cases are decided by :meth:`_gate`, which
-        returns before this method is reached. The fourth —
-        ``history_too_short`` — is decided *inside* the transform, so it
-        arrives here and has to be filtered explicitly. It re-triggers on
-        every loop iteration exactly like the gated three (four huge messages
-        over the threshold is enough), so letting it through was an event
-        storm on the one status documented to stay silent.
+        Most skipped cases are decided by :meth:`_gate`, which returns before
+        this method is reached. ``history_too_short`` and ``nothing_to_shed``
+        are decided *inside* the transform, so they arrive here and have to be
+        filtered explicitly. They re-trigger on the loop's iterations like the
+        gated ones (four huge messages over the threshold is enough), so
+        letting them through was an event storm on the one status documented
+        to stay silent.
         """
         if outcome.status == "skipped":
             return

@@ -112,14 +112,16 @@ def _heuristic_token_count(text: str) -> int:
 class PrepareRejected:
     """Prepare decided there is nothing to hand to a summarizer.
 
-    Three cases, and they are **not** the same severity: too little history is
-    ``skipped`` and costs nothing, while no safe split point and an
-    un-renderable transcript are structural ``failed``s that have to be
-    counted on the auto path or the caller re-enters every iteration.
+    Four cases, and they are **not** the same severity: too little history and
+    a cut with nothing to shed are ``skipped`` and cost nothing, while no safe
+    split point and an un-renderable transcript are structural ``failed``s that
+    have to be counted on the auto path or the caller re-enters every
+    iteration.
     """
 
     status: str          # "skipped" | "failed"
-    # "history_too_short" | "no_safe_split" | "summary_input_error"
+    # "history_too_short" | "nothing_to_shed" | "no_safe_split"
+    # | "summary_input_error"
     detail: str
     counts_as_failure: bool
 
@@ -132,6 +134,10 @@ class PreparedCompaction:
     counts in the boundary marker and ``_last_compact_stats``, the kept
     request and surviving half that are spliced into the result, and
     ``pre_tokens`` for the boundary marker and the session-summary row.
+
+    ``clip_on_commit`` means ``to_keep`` is still whole: the overflow path
+    clips it in commit, because that clip writes files and a cancelled
+    compaction must leave none behind.
     """
 
     trigger: str
@@ -145,6 +151,7 @@ class PreparedCompaction:
     recently_read: List[str]
     summary_input: str
     pre_tokens: int
+    clip_on_commit: bool = False
 
 
 @dataclass(frozen=True)
@@ -191,6 +198,44 @@ def _trailing_state_start(messages: List[Dict[str, Any]]) -> int:
     while end > 0 and is_skill_state_message(messages[end - 1]):
         end -= 1
     return end
+
+
+def _unread_tool_results(messages: List[Dict[str, Any]]) -> set:
+    """Indices of the results the model has not read yet.
+
+    The results after the last assistant message: no model reply follows them.
+    A ``user`` message may follow them and changes nothing: a skill-state note,
+    a ``new_instruction`` at the iteration cap, or the request after a cancelled
+    turn.
+    """
+    unread = set()
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
+            break
+        if _is_tool_result(msg):
+            unread.add(i)
+    return unread
+
+
+_COMPACTION_SCAFFOLDING_PREFIXES = (
+    "[Compact Boundary",
+    "[Conversation Summary]",
+    "[Files accessed before this summary",
+)
+
+
+def _is_compaction_scaffolding(msg: Any) -> bool:
+    """True for a system message that an earlier compaction wrote.
+
+    A summary of these alone repeats the summary they already hold.
+    """
+    return (
+        isinstance(msg, dict)
+        and msg.get("role") == "system"
+        and isinstance(msg.get("content"), str)
+        and msg["content"].startswith(_COMPACTION_SCAFFOLDING_PREFIXES)
+    )
 
 
 def _made_tool_calls(msg: Any) -> bool:
@@ -246,6 +291,12 @@ class ContextManager:
         self.memory_tool = memory_tool
         self.max_tokens = max_tokens
         self.memory_manager = memory_manager
+
+        #: Saves a result that the overflow path is about to clip:
+        #: ``(tool_name, content) -> note | None``. The agent sets it, as this
+        #: class knows no working directory. ``None``, or any answer that is
+        #: not a string, clips with no pointer to a copy.
+        self.clipped_result_saver: Optional[Callable[[str, str], Optional[str]]] = None
 
         #: Per-instance override of :attr:`KEEP_RECENT_TOKEN_RATIO`.
         self.keep_recent_token_ratio: Optional[float] = self.KEEP_RECENT_TOKEN_RATIO
@@ -617,7 +668,9 @@ class ContextManager:
 
     # Matches an omission notice this class wrote, so a re-clip can carry the
     # earlier count forward instead of reporting only its own slice.
-    _OMISSION_NOTICE = re.compile(r"\[… ([\d,]+) chars [^\]]*?…\]")
+    # Up to the first ``…]`` on the line, not the first ``]``: a note can name a
+    # saved copy, and a working directory may hold a bracket.
+    _OMISSION_NOTICE = re.compile(r"\[… ([\d,]+) chars [^\n]*?…\]")
 
     @classmethod
     def _prior_omissions(cls, text: str) -> int:
@@ -680,7 +733,9 @@ class ContextManager:
             + (text[len(text) - tail:] if tail else "")
         )
 
-    def _microcompactable_indices(self, messages: List[Dict[str, Any]]) -> set:
+    def _microcompactable_indices(
+        self, messages: List[Dict[str, Any]], *, overflow: bool = False,
+    ) -> set:
         """Indices of tool messages a microcompact pass would actually shorten.
 
         Factored out so the *predicate* and the *transform* can never disagree:
@@ -696,6 +751,10 @@ class ContextManager:
         as before — earlier results of a skill, a deactivated skill's, one a
         hook or the formatter changed. Without an answer from the agent, the
         latest result of every MCP skill that could carry a pointer is kept.
+
+        Results the model has not read are not shortened either (#625), unless
+        ``overflow`` says the provider refused the request. Then the choice is a
+        clipped result or a failed turn.
         """
         from .skills.provenance import can_carry_pointer, latest_mcp_activations
 
@@ -711,6 +770,8 @@ class ContextManager:
             }
         tool_indices = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
         preserve = set(tool_indices[-self.MICROCOMPACT_PRESERVE_RECENT:])
+        if not overflow:
+            preserve |= _unread_tool_results(messages)
         return {
             i for i in tool_indices
             if i not in preserve
@@ -739,7 +800,9 @@ class ContextManager:
             return None
         return answer
 
-    def microcompact_would_mutate(self, messages: List[Dict[str, Any]]) -> bool:
+    def microcompact_would_mutate(
+        self, messages: List[Dict[str, Any]], *, overflow: bool = False,
+    ) -> bool:
         """True when :meth:`microcompact_messages` would shorten something.
 
         Cheap (lengths only, no encoding). Callers gate the whole microcompact
@@ -749,9 +812,25 @@ class ContextManager:
         would fork a ``PreCompact`` hook subprocess per iteration and emit a
         ``CONTEXT_COMPRESSED`` reporting ``pre == post``.
         """
-        return bool(self._microcompactable_indices(messages))
+        return bool(self._microcompactable_indices(messages, overflow=overflow))
 
-    def microcompact_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _clip_note(self, msg: Dict[str, Any], overflow: bool) -> str:
+        """The omission note for one clip, naming a saved copy if there is one."""
+        note = "omitted by microcompact"
+        if not overflow or not callable(self.clipped_result_saver):
+            return note
+        try:
+            saved = self.clipped_result_saver(str(msg.get("name") or "tool"), msg["content"])
+        except Exception:
+            return note
+        return f"{note}; {saved}" if isinstance(saved, str) and saved else note
+
+    def microcompact_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        overflow: bool = False,
+    ) -> List[Dict[str, Any]]:
         """Truncate large tool results without calling the LLM.
 
         Keeps the most recent MICROCOMPACT_PRESERVE_RECENT tool results at full
@@ -759,6 +838,11 @@ class ContextManager:
         a head+tail strategy: 20% from the start (command context) and 80% from
         the end (errors and final output tend to appear last).
         Returns a new list; does not mutate the original.
+
+        Results the model has not read stay whole, unless ``overflow`` says the
+        provider refused the request (:meth:`_microcompactable_indices`). Then
+        each clipped result is saved first, and the note names the copy
+        (:attr:`clipped_result_saver`).
 
         Records whether anything was actually shortened on
         :attr:`last_microcompact_mutated`. The return value cannot carry it —
@@ -768,7 +852,7 @@ class ContextManager:
         ``last_summary_finish_reason_missing``, and for the same reason: this
         class holds no agent reference, so the call sites fold it in.
         """
-        targets = self._microcompactable_indices(messages)
+        targets = self._microcompactable_indices(messages, overflow=overflow)
 
         result = []
         for i, msg in enumerate(messages):
@@ -777,7 +861,7 @@ class ContextManager:
                 msg["content"] = self._head_tail_clip(
                     msg["content"],
                     self.MICROCOMPACT_TOOL_LIMIT,
-                    note="omitted by microcompact",
+                    note=self._clip_note(msg, overflow),
                 )
             result.append(msg)
 
@@ -1065,6 +1149,52 @@ class ContextManager:
             return None
         return chosen
 
+    @staticmethod
+    def _walk_back_split(
+        messages: List[Dict[str, Any]], start: int, end: int,
+    ) -> Optional[int]:
+        """The assistant that opened the tool run around ``start``, or ``None``.
+
+        The last resort after :meth:`_find_split_index` finds nothing, which
+        means the rest of history is one run of tool results. Cutting at the
+        assistant keeps every result with its call, and summarizes what came
+        before the run. The cut lands earlier than ``start`` asked for: the
+        kept window and any keep-token budget give way, as the run cannot be
+        split.
+
+        ``None`` when the assistant is at index 0 or 1. At 0 nothing would be
+        summarized, and at 1 only the message that opened the conversation.
+        """
+        i = min(start, end - 1)
+        if i < 0:
+            return None
+        while i > 0 and _is_tool_result(messages[i]):
+            i -= 1
+        return i if i >= 2 and _made_tool_calls(messages[i]) else None
+
+    def _nothing_to_shed(
+        self,
+        to_summarize: List[Dict[str, Any]],
+        kept_request: Optional[Dict[str, Any]],
+    ) -> bool:
+        """True when a cut would pay for a summary and shed nothing (#623).
+
+        Two ways: the cut holds only what an earlier compaction wrote, or only
+        the request, whose copy goes straight back and costs as much. The
+        result would grow by the summary, and the same history would ask again
+        on the next iteration. History changes once the model replies, so this
+        is a stand-down and not a failure.
+
+        Clipping is not counted here. It needs no summary, and an overflow gets
+        it from its own step in the runner.
+        """
+        real = [m for m in to_summarize if not _is_compaction_scaffolding(m)]
+        if not real:
+            return True
+        if kept_request is None:
+            return False
+        return self.estimate_tokens(real) <= self.estimate_tokens([kept_request])
+
     # -----------------------------------------------------------------------
     # Compaction — the ``kind == "full"`` transform
     #
@@ -1165,7 +1295,7 @@ class ContextManager:
         Makes no breaker judgement. That is policy, and policy lives above.
 
         Returns either a :class:`PreparedCompaction` snapshot or a
-        :class:`PrepareRejected` saying which of the two early exits fired.
+        :class:`PrepareRejected` saying which of the early exits fired.
         """
         if len(messages) < self.MIN_MESSAGES_TO_COMPACT:
             return PrepareRejected("skipped", "history_too_short", False)
@@ -1182,13 +1312,15 @@ class ContextManager:
         # must not leave the window holding only the notes and summarize the
         # request in flight. Floored at 1, so something is still summarized.
         # The split itself never lands on a trailing note either: a run of
-        # tool results before the notes has no safe cut, as without them.
+        # tool results before the notes walks back to its call, as without them.
         end = _trailing_state_start(messages)
         count_start = len(messages) - keep_count
         if end < len(messages):
             count_start = max(1, end - keep_count)
         start = self._apply_keep_token_budget(messages, count_start, end=end)
         split_index = self._find_split_index(messages, start, end=end)
+        if split_index is None:
+            split_index = self._walk_back_split(messages, start, end)
 
         if split_index is None:
             # Structural failure, not a summarization failure — but the caller
@@ -1209,10 +1341,20 @@ class ContextManager:
         # gives a failing command four times what this pass would have left and
         # keeps the tail where its diagnostic is. Running before the split (as
         # this did) cut the same text twice for no gain.
-        to_keep = self.microcompact_messages(messages[split_index:])
+        #
+        # The model has not read the results at the end of history, so they stay
+        # whole until the provider refuses them (#625). Then the choice is a
+        # clipped result or a failed turn, and commit clips them, each with a
+        # saved copy.
+        clip_on_commit = reason == "api_overflow"
+        to_keep = messages[split_index:]
+        if not clip_on_commit:
+            to_keep = self.microcompact_messages(to_keep)
 
         # --- Step 3: keep the request of the turn in progress ----------------
         kept_request = self._request_to_keep(to_summarize, to_keep)
+        if self._nothing_to_shed(to_summarize, kept_request):
+            return PrepareRejected("skipped", "nothing_to_shed", False)
 
         # --- Step 4: extract recently read files ----------------------------
         recently_read = self._extract_recently_read_files(to_summarize)
@@ -1257,6 +1399,7 @@ class ContextManager:
             # below is measured in, and *not* the unit the CONTEXT_COMPRESSED
             # event's token pair uses.
             pre_tokens=self.estimate_tokens(messages),
+            clip_on_commit=clip_on_commit,
         )
 
     def _request_to_keep(
@@ -1439,7 +1582,12 @@ class ContextManager:
             })
 
         kept_request = [prep.kept_request] if prep.kept_request else []
-        result = [boundary_msg, summary_msg] + file_hint_msgs + kept_request + prep.to_keep
+        to_keep = (
+            self.microcompact_messages(prep.to_keep, overflow=True)
+            if prep.clip_on_commit
+            else prep.to_keep
+        )
+        result = [boundary_msg, summary_msg] + file_hint_msgs + kept_request + to_keep
 
         post_tokens = self.estimate_tokens(result)
         self._last_compact_stats = {
@@ -1464,6 +1612,8 @@ class ContextManager:
     def prepare_microcompact(
         self,
         messages: List[Dict[str, Any]],
+        *,
+        overflow: bool = False,
     ) -> "PreparedMicrocompact":
         """Count what a microcompaction pass would shorten, without doing it.
 
@@ -1480,7 +1630,9 @@ class ContextManager:
         largest.
         """
         return PreparedMicrocompact(
-            tool_results_to_clip=len(self._microcompactable_indices(messages)),
+            tool_results_to_clip=len(
+                self._microcompactable_indices(messages, overflow=overflow),
+            ),
         )
 
     @staticmethod
@@ -1731,8 +1883,8 @@ class ContextManager:
         :meth:`compress_messages` does not have.
 
         Never returns ``skipped`` for an open breaker or a suppression latch:
-        both are decided above and never reach here. The only ``skipped`` it
-        can produce is ``history_too_short``.
+        both are decided above and never reach here. The only ``skipped``s it
+        can produce are ``history_too_short`` and ``nothing_to_shed``.
 
         ``cancellation_token`` is the turn's, when there is one. It reaches
         the summarizer's retry waits, and it is read twice here — before the

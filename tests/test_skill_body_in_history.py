@@ -698,8 +698,8 @@ def test_a_full_compaction_never_cuts_on_a_trailing_note():
 
     Every message between the nominal start and the note is a tool result,
     so the only non-tool message left was the note itself. Cutting there kept
-    a window of the note alone and summarized the request in flight; without
-    the note the same history has no safe split, and it still has none.
+    a window of the note alone and summarized the request in flight. The run
+    walks back to its call instead (#625), as it does without the note.
     """
     from unittest.mock import Mock
 
@@ -729,7 +729,9 @@ def test_a_full_compaction_never_cuts_on_a_trailing_note():
     messages.append({"role": "user", "content": f'{_STATE_OPEN}{_STATE_LOADED}"a"\nbody\n</system-reminder>'})
 
     prepared = cm.prepare_compaction(messages, trigger="auto", kind="full", reason="manual_cli")
-    assert getattr(prepared, "detail", None) == "no_safe_split"
+    assert prepared.to_keep[0]["tool_calls"] == calls
+    assert prepared.to_keep[-1] is messages[-1]
+    assert prepared.to_summarize[-1]["content"] == "request"
 
 
 _VALID = '<system-reminder>\nSkill loaded: "demo-skill"\nbody\n</system-reminder>'
