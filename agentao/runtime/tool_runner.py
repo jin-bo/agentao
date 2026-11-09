@@ -97,6 +97,10 @@ class ToolRunner:
         #: top of every call so a stop can never leak into the next batch and
         #: so phase 1.5's write survives to the end of the pipeline.
         self.last_hook_stop: Optional[str] = None
+        #: The answer of the first ``complete_task`` call in the batch that just
+        #: ran, in plan order, or ``None``. Read by the chat loop right after
+        #: ``execute()``, like :attr:`last_hook_stop`, and reset with it.
+        self.last_task_complete: Optional[str] = None
         # Plugin hook rules — set by the agent after plugin loading.
         self._plugin_hook_rules: list = []
         # Session working directory for hook dispatchers (set by cli after plugin loading).
@@ -259,6 +263,7 @@ class ToolRunner:
         # the stop a ``PreToolUse`` hook sets during phase 1.5, which is the
         # only place that value is ever written before phase 3.
         self.last_hook_stop = None
+        self.last_task_complete = None
 
         # --- Phase 1: Planning (sequential, no I/O) ---
         # Doom-loop detection, JSON parse, tool lookup, and the
@@ -420,6 +425,15 @@ class ToolRunner:
                 if _info is not None and _info.hook_stop_reason is not None:
                     self.last_hook_stop = _info.hook_stop_reason
                     break
+        # The same plan order picks the answer when a batch calls
+        # ``complete_task`` more than once.
+        for _plan in _plans:
+            _info = _exec_results.get(_plan.tool_call_id)
+            if _info is not None and _info.task_complete is True:
+                self.last_task_complete = (
+                    _info.result if isinstance(_info.result, str) else str(_info.result)
+                )
+                break
 
         # `systemMessage` and the one-shot field diagnostics a `PostToolUse*`
         # hook produced go to the **user**, and the worker that computed them
