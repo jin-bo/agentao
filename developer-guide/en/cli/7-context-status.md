@@ -74,6 +74,8 @@ When `/context` usage approaches the configured limit, the context manager:
 
 The summary lives both in the live message history (so the next turn sees it) and in the DB (so future sessions can reference it via memory).
 
+**The request of the turn in progress survives.** If the cut lands inside a turn, the request that started the turn goes back after the summary, word for word, with a note that tells the model to continue the work. This also applies to the last overflow step, which keeps no summary. A request larger than 10% of the context window keeps its start and its end, and states how much is missing. Images are not kept. A `/compact` after the model has answered keeps no copy. The next compaction after a later request drops the copy. You do not need a prefix for this: `[PIN]` no longer has a special meaning.
+
 While step 2 runs (it can take a minute), the turn's `Thinking…` spinner reads `Compacting context (12s)`; when it finishes you see `Context compacted · 54 → 19 messages · 14s` (or `Compaction made no change — <reason> · 14s`) and the spinner goes back to `Thinking…`. If repeated failures have paused automatic compaction, a line says so.
 
 The "circuit breaker" is a safety: if compaction itself fails (LLM timeout, parse error) more than `CIRCUIT_BREAKER_LIMIT` times in a row, auto-compaction disables for the rest of the session — better to refuse a turn than spiral.

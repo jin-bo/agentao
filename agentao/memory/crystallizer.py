@@ -149,8 +149,6 @@ class MemoryCrystallizer:
         - Plain string content (the current chat path): used directly.
         - List-of-blocks content (defensive — multimodal/tool-use shapes):
           joined text from ``{"type": "text", "text": ...}`` blocks.
-        - Leading ``[PIN]`` marker is stripped before pattern matching, so
-          pinned messages still crystallize correctly.
         - Empty / non-text messages are skipped.
 
         Within-call dedup: same ``(scope, key_normalized)`` matched in
@@ -171,8 +169,6 @@ class MemoryCrystallizer:
             text = self._user_message_text(msg.get("content"))
             if not text:
                 continue
-            if text.startswith("[PIN]"):
-                text = text[len("[PIN]"):].lstrip()
             for p in self.extract_from_summary(text, session_id):
                 key = (p.scope, p.key_normalized)
                 if key in merged:

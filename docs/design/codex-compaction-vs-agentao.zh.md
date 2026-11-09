@@ -215,13 +215,13 @@ pass 3: len=3040  mutated=True   [… 40 chars omitted by microcompact …]
 **agentao**（`context_manager.py:326` `compress_messages`）：
 
 ```
-[Compact Boundary | 元数据] + [Conversation Summary] + 文件提示? + [PIN] 消息 + 最近 ≤20 条
+[Compact Boundary | 元数据] + [Conversation Summary] + 文件提示? + 进行中一轮的请求? + 最近 ≤20 条
 ```
 
 - **Step 1 先对整个消息列表跑 microcompact**（`:368`），**然后**才划分 to_keep（`:372`）。因此「最近 ≤20 条」**不是原文**：其中除最近 5 条 tool result 外，任何超过 3000 字符的更早 tool result 都已被头尾截断（`:282` `microcompact_messages`）。
 - `KEEP_RECENT_MESSAGES = 20`，且不超过总数的 **60%**（`:372-375`）
 - split point 向后推进到下一个 `role == "user"` 边界（`:379-380`）——保证不产生孤儿 tool result；找不到安全切点就原样返回（`:382-383`）
-- 额外携带：`[PIN]` 前缀消息、`_extract_recently_read_files` 生成的「压缩前读过的文件」提示列表
+- 额外携带：切点落在一轮中间时这一轮的请求（0.5.20 起取代 `[PIN]` 前缀）、`_extract_recently_read_files` 生成的「压缩前读过的文件」提示列表
 
 **codex local**（`compact.rs:652` `build_compacted_history_with_limit`）：
 
@@ -355,7 +355,7 @@ agentao 的更 recency-aware（延迟到真需要时才做），**代价是它�
 - **孤儿 tool result 防护** —— agentao 靠推进到 `user` 边界（`:379`），codex local 靠只保留 user 消息。两者都不会产生孤儿。
 - **手动压缩的观测一致性** —— `cli/commands/compact.py` 与 `_compaction.py::_maybe_full_compress` 发同一套 `CONTEXT_COMPRESSED` / session-summary 事件；`_produced_fresh_compaction`（`compact.py:26`）刻意用新加的 `[Compact Boundary` 头判定而非搜 `[Conversation Summary]`，避免旧摘要误判。这段注释已解释原因，**不要"简化"它**。
 - **压缩前的 memory crystallization** —— `compress_messages` step 4b（`:404-407`）刻意跑在摘要**之前**，让规则抽取器看到原始 user 文本而非 LLM 的转述。codex 无此机制。
-- **`[PIN]` 消息钉选、recently-read-files 提示、SQLite session summary** —— 均为 agentao 独有。
+- **保留进行中一轮的请求、recently-read-files 提示、SQLite session summary** —— 均为 agentao 独有。
 - **两级阈值（55% micro / 65% full）** —— codex 无廉价中间层（它的截断在 record 时无条件生效）。
 - **熔断器** —— codex 无等价物。
 - **摘要 prompt 的 `<analysis>` / `<summary>` 双块结构** —— agentao 独有（`_format_summary`，`:610`）。

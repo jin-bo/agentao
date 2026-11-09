@@ -95,8 +95,8 @@ def _prep(to_summarize):
 
     return PreparedCompaction(
         trigger="t", kind="full", reason="r", is_auto=True, split_index=len(to_summarize),
-        to_summarize=to_summarize, to_keep=[], pinned=[], recently_read=[],
-        summary_messages=to_summarize, summary_input="", pre_tokens=1,
+        to_summarize=to_summarize, to_keep=[], kept_request=None, recently_read=[],
+        summary_input="", pre_tokens=1,
     )
 
 
