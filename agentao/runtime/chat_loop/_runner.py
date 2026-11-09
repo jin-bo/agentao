@@ -991,12 +991,17 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             # went on: the model saw its answer come back as a tool result,
             # called ``complete_task`` again with "see above", and that line
             # became the result the parent read. The real answer was lost.
-            answer = _raw_complete.strip()
             final_msg_done: Dict[str, Any] = {
                 "role": "assistant",
-                "content": answer or EMPTY_RESPONSE_PLACEHOLDER,
+                "content": _raw_complete.strip(),
             }
+            _attach_reasoning_echo(final_msg_done, reasoning_content)
             sanitize_assistant_message(final_msg_done)
+            # Judged after the sanitize: an answer of only invisible tag
+            # characters is empty once stripped, and is no answer.
+            answer = (final_msg_done.get("content") or "").strip()
+            if not answer:
+                final_msg_done["content"] = EMPTY_RESPONSE_PLACEHOLDER
             return self._resolve_stop_hook(
                 turn_end_reason="final_response",
                 assistant_content=final_msg_done["content"],
@@ -1142,8 +1147,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
     ) -> "ChatLoopRunner._Step":
         """Dispatch the Stop hook and translate its verdict into a step.
 
-        Shared by all four turn-ending sites (max-iterations, doom-loop,
-        length-truncation, final-response); per-site differences live in
+        Shared by every turn-ending site (max-iterations, doom-loop,
+        length-truncation, hook stop, final-response — including the
+        ``complete_task`` end); per-site differences live in
         ``_STOP_SITES``.
         ``final_msg`` is appended to history here (after a possible
         ``blocking_error`` / ``additional_contexts`` rewrite) so the

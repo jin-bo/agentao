@@ -180,7 +180,9 @@ class TestTaskCompleteDetection:
         ])
         assert _find_task_complete_result(agent) is None
 
-    def test_takes_the_last_call(self):
+    def test_takes_the_latest_batch_and_its_first_call(self):
+        """Same choice as ``ToolRunner.last_task_complete``: in one batch the
+        first call wins; across batches the latest batch wins."""
         from agentao.agents.tools._outcome import _find_task_complete_result
 
         agent = SimpleNamespace(messages=[
@@ -189,7 +191,19 @@ class TestTaskCompleteDetection:
             {"role": "tool", "tool_call_id": "c2", "name": "complete_task",
              "content": "second"},
         ])
-        assert _find_task_complete_result(agent) == "second"
+        assert _find_task_complete_result(agent) == "first"
+
+        agent.messages += [
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c3"}]},
+            {"role": "tool", "tool_call_id": "c3", "name": "read_file",
+             "content": "body"},
+            {"role": "tool", "tool_call_id": "c4", "name": "complete_task",
+             "content": "third"},
+            {"role": "tool", "tool_call_id": "c5", "name": "complete_task",
+             "content": "fourth"},
+            {"role": "assistant", "content": "[No response]"},
+        ]
+        assert _find_task_complete_result(agent) == "third"
 
     def test_survives_malformed_history(self):
         from agentao.agents.tools._outcome import _find_task_complete_result

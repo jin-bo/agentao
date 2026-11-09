@@ -143,6 +143,15 @@ def test_an_empty_answer_is_reported_as_no_output(tmp_path, monkeypatch):
     assert stats["incomplete"] is None
 
 
+def test_an_answer_of_only_tag_characters_is_no_output(tmp_path, monkeypatch):
+    # Unicode tag characters are stripped by the sanitize, leaving nothing.
+    _script(monkeypatch, [[_complete("\U000E0041\U000E0042")]])
+
+    result, _ = _run(tmp_path)
+
+    assert result == "[No response]"
+
+
 def test_a_turn_without_complete_task_is_unchanged(tmp_path, monkeypatch):
     requests, _ = _script(monkeypatch, [
         [_call("list_directory", "l1", path=str(tmp_path))],
