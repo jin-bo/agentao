@@ -45,7 +45,6 @@ prompt-toolkit
 pycparser
 pydantic
 pydantic-core
-pyee
 pygments
 pyjwt
 python-dotenv
