@@ -1165,12 +1165,10 @@ class AgentToolWrapper(Tool):
         completed_payload = _find_task_complete_result(sub_agent)
         if completed_payload is not None:
             task_complete = True
-            # ``complete_task`` is documented as *the* way a sub-agent
-            # returns its answer, but the loop keeps running after the tool
-            # call and the child often has nothing left to say — leaving
-            # ``chat()`` to return the empty-turn placeholder. Prefer the
-            # payload the agent explicitly handed back over that placeholder,
-            # otherwise the real answer is dropped on the floor.
+            # ``complete_task`` ends the child's turn with its answer, so
+            # ``chat()`` returns it. A Stop hook can still continue the turn,
+            # and the child can then end with no text: prefer the payload the
+            # agent explicitly handed back over that placeholder.
             if _is_harness_notice(result) and completed_payload.strip():
                 result = completed_payload
 

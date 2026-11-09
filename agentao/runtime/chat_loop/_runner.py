@@ -984,6 +984,31 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                 system_prompt=system_prompt,
                 incomplete_reason=INCOMPLETE_HOOK_STOP,
             )
+        _raw_complete = getattr(agent.tool_runner, "last_task_complete", None)
+        if isinstance(_raw_complete, str):
+            # ``complete_task`` is the sub-agent's answer, so the turn ends on it
+            # as on a final response, with the same Stop hook. Before, the loop
+            # went on: the model saw its answer come back as a tool result,
+            # called ``complete_task`` again with "see above", and that line
+            # became the result the parent read. The real answer was lost.
+            final_msg_done: Dict[str, Any] = {
+                "role": "assistant",
+                "content": _raw_complete.strip(),
+            }
+            _attach_reasoning_echo(final_msg_done, reasoning_content)
+            sanitize_assistant_message(final_msg_done)
+            # Judged after the sanitize: an answer of only invisible tag
+            # characters is empty once stripped, and is no answer.
+            answer = (final_msg_done.get("content") or "").strip()
+            if not answer:
+                final_msg_done["content"] = EMPTY_RESPONSE_PLACEHOLDER
+            return self._resolve_stop_hook(
+                turn_end_reason="final_response",
+                assistant_content=final_msg_done["content"],
+                final_msg=final_msg_done,
+                system_prompt=system_prompt,
+                incomplete_reason=None if answer else INCOMPLETE_NO_OUTPUT,
+            )
         if doom_triggered:
             doom_content = (assistant_msg.get("content") or "").strip()
             assistant_content_doom = (
@@ -1122,8 +1147,9 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
     ) -> "ChatLoopRunner._Step":
         """Dispatch the Stop hook and translate its verdict into a step.
 
-        Shared by all four turn-ending sites (max-iterations, doom-loop,
-        length-truncation, final-response); per-site differences live in
+        Shared by every turn-ending site (max-iterations, doom-loop,
+        length-truncation, hook stop, final-response — including the
+        ``complete_task`` end); per-site differences live in
         ``_STOP_SITES``.
         ``final_msg`` is appended to history here (after a possible
         ``blocking_error`` / ``additional_contexts`` rewrite) so the

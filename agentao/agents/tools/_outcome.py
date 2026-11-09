@@ -93,22 +93,28 @@ def _find_task_complete_result(sub_agent: Any) -> Optional[str]:
 
     ``CompleteTaskTool.execute`` raises ``TaskComplete``, but
     ``ToolExecutor._execute_one`` catches it and turns it into an ordinary
-    tool result (``runtime/tool_executor.py:339``) — so it never propagates
-    out of ``chat()`` and cannot be detected with ``except``. The durable
-    signal is the tool result it leaves in the child's history.
+    tool result marked ``task_complete`` — so it never propagates out of
+    ``chat()`` and cannot be detected with ``except``. The durable signal is
+    the tool result it leaves in the child's history.
 
-    Returns the last such payload (``None`` if the tool was never called),
-    which is both the "the agent declared itself done" flag and the answer
-    it meant to hand back.
+    Returns the payload of the latest batch that called it (``None`` if the
+    tool was never called), which is both the "the agent declared itself
+    done" flag and the answer it meant to hand back. Within that batch the
+    first call wins, as in ``ToolRunner.last_task_complete``: the tool
+    results of one batch are contiguous and in plan order.
     """
     messages = getattr(sub_agent, "messages", None) or []
+    found: Optional[str] = None
+    in_batch = False
     for msg in reversed(messages):
-        if not isinstance(msg, dict):
-            continue
-        if msg.get("role") == "tool" and msg.get("name") == "complete_task":
+        is_tool = isinstance(msg, dict) and msg.get("role") == "tool"
+        if in_batch and not is_tool:
+            break
+        if is_tool and msg.get("name") == "complete_task":
             content = msg.get("content")
-            return content if isinstance(content, str) else ""
-    return None
+            found = content if isinstance(content, str) else ""
+            in_batch = True
+    return found
 
 
 def _classify_subagent_outcome(

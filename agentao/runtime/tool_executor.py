@@ -146,6 +146,9 @@ class ToolExecutionResult:
     #: frames below anything that can act on a stop, so the verdict rides home
     #: on the result rather than being dropped where it was computed.
     hook_stop_reason: Optional[str] = None
+    #: True when this call was ``complete_task``: the sub-agent declared itself
+    #: done, and ``result`` is its answer. The chat loop ends the turn on it.
+    task_complete: bool = False
     #: Hook-authored feedback for the model — exit-2 stderr and
     #: ``additionalContext``. Spliced beside the tool result by the formatter,
     #: which is where the model actually sees it.
@@ -484,6 +487,7 @@ class ToolExecutor:
         # when this is set; the success/error tail below must short-circuit.
         async_cancel_outcome: Optional[ToolExecutionResult] = None
         cancelled_reason: Optional[str] = None
+        task_complete = False
         cancelled_output = ""
         error_type_name: Optional[str] = None
         with tool_locks[id(tool)]:
@@ -523,6 +527,7 @@ class ToolExecutor:
                         result_text = tool.execute(**call_args)
             except TaskComplete as tc_exc:
                 result_text = tc_exc.result
+                task_complete = True
             except AgentCancelledError as cancel_exc:
                 # A blocking call the turn's cancel reached (a shell command,
                 # an MCP call): reported like the pre-execution cancel above,
@@ -650,7 +655,7 @@ class ToolExecutor:
             fn_name=fn, result=result_text, status=status,
             duration_ms=duration_ms, error=error_msg,
             hook_stop_reason=hook_stop, hook_model_contexts=hook_contexts,
-            hook_user_notices=hook_notices,
+            hook_user_notices=hook_notices, task_complete=task_complete,
         )
 
     # ------------------------------------------------------------------

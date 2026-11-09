@@ -43,8 +43,8 @@ def _attach_reasoning_echo(
 ) -> None:
     """Attach a short echo of ``reasoning_content`` to a synthetic final.
 
-    The four synthetic finals (max-iterations, length abort, hook stop, doom
-    loop) are a second assistant message built from a response that is
+    The synthetic finals (max-iterations, length abort, hook stop, doom
+    loop, ``complete_task``) are a second assistant message built from a response that is
     already recorded, with its reasoning whole, on the tool-call message. A
     second whole copy would send and count the same text twice; the echo
     keeps the old 500-character cut, which is all these messages ever had.

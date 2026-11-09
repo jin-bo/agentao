@@ -1,10 +1,11 @@
 """``CompleteTaskTool`` and the ``TaskComplete`` exception it raises.
 
 Sub-agents call ``complete_task(result=...)`` to return their final
-answer. The tool's ``execute`` raises a ``TaskComplete`` exception
-which the wrapper's chat loop catches as a normal terminal signal —
-this is the only Tool that uses control-flow-by-exception, kept here
-so the convention stays in one place.
+answer. The tool's ``execute`` raises a ``TaskComplete`` exception.
+``ToolExecutor`` turns it into an ordinary result marked ``task_complete``,
+and the chat loop ends the turn with that result as the answer. This is the
+only Tool that uses control-flow-by-exception, kept here so the convention
+stays in one place.
 """
 
 from __future__ import annotations
