@@ -575,22 +575,6 @@ def test_an_empty_summary_still_increments_the_failure_counter():
     assert cm.compaction_circuit_open is True
 
 
-def test_pins_appear_once_in_the_result_and_never_in_the_summary_input():
-    cm = _make_cm()
-    msgs = _history()
-    msgs.insert(1, {"role": "user", "content": "[PIN] remember the ticket id"})
-    prep = cm.prepare_compaction(
-        msgs, trigger="auto", kind="full", reason="compression_threshold",
-    )
-    assert not isinstance(prep, PrepareRejected)
-    assert "[PIN] remember the ticket id" not in prep.summary_input
-    assert prep.pinned == [{"role": "user", "content": "[PIN] remember the ticket id"}]
-
-    result = cm.commit_compaction(prep, "a summary")
-    pins = [m for m in result if str(m.get("content", "")).startswith("[PIN]")]
-    assert len(pins) == 1
-
-
 # ---------------------------------------------------------------------------
 # The legacy wrapper
 # ---------------------------------------------------------------------------

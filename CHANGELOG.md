@@ -13,7 +13,15 @@ _Targeting 0.5.20. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **Compaction keeps the request of the turn in progress.** When a cut lands inside a turn, the full compaction and the last overflow rung (`minimal_history`) put the request back after the summary, with a note that tells the model to continue the work. A long prompt no longer loses its later lines to the summarizer's 2,000-character cut. The copy costs at most the summary input's budget (10% of the effective window). Past that it keeps both ends and states the gap. Images are not kept. A request in the surviving half, a later turn's request, or a window that ends on the model's final answer ends the keeping. On the last rung, `CompactionDecisionContext.messages_to_keep` counts the copy.
+
+### Removed
+
+- **The `[PIN]` message prefix.** It has not worked for a normal turn since the date reminder moved into user messages (2026-04-01), because the check required the content to start with `[PIN]`. The check also read no role, so a tool result or an assistant message that starts with `[PIN]` was moved out of its tool exchange, which orphaned the pair. A message that starts with `[PIN]` is now an ordinary message. `PreparedCompaction.pinned` and `.summary_messages` are gone, and `.kept_request` is new.
+
 ### Fixed
+
+- `/crystallize` evidence no longer quotes the date reminder as the start of a user goal.
 
 ## [0.5.19] — 2026-11-06
 

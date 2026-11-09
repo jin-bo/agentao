@@ -208,6 +208,11 @@ Design: `docs/design/compaction-orchestration-plan.md`. Five entry points hand o
 - A cancelled threshold compaction enters a latch, per `(kind, reason)`. `runtime/turn.py` clears the latch each turn.
 - A cancelled overflow returns the provider's context-length error.
 
+**The kept request** (`compaction/request.py`, `ContextManager._request_to_keep`):
+- When the surviving window holds no request and does not end on the model's final answer, the full compaction and the last rung put the turn's newest request back in the result.
+- A request is a `user` message that opens with the runner's exact date reminder (a turn, or a `new_instruction` at the iteration cap). Never widen this to "any leading `<system-reminder>`": background notes and Stop hook follow-ups have one, and they can hold text the user did not write.
+- The request also stays in the summary input. Crystallization skips the kept copy.
+
 **The last rung is not a plain tail slice. Do not simplify it back to one.**
 - `_minimal_history_start` repairs the boundary, so the window never opens on a `role: "tool"` message.
 - Trailing `Skill loaded` / `Skill no longer active` notes do not count toward `keep_tail` (#552). They stay in the window, but the window also keeps a real message before them. The full compaction's kept window and its token budget skip them the same way (`prepare_compaction`).

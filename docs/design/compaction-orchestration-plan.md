@@ -724,16 +724,19 @@ class PreparedCompaction:
     split_index: int
     to_summarize: list[dict]     # messages[:split_index] (`:558`)
     to_keep: list[dict]          # the already-microcompacted surviving half (`:565`)
-    pinned: list[dict]           # (`:568`)
+    kept_request: dict | None    # the turn's request when the cut lands inside the turn (0.5.20)
     recently_read: list[str]     # (`:574`)
-    summary_messages: list[dict] # to_summarize minus the [PIN] entries (below)
-    summary_input: str           # the result of _format_for_summary(summary_messages)
+    summary_input: str           # the result of _format_for_summary(to_summarize)
     pre_tokens: int              # estimate_tokens(messages), **excluding the system prompt** (`:587`)
 ```
 
+> **0.5.20:** `kept_request` replaced the `pinned` and `summary_messages` fields, and the `[PIN]`
+> prefix is gone. See `agentao/compaction/request.py`. The review tables below keep the old names
+> as a record of that time.
+
 Commit needs every one of these: `crystallize_user_messages(to_summarize)` (`:582`),
 `len(to_summarize)` / `len(to_keep)` for `_last_compact_stats` (`:646-647`), and
-`result = [boundary, summary] + file_hint + pinned + to_keep` (`:639`). **"The host can read
+`result = [boundary, summary] + file_hint + kept_request + to_keep` (`:639`). **"The host can read
 `agent.messages`" does not resolve commit's data dependency** — that sentence answers what the *host*
 needs, not what *commit* needs.
 
@@ -1002,7 +1005,8 @@ either. The three plans:
   refused twice, so a malformed cut spends the turn's last attempt. The repair can move the boundary
   either way, so `prepare_minimal_history` reports what the cut will actually keep. Both halves read
   one boundary function (`ContextManager._minimal_history_start`), so the count a host approves and
-  the cut it approves cannot disagree. The same change cost this kind its exemption from a
+  the cut it approves cannot disagree. Since 0.5.20 the count also includes a kept request, because
+  `prepare_minimal_history` measures `apply_minimal_history`. The same change cost this kind its exemption from a
   would-mutate gate — a flat tail slice always shed something, a repaired boundary need not — so
   `minimal_history` now has one next to microcompaction's (`minimal_history_would_help` →
   `no_valid_minimal_cut`); see the row added to §2's status mapping.
@@ -1278,9 +1282,9 @@ the gate.
   `[Compact Boundary` marker instead (`cli/commands/compact.py:26-40`).
 - The overflow entry does not emit `CONTEXT_COMPRESSED` while the breaker is open (today it emits
   unconditionally, `_runner.py:1177`).
-- A `[PIN]` message appears **exactly once** in the compacted result and **never** in the summary
-  input (`summary_messages` has the `[PIN]` entries removed, matching the existing filter at
-  `_summarize_messages:847-853`).
+- When a cut lands inside a turn, the turn's request appears **exactly once** in the compacted result
+  and is **also** in the summary input, so the summary can state the task (0.5.20, replaces the
+  `[PIN]` scenario).
 - After a cancelled threshold compaction, PreCompact is not dispatched again in that turn — but a
   later `api_overflow` in the **same** turn still dispatches once (the latch key carries `reason`,
   §4.4.4).

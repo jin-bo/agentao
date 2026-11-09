@@ -426,12 +426,6 @@ class TestExtractFromUserMessages:
         out = c.extract_from_user_messages(msgs)
         assert len(out) == 1
 
-    def test_strips_pin_prefix(self):
-        c = MemoryCrystallizer()
-        msgs = [{"role": "user", "content": "[PIN] I prefer fish shell"}]
-        out = c.extract_from_user_messages(msgs)
-        assert len(out) == 1
-
     def test_dedupes_across_messages_with_occurrences(self):
         c = MemoryCrystallizer()
         msgs = [

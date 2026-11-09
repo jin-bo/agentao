@@ -618,16 +618,18 @@ class PreparedCompaction:
     split_index: int
     to_summarize: list[dict]     # messages[:split_index]（`:558`）
     to_keep: list[dict]          # 已微压缩的存活半边（`:565`）
-    pinned: list[dict]           # （`:568`）
+    kept_request: dict | None    # 切点落在一轮中间时，这一轮的请求（0.5.20）
     recently_read: list[str]     # （`:574`）
-    summary_messages: list[dict] # to_summarize 去掉 [PIN] 之后（见下）
-    summary_input: str           # _format_for_summary(summary_messages) 的结果
+    summary_input: str           # _format_for_summary(to_summarize) 的结果
     pre_tokens: int              # estimate_tokens(messages)，**不含系统提示**（`:587`）
 ```
 
+> **0.5.20：** `kept_request` 取代了 `pinned` 和 `summary_messages` 字段，`[PIN]` 前缀已移除。
+> 见 `agentao/compaction/request.py`。下面的评审表保留旧名称，作为当时的记录。
+
 这几个对象 commit 一个都不能少：`crystallize_user_messages(to_summarize)`（`:582`）、
 `len(to_summarize)` / `len(to_keep)` 进 `_last_compact_stats`（`:646-647`）、
-`result = [boundary, summary] + file_hint + pinned + to_keep`（`:639`）。**"宿主可以自己读
+`result = [boundary, summary] + file_hint + kept_request + to_keep`（`:639`）。**"宿主可以自己读
 `agent.messages`"解决不了 commit 的数据依赖**——那句话回答的是宿主需要什么，不是 commit 需要什么。
 
 `CompactionDecisionContext`（**公开、脱敏，仅进程内，只给 controller**）：
@@ -851,7 +853,7 @@ class CompactionDecision:
   该级的边界会被修复，使保留窗口不会**开在**一条 `role: "tool"` 消息上——严格 API 会直接拒绝这种历史，
   而这一级重试的是模型已经拒过两次的请求，切坏了就把这一轮最后一次机会花在报错上。修复可能把边界往两个
   方向挪，所以 `prepare_minimal_history` 报的是这一刀实际会保留多少条。两半读的是同一个边界函数
-  （`ContextManager._minimal_history_start`），因此宿主批准的数字和它批准的那一刀不会对不上。同一个改动
+  （`ContextManager._minimal_history_start`），因此宿主批准的数字和它批准的那一刀不会对不上。0.5.20 起这个数字也包含保留的请求，因为 `prepare_minimal_history` 量的是 `apply_minimal_history` 的结果。同一个改动
   也让这种 kind 失去了"不需要 would-mutate 闸门"的豁免——平切尾巴必然削掉点什么，修复过的边界不一定——
   所以 `minimal_history` 现在有了自己的闸门，就挨着微压缩那道（`minimal_history_would_help` →
   `no_valid_minimal_cut`）；见 §2 状态映射表里新增的那一行。
@@ -1072,8 +1074,8 @@ uv run ruff check .
   nothing"）、为此另设的 `last_microcompact_mutated`（`:112`）、以及 `/compact` 改用
   `[Compact Boundary` 标记嗅探（`cli/commands/compact.py:26-40`）。
 - 熔断器打开时溢出入口不发 `CONTEXT_COMPRESSED`（今天无条件发，`_runner.py:1177`）。
-- `[PIN]` 消息在压缩结果里**恰好出现一次**，且**不出现在**摘要输入里（`summary_messages` 已剔除
-  `[PIN]`，与 `_summarize_messages:847-853` 的既有过滤一致）。
+- 切点落在一轮中间时，这一轮的请求在压缩结果里**恰好出现一次**，并且**也在**摘要输入里，这样摘要才能
+  说明任务（0.5.20，取代 `[PIN]` 场景）。
 - 阈值压缩被取消后，同一回合内不再派发 PreCompact；但同一回合里随后的 `api_overflow` **仍然**会派发一
   次（抑制闩的键带 `reason`，§4.4.4）。
 - 抑制闩在下一回合开头被清掉。

@@ -35,6 +35,7 @@ from xml.sax.saxutils import quoteattr
 
 from ...cancellation import AgentCancelledError, CancellationToken
 from ...compaction.coordinator import CompactionRequest
+from ...compaction.request import turn_reminder
 from ...context_manager import _LENGTH_FINISH_REASONS as _CM_LENGTH_FINISH_REASONS
 from ...context_manager import is_context_too_long_error, is_request_too_large_error
 from ...skills.provenance import tail_points_into_history
@@ -382,12 +383,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         bracketed status string for hook short-circuits / max-iterations).
         """
         agent = self._agent
-        now = datetime.now()
-        system_reminder = (
-            f"<system-reminder>\n"
-            f"Current Date/Time: {now.strftime('%Y-%m-%d %H:%M:%S')} ({now.strftime('%A')})\n"
-            f"</system-reminder>\n"
-        )
+        system_reminder = turn_reminder(datetime.now())
         agent._last_user_message = user_message
 
         hook_outcome = self._dispatch_user_prompt_submit(user_message)
@@ -704,7 +700,12 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         if action == "new_instruction":
             new_msg = result.get("message", "")
             if new_msg:
-                agent.messages.append({"role": "user", "content": new_msg})
+                # The date reminder marks it as a request, so a compaction
+                # keeps this instruction and not the one it replaced.
+                agent.messages.append({
+                    "role": "user",
+                    "content": turn_reminder(datetime.now()) + new_msg,
+                })
                 messages_with_system = [
                     {"role": "system", "content": system_prompt}
                 ] + agent.messages

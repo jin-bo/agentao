@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ....embedding.sessions import strip_system_reminders
 from ._helpers import (
     _PATHY_ARG_KEYS,
     _clip,
@@ -57,11 +58,11 @@ def collect_crystallize_evidence(cli: AgentaoCLI):
             continue
         role = msg.get("role", "")
         if role == "user":
-            text = _message_text(msg.get("content"))
+            # Without the date reminder, and the note on a kept request: they
+            # would use the excerpt's 200 characters and name no goal.
+            text = strip_system_reminders(_message_text(msg.get("content")))
             if not text:
                 continue
-            if text.startswith("[PIN]"):
-                text = text[len("[PIN]"):].lstrip()
             first = _first_sentences(text, max_chars=200)
             if first and first not in user_goals:
                 user_goals.append(first)

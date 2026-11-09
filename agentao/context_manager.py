@@ -7,6 +7,12 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from .cancellation import CancellationToken
+from .compaction.request import (
+    KEPT_REQUEST_NOTE,
+    is_kept_request,
+    is_user_request,
+    strip_kept_note,
+)
 from .compaction.types import (
     CompactionDecisionContext,
     CompactionOutcome,
@@ -123,8 +129,8 @@ class PreparedCompaction:
     """Everything ``commit_compaction`` needs, computed before summarizing.
 
     Every field here has a reader in commit — the crystallize input, the two
-    counts in the boundary marker and ``_last_compact_stats``, the pinned
-    block and surviving half that are spliced into the result, and
+    counts in the boundary marker and ``_last_compact_stats``, the kept
+    request and surviving half that are spliced into the result, and
     ``pre_tokens`` for the boundary marker and the session-summary row.
     """
 
@@ -135,9 +141,8 @@ class PreparedCompaction:
     split_index: int
     to_summarize: List[Dict[str, Any]]
     to_keep: List[Dict[str, Any]]
-    pinned: List[Dict[str, Any]]
+    kept_request: Optional[Dict[str, Any]]
     recently_read: List[str]
-    summary_messages: List[Dict[str, Any]]
     summary_input: str
     pre_tokens: int
 
@@ -195,20 +200,6 @@ def _made_tool_calls(msg: Any) -> bool:
         and msg.get("role") == "assistant"
         and bool(msg.get("tool_calls"))
     )
-
-
-def _is_pinned(msg: Any) -> bool:
-    """True for a ``[PIN]`` message — the one predicate, used by both halves.
-
-    Both the pinned list and its complement are built from this, so they can
-    never disagree. The complement used to be ``m not in pinned``, an O(n·k)
-    dict-equality scan that also silently folded "equal to a pinned message"
-    into "is pinned".
-    """
-    if not isinstance(msg, dict):
-        return False
-    content = msg.get("content")
-    return isinstance(content, str) and content.startswith("[PIN]")
 
 
 def _compose_detail(internal: Optional[str], decision: Optional[str]) -> Optional[str]:
@@ -1111,7 +1102,7 @@ class ContextManager:
           4. Extract recently read file paths from the to-summarize window
           5. Call LLM with structured 9-section prompt to summarize old messages
           6. Save summary to memory
-          7. Build result: [boundary_marker, summary, file_hint?, pinned…, recent…]
+          7. Build result: [boundary_marker, summary, file_hint?, kept_request?, recent…]
 
         Circuit breaker: after CIRCUIT_BREAKER_LIMIT consecutive failures this
         method returns messages unchanged and logs a warning.
@@ -1220,20 +1211,19 @@ class ContextManager:
         # this did) cut the same text twice for no gain.
         to_keep = self.microcompact_messages(messages[split_index:])
 
-        # --- Step 3: extract pinned messages --------------------------------
-        pinned = [m for m in to_summarize if _is_pinned(m)]
+        # --- Step 3: keep the request of the turn in progress ----------------
+        kept_request = self._request_to_keep(to_summarize, to_keep)
 
         # --- Step 4: extract recently read files ----------------------------
         recently_read = self._extract_recently_read_files(to_summarize)
 
         # --- Step 4b: assemble the summarizer's input -----------------------
-        # ``[PIN]`` messages are dropped here rather than inside the
-        # summarizer: they are spliced verbatim into the result below, so
-        # summarizing them too would put the same text in twice — and a host
-        # inspecting ``summary_input`` should see exactly what the model will.
-        summary_messages = [m for m in to_summarize if not _is_pinned(m)]
+        # The kept request stays in this input. Its sections "Primary Request"
+        # and "Pending Tasks" need the request, and the summarizer of a batch
+        # run, whose only user message is that request, would otherwise see no
+        # request at all.
         try:
-            summary_input = self._format_for_summary(summary_messages)
+            summary_input = self._format_for_summary(to_summarize)
         except Exception as exc:
             # Transcript assembly used to sit inside ``_summarize_messages``'s
             # ``try``, so a history entry it could not render (a non-dict, a
@@ -1260,15 +1250,87 @@ class ContextManager:
             split_index=split_index,
             to_summarize=to_summarize,
             to_keep=to_keep,
-            pinned=pinned,
+            kept_request=kept_request,
             recently_read=recently_read,
-            summary_messages=summary_messages,
             summary_input=summary_input,
             # Excludes the system prompt — the same unit ``post_tokens``
             # below is measured in, and *not* the unit the CONTEXT_COMPRESSED
             # event's token pair uses.
             pre_tokens=self.estimate_tokens(messages),
         )
+
+    def _request_to_keep(
+        self,
+        dropped: List[Dict[str, Any]],
+        kept: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """The message that keeps the turn's request across a cut, else ``None``.
+
+        Only a cut inside a turn needs one. If the surviving half holds a
+        request, the cut fell between turns: the older requests are finished
+        work, and the summary is the right home for them. A later turn's
+        request also ends the keeping: the copy stays in history until the
+        next compaction, which finds that newer request and drops the copy.
+
+        A window that ends on the model's final answer also needs none: that
+        turn is over (``/compact`` between turns), and a note to continue it
+        would restart finished work.
+
+        A message of this shape was already a kept copy: it comes back with
+        the same note, once, however many compactions it crosses.
+        """
+        if any(is_user_request(m) for m in kept):
+            return None
+        end = _trailing_state_start(kept)
+        if end > 0:
+            last = kept[end - 1]
+            if (
+                isinstance(last, dict)
+                and last.get("role") == "assistant"
+                and not _made_tool_calls(last)
+            ):
+                return None
+        for message in reversed(dropped):
+            if is_user_request(message):
+                return self._render_kept_request(message)
+        return None
+
+    def _render_kept_request(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """A request as its kept copy: verbatim up to a budget, text only.
+
+        A compaction exists to shrink history, so the copy has the summary
+        input's ceiling. Past that it keeps both ends and states the gap,
+        because a prompt's hard constraints are often its last lines. Images
+        stay out, as they do for every summarized message: their base64 would
+        cross every later compaction.
+        """
+        content = message.get("content")
+        if isinstance(content, str):
+            text = strip_kept_note(content)
+        else:
+            parts = [b for b in content if isinstance(b, dict)]
+            # This runs on the overflow ladder, outside the guard around
+            # ``_format_for_summary``: a malformed part must not end the turn.
+            text = "\n".join(
+                b["text"] for b in parts
+                if b.get("type") == "text" and isinstance(b.get("text"), str)
+            )
+            images = sum(1 for b in parts if b.get("type") != "text")
+            if images:
+                text += f"\n[{images} attachment(s) of this request were not kept.]"
+
+        budget = self._summary_input_budget()
+        cost = self.count_tokens_in_text(text)
+        # The cut is proportional, and the ends it keeps can cost more per
+        # character than the middle it drops, so one pass can miss the budget.
+        for _ in range(self._KEPT_REQUEST_CLIP_PASSES):
+            if cost <= budget:
+                break
+            text = self._head_tail_clip(
+                text, max(1, len(text) * budget // cost),
+            )
+            cost = self.count_tokens_in_text(text)
+        return {"role": "user", "content": KEPT_REQUEST_NOTE + text}
 
     def commit_compaction(
         self,
@@ -1297,8 +1359,14 @@ class ContextManager:
                 # background sub-agent's result) holds server-written text,
                 # not the user's: a review item from it would reach a later
                 # session's prompt with no gate, as the summary below would.
+                # A kept copy is not read again: it would count as the user
+                # repeating themselves. A copy that the last rung made was
+                # never read at all, as that rung crystallizes nothing.
                 self.memory_manager.crystallize_user_messages(
-                    [m for m in prep.to_summarize if not marker_origins(m)]
+                    [
+                        m for m in prep.to_summarize
+                        if not marker_origins(m) and not is_kept_request(m)
+                    ]
                 )
             except Exception:
                 pass
@@ -1370,7 +1438,8 @@ class ContextManager:
                 ),
             })
 
-        result = [boundary_msg, summary_msg] + file_hint_msgs + prep.pinned + prep.to_keep
+        kept_request = [prep.kept_request] if prep.kept_request else []
+        result = [boundary_msg, summary_msg] + file_hint_msgs + kept_request + prep.to_keep
 
         post_tokens = self.estimate_tokens(result)
         self._last_compact_stats = {
@@ -1541,11 +1610,19 @@ class ContextManager:
         In all three the honest answer is to change nothing and let the
         provider's own context-length error reach the caller — which is
         already what a *cancelled* overflow does.
+
+        Keeping the turn's request can also shed nothing: the only message
+        cut is the request, and its copy costs as much.
         """
         start = self._minimal_history_start(messages, keep_tail)
         if start <= 0 or start >= len(messages):
             return False
-        return self._window_answers_its_own_calls(messages[start:])
+        if not self._window_answers_its_own_calls(messages[start:]):
+            return False
+        kept = self._request_to_keep(messages[:start], messages[start:])
+        return kept is None or (
+            self.estimate_tokens(messages[:start]) > self.estimate_tokens([kept])
+        )
 
     def prepare_minimal_history(
         self,
@@ -1557,14 +1634,16 @@ class ContextManager:
 
         ``keep_tail`` on the result is the **effective** count, not the
         requested one, because the boundary repair in
-        :meth:`_minimal_history_start` can move it either way. Both halves
-        read that one function, so the number a host sees in
+        :meth:`_minimal_history_start` can move it either way, and a kept
+        request adds one. Both halves read :meth:`apply_minimal_history`, so
+        the number a host sees in
         ``messages_to_keep`` and the cut it is being asked to approve can
         never disagree — the same reason :meth:`prepare_microcompact` wraps
         the index set its transform rewrites.
         """
-        start = self._minimal_history_start(messages, keep_tail)
-        return PreparedMinimalHistory(keep_tail=len(messages) - start)
+        return PreparedMinimalHistory(
+            keep_tail=len(self.apply_minimal_history(messages, keep_tail=keep_tail)),
+        )
 
     def apply_minimal_history(
         self,
@@ -1586,8 +1665,17 @@ class ContextManager:
 
         The boundary itself, and why it is not simply ``keep_tail`` messages
         from the end, is :meth:`_minimal_history_start`.
+
+        This rung keeps no summary, so without the turn's request the model
+        would have no record of its task (:meth:`_request_to_keep`). A window
+        that is empty on purpose (``keep_tail == 0``) stays empty.
         """
-        return messages[self._minimal_history_start(messages, keep_tail):]
+        start = self._minimal_history_start(messages, keep_tail)
+        window = messages[start:]
+        if not window:
+            return window
+        kept = self._request_to_keep(messages[:start], window)
+        return [kept] + window if kept else window
 
     def _validate_host_summary(
         self,
@@ -1921,6 +2009,7 @@ class ContextManager:
     # single message.
     _SUMMARY_INPUT_BUDGET_RATIO = 0.10
     _SUMMARY_INPUT_BUDGET_FLOOR = 2_000  # tokens
+    _KEPT_REQUEST_CLIP_PASSES = 3
 
     # A tool result is "high value" when it reports a failure — that is the
     # text ``## 4. Errors and Fixes`` asks to be quoted verbatim.
@@ -2013,8 +2102,8 @@ class ContextManager:
         Uses an <analysis> thinking block (stripped from output) followed by
         a <summary> block for the final result.
 
-        Takes a raw message window and does its own ``[PIN]`` filtering and
-        formatting. The compaction path no longer comes through here — it
+        Takes a raw message window and does its own formatting. The compaction
+        path no longer comes through here — it
         assembles the input in ``prepare_compaction`` (so the host control
         plane can see exactly what the model will) and calls
         :meth:`_summarize_formatted` directly. Kept for callers that hold
@@ -2023,14 +2112,7 @@ class ContextManager:
         Returns:
             Formatted summary text, or empty string on failure.
         """
-        to_summarize = [
-            m for m in messages
-            if not (
-                isinstance(m.get("content"), str)
-                and m["content"].startswith("[PIN]")
-            )
-        ]
-        return self._summarize_formatted(self._format_for_summary(to_summarize))
+        return self._summarize_formatted(self._format_for_summary(messages))
 
     def _summarize_formatted(
         self,
@@ -2139,6 +2221,9 @@ class ContextManager:
                     for b in content
                     if isinstance(b, dict) and b.get("type") == "text"
                 )
+            if role == "user" and isinstance(content, str):
+                # The note speaks to the working model, not to the summarizer.
+                content = strip_kept_note(content)
             if (
                 isinstance(content, str)
                 and content.startswith("[Conversation Summary]")
@@ -2233,12 +2318,10 @@ class ContextManager:
         reserved budget for it, so a long tail of tool traffic could evict the
         one sentence saying what the work was for.
 
-        **This is a partial mitigation and not a fix.** Reserving *input*
-        budget does not make the summarizing model write the request into its
-        *output*. Actually closing it means one of: splicing the raw request
-        into the result without going through the summarizer, validating the
-        output and retrying, or a dedicated turn-prefix summarization call —
-        all out of scope here.
+        This serves the summary only. Reserving *input* budget does not make
+        the summarizing model write the request into its *output*, so the
+        working model gets the request from :meth:`_request_to_keep`, which
+        splices it into the result without going through the summarizer.
         """
         text = self._clip_to_token_budget("\n".join(block), max(1, budget))
         section = f"<originating-request>\n{text}\n</originating-request>\n\n"
