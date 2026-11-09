@@ -169,7 +169,7 @@ Agentao.chat() / Agentao.arun()
 
 ### Compaction
 
-Design: `docs/design/compaction-orchestration-plan.md`. Five entry points hand off to one `CompactionCoordinator` (`agent.compaction_coordinator`):
+Design: `docs/design/compaction-orchestration-plan.md`. Six entry points hand off to one `CompactionCoordinator` (`agent.compaction_coordinator`):
 
 | # | Entry point | `kind` | `reason` |
 |---|---|---|---|
@@ -178,6 +178,7 @@ Design: `docs/design/compaction-orchestration-plan.md`. Five entry points hand o
 | 3 | API overflow, rung 1 (`runtime/chat_loop/_runner.py`) | `full` | `api_overflow` |
 | 4 | API overflow, rung 2 (same file) | `minimal_history` | `api_overflow_after_compression` |
 | 5 | Manual `/compact` (`cli/commands/compact.py`) | `full` | `manual_cli` |
+| 6 | API overflow, clip after rung 1 did not succeed (`runtime/chat_loop/_runner.py`) | `microcompact` | `api_overflow` |
 
 **Ownership:** the coordinator decides whether to run, whose summary to take, and what to emit. `ContextManager` does every content transform, and neither imports nor holds a coordinator. Shared types are in the neutral `types.py`.
 
@@ -212,6 +213,14 @@ Design: `docs/design/compaction-orchestration-plan.md`. Five entry points hand o
 - When the surviving window holds no request and does not end on the model's final answer, the full compaction and the last rung put the turn's newest request back in the result.
 - A request is a `user` message that opens with the runner's exact date reminder (a turn, or a `new_instruction` at the iteration cap). Never widen this to "any leading `<system-reminder>`": background notes and Stop hook follow-ups have one, and they can hold text the user did not write.
 - The request also stays in the summary input. Crystallization skips the kept copy.
+
+**A run of parallel tool results** (#625, `ContextManager._walk_back_split`):
+- When no safe cut exists at or after the start, the cut walks back to the assistant that opened the run, if that assistant is at index 2 or later. Else the result is `no_safe_split`. That walk-back overrides the kept window and any keep-token budget.
+- **The model has not read the results at the end of history** (`_unread_tool_results`). No compaction clips them, except on `api_overflow`. The one filter is `_microcompactable_indices`, so the clip, `microcompact_would_mutate` and `tool_results_to_clip` agree. A test of the clip by age must end its history on a model reply, or a "not clipped" assertion passes by default.
+- `prepare_compaction` writes no file. On `api_overflow`, `commit_compaction` clips, and each clipped result names a saved copy (`clipped_result_saver`, `tool_result_formatter.py::save_clipped_result`). MCP skill content gets no copy.
+- A `413` does not get entry point 6, because it does not say that tokens are the problem.
+
+**A cut with nothing to shed** (#623, `_nothing_to_shed`): when the older half holds only what an earlier compaction wrote, or only a request whose copy costs as much, `prepare_compaction` returns `skipped` / `nothing_to_shed`. This is not a failure, because history changes once the model replies.
 
 **The last rung is not a plain tail slice. Do not simplify it back to one.**
 - `_minimal_history_start` repairs the boundary, so the window never opens on a `role: "tool"` message.

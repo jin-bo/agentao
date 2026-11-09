@@ -13,6 +13,7 @@ so the runner does not need to know either threshold.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 import uuid
 from pathlib import Path
@@ -40,6 +41,16 @@ _TOOL_OUTPUT_DIR = Path(".agentao") / "tool-outputs"
 # was last written). A session resumed after this long finds its excerpts'
 # files gone and gets ``read_file``'s not-found error, which is honest.
 TOOL_OUTPUT_RETENTION_S = 7 * 24 * 60 * 60
+
+# How an excerpt opens. It names its saved copy right after this, inside the
+# head that any later clip keeps.
+_SPILLED_EXCERPT_PREFIX = "[Output truncated: "
+# The whole opening line, so a result that merely starts with those words still
+# gets a copy.
+_SPILLED_EXCERPT = re.compile(
+    re.escape(_SPILLED_EXCERPT_PREFIX)
+    + r"[\d,]+ chars total, showing first [\d,]+ and last [\d,]+ chars\."
+)
 
 # Legacy hard cap for results that fail the file-save path (e.g. write errors)
 MAX_TOOL_RESULT_CHARS = 80_000
@@ -98,6 +109,62 @@ def _is_mcp_skill_content(tool_name: str, result: str) -> bool:
     return carries_marker(tool_name) and bool(summary_origins(result))
 
 
+def _write_tool_output(
+    content: str, tool_name: str, out_dir: Path, logger=None,
+) -> Tuple[Path, bool]:
+    """Write *content* to a new file in *out_dir*, redacted.
+
+    Returns ``(path, redacted)``. Raises on a failed write: a caller must not
+    name a file that does not exist.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ts = int(time.time())
+    uid = uuid.uuid4().hex[:6]
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in tool_name)
+    out_file = out_dir / f"{safe_name}_{ts}_{uid}.txt"
+    redacted, hits = scan_and_redact(content)
+    out_file.write_text(redacted, encoding="utf-8")
+    if hits and logger:
+        logger.info(
+            "Redacted %s from tool output saved to %s",
+            ", ".join(f"{k}×{v}" for k, v in sorted(hits.items())),
+            out_file,
+        )
+    return out_file, bool(hits)
+
+
+def save_clipped_result(
+    tool_name: str, content: str, working_directory: Path, logger=None,
+) -> Optional[str]:
+    """Save a result that a clip is about to shorten; return the note that names it.
+
+    ``None`` when there is nothing to name, and the clip goes ahead without a
+    pointer. Three cases: MCP skill content never reaches disk
+    (:func:`_is_mcp_skill_content`), a result the formatter already spilled
+    names its own file in the head that the clip keeps, and a failed write must
+    not name a file that does not exist.
+
+    The note goes inside a one-line omission notice, whose pattern ends at the
+    first ``…]``, so it adds neither. Prunes here too: results under the spill
+    threshold reach the disk only through this path, and the formatter's prune
+    runs only on a spill.
+    """
+    if _is_mcp_skill_content(tool_name, content) or _SPILLED_EXCERPT.match(content):
+        return None
+    out_dir = Path(working_directory) / _TOOL_OUTPUT_DIR
+    try:
+        out_file, redacted = _write_tool_output(content, tool_name, out_dir, logger)
+        _prune_tool_outputs(out_dir, logger)
+    except Exception as exc:
+        if logger:
+            logger.warning(f"Could not save a clipped tool result: {exc}")
+        return None
+    note = f"full result saved to {out_file}, use read_file to access it"
+    if redacted:
+        note += " (credential-shaped strings are masked in the saved copy)"
+    return note
+
+
 def _save_and_truncate(
     content: str, tool_name: str, logger=None,
     *, output_dir: Optional[Path] = None, persist: bool = True,
@@ -141,24 +208,12 @@ def _save_and_truncate(
         if not persist:
             raise _NotPersisted
         out_dir = _TOOL_OUTPUT_DIR if output_dir is None else output_dir
-        out_dir.mkdir(parents=True, exist_ok=True)
-        ts = int(time.time())
-        uid = uuid.uuid4().hex[:6]
-        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in tool_name)
-        out_file = out_dir / f"{safe_name}_{ts}_{uid}.txt"
         # Redact before the bytes land on disk. The in-context excerpt below
         # is built from the *unredacted* ``content`` on purpose: pattern
         # matching cannot distinguish a live credential from a test fixture,
         # and mangling the model's view breaks work it can neither see nor
         # fix. What we persist is a different question from what we show.
-        redacted, hits = scan_and_redact(content)
-        out_file.write_text(redacted, encoding="utf-8")
-        if hits and logger:
-            logger.info(
-                "Redacted %s from tool output saved to %s",
-                ", ".join(f"{k}×{v}" for k, v in sorted(hits.items())),
-                out_file,
-            )
+        out_file, redacted = _write_tool_output(content, tool_name, out_dir, logger)
         # The excerpt below tells the model to ``read_file`` this path, so the
         # saved copy is a model-facing surface even though it is on disk. Say
         # that it was scrubbed — otherwise the model reads back mangled text
@@ -167,7 +222,7 @@ def _save_and_truncate(
         redaction_note = (
             "  (credential-shaped strings in the saved copy are replaced with "
             "[REDACTED:<kind>]; the excerpt below is verbatim)"
-            if hits else ""
+            if redacted else ""
         )
         file_ref = (
             f"\nFull output saved to: {out_file}  (use read_file to access)"
@@ -181,7 +236,7 @@ def _save_and_truncate(
             logger.warning(f"Could not save tool output to file: {exc}")
 
     excerpt = (
-        f"[Output truncated: {total:,} chars total, showing first {head_chars:,} "
+        f"{_SPILLED_EXCERPT_PREFIX}{total:,} chars total, showing first {head_chars:,} "
         f"and last {tail_chars:,} chars.{file_ref}]\n\n"
         + content[:head_chars]
         + f"\n\n[… {omitted:,} chars omitted …]\n\n"

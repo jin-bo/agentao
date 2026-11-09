@@ -27,13 +27,17 @@ def _assistant_msg(content: str) -> dict:
     return {"role": "assistant", "content": content}
 
 
+# Each history below ends on a model reply: results the model has not read are
+# not clipped (#625), and this file tests the clip by age.
+
+
 # ---------------------------------------------------------------------------
 # Core truncation behaviour
 # ---------------------------------------------------------------------------
 
 def test_old_large_result_is_truncated():
     large = "A" * (_LIMIT + 500)
-    messages = [_tool_msg(large)] + [_tool_msg("short") for _ in range(_PRESERVE)]
+    messages = [_tool_msg(large)] + [_tool_msg("short") for _ in range(_PRESERVE)] + [_assistant_msg("read")]
     result = _cm().microcompact_messages(messages)
     assert len(result[0]["content"]) < len(large)
     assert "omitted by microcompact" in result[0]["content"]
@@ -49,7 +53,7 @@ def test_omission_marker_contains_char_count():
     every later pass — see ``test_microcompaction_is_a_fixed_point``.
     """
     large = "B" * (_LIMIT * 2)
-    messages = [_tool_msg(large)] + [_tool_msg("s") for _ in range(_PRESERVE)]
+    messages = [_tool_msg(large)] + [_tool_msg("s") for _ in range(_PRESERVE)] + [_assistant_msg("read")]
     result = _cm().microcompact_messages(messages)
     body = result[0]["content"]
     assert len(body) <= _LIMIT
@@ -70,7 +74,7 @@ def test_microcompaction_is_a_fixed_point():
     """
     cm = _cm()
     original = "START\n" + "x" * 200_000 + "\nEND"
-    msgs = [_tool_msg(original)] + [_tool_msg("s") for _ in range(_PRESERVE)]
+    msgs = [_tool_msg(original)] + [_tool_msg("s") for _ in range(_PRESERVE)] + [_assistant_msg("read")]
     once = cm.microcompact_messages(msgs)
     assert cm.last_microcompact_mutated is True
     honest = once[0]["content"]
@@ -89,16 +93,16 @@ def test_microcompaction_is_a_fixed_point():
 def test_preserves_last_n_tool_results_at_full_fidelity():
     large = "C" * (_LIMIT + 500)
     # First msg is old; last _PRESERVE are recent
-    messages = [_tool_msg("old")] + [_tool_msg(large) for _ in range(_PRESERVE)]
+    messages = [_tool_msg("old")] + [_tool_msg(large) for _ in range(_PRESERVE)] + [_assistant_msg("read")]
     result = _cm().microcompact_messages(messages)
     # Recent ones should be untouched
-    for msg in result[1:]:
+    for msg in result[1:-1]:
         assert msg["content"] == large
 
 
 def test_short_results_not_mutated():
     short = "x" * (_LIMIT - 1)
-    messages = [_tool_msg(short)] + [_tool_msg("y") for _ in range(_PRESERVE)]
+    messages = [_tool_msg(short)] + [_tool_msg("y") for _ in range(_PRESERVE)] + [_assistant_msg("read")]
     result = _cm().microcompact_messages(messages)
     assert result[0]["content"] == short
 
@@ -122,7 +126,7 @@ def test_non_tool_messages_untouched():
 def test_head_tail_split_ratio():
     # Content that's exactly 2× the limit so we can measure precisely
     content = "H" * _LIMIT + "T" * _LIMIT
-    messages = [_tool_msg(content)] + [_tool_msg("s") for _ in range(_PRESERVE)]
+    messages = [_tool_msg(content)] + [_tool_msg("s") for _ in range(_PRESERVE)] + [_assistant_msg("read")]
     result = _cm().microcompact_messages(messages)
     truncated = result[0]["content"]
     # The ratio applies to the space left after reserving the notice, not to
@@ -140,7 +144,7 @@ def test_head_tail_split_ratio():
 
 def test_returns_new_list_not_mutating_original():
     large = "M" * (_LIMIT + 100)
-    original = [_tool_msg(large)] + [_tool_msg("s") for _ in range(_PRESERVE)]
+    original = [_tool_msg(large)] + [_tool_msg("s") for _ in range(_PRESERVE)] + [_assistant_msg("read")]
     original_content = original[0]["content"]
     _cm().microcompact_messages(original)
     assert original[0]["content"] == original_content

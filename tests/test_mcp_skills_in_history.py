@@ -41,6 +41,11 @@ def docs(tmp_path):
         yield connected
 
 
+# A clip takes only results a model reply follows (#625), so a history that ends
+# on results would make every "not clipped" assertion below pass by default.
+_MODEL_READ_THEM = {"role": "assistant", "content": "read"}
+
+
 def _activate_into_history(agent) -> Dict[str, Any]:
     """Activate PDF by tool call and keep its messages, as the chat loop does."""
     call = make_tool_call("c1", "activate_skill", json.dumps(
@@ -121,6 +126,7 @@ def test_microcompact_keeps_an_mcp_activation_result_whole(tmp_path, docs):
         agent.messages.append({
             "role": "tool", "tool_call_id": f"r{n}", "name": "read_file", "content": big,
         })
+    agent.messages.append(_MODEL_READ_THEM)
 
     out = cm.microcompact_messages(agent.messages)
     activation = next(m for m in out if m.get("name") == "activate_skill")
@@ -141,6 +147,7 @@ def test_microcompact_still_clips_a_local_skill_activation(tmp_path):
         {"role": "tool", "tool_call_id": f"r{n}", "name": "read_file", "content": "ok"}
         for n in range(ContextManager.MICROCOMPACT_PRESERVE_RECENT)
     ]
+    messages.append(_MODEL_READ_THEM)
     assert cm._microcompactable_indices(messages) == {0}
 
 
@@ -161,6 +168,7 @@ def test_microcompact_clips_a_truncated_mcp_activation(tmp_path):
         {"role": "tool", "tool_call_id": f"r{n}", "name": "read_file", "content": "ok"}
         for n in range(ContextManager.MICROCOMPACT_PRESERVE_RECENT)
     ]
+    messages.append(_MODEL_READ_THEM)
     assert cm._microcompactable_indices(messages) == {0}
 
 
@@ -281,6 +289,7 @@ def test_microcompact_clips_all_but_the_latest_activation(tmp_path, docs):
         agent.messages.append({
             "role": "tool", "tool_call_id": f"r{n}", "name": "read_file", "content": "ok",
         })
+    agent.messages.append(_MODEL_READ_THEM)
 
     out = cm.microcompact_messages(agent.messages)
     activations = [m for m in out if m.get("name") == "activate_skill"]
@@ -304,6 +313,7 @@ def test_microcompact_clips_a_latest_activation_a_hook_appended_to(tmp_path, doc
         agent.messages.append({
             "role": "tool", "tool_call_id": f"r{n}", "name": "read_file", "content": "ok",
         })
+    agent.messages.append(_MODEL_READ_THEM)
     index = agent.messages.index(result)
     assert index in cm._microcompactable_indices(agent.messages)
     assert BLOCK_OPEN in agent._build_volatile_tail()
@@ -320,6 +330,7 @@ def _padded_activation(agent):
         agent.messages.append({
             "role": "tool", "tool_call_id": f"r{n}", "name": "read_file", "content": "ok",
         })
+    agent.messages.append(_MODEL_READ_THEM)
     return agent.messages.index(result)
 
 

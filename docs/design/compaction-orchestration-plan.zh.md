@@ -405,8 +405,8 @@ Outcome 的 history-only 数字里取——那会悄悄改掉一个公开字段�
 @dataclass(frozen=True)
 class PrepareRejected:
     status: Literal["skipped", "failed"]
-    detail: str                # "history_too_short" | "no_safe_split"
-    counts_as_failure: bool    # 仅 no_safe_split 为 True
+    detail: str                # "history_too_short" | "no_safe_split"；另见下文 0.5.20 的说明
+    counts_as_failure: bool    # 按原计划，仅 no_safe_split 为 True
 
 PrepareResult = PreparedCompaction | PrepareRejected
 ```
@@ -459,6 +459,7 @@ class ContextManager:
 | 分支 | `status` | `messages` | `pre_tokens` | `post_tokens` | `detail` | 计数器 |
 |---|---|---|---|---|---|---|
 | `PrepareRejected("skipped", "history_too_short")`（`:517`） | `skipped` | 原对象 | `None` | `None` | `history_too_short` | 不动 |
+| `PrepareRejected("skipped", "nothing_to_shed")`（0.5.20，#623） | `skipped` | 原对象 | `None` | `None` | `nothing_to_shed` | 不动 |
 | `PrepareRejected("failed", "no_safe_split")`（`:528`） | `failed` | 原对象 | `None` | `None` | `no_safe_split` | 按门控 +1 |
 | `decide` 返回 `cancel` | `cancelled` | 原对象 | `:587` | `None` | **无内部原因**（`None`，见下） | 不动 |
 | 摘要返回空（`:589`） | `failed` | 原对象 | `:587` | `None` | `summary_empty` | 按门控 +1 |
@@ -496,7 +497,7 @@ summarize → commit）。落法：`decision_reason: str | None = None` 起手�
 表里"计数器"那一列描述的是 `_run_compaction` **内部**的行为，不是它返回的字段——见下。
 
 `_run_compaction` **不会**为熔断器已开或命中抑制闩返回 `skipped`——那两种在它**之上**就被拦下了，根本不
-会调到它。它唯一会产出的 `skipped` 是 `history_too_short`。
+会调到它。它原本唯一会产出的 `skipped` 是 `history_too_short`，0.5.20 起还有 `nothing_to_shed`。
 
 `_run_compaction` 直接返回 `CompactionOutcome` 本身，**没有中间类型、没有字段搬运**（上一版的
 `_CompactionRun` 已删，理由见上）。所以这里只剩三件曾经写错、需要留档的事：
@@ -857,6 +858,11 @@ class CompactionDecision:
   也让这种 kind 失去了"不需要 would-mutate 闸门"的豁免——平切尾巴必然削掉点什么，修复过的边界不一定——
   所以 `minimal_history` 现在有了自己的闸门，就挨着微压缩那道（`minimal_history_would_help` →
   `no_valid_minimal_cut`）；见 §2 状态映射表里新增的那一行。
+
+- **0.5.20 起有第六个入口（#625）：`microcompact` / `api_overflow`。** 溢出时的完整压缩可能找不到可摘要的
+  内容，因为体积都在一段模型还没读过的结果里。这时 runner 通过 coordinator 裁剪它们，所以钩子和
+  controller 可以拒绝，每个被裁的结果都会指向保存的副本。阈值路径不再裁剪这些结果。此外，过去只要一段
+  结果占满保留窗口就会触发 `no_safe_split`；现在切点回退到发起它们的 assistant，除非它在下标 0 或 1。
 
 - **微压缩的 `pre_tokens` 是 `None`，不是 `estimate_tokens(messages)`——上一版这里与 §4.2 打架。**
   §4.2 定死"本计划不新增任何一次 `estimate_tokens` 调用"，而微压缩今天**唯一**存在的那次估算算的是

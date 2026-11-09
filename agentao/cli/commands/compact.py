@@ -44,6 +44,10 @@ _MIN_MESSAGES_TO_COMPACT = ContextManager.MIN_MESSAGES_TO_COMPACT
 # and the one action a user can take to close the breaker again.
 _FAILURE_HINTS = {
     "history_too_short": "there is not enough history to summarize yet",
+    "nothing_to_shed": (
+        "the older messages are only the request and earlier summaries, so a "
+        "new summary would not make history smaller"
+    ),
     "no_safe_split": (
         "no safe split point — every candidate boundary would orphan a tool "
         "result"

@@ -468,8 +468,8 @@ split at `:528`) have no `PreparedCompaction` to return:
 @dataclass(frozen=True)
 class PrepareRejected:
     status: Literal["skipped", "failed"]
-    detail: str                # "history_too_short" | "no_safe_split"
-    counts_as_failure: bool    # True only for no_safe_split
+    detail: str                # "history_too_short" | "no_safe_split"; see the 0.5.20 note below
+    counts_as_failure: bool    # True only for no_safe_split, as planned
 
 PrepareResult = PreparedCompaction | PrepareRejected
 ```
@@ -532,6 +532,7 @@ counting behaviour:
 |---|---|---|---|---|---|---|
 | `PrepareRejected("skipped", "history_too_short")` (`:517`) | `skipped` | the original object | `None` | `None` | `history_too_short` | untouched |
 | `PrepareRejected("failed", "no_safe_split")` (`:528`) | `failed` | the original object | `None` | `None` | `no_safe_split` | +1, gated |
+| `PrepareRejected("skipped", "nothing_to_shed")` (0.5.20, #623) | `skipped` | the original object | `None` | `None` | `nothing_to_shed` | untouched |
 | `decide` returned `cancel` | `cancelled` | the original object | `:587` | `None` | **no internal reason** (`None`, see below) | untouched |
 | Summarization returned nothing (`:589`) | `failed` | the original object | `:587` | `None` | `summary_empty` | +1, gated |
 | Host summary invalid → built-in succeeded (§4.2.1) | `success` | a new list | `:587` | `:641` | `host_summary_rejected:<check>` | reset |
@@ -576,7 +577,8 @@ The table's "Counter" column describes what `_run_compaction` does **internally*
 field — see below.
 
 `_run_compaction` **never** returns `skipped` for an open breaker or a latch hit — both are stopped
-**above** it and never reach it. The only `skipped` it can produce is `history_too_short`.
+**above** it and never reach it. The only `skipped` it could produce was `history_too_short`, and since
+0.5.20 also `nothing_to_shed`.
 
 `_run_compaction` returns `CompactionOutcome` itself — **no intermediate type, no field copying** (rev
 9's `_CompactionRun` is deleted; reasoning above). What remains here are three things that were once
@@ -1010,6 +1012,13 @@ either. The three plans:
   would-mutate gate — a flat tail slice always shed something, a repaired boundary need not — so
   `minimal_history` now has one next to microcompaction's (`minimal_history_would_help` →
   `no_valid_minimal_cut`); see the row added to §2's status mapping.
+
+- **A sixth entry point since 0.5.20 (#625): `microcompact` / `api_overflow`.** A full compaction on
+  an overflow can find nothing to summarize, because the size is in one run of results the model has
+  not read. The runner then clips them through the coordinator, so hooks and the controller can refuse
+  it, and each clip names a saved copy. The threshold path no longer clips those results. Before the
+  overflow-only clip, `no_safe_split` also fired whenever a run filled the kept window. The cut now
+  walks back to the run's assistant, unless it is at index 0 or 1.
 
 - **Microcompaction's `pre_tokens` is `None`, not `estimate_tokens(messages)` — the previous revision
   had this fighting §4.2.** §4.2 pins "this plan adds no new `estimate_tokens` call", and the **only**

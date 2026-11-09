@@ -717,6 +717,7 @@ def test_circuit_open_property_tracks_the_limit():
 def test_microcompact_reports_mutation():
     cm = _cm()
     big = [{"role": "tool", "name": "t", "content": "x" * 50_000} for _ in range(8)]
+    big.append({"role": "assistant", "content": "read"})
     cm.microcompact_messages(big)
     assert cm.last_microcompact_mutated is True
 
@@ -725,6 +726,7 @@ def test_microcompact_reports_no_mutation_when_nothing_oversized():
     """A fresh list is always returned, so identity cannot answer this."""
     cm = _cm()
     small = [{"role": "tool", "name": "t", "content": "short"} for _ in range(8)]
+    small.append({"role": "assistant", "content": "read"})
     out = cm.microcompact_messages(small)
     assert out is not small          # new list, as before
     assert cm.last_microcompact_mutated is False
@@ -1028,9 +1030,9 @@ def test_compress_does_not_microcompact_the_half_it_is_about_to_discard():
     seen = {}
     real = cm.microcompact_messages
 
-    def _spy(messages):
+    def _spy(messages, **kwargs):
         seen["contents"] = [str(m.get("content", "")) for m in messages]
-        return real(messages)
+        return real(messages, **kwargs)
 
     old_result = "OLD-RESULT-" + "z" * 50_000
     msgs = (

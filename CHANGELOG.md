@@ -22,6 +22,9 @@ _Targeting 0.5.20. Add entries under the relevant heading as work lands._
 ### Fixed
 
 - `/crystallize` evidence no longer quotes the date reminder as the start of a user goal.
+- **A large batch of parallel tool calls no longer blocks compaction (#625).** When the rest of history is one run of tool results, the full compaction now cuts at the assistant message that requested them. It used to fail with `no_safe_split`, so the next request went out uncompacted, a provider at its real limit ended the turn with a context-length error, and three such batches in a row opened the circuit breaker. `no_safe_split` remains when that assistant message is at index 0 or 1.
+- **Compaction no longer clips results the model has not read, until the provider refuses them.** At the 55-80% microcompaction tier, at the threshold and on `/compact`, the results that no model reply follows stay whole, and the tier clips them once the model has read them. `tool_results_to_clip` counts the same set. After a context-length error or a `413`, the full compaction clips them, and each clipped result names a copy in `.agentao/tool-outputs/`. If the full compaction does not succeed on a context-length error, the overflow ladder runs a clip of its own (`kind="microcompact"`, `reason="api_overflow"`), which hooks and `compaction_controller=` can refuse. A `413` does not get this step. MCP skill content gets no copy.
+- **A compaction that would only make history larger now stands down (#623).** When the older half holds only the turn's request or what an earlier compaction wrote, the full compaction returns `skipped` with `detail="nothing_to_shed"`. It makes no summarizer call and does not count against the circuit breaker. It used to report success with a larger history, and pay for a summary on each threshold iteration.
 
 ## [0.5.19] — 2026-11-06
 
