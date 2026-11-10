@@ -79,7 +79,8 @@ class CompactionOutcome:
     ``CONTEXT_COMPRESSED`` event's pair. They are ``| None`` because two
     paths genuinely have no number to report: ``minimal_history``
     estimates nothing at all, and a ``no_safe_split`` failure or a
-    ``nothing_to_shed`` skip returns before the estimate runs.
+    ``nothing_to_shed`` / ``too_little_to_shed`` skip returns before the
+    estimate runs.
     """
 
     status: Literal["success", "cancelled", "failed", "skipped"]

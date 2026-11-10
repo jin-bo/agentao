@@ -677,7 +677,8 @@ def test_a_full_compaction_does_not_keep_only_loaded_bodies(ratio):
     cm = ContextManager(llm, Mock(), max_tokens=200_000)
     cm.keep_recent_token_ratio = ratio
 
-    messages = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "old answer"}]
+    # Old work large enough that the cut sheds its minimum (#629).
+    messages = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "old answer " * 2_000}]
     messages.append({"role": "user", "content": "request"})
     for i in range(12):
         messages.append({
@@ -713,7 +714,8 @@ def test_a_full_compaction_never_cuts_on_a_trailing_note():
 
     messages = []
     for i in range(12):
-        messages += [{"role": "user", "content": f"q{i}"}, {"role": "assistant", "content": f"a{i}"}]
+        # Long enough that the cut sheds its minimum (#629).
+        messages += [{"role": "user", "content": f"q{i}"}, {"role": "assistant", "content": f"a{i} " * 100}]
     calls = [
         {"id": f"c{i}", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}
         for i in range(30)

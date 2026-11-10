@@ -49,9 +49,9 @@ def _batch(parallel, tag="p", content="x"):
     ]
 
 
-def _older_work():
+def _older_work(size=2_000):
     """Two finished exchanges, large enough that summarizing them saves something."""
-    return _batch(1, "a", content="y" * 2_000) + _batch(1, "b", content="y" * 2_000)
+    return _batch(1, "a", content="y" * size) + _batch(1, "b", content="y" * size)
 
 
 def _request(text="do the batch"):
@@ -163,7 +163,8 @@ def test_a_keep_budget_gives_way_to_the_run():
 @pytest.mark.parametrize("reason", ["compression_threshold", "manual_cli"])
 def test_the_threshold_path_does_not_clip_unread_results(reason):
     big = "y" * 20_000
-    history = [_request()] + _older_work() + _batch(16, content=big)
+    # Enough older work that the cut sheds its minimum (#629).
+    history = [_request()] + _older_work(40_000) + _batch(16, content=big)
 
     prep = _prepare(_cm(), history, reason=reason)
 
@@ -190,7 +191,7 @@ def test_a_user_message_after_unread_results_does_not_expose_them():
     """A ``new_instruction`` at the iteration cap: no model reply followed the run."""
     big = "y" * 20_000
     history = (
-        [_request("old")] + _older_work() * 2
+        [_request("old")] + _older_work(20_000) * 2
         + [_request("mid")] + _batch(8, content=big) + [_request("new")]
     )
 
@@ -701,3 +702,72 @@ def test_every_refused_shape_leaves_a_valid_history(isolated_cwd):
     for request in turn.requests:
         assert _pairs_hold(request)
     turn.agent.close()
+
+
+# ---------------------------------------------------------------------------
+# A cut that sheds too little (#629)
+# ---------------------------------------------------------------------------
+
+
+def _skill_loaded(body_chars=8_400):
+    from agentao.skills.manager import _STATE_LOADED, _STATE_OPEN
+
+    return {"role": "user", "content": f'{_STATE_OPEN}{_STATE_LOADED}"wiki"\n{"b" * body_chars}\n</system-reminder>'}
+
+
+def _subagent_after_one_batch():
+    """The first sub-agent of the real run: a few small steps, then 12 reads."""
+    return (
+        [_request("r" * 2_600)]
+        + _batch(1, "s", content="activated " * 100)
+        + [_skill_loaded()]
+        + _batch(1, "t", content="todos")
+        + _batch(12, "p", content=" ".join(random.choices(string.ascii_lowercase, k=8_000)))
+    )
+
+
+def test_a_cut_behind_an_unread_batch_sheds_too_little():
+    cm = _cm()
+    calls = []
+    cm._summarize_formatted = lambda formatted, **kwargs: calls.append(1) or "SUMMARY"
+    history = _subagent_after_one_batch()
+
+    for _ in range(ContextManager.CIRCUIT_BREAKER_LIMIT):
+        outcome = cm._run_compaction(history, is_auto=True, reason="compression_threshold")
+        assert outcome.status == "skipped"
+        assert outcome.detail == "too_little_to_shed"
+
+    assert calls == []
+    assert cm.circuit_breaker_failures == 0
+
+
+def test_once_the_model_has_read_the_batch_the_cut_sheds_enough():
+    history = _subagent_after_one_batch() + [{"role": "assistant", "content": "read them"}]
+
+    prep = _prepare(_cm(), history)
+
+    assert isinstance(prep, PreparedCompaction)
+
+
+def test_an_overflow_is_not_held_to_the_minimum():
+    """Commit clips the unread results on an overflow, so the cut sheds a lot."""
+    prep = _prepare(_cm(), _subagent_after_one_batch(), reason="api_overflow")
+
+    assert isinstance(prep, PreparedCompaction)
+    assert prep.clip_on_commit is True
+
+
+def test_skill_state_and_the_kept_request_do_not_count_as_shed():
+    """Both come straight back: the runner re-syncs an active skill's note."""
+    history = [_request("r" * 40_000), _skill_loaded(40_000)] + _batch(4, content="x" * 2_000) + [
+        {"role": "assistant", "content": "done"},
+    ]
+    cm = _cm()
+
+    assert cm._too_little_to_shed(history, 2, history[2:], history[0]) is True
+
+
+def test_manual_compact_explains_a_cut_that_sheds_too_little():
+    from agentao.cli.commands.compact import _FAILURE_HINTS
+
+    assert "too_little_to_shed" in _FAILURE_HINTS

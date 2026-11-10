@@ -533,6 +533,7 @@ counting behaviour:
 | `PrepareRejected("skipped", "history_too_short")` (`:517`) | `skipped` | the original object | `None` | `None` | `history_too_short` | untouched |
 | `PrepareRejected("failed", "no_safe_split")` (`:528`) | `failed` | the original object | `None` | `None` | `no_safe_split` | +1, gated |
 | `PrepareRejected("skipped", "nothing_to_shed")` (0.5.20, #623) | `skipped` | the original object | `None` | `None` | `nothing_to_shed` | untouched |
+| `PrepareRejected("skipped", "too_little_to_shed")` (0.5.20, #629) | `skipped` | the original object | `None` | `None` | `too_little_to_shed` | untouched |
 | `decide` returned `cancel` | `cancelled` | the original object | `:587` | `None` | **no internal reason** (`None`, see below) | untouched |
 | Summarization returned nothing (`:589`) | `failed` | the original object | `:587` | `None` | `summary_empty` | +1, gated |
 | Host summary invalid → built-in succeeded (§4.2.1) | `success` | a new list | `:587` | `:641` | `host_summary_rejected:<check>` | reset |
@@ -578,7 +579,7 @@ field — see below.
 
 `_run_compaction` **never** returns `skipped` for an open breaker or a latch hit — both are stopped
 **above** it and never reach it. The only `skipped` it could produce was `history_too_short`, and since
-0.5.20 also `nothing_to_shed`.
+0.5.20 also `nothing_to_shed` and `too_little_to_shed`.
 
 `_run_compaction` returns `CompactionOutcome` itself — **no intermediate type, no field copying** (rev
 9's `_CompactionRun` is deleted; reasoning above). What remains here are three things that were once

@@ -120,7 +120,8 @@ class PrepareRejected:
     """
 
     status: str          # "skipped" | "failed"
-    # "history_too_short" | "nothing_to_shed" | "no_safe_split"
+    # "history_too_short" | "nothing_to_shed" | "too_little_to_shed"
+    # | "no_safe_split"
     # | "summary_input_error"
     detail: str
     counts_as_failure: bool
@@ -269,6 +270,11 @@ class ContextManager:
     #: Below this many messages there is nothing worth summarizing. Named so
     #: the CLI's pre-check and this class's guard cannot drift apart.
     MIN_MESSAGES_TO_COMPACT = 5
+    #: A full compaction that would shed less than this share of history
+    #: stands down (#629). A summary costs a call and a few thousand tokens of
+    #: its own, and history that stays this large asks again next iteration.
+    #: In real runs the poor cuts shed under 5% and the useful ones over 35%.
+    MIN_SHED_RATIO = 0.10
     #: Opt-in token budget for the kept-verbatim tail, as a fraction of the
     #: effective window. ``None`` — the default — is today's behaviour
     #: exactly. Off by default on purpose: the right value has to come from
@@ -1204,6 +1210,43 @@ class ContextManager:
             return False
         return self.estimate_tokens(real) <= self.estimate_tokens([kept_request])
 
+    def _too_little_to_shed(
+        self,
+        messages: List[Dict[str, Any]],
+        split_index: int,
+        to_keep: List[Dict[str, Any]],
+        kept_request: Optional[Dict[str, Any]],
+    ) -> bool:
+        """True when a cut would shed less than :attr:`MIN_SHED_RATIO` (#629).
+
+        The size can sit in the kept window: a batch of results the model has
+        not read, which no compaction clips before an overflow (#625). Then the
+        summarized half is a few small messages, the summary costs about as
+        much, and history stays above the threshold, so the next iteration
+        compacts again. Once the model has read the results, a cut clips them
+        and sheds a lot.
+
+        Shed: the summarized half, less what comes straight back (the kept
+        request's copy, compaction scaffolding, and skill state notes, which
+        the runner syncs back for an active skill), plus what clipping takes
+        out of the kept window. Not on ``api_overflow``: there commit clips the
+        unread results too.
+        """
+        from .skills.provenance import is_skill_state_message
+
+        before = self.estimate_tokens(messages)
+        if before <= 0:
+            return False
+        summarized = [
+            m for m in messages[:split_index]
+            if not _is_compaction_scaffolding(m) and not is_skill_state_message(m)
+        ]
+        shed = self.estimate_tokens(summarized)
+        if kept_request is not None:
+            shed -= self.estimate_tokens([kept_request])
+        shed += self.estimate_tokens(messages[split_index:]) - self.estimate_tokens(to_keep)
+        return shed < before * self.MIN_SHED_RATIO
+
     # -----------------------------------------------------------------------
     # Compaction — the ``kind == "full"`` transform
     #
@@ -1373,6 +1416,10 @@ class ContextManager:
         kept_request = self._request_to_keep(to_summarize, to_keep)
         if self._nothing_to_shed(to_summarize, kept_request):
             return PrepareRejected("skipped", "nothing_to_shed", False)
+        if not clip_on_commit and self._too_little_to_shed(
+            messages, split_index, to_keep, kept_request,
+        ):
+            return PrepareRejected("skipped", "too_little_to_shed", False)
 
         # --- Step 4: extract recently read files ----------------------------
         recently_read = self._extract_recently_read_files(to_summarize)
@@ -1902,7 +1949,8 @@ class ContextManager:
 
         Never returns ``skipped`` for an open breaker or a suppression latch:
         both are decided above and never reach here. The only ``skipped``s it
-        can produce are ``history_too_short`` and ``nothing_to_shed``.
+        can produce are ``history_too_short``, ``nothing_to_shed`` and
+        ``too_little_to_shed``.
 
         ``cancellation_token`` is the turn's, when there is one. It reaches
         the summarizer's retry waits, and it is read twice here — before the

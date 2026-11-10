@@ -48,6 +48,11 @@ _FAILURE_HINTS = {
         "the older messages are only the request and earlier summaries, so a "
         "new summary would not make history smaller"
     ),
+    "too_little_to_shed": (
+        "most of the history is recent tool results the model has not read "
+        "yet, so a summary would shed little; they can be clipped once the "
+        "model has replied"
+    ),
     "no_safe_split": (
         "no safe split point — every candidate boundary would orphan a tool "
         "result"

@@ -460,6 +460,7 @@ class ContextManager:
 |---|---|---|---|---|---|---|
 | `PrepareRejected("skipped", "history_too_short")`（`:517`） | `skipped` | 原对象 | `None` | `None` | `history_too_short` | 不动 |
 | `PrepareRejected("skipped", "nothing_to_shed")`（0.5.20，#623） | `skipped` | 原对象 | `None` | `None` | `nothing_to_shed` | 不动 |
+| `PrepareRejected("skipped", "too_little_to_shed")`（0.5.20，#629） | `skipped` | 原对象 | `None` | `None` | `too_little_to_shed` | 不动 |
 | `PrepareRejected("failed", "no_safe_split")`（`:528`） | `failed` | 原对象 | `None` | `None` | `no_safe_split` | 按门控 +1 |
 | `decide` 返回 `cancel` | `cancelled` | 原对象 | `:587` | `None` | **无内部原因**（`None`，见下） | 不动 |
 | 摘要返回空（`:589`） | `failed` | 原对象 | `:587` | `None` | `summary_empty` | 按门控 +1 |
@@ -497,7 +498,7 @@ summarize → commit）。落法：`decision_reason: str | None = None` 起手�
 表里"计数器"那一列描述的是 `_run_compaction` **内部**的行为，不是它返回的字段——见下。
 
 `_run_compaction` **不会**为熔断器已开或命中抑制闩返回 `skipped`——那两种在它**之上**就被拦下了，根本不
-会调到它。它原本唯一会产出的 `skipped` 是 `history_too_short`，0.5.20 起还有 `nothing_to_shed`。
+会调到它。它原本唯一会产出的 `skipped` 是 `history_too_short`，0.5.20 起还有 `nothing_to_shed` 和 `too_little_to_shed`。
 
 `_run_compaction` 直接返回 `CompactionOutcome` 本身，**没有中间类型、没有字段搬运**（上一版的
 `_CompactionRun` 已删，理由见上）。所以这里只剩三件曾经写错、需要留档的事：
