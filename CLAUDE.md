@@ -215,7 +215,7 @@ Design: `docs/design/compaction-orchestration-plan.md`. Six entry points hand of
 - The request also stays in the summary input. Crystallization skips the kept copy.
 
 **A run of parallel tool results** (#625, `ContextManager._walk_back_split`):
-- When no safe cut exists at or after the start, the cut walks back to the assistant that opened the run, if that assistant is at index 2 or later. Else the result is `no_safe_split`. That walk-back overrides the kept window and any keep-token budget.
+- When no safe cut exists at or after the start, the cut walks back to the assistant that opened the run, if that assistant is at index 2 or later. At index 0 or 1, the result is `skipped` / `nothing_to_shed` when only the request or scaffolding comes before the run (a first request that fans out), else `no_safe_split`. That walk-back overrides the kept window and any keep-token budget.
 - **The model has not read the results at the end of history** (`_unread_tool_results`). No compaction clips them, except on `api_overflow`. The one filter is `_microcompactable_indices`, so the clip, `microcompact_would_mutate` and `tool_results_to_clip` agree. A test of the clip by age must end its history on a model reply, or a "not clipped" assertion passes by default.
 - `prepare_compaction` writes no file. On `api_overflow`, `commit_compaction` clips, and each clipped result names a saved copy (`clipped_result_saver`, `tool_result_formatter.py::save_clipped_result`). MCP skill content gets no copy.
 - A `413` does not get entry point 6, because it does not say that tokens are the problem.

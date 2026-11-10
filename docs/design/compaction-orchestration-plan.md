@@ -1018,7 +1018,9 @@ either. The three plans:
   not read. The runner then clips them through the coordinator, so hooks and the controller can refuse
   it, and each clip names a saved copy. The threshold path no longer clips those results. Before the
   overflow-only clip, `no_safe_split` also fired whenever a run filled the kept window. The cut now
-  walks back to the run's assistant, unless it is at index 0 or 1.
+  walks back to the run's assistant, unless it is at index 0 or 1. At index 0 or 1, a run that only
+  the request or scaffolding comes before, as on a first request that fans out, is `skipped` /
+  `nothing_to_shed`, not a counted `no_safe_split`.
 
 - **Microcompaction's `pre_tokens` is `None`, not `estimate_tokens(messages)` — the previous revision
   had this fighting §4.2.** §4.2 pins "this plan adds no new `estimate_tokens` call", and the **only**
