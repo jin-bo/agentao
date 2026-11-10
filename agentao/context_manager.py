@@ -1164,13 +1164,22 @@ class ContextManager:
 
         ``None`` when the assistant is at index 0 or 1. At 0 nothing would be
         summarized, and at 1 only the message that opened the conversation.
+        :meth:`prepare_compaction` then asks whether that is nothing to shed.
         """
+        i = ContextManager._run_opener(messages, start, end)
+        return i if i is not None and i >= 2 else None
+
+    @staticmethod
+    def _run_opener(
+        messages: List[Dict[str, Any]], start: int, end: int,
+    ) -> Optional[int]:
+        """Index of the assistant whose tool run covers ``start``, or ``None``."""
         i = min(start, end - 1)
         if i < 0:
             return None
         while i > 0 and _is_tool_result(messages[i]):
             i -= 1
-        return i if i >= 2 and _made_tool_calls(messages[i]) else None
+        return i if _made_tool_calls(messages[i]) else None
 
     def _nothing_to_shed(
         self,
@@ -1323,6 +1332,15 @@ class ContextManager:
             split_index = self._walk_back_split(messages, start, end)
 
         if split_index is None:
+            # The run opens at index 0 or 1, as on a first request that fans
+            # out. When all that comes before it is the request, whose copy
+            # goes straight back, or scaffolding, there is nothing to shed, and
+            # the next reply gives a cut. That is a stand-down, not a failure.
+            opener = self._run_opener(messages, start, end)
+            if opener is not None and opener < 2:
+                head, run = messages[:opener], messages[opener:]
+                if self._nothing_to_shed(head, self._request_to_keep(head, run)):
+                    return PrepareRejected("skipped", "nothing_to_shed", False)
             # Structural failure, not a summarization failure — but the caller
             # still has to count it on the auto path, or it re-enters every
             # iteration (firing PreCompact hook subprocesses each time) while

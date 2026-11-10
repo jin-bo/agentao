@@ -86,9 +86,30 @@ def test_a_run_with_no_cut_ahead_walks_back_to_its_call():
 
 @pytest.mark.parametrize(
     "history",
+    [_batch(8), [_request()] + _batch(8)],
+    ids=["call-first", "call-second"],
+)
+def test_a_run_after_only_the_request_stands_down(history):
+    """A first request that fans out: nothing comes before the run but the request.
+
+    Its copy would go straight back, so there is nothing to shed, and the next
+    reply gives a cut. Not a counted failure: three iterations of it must not
+    open the breaker.
+    """
+    cm = _cm()
+
+    for _ in range(ContextManager.CIRCUIT_BREAKER_LIMIT):
+        outcome = cm._run_compaction(history, is_auto=True, reason="compression_threshold")
+        assert outcome.status == "skipped"
+        assert outcome.detail == "nothing_to_shed"
+
+    assert cm.circuit_breaker_failures == 0
+    assert cm.compaction_circuit_open is False
+
+
+@pytest.mark.parametrize(
+    "history",
     [
-        _batch(8),
-        [_request()] + _batch(8),
         [{"role": "user", "content": "plain"}] + _batch(8),
         [{"role": "user", "content": "go"}]
         + [{"role": "tool", "name": "read_file", "content": "r"} for _ in range(10)],
@@ -98,7 +119,7 @@ def test_a_run_with_no_cut_ahead_walks_back_to_its_call():
         + [{"role": "tool", "name": "read_file", "content": "r"} for _ in range(10)],
     ],
     ids=[
-        "call-first", "call-second", "plain-user-second", "no-call-at-all",
+        "plain-user-second", "no-call-at-all",
         "orphans-after-a-user", "orphans-after-an-answer",
     ],
 )

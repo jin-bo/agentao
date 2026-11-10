@@ -863,6 +863,8 @@ class CompactionDecision:
   内容，因为体积都在一段模型还没读过的结果里。这时 runner 通过 coordinator 裁剪它们，所以钩子和
   controller 可以拒绝，每个被裁的结果都会指向保存的副本。阈值路径不再裁剪这些结果。此外，过去只要一段
   结果占满保留窗口就会触发 `no_safe_split`；现在切点回退到发起它们的 assistant，除非它在下标 0 或 1。
+  在下标 0 或 1 时，如果这段结果前面只有请求或压缩留下的内容（例如第一次请求就并行发出大量调用），结果是
+  `skipped` / `nothing_to_shed`，不再是计入熔断的 `no_safe_split`。
 
 - **微压缩的 `pre_tokens` 是 `None`，不是 `estimate_tokens(messages)`——上一版这里与 §4.2 打架。**
   §4.2 定死"本计划不新增任何一次 `estimate_tokens` 调用"，而微压缩今天**唯一**存在的那次估算算的是
