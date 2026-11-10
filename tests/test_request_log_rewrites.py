@@ -152,3 +152,57 @@ def test_a_moved_cache_marker_is_not_a_rewrite(client):
     text = new_text()
     assert "rewritten" not in text
     assert "logging 2 new):" in text
+
+
+def test_side_calls_are_each_logged_whole(client):
+    """Two unrelated one-off calls: the second is not a rewrite of the first."""
+    c, new_text = client
+    side = lambda rid, text: c._log_request(  # noqa: E731 — local shorthand
+        rid,
+        {"model": "m", "messages": [{"role": "system", "content": "summarize"}, {"role": "user", "content": text}]},
+        channel="side",
+    )
+    side("s1", "first")
+    new_text()
+
+    side("s2", "second")
+
+    text = new_text()
+    assert "rewritten" not in text
+    assert "system prompt initial" in text
+    assert "Message 2 [user]:" in text
+
+
+def test_a_cache_marked_system_prompt_is_logged(client):
+    c, new_text = client
+    marked = dict(
+        SYSTEM,
+        content=[{"type": "text", "text": SYSTEM["content"], "cache_control": {"type": "ephemeral"}}],
+    )
+    _turn(c, "r1", [marked, REQUEST])
+
+    assert "you are an agent" in new_text()
+
+
+def test_the_non_streaming_turn_path_logs_on_the_turn_channel(client, monkeypatch):
+    """The Gemini bypass and the streaming-unsupported fallback send the
+    turn's request through ``chat``: it must keep the turn's state and not
+    remember the request-only tail."""
+    c, new_text = client
+    seen = []
+    monkeypatch.setattr(
+        c, "_log_request",
+        lambda rid, kw, **opts: seen.append(opts),
+    )
+
+    class _Stop(Exception):
+        pass
+
+    def _boom(*a, **k):
+        raise _Stop()
+
+    monkeypatch.setattr(c._adapter, "send", _boom)
+    monkeypatch.setattr(c._adapter, "classify_retry", lambda e: (False, None, None))
+    with pytest.raises(_Stop):
+        c._emit_nonstreaming([SYSTEM, REQUEST, TAIL], None, None, None, cache_boundary=1)
+    assert seen == [{"channel": "turn", "request_only": 1}]

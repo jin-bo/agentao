@@ -140,11 +140,15 @@ class _LoggingMixin:
             channel: Whose history this is. The turn (``chat_stream``) and the
                 one-off calls (``chat``: the summarizer, crystallize) keep
                 separate state, so a side call does not make the turn's next
-                request log its whole history again.
+                request log its whole history again. ``"side"`` keeps no
+                state at all: each one-off call is logged whole.
             request_only: How many trailing messages are request-only (the
                 volatile tail). Logged each time, never remembered.
         """
-        state = self._log_channel(channel)
+        # One-off calls are unrelated to each other: compared with the
+        # previous one, a new summarizer prompt would read as a rewrite, and
+        # its system prompt as a diff of another call's. Each is logged whole.
+        state = _ChannelLog() if channel == "side" else self._log_channel(channel)
         self.logger.info("=" * 80)
         self.logger.info(f"[{request_id}] LLM REQUEST")
         self.logger.info("=" * 80)
@@ -193,9 +197,17 @@ class _LoggingMixin:
             f"Messages ({len(messages)} total, logging {new_count} new{notes}):"
         )
 
-        # Always check system prompt for changes (it's messages[0], never in new_messages after first request)
+        # Always check the system prompt (messages[0]) for changes: the loop
+        # below skips it, so this is where it is logged, whole or as a diff.
         if messages and messages[0].get('role') == 'system':
             sys_content = messages[0].get('content', '')
+            if isinstance(sys_content, list) and sys_content and all(
+                isinstance(p, dict) and p.get('type') == 'text'
+                and isinstance(p.get('text'), str) for p in sys_content
+            ):
+                # A cache-marked system prompt (Chat Completions with
+                # ``LLM_PROMPT_CACHE``) is one text part carrying the marker.
+                sys_content = "".join(p['text'] for p in sys_content)
             if isinstance(sys_content, str):
                 if state.system is None:
                     self.logger.info("  Message 1 [system]:")

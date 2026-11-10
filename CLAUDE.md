@@ -426,7 +426,7 @@ Design: `docs/design/llm-api-adapters.md`.
 
 `agentao.log` records every LLM request and response, tool call, tool result and token usage, without truncation.
 - The logger is in `agentao/llm/client.py`. Read it first when you debug tool execution or LLM behaviour.
-- **Request logging compares, it does not count** (#635, `llm/_logging.py`). Each channel (`chat_stream` = turn, `chat` = side calls) keeps one fingerprint per logged history message. A request logs new and changed messages, a changed one marked `(rewritten)`. Never go back to `messages[count:]`: a compaction rewrites messages in place. Pass the trailing request-only count (`request_only=`), so the tail is logged each time and never remembered.
+- **Request logging compares, it does not count** (#635, `llm/_logging.py`). The turn's channel (`chat_stream`, and `chat` when the Gemini bypass or the streaming fallback sends the turn's request) keeps one fingerprint per logged history message. A one-off `chat` call keeps none and is logged whole. A request logs new and changed messages, a changed one marked `(rewritten)`. Never go back to `messages[count:]`: a compaction rewrites messages in place. Pass the trailing request-only count (`request_only=`), so the tail is logged each time and never remembered.
 - On `anthropic-messages`, the log has the canonical OpenAI-shaped list, not the translated body.
 - **The log is redacted.** `_RedactingFormatter` rewrites credential-shaped strings with the patterns in `security/secret_scan.py`. It is a `Formatter`, not a `Filter`, so the redaction never leaks into an embedding host's handlers. To get raw bytes, bypass this formatter (the only place to do so).
 
