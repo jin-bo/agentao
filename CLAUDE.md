@@ -222,6 +222,8 @@ Design: `docs/design/compaction-orchestration-plan.md`. Six entry points hand of
 
 **A cut with nothing to shed** (#623, `_nothing_to_shed`): when the older half holds only what an earlier compaction wrote, or only a request whose copy costs as much, `prepare_compaction` returns `skipped` / `nothing_to_shed`. This is not a failure, because history changes once the model replies.
 
+**A cut that sheds too little** (#629, `_too_little_to_shed`): a full compaction that would shed less than `MIN_SHED_RATIO` (10%) of history returns `skipped` / `too_little_to_shed`, before any summarizer call. The size usually sits in a kept batch the model has not read. Shed is the summarized half less what comes straight back (the kept request, scaffolding, skill state notes), plus what clipping takes out of the kept window. `api_overflow` is exempt, because commit clips the unread results too.
+
 **The last rung is not a plain tail slice. Do not simplify it back to one.**
 - `_minimal_history_start` repairs the boundary, so the window never opens on a `role: "tool"` message.
 - Trailing `Skill loaded` / `Skill no longer active` notes do not count toward `keep_tail` (#552). They stay in the window, but the window also keeps a real message before them. The full compaction's kept window and its token budget skip them the same way (`prepare_compaction`).

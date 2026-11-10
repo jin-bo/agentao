@@ -732,8 +732,8 @@ class CompactionCoordinator:
         history unchanged.
 
         Most skipped cases are decided by :meth:`_gate`, which returns before
-        this method is reached. ``history_too_short`` and ``nothing_to_shed``
-        are decided *inside* the transform, so they arrive here and have to be
+        this method is reached. ``history_too_short``, ``nothing_to_shed`` and
+        ``too_little_to_shed`` are decided *inside* the transform, so they arrive here and have to be
         filtered explicitly. They re-trigger on the loop's iterations like the
         gated ones (four huge messages over the threshold is enough), so
         letting them through was an event storm on the one status documented
