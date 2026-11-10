@@ -503,7 +503,7 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             )
             tail_msg, tail_tokens = self._volatile_tail()
             est_tokens = agent.context_manager._threshold_token_estimate(
-                messages_with_system, tail_tokens=tail_tokens,
+                messages_with_system, tail_tokens=tail_tokens, tools=tools,
             )
             messages_with_system, system_prompt = self._maybe_microcompact(
                 messages_with_system, system_prompt, tokens=est_tokens,

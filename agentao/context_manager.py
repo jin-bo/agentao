@@ -44,25 +44,52 @@ except ImportError:
 _FAST_PATH_CHARS = 100_000
 
 
+#: Model names counted with ``o200k_base``. Checked before the ``cl100k_base``
+#: rule, which would otherwise take ``gpt-4o`` / ``gpt-4.1`` by its ``gpt-4``
+#: prefix. ``gpt-(5..)`` takes every later major, so a new one does not fall
+#: back to the CJK heuristic (#630: ``gpt-6.1-*`` did, and estimated Chinese
+#: tool results 20–37% high). ``deepseek`` is here by measurement, not by
+#: vendor: on Chinese tool results ``cl100k_base`` ran 40–60% high and
+#: ``o200k_base`` 10–17% high against the provider's own count (#630).
+_O200K_MODELS = re.compile(
+    r"(?:ft:)?(?:chatgpt-4o|gpt-4o|gpt-4\.[15]|gpt-(?:[5-9]|[1-9]\d)|gpt-oss"
+    r"|o[1-9]\d*(?:-|$)|deepseek)"
+)
+_CL100K_MODELS = re.compile(r"(?:ft:)?(?:gpt-4|gpt-3\.5|gpt-35|claude)")
+
+
+def _tiktoken_encoding_name(model: str) -> Optional[str]:
+    """Name the tiktoken encoding for ``model``, or None for the heuristic.
+
+    A gateway's ``provider/`` prefix (``openai/gpt-5``) is dropped first.
+    Pure, so the mapping is tested without the ``[tokenizer]`` extra, which
+    no CI job installs.
+    """
+    if not isinstance(model, str):
+        return None
+    m = model.lower().rsplit("/", 1)[-1]
+    if _O200K_MODELS.match(m):
+        return "o200k_base"
+    if _CL100K_MODELS.match(m):
+        return "cl100k_base"
+    return None
+
+
 def _get_tiktoken_encoding(model: str):
     """Return tiktoken Encoding for model, or None if unsupported/unavailable.
 
-    Mapping:
-      gpt-5* / gpt-4o* / o1* / o3*            -> o200k_base
-      gpt-4* / gpt-3.5* / claude* / deepseek* -> cl100k_base
-      gemini* / unknown                         -> None (CJK heuristic fallback)
+    :func:`_tiktoken_encoding_name` picks the encoding. Gemini and unknown
+    models get None: the CJK heuristic fallback.
     """
     if not _TIKTOKEN_AVAILABLE:
         return None
-    m = model.lower()
+    name = _tiktoken_encoding_name(model)
+    if name is None:
+        return None
     try:
-        if any(m.startswith(p) for p in ("gpt-5", "gpt-4o", "o1", "o3")):
-            return _tiktoken.get_encoding("o200k_base")
-        if any(m.startswith(p) for p in ("gpt-4", "gpt-3.5", "claude", "deepseek")):
-            return _tiktoken.get_encoding("cl100k_base")
+        return _tiktoken.get_encoding(name)
     except Exception:
-        pass
-    return None
+        return None
 
 
 #: Per-message framing the provider bills on top of content (role, delimiters).
@@ -458,6 +485,7 @@ class ContextManager:
 
     def _threshold_token_estimate(
         self, messages: List[Dict[str, Any]], tail_tokens: int = 0,
+        *, tools: Optional[List[Dict[str, Any]]] = None,
     ) -> int:
         """Token count for hot-path threshold checks.
 
@@ -474,6 +502,12 @@ class ContextManager:
         never enters history: the anchor was recorded with it subtracted, so
         adding it back here is what makes the two halves agree. Passing 0
         estimates a request with no tail.
+
+        ``tools`` is the tool list this request will carry. Only the full
+        local estimate counts it: the anchor already holds it, because the
+        provider bills the tool schemas as prompt. Without it a first request
+        is estimated short by the whole schema list, about 3,000 tokens for
+        a sub-agent's 14 tools (#630).
 
         Note: ``messages[0]`` (the system prompt) lives inside the anchored
         prefix. Since 0a it is stable within a session, so the anchor charges
@@ -494,7 +528,11 @@ class ContextManager:
             or not isinstance(n, int)
             or n > len(messages)
         ):
-            return self.estimate_tokens(messages) + tail_tokens
+            return (
+                self.estimate_tokens(messages)
+                + tail_tokens
+                + self._count_tools_tokens(tools)
+            )
         return (
             anchor
             + sum(self._count_message_tokens(m) for m in messages[n:])
@@ -512,6 +550,16 @@ class ContextManager:
         :meth:`record_api_usage`, so whatever it misses is left in the anchor.
         """
         return self._count_message_tokens(message) + _MESSAGE_ENVELOPE_TOKENS
+
+    def _count_tools_tokens(self, tools: Optional[List[Dict[str, Any]]]) -> int:
+        """Estimate the tool schemas a request carries (0 for none)."""
+        if not tools:
+            return 0
+        try:
+            tools_str = json.dumps(tools)
+        except Exception:
+            tools_str = str(tools)
+        return self.count_tokens_in_text(tools_str)
 
     def count_tokens_in_text(self, text: str) -> int:
         """Count tokens via tiktoken; fall back to CJK-aware heuristic."""
@@ -618,13 +666,7 @@ class ContextManager:
             else:
                 message_tokens += count
         tail_tokens = self.estimate_request_tail_tokens(tail) if tail else 0
-        tools_tokens = 0
-        if tools is not None:
-            try:
-                tools_str = json.dumps(tools)
-            except Exception:
-                tools_str = str(tools)
-            tools_tokens = self.count_tokens_in_text(tools_str)
+        tools_tokens = self._count_tools_tokens(tools)
         total = system_tokens + message_tokens + tail_tokens + tools_tokens
         return {
             "system": system_tokens,
