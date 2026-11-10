@@ -368,10 +368,11 @@ class LLMClient(_LoggingMixin):
         # adds its usage from its own thread (``add_usage``) while this
         # client's turn adds its own, so every writer goes through the lock.
         self._usage_lock = threading.Lock()
-        # Track how many messages have already been logged (for incremental logging)
-        self._logged_message_count = 0
-        # Track system prompt content to log full text on first call and diffs on changes
-        self._last_system_content: Optional[str] = None
+        # What the request log has already written, per channel ("turn" for
+        # ``chat_stream``, "side" for ``chat``): a fingerprint per history
+        # message, and the system prompt, so the next request logs only what is
+        # new or rewritten, and a diff of the system prompt (#635).
+        self._log_channels: Dict[str, Any] = {}
         # Track tools hash to avoid logging unchanged tool lists repeatedly
         self._last_tools_hash: Optional[int] = None
 
@@ -772,8 +773,13 @@ class LLMClient(_LoggingMixin):
             cache_boundary=cache_boundary,
         )
 
-        # Log request
-        self._log_request(request_id, self._adapter.log_view(kwargs, messages, tools))
+        # Log request. ``chat`` carries the one-off calls (the summarizer,
+        # crystallize): their own channel, so they do not reset what the
+        # turn's log has written.
+        self._log_request(
+            request_id, self._adapter.log_view(kwargs, messages, tools),
+            channel="side",
+        )
 
         attempt = 0  # number of retries performed; first try is attempt 0
         while True:
@@ -917,8 +923,13 @@ class LLMClient(_LoggingMixin):
             cache_boundary=cache_boundary,
         )
 
-        # Log without the stream flag (matches non-streaming log format)
-        self._log_request(request_id, self._adapter.log_view(kwargs, messages, tools))
+        # Log without the stream flag (matches non-streaming log format).
+        # ``cache_boundary`` counts the trailing request-only messages (the
+        # volatile tail): logged each time, and not remembered as history.
+        self._log_request(
+            request_id, self._adapter.log_view(kwargs, messages, tools),
+            channel="turn", request_only=cache_boundary,
+        )
 
         attempt = 0  # number of retries performed; first try is attempt 0
         while True:

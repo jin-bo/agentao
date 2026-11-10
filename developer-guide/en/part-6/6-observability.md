@@ -97,7 +97,7 @@ Token Usage:
 
 `Duration` is the time of the attempt that produced the response, from send to its last chunk. A retried call's earlier attempts are not in it: each failed attempt's line (`retryable error`, `API call failed`, `mid-stream failure`) ends its own time with `after N ms`. The two cache counts are parts of `Prompt Tokens`, not additions to it. `Reasoning Tokens` is likewise a part of `Completion Tokens`, and always 0 on `anthropic-messages`. All three are 0 when the provider states none. The wait for the first piece of reasoning or text is not in the log. It is on the `llm_call_completed` replay event (`first_reasoning_ms`, `first_token_ms`).
 
-The logging is incremental. To rebuild a full conversation, read the blocks in order from the first request. Inline images are summarized by size and never dumped as base64. The layout is in [`llm/_logging.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/_logging.py).
+The logging is incremental. A request logs the messages that are new, or that changed since that client's last request. A changed message is logged again, marked `(rewritten)`: a compaction can change a message in place, for example a clipped tool result that names its saved copy. When history got shorter, the header says `history shortened from N`. The trailing reminder that is sent with each request but not kept in history is logged each time. The summarizer's calls keep their own record, so they do not make the next request log the whole history again. To rebuild a full conversation, read the blocks in order from the first request. Inline images are summarized by size and never dumped as base64. The layout is in [`llm/_logging.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/_logging.py).
 
 ### Debugging with grep
 
@@ -127,7 +127,7 @@ grep -nE '\[req_[0-9]+\] .*(failed|retryable|mid-stream)' agentao.log
 | No `agentao.log` | A `logger=` was injected, or the client was built with `log_file=None`. Or the directory is not writable: check stderr and `~/.agentao/agentao.log`. |
 | Another agent's records in this file, or none of yours | Several agents share one process. Records go to the newest open agent's file ([below](#several-agents-in-one-process)). |
 | The start of the session is gone | Rotation moved it to `agentao.log.1` … `.5`, or deleted it after 5 backups. |
-| A request shows only a few messages | Logging is incremental. The earlier messages are in earlier blocks. |
+| A request shows only a few messages | Logging is incremental. The earlier messages are in earlier blocks. A message marked `(rewritten)` replaces the one logged before at the same position. |
 | Records stop after `close()` | By design. A closed client's handler drops late records, so the host can delete the directory. |
 
 Records are written as they are logged. A crash does not lose the records written before it.

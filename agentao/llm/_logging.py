@@ -5,16 +5,24 @@ in full (no truncation), with incremental message logging and system-prompt
 diffing. They are pure formatting logic, split out of ``client.py`` to keep the
 chat / retry / streaming machinery readable.
 
+**Incremental, but never blind to a rewrite (#635).** A request logs the
+messages that are new *or changed*, not those past a count: a compaction can
+rewrite a message in place (microcompaction, the ``api_overflow`` clip that
+names a saved copy) or shorten the list, and the log must show what the model
+was actually sent. Each channel remembers one fingerprint per history message
+it logged. A changed one is logged again, marked ``(rewritten)``. The trailing
+request-only messages (the volatile tail) are logged each time and not
+remembered: they move every request.
+
 Mixed into ``LLMClient``; relies on instance state set in ``LLMClient.__init__``:
-``self.logger`` plus the incremental-logging bookkeeping fields
-``self._logged_message_count`` / ``self._last_system_content`` /
+``self.logger``, ``self._log_channels`` (per-channel bookkeeping) and
 ``self._last_tools_hash``.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from .. import json_parse
 from ._usage import cache_token_counts, reasoning_token_count
@@ -60,16 +68,83 @@ def _redact_sensitive(value: Any) -> Any:
     return value
 
 
+def _without_cache_markers(value: Any) -> Any:
+    """``value`` with every ``cache_control`` key left out.
+
+    On Chat Completions the logged list is the request, and the prompt-cache
+    breakpoints move each request (``llm/_cache_control.py``). Marking turns a
+    string ``content`` into one text part that carries the marker. Neither is a
+    change to the message, so neither may log it again as rewritten.
+    """
+    if isinstance(value, dict):
+        return {k: _without_cache_markers(v) for k, v in value.items() if k != "cache_control"}
+    if isinstance(value, list):
+        return [_without_cache_markers(v) for v in value]
+    return value
+
+
+def _fingerprint(msg: Any) -> int:
+    """An in-process identity for one message's whole content."""
+    canon = _without_cache_markers(msg)
+    if isinstance(canon, dict):
+        content = canon.get("content")
+        if (
+            isinstance(content, list) and len(content) == 1
+            and isinstance(content[0], dict)
+            and set(content[0]) == {"type", "text"} and content[0]["type"] == "text"
+        ):
+            canon = dict(canon, content=content[0]["text"])
+    try:
+        return hash(json.dumps(canon, sort_keys=True, default=repr, ensure_ascii=False))
+    except Exception:
+        return hash(repr(canon))
+
+
+class _ChannelLog:
+    """What one request channel has already written to the log."""
+
+    __slots__ = ("fingerprints", "system")
+
+    def __init__(self) -> None:
+        self.fingerprints: List[int] = []
+        self.system: Optional[str] = None
+
+
 class _LoggingMixin:
     """LLM request/response logging for :class:`LLMClient`."""
 
-    def _log_request(self, request_id: str, kwargs: Dict[str, Any]) -> None:
+    def _log_channel(self, channel: str) -> _ChannelLog:
+        channels = getattr(self, "_log_channels", None)
+        if not isinstance(channels, dict):
+            channels = {}
+            self._log_channels = channels
+        state = channels.get(channel)
+        if not isinstance(state, _ChannelLog):
+            state = _ChannelLog()
+            channels[channel] = state
+        return state
+
+    def _log_request(
+        self,
+        request_id: str,
+        kwargs: Dict[str, Any],
+        *,
+        channel: str = "turn",
+        request_only: Optional[int] = None,
+    ) -> None:
         """Log LLM request details.
 
         Args:
             request_id: Unique request identifier
             kwargs: Request parameters
+            channel: Whose history this is. The turn (``chat_stream``) and the
+                one-off calls (``chat``: the summarizer, crystallize) keep
+                separate state, so a side call does not make the turn's next
+                request log its whole history again.
+            request_only: How many trailing messages are request-only (the
+                volatile tail). Logged each time, never remembered.
         """
+        state = self._log_channel(channel)
         self.logger.info("=" * 80)
         self.logger.info(f"[{request_id}] LLM REQUEST")
         self.logger.info("=" * 80)
@@ -94,26 +169,44 @@ class _LoggingMixin:
         if extra_body:
             self.logger.info(f"Extra Body: {_redact_sensitive(extra_body)}")
 
-        # Log only new messages since last request (incremental)
+        # Log what is new or rewritten since this channel's last request.
         messages = kwargs.get('messages', [])
-        new_messages = messages[self._logged_message_count:]
-        self.logger.info(f"Messages ({len(messages)} total, logging {len(new_messages)} new):")
-        self._logged_message_count = len(messages)
+        tail = request_only if type(request_only) is int and 0 < request_only <= len(messages) else 0
+        history_len = len(messages) - tail
+        fingerprints = [_fingerprint(m) for m in messages[:history_len]]
+        previous = state.fingerprints
+        selected = []  # (index, rewritten)
+        new_count = rewritten_count = 0
+        for i, msg in enumerate(messages):
+            if i >= history_len or i >= len(previous):
+                selected.append((i, False))
+                new_count += 1
+            elif fingerprints[i] != previous[i]:
+                selected.append((i, True))
+                if not (isinstance(msg, dict) and msg.get('role') == 'system'):
+                    rewritten_count += 1
+        state.fingerprints = fingerprints
+        notes = f", {rewritten_count} rewritten" if rewritten_count else ""
+        if history_len < len(previous):
+            notes += f", history shortened from {len(previous)}"
+        self.logger.info(
+            f"Messages ({len(messages)} total, logging {new_count} new{notes}):"
+        )
 
         # Always check system prompt for changes (it's messages[0], never in new_messages after first request)
         if messages and messages[0].get('role') == 'system':
             sys_content = messages[0].get('content', '')
             if isinstance(sys_content, str):
-                if self._last_system_content is None:
+                if state.system is None:
                     self.logger.info("  Message 1 [system]:")
                     self.logger.info(f"    [system prompt initial: {len(sys_content)} chars]:\n" +
                                      "\n".join(f"      {line}" for line in sys_content.split('\n')))
-                elif sys_content != self._last_system_content:
+                elif sys_content != state.system:
                     import re, difflib
                     _TS = re.compile(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \([A-Za-z]+\)')
-                    if _TS.sub('<ts>', sys_content) != _TS.sub('<ts>', self._last_system_content):
+                    if _TS.sub('<ts>', sys_content) != _TS.sub('<ts>', state.system):
                         diff = list(difflib.unified_diff(
-                            self._last_system_content.splitlines(),
+                            state.system.splitlines(),
                             sys_content.splitlines(),
                             lineterm='',
                             n=2,
@@ -125,18 +218,20 @@ class _LoggingMixin:
                 else:
                     self.logger.info("  Message 1 [system]:")
                     self.logger.info(f"    [system prompt unchanged: {len(sys_content)} chars]")
-                self._last_system_content = sys_content
+                state.system = sys_content
 
-        for i, msg in enumerate(new_messages):
+        for i, rewritten in selected:
+            msg = messages[i]
             role = msg.get('role', 'unknown')
             content = msg.get('content', '')
-            abs_index = len(messages) - len(new_messages) + i + 1
+            abs_index = i + 1
 
             # system message already handled above
             if role == 'system':
                 continue
 
-            self.logger.info(f"  Message {abs_index} [{role}]:")
+            mark = " (rewritten)" if rewritten else ""
+            self.logger.info(f"  Message {abs_index} [{role}]{mark}:")
             if role == 'tool':
                 # The content below is the result: logged once, by the same
                 # path that summarizes a multimodal result's inline images.
