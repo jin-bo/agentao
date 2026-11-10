@@ -5,6 +5,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -422,16 +424,46 @@ def test_estimate_tokens_reasoning_content():
 # Tiktoken model mapping (skipped if tiktoken not installed)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize("model, encoding", [
+    # #630: a later major fell back to the CJK heuristic and ran 20–37% high.
+    ("gpt-6.1-terra", "o200k_base"),
+    ("gpt-5.2", "o200k_base"),
+    ("gpt-10", "o200k_base"),
+    ("gpt-4o-mini", "o200k_base"),
+    ("chatgpt-4o-latest", "o200k_base"),
+    ("gpt-4.1-mini", "o200k_base"),
+    ("gpt-4.5-preview", "o200k_base"),
+    ("gpt-oss-120b", "o200k_base"),
+    ("o1", "o200k_base"),
+    ("o3-mini", "o200k_base"),
+    ("o4-mini", "o200k_base"),
+    ("openai/gpt-5", "o200k_base"),
+    # #630: measured closer to the provider than cl100k_base on Chinese.
+    ("deepseek-v4.1-flash-1017", "o200k_base"),
+    ("deepseek-ai/DeepSeek-V3", "o200k_base"),
+    ("gpt-4", "cl100k_base"),
+    ("gpt-4-turbo", "cl100k_base"),
+    ("gpt-3.5-turbo", "cl100k_base"),
+    ("claude-sonnet-4-5", "cl100k_base"),
+    ("gemini-2.5-pro", None),
+    ("glm-5.2", None),
+    ("ollama-thing", None),
+    ("unknown-model-xyz", None),
+    ("", None),
+    (None, None),
+])
+def test_tiktoken_encoding_name(model, encoding):
+    """Pure, so it runs without the [tokenizer] extra, which no CI job installs."""
+    from agentao.context_manager import _tiktoken_encoding_name
+    assert _tiktoken_encoding_name(model) == encoding
+
+
 def test_tiktoken_model_mapping():
-    import pytest
     pytest.importorskip("tiktoken")
     from agentao.context_manager import _get_tiktoken_encoding
-    assert _get_tiktoken_encoding("claude-sonnet-4-5") is not None   # cl100k_base
-    assert _get_tiktoken_encoding("gpt-4") is not None               # cl100k_base
-    assert _get_tiktoken_encoding("gpt-4o") is not None              # o200k_base
-    assert _get_tiktoken_encoding("deepseek-chat") is not None       # cl100k_base
-    assert _get_tiktoken_encoding("gemini-2.5-pro") is None          # no mapping
-    assert _get_tiktoken_encoding("unknown-model-xyz") is None       # no mapping
+    assert _get_tiktoken_encoding("gpt-6.1-terra").name == "o200k_base"
+    assert _get_tiktoken_encoding("claude-sonnet-4-5").name == "cl100k_base"
+    assert _get_tiktoken_encoding("gemini-2.5-pro") is None
 
 
 # ---------------------------------------------------------------------------

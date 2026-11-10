@@ -240,6 +240,44 @@ def test_the_threshold_estimate_adds_the_tail_on_top_of_the_anchor():
     print("✅ Tail rides on top of both estimate paths")
 
 
+def test_only_the_full_local_estimate_counts_the_tool_schemas():
+    """The provider bills the tool schemas as prompt, so the anchor holds
+    them. A first request has no anchor and was short by the whole list (#630)."""
+    cm = _make_agent().context_manager
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
+    tools = [{"type": "function", "function": {"name": "read_file", "description": "x" * 4000}}]
+    schemas = cm._count_tools_tokens(tools)
+    assert schemas >= 1000
+
+    assert cm._threshold_token_estimate(msgs, tools=tools) == cm.estimate_tokens(msgs) + schemas
+    cm.record_api_usage(5000, message_count=2)
+    assert cm._threshold_token_estimate(msgs, tools=tools) == 5000
+
+
+def test_the_loop_hands_its_tools_to_the_estimate():
+    agent = _make_agent()
+    cm = agent.context_manager
+    seen: list = []
+    real = cm._threshold_token_estimate
+
+    def _record(messages, tail_tokens=0, **kwargs):
+        seen.append(kwargs.get("tools"))
+        return real(messages, tail_tokens=tail_tokens, **kwargs)
+
+    cm._threshold_token_estimate = _record
+    sent: list = []
+
+    def _call(messages, tools, token):
+        sent.append(tools)
+        return _fake_response("ok", prompt_tokens=1000)
+
+    agent._llm_call = _call
+    agent.chat("go")
+
+    assert seen and seen[0], "the estimate got no tools"
+    assert [t["function"]["name"] for t in seen[0]] == [t["function"]["name"] for t in sent[0]]
+
+
 def test_the_local_estimate_does_not_drift_with_tail_size():
     """The §11 gate: N ≥ 10 consecutive turns, fixed history growth, tail size
     varied on purpose.
@@ -261,8 +299,8 @@ def test_the_local_estimate_does_not_drift_with_tail_size():
     seen_tail_tokens: list = []
     real = cm._threshold_token_estimate
 
-    def _record_estimate(messages, tail_tokens=0):
-        value = real(messages, tail_tokens=tail_tokens)
+    def _record_estimate(messages, tail_tokens=0, **kwargs):
+        value = real(messages, tail_tokens=tail_tokens, **kwargs)
         estimates.append(value)
         seen_tail_tokens.append(tail_tokens)
         return value
