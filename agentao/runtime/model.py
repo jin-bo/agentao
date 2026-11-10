@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional, TYPE_CHECKING
 
-from ..context_manager import _get_tiktoken_encoding
+from ..context_manager import _apply_model_tokenizer
 from ..llm._stream_response import WIRE_CARRIER_KEYS
 from ..llm.client import KEEP_BASE_URL
 from ..transport import AgentEvent, EventType
@@ -164,7 +164,7 @@ def set_provider(
         agent.context_manager.invalidate_token_anchor()
         agent.context_manager.clear_observed_limit("wire protocol switch")
     if model is not None and model != _old_model:
-        agent.context_manager._encoding = _get_tiktoken_encoding(agent.llm.model)
+        _apply_model_tokenizer(agent.context_manager, agent.llm.model)
         agent.context_manager.invalidate_token_anchor()
         agent.context_manager.clear_observed_limit("model switch")
     elif agent.llm.base_url != _old_base:
@@ -211,7 +211,7 @@ def set_model(agent: "Agentao", model: str) -> str:
     # Built-in LLMClient only; injected host clients need not implement it.
     if hasattr(agent.llm, "reset_capability_latches"):
         agent.llm.reset_capability_latches()
-    agent.context_manager._encoding = _get_tiktoken_encoding(model)
+    _apply_model_tokenizer(agent.context_manager, model)
     agent.context_manager.invalidate_token_anchor()
     if model != old_model:
         # Joins the clear-on-switch family beside the encoding and the anchor:

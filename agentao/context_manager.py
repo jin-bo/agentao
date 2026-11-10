@@ -92,6 +92,42 @@ def _get_tiktoken_encoding(model: str):
         return None
 
 
+#: The heuristic's tokens per non-ASCII character, in hundredths, by model
+#: family. Measured on Chinese tool results against each provider's own
+#: ``prompt_tokens`` (#630, 1,300+ requests): deepseek 0.84–0.94, gemini 0.91,
+#: glm 0.83, kimi 0.72, ``gpt-6.1`` 1.08, claude 1.39. Only the measured
+#: families get a lower ratio. Claude and every unmeasured family keep the
+#: default, which over- rather than under-estimates.
+_CJK_RATIO_DEFAULT = 130
+_CJK_RATIOS = (
+    (re.compile(r"(?:deepseek|gemini|glm|kimi)"), 100),
+    (re.compile(r"(?:ft:)?(?:gpt-(?:[5-9]|[1-9]\d)|o[1-9]\d*(?:-|$))"), 110),
+)
+
+
+def _heuristic_cjk_ratio(model: str) -> int:
+    """Tokens per non-ASCII character for ``model``, in hundredths.
+
+    Matched like :func:`_tiktoken_encoding_name`: lower case, ``provider/``
+    prefix dropped.
+    """
+    if not isinstance(model, str):
+        return _CJK_RATIO_DEFAULT
+    m = model.lower().rsplit("/", 1)[-1]
+    for pattern, ratio in _CJK_RATIOS:
+        if pattern.match(m):
+            return ratio
+    return _CJK_RATIO_DEFAULT
+
+
+def _apply_model_tokenizer(context_manager: Any, model: str) -> None:
+    """Point the estimator at ``model``: its tiktoken encoding and its
+    heuristic ratio. The one place both are set, so a model switch cannot
+    update one and leave the other describing the old model."""
+    context_manager._encoding = _get_tiktoken_encoding(model)
+    context_manager._cjk_ratio = _heuristic_cjk_ratio(model)
+
+
 #: Per-message framing the provider bills on top of content (role, delimiters).
 #: OpenAI's own cookbook counts 4 for a Chat Completions message; the exact
 #: number is provider-specific and small. Used **only** by
@@ -100,19 +136,20 @@ def _get_tiktoken_encoding(model: str):
 _MESSAGE_ENVELOPE_TOKENS = 4
 
 
-def _heuristic_token_count(text: str) -> int:
+def _heuristic_token_count(text: str, cjk_ratio: int = _CJK_RATIO_DEFAULT) -> int:
     """CJK-aware token estimation (adapted from gemini-cli tokenCalculation.ts).
 
     Fast path for strings > 100K chars: len/4.
     Otherwise weighted by character class:
       ASCII (0-127):    0.25 tokens/char
-      non-ASCII / CJK:  1.3  tokens/char
+      non-ASCII / CJK:  ``cjk_ratio`` / 100 tokens/char (1.3 by default;
+                        :func:`_heuristic_cjk_ratio` gives it per model)
 
     The ASCII/CJK split is computed at C speed via ``encode("ascii", "ignore")``
     — which drops every non-ASCII char, so the encoded byte length is exactly
     the ASCII-char count — instead of a Python per-character loop. The weights
     are applied with integer arithmetic (``×100 // 100``) so the result is the
-    exact floor of ``ascii×0.25 + cjk×1.3``: deterministic, and free of the
+    exact floor of ``ascii×0.25 + cjk×ratio``: deterministic, and free of the
     upward drift a running float sum of the inexact ``1.3`` would accumulate.
     This removes the O(chars) interpreter loop from the no-tiktoken estimation
     fallback (T1.2).
@@ -122,7 +159,7 @@ def _heuristic_token_count(text: str) -> int:
         return n // 4
     ascii_count = len(text.encode("ascii", "ignore"))
     non_ascii = n - ascii_count
-    return (ascii_count * 25 + non_ascii * 130) // 100
+    return (ascii_count * 25 + non_ascii * cjk_ratio) // 100
 
 
 # ---------------------------------------------------------------------------
@@ -407,8 +444,9 @@ class ContextManager:
         # questions and must never be wired into each other: the anchor is a
         # prefix the next request reuses, this is one request's total bill.
         self._last_api_request_tokens: Optional[int] = None
-        # Tier 3: cached tiktoken encoding; None = CJK-aware heuristic fallback
-        self._encoding = _get_tiktoken_encoding(self.llm_client.model)
+        # Tier 3: cached tiktoken encoding; None = CJK-aware heuristic
+        # fallback, at this model family's ratio.
+        _apply_model_tokenizer(self, self.llm_client.model)
 
     # -----------------------------------------------------------------------
     # Token estimation
@@ -568,7 +606,7 @@ class ContextManager:
                 return len(self._encoding.encode(text, disallowed_special=()))
             except Exception:
                 pass
-        return _heuristic_token_count(text)
+        return _heuristic_token_count(text, self._cjk_ratio)
 
     def _count_message_tokens(self, msg: Dict[str, Any]) -> int:
         """Return estimated token count for a single message dict."""
@@ -634,7 +672,8 @@ class ContextManager:
         """Count tokens for a list of messages (local estimate).
 
         Uses tiktoken when available (cl100k_base / o200k_base per model family);
-        falls back to CJK-aware heuristic (ASCII=0.25, non-ASCII=1.3 tok/char).
+        falls back to CJK-aware heuristic (ASCII=0.25, non-ASCII=1.0–1.3 tok/char
+        by model family, see ``_heuristic_cjk_ratio``).
         Used in hot-path threshold checks. Signature unchanged for compatibility.
         """
         return sum(self._count_message_tokens(m) for m in messages)
@@ -2683,8 +2722,8 @@ class ContextManager:
         Goes through :meth:`count_tokens_in_text`, not ``_heuristic_token_count``
         directly, so the budget is denominated in the *same* unit as the
         ``max_tokens`` it is a fraction of — tiktoken where the model family is
-        known, and the CJK-aware heuristic (non-ASCII 1.3 tok/char vs ASCII's
-        0.25) exactly as before where it is not. Either way this must not be a
+        known, and the CJK-aware heuristic (non-ASCII 1.0–1.3 tok/char by
+        model family, vs ASCII's 0.25) where it is not. Either way this must not be a
         character budget: that would under-count Chinese more than fivefold, on
         the very histories most likely to be long.
         """

@@ -458,6 +458,55 @@ def test_tiktoken_encoding_name(model, encoding):
     assert _tiktoken_encoding_name(model) == encoding
 
 
+@pytest.mark.parametrize("model, ratio", [
+    # Measured on Chinese tool results (#630): 0.72–0.94 tokens per char.
+    ("deepseek-v4.1-flash-1017", 100),
+    ("gemini-flash-latest", 100),
+    ("models/gemini-2.5-pro", 100),
+    ("glm-5.2", 100),
+    ("kimi/kimi-k3", 100),
+    # gpt-6.1 measured 1.08.
+    ("gpt-6.1-terra", 110),
+    ("gpt-5.2", 110),
+    ("o3-mini", 110),
+    # Claude measured 1.39: a lower ratio would under-estimate it.
+    ("claude-sonnet-5", 130),
+    # Unmeasured families keep the conservative default.
+    ("qwen/qwen3.8-27b", 130),
+    ("gpt-4", 130),
+    ("unknown-model-xyz", 130),
+    (None, 130),
+])
+def test_heuristic_cjk_ratio(model, ratio):
+    from agentao.context_manager import _heuristic_cjk_ratio
+    assert _heuristic_cjk_ratio(model) == ratio
+
+
+def test_the_heuristic_counts_cjk_at_the_models_ratio():
+    from agentao.context_manager import ContextManager, _heuristic_token_count
+    assert _heuristic_token_count("中" * 100) == 130
+    assert _heuristic_token_count("中" * 100, 100) == 100
+    assert _heuristic_token_count("a" * 400 + "中" * 100, 110) == 100 + 110
+
+    llm = _make_mock_llm()
+    llm.model = "deepseek-v4.1-flash"
+    cm = ContextManager(llm, Mock(), max_tokens=200_000)
+    cm._encoding = None
+    assert cm.count_tokens_in_text("中" * 100) == 100
+
+
+def test_a_model_switch_moves_the_ratio_with_the_encoding(tmp_path):
+    from agentao.runtime.model import set_model
+    from tests.support.stop_precompact import make_bare_agent
+
+    agent = make_bare_agent(tmp_path)
+    cm = agent.context_manager
+    set_model(agent, "glm-5.2")
+    assert cm._cjk_ratio == 100
+    set_model(agent, "claude-sonnet-5")
+    assert cm._cjk_ratio == 130
+
+
 def test_tiktoken_model_mapping():
     pytest.importorskip("tiktoken")
     from agentao.context_manager import _get_tiktoken_encoding

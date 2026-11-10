@@ -13,6 +13,7 @@ _Targeting 0.5.20. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **Without tiktoken, the token estimate counts Chinese at the model family's measured rate (#630).** The character heuristic used to count every non-ASCII character as 1.3 tokens. Measured on Chinese tool results against each provider's own count, `deepseek`, `gemini`, `glm` and `kimi` models cost 0.72–0.94 tokens per character and now count 1.0. `gpt-5` and later and the `o` series cost 1.08 and now count 1.1. Claude measured 1.39, so it and every unmeasured family keep 1.3. This applies when `agentao[tokenizer]` is not installed, or for models without a tiktoken encoding (`gemini`, `glm`, `kimi`). Compaction on these models now triggers later, closer to the real 80% of the window.
 - **Compaction keeps the request of the turn in progress.** When a cut lands inside a turn, the full compaction and the last overflow rung (`minimal_history`) put the request back after the summary, with a note that tells the model to continue the work. A long prompt no longer loses its later lines to the summarizer's 2,000-character cut. The copy costs at most the summary input's budget (10% of the effective window). Past that it keeps both ends and states the gap. Images are not kept. A request in the surviving half, a later turn's request, or a window that ends on the model's final answer ends the keeping. On the last rung, `CompactionDecisionContext.messages_to_keep` counts the copy.
 
 ### Removed
