@@ -267,7 +267,7 @@ agentao 每轮都检查，所以窗口一旦被纠正，下一次迭代自然就
 |---|---|---|
 | 1 | 真实 API `prompt_tokens`，锚定到产生它的消息条数，之后只对新追加的部分做局部估算（`context_manager.py:130,153`） | 最近一条有效 assistant 消息的 `usage`（`compaction.ts:202`） |
 | 2 | tiktoken，按模型族（`o200k_base` / `cl100k_base`） | — |
-| 3 | **CJK 感知启发式**：ASCII 0.25 token/字符，非 ASCII 1.3 token/字符（`context_manager.py:40`） | 尾部消息一律 **`chars/4`**（`compaction.ts:266`） |
+| 3 | **CJK 感知启发式**：ASCII 0.25 token/字符，非 ASCII 按模型族 1.0–1.3 token/字符（`context_manager.py::_heuristic_cjk_ratio`，#630） | 尾部消息一律 **`chars/4`**（`compaction.ts:266`） |
 
 agentao 在这一项上明显更强，而且差距最大的恰恰是最容易变长的那类历史：`chars/4` 对中文低估约 5 倍。
 agentao 的第 1 层锚点设计也更谨慎——它会把上一回合的系统提示词多计一个回合然后自愈，这个取舍在原处

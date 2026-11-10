@@ -310,7 +310,7 @@ estimation) — **not checked**, so no claim either way.
 |---|---|---|
 | 1 | real API `prompt_tokens` anchored to the message count that produced it, plus a local estimate of only what was appended since (`context_manager.py:130,153`) | `usage` from the last valid assistant message (`compaction.ts:202`) |
 | 2 | tiktoken, per model family (`o200k_base` / `cl100k_base`) | — |
-| 3 | **CJK-aware heuristic**: ASCII 0.25 tok/char, non-ASCII 1.3 tok/char (`context_manager.py:40`) | **`chars/4`** for every trailing message (`compaction.ts:266`) |
+| 3 | **CJK-aware heuristic**: ASCII 0.25 tok/char, non-ASCII 1.0–1.3 tok/char by model family (`context_manager.py::_heuristic_cjk_ratio`, #630) | **`chars/4`** for every trailing message (`compaction.ts:266`) |
 
 agentao is materially better here, and the gap is worst on exactly the histories most likely to be
 long: `chars/4` under-counts Chinese roughly fivefold. agentao's tier-1 anchor is also the more
