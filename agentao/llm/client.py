@@ -368,10 +368,12 @@ class LLMClient(_LoggingMixin):
         # adds its usage from its own thread (``add_usage``) while this
         # client's turn adds its own, so every writer goes through the lock.
         self._usage_lock = threading.Lock()
-        # Track how many messages have already been logged (for incremental logging)
-        self._logged_message_count = 0
-        # Track system prompt content to log full text on first call and diffs on changes
-        self._last_system_content: Optional[str] = None
+        # What the request log has already written for the turn's channel
+        # (``chat_stream``; the one-off ``chat`` calls keep none and are
+        # logged whole): a fingerprint per history
+        # message, and the system prompt, so the next request logs only what is
+        # new or rewritten, and a diff of the system prompt (#635).
+        self._log_channels: Dict[str, Any] = {}
         # Track tools hash to avoid logging unchanged tool lists repeatedly
         self._last_tools_hash: Optional[int] = None
 
@@ -741,6 +743,7 @@ class LLMClient(_LoggingMixin):
         cache_boundary: Optional[int] = None,
         on_retry: Optional[Callable[[Dict[str, Any]], None]] = None,
         cancellation_token: Optional[Any] = None,
+        _log_channel: str = "side",
     ) -> Any:
         """Send chat request to LLM.
 
@@ -757,6 +760,10 @@ class LLMClient(_LoggingMixin):
                 sleep, so a cancel does not wait out a wait of up to
                 :data:`MAX_BACKOFF_SECONDS`. The request itself is not
                 interrupted.
+            _log_channel: Internal. ``"side"`` (the default) for the one-off
+                calls; ``"turn"`` when ``chat_stream`` sends the turn's request
+                through here (the Gemini bypass, the streaming-unsupported
+                fallback), so the turn's log stays on one channel.
 
         Returns:
             Response from the LLM
@@ -772,8 +779,16 @@ class LLMClient(_LoggingMixin):
             cache_boundary=cache_boundary,
         )
 
-        # Log request
-        self._log_request(request_id, self._adapter.log_view(kwargs, messages, tools))
+        # Log request. ``chat`` carries the one-off calls (the summarizer,
+        # crystallize): their own channel, so they do not reset what the
+        # turn's log has written. A turn request sent through here (see
+        # ``_emit_nonstreaming``) stays on the turn's channel.
+        turn = _log_channel == "turn"
+        self._log_request(
+            request_id, self._adapter.log_view(kwargs, messages, tools),
+            channel="turn" if turn else "side",
+            request_only=cache_boundary if turn else None,
+        )
 
         attempt = 0  # number of retries performed; first try is attempt 0
         while True:
@@ -917,8 +932,13 @@ class LLMClient(_LoggingMixin):
             cache_boundary=cache_boundary,
         )
 
-        # Log without the stream flag (matches non-streaming log format)
-        self._log_request(request_id, self._adapter.log_view(kwargs, messages, tools))
+        # Log without the stream flag (matches non-streaming log format).
+        # ``cache_boundary`` counts the trailing request-only messages (the
+        # volatile tail): logged each time, and not remembered as history.
+        self._log_request(
+            request_id, self._adapter.log_view(kwargs, messages, tools),
+            channel="turn", request_only=cache_boundary,
+        )
 
         attempt = 0  # number of retries performed; first try is attempt 0
         while True:
@@ -1190,6 +1210,7 @@ class LLMClient(_LoggingMixin):
             messages, tools=tools, max_tokens=max_tokens,
             cache_boundary=cache_boundary, on_retry=on_retry,
             cancellation_token=cancellation_token,
+            _log_channel="turn",
         )
         if not (on_text_chunk or on_reasoning_chunk):
             return response

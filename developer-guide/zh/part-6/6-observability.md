@@ -97,7 +97,7 @@ Token Usage:
 
 `Duration` 是产生这个响应的那次尝试所用的时间，从发出请求到最后一个分片。一次重试过的调用，之前那几次尝试不算在内：每次失败尝试的那一行（`retryable error`、`API call failed`、`mid-stream failure`）用 `after N ms` 标出它自己的耗时。两个缓存计数是 `Prompt Tokens` **之中**的部分，不是额外加上的。`Reasoning Tokens` 同样是 `Completion Tokens` 之中的部分，在 `anthropic-messages` 上恒为 0。三项在 provider 没给出时都为 0。到第一段推理或正文的等待时间不在日志里，在 replay 的 `llm_call_completed` 事件上（`first_reasoning_ms`、`first_token_ms`）。
 
-日志是增量记录的。要还原完整对话，从第一次请求起按顺序读各个块。内联图片只记大小摘要，不会把 base64 倒进日志。版式定义在 [`llm/_logging.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/_logging.py)。
+日志是增量记录的。每次请求只记新出现的消息，以及和这个客户端上一次请求相比内容变了的消息。变了的消息会重新记一遍，标为 `(rewritten)`：压缩可能就地改写消息，例如被裁剪的工具结果会写明副本保存在哪里。历史变短时，标题行会写 `history shortened from N`。每次请求末尾附带、但不存入历史的提醒，每次都会记。每次摘要请求都完整记录，且不影响对话轮次的记录，不会让下一次请求把整段历史重记一遍。要还原完整对话，从第一次请求起按顺序读各个块。内联图片只记大小摘要，不会把 base64 倒进日志。版式定义在 [`llm/_logging.py`](https://github.com/jin-bo/agentao/blob/main/agentao/llm/_logging.py)。
 
 ### 用 grep 排查
 
@@ -127,7 +127,7 @@ grep -nE '\[req_[0-9]+\] .*(failed|retryable|mid-stream)' agentao.log
 | 没有 `agentao.log` | 注入了 `logger=`，或 client 构造时传了 `log_file=None`。也可能目录不可写：看 stderr 和 `~/.agentao/agentao.log`。 |
 | 文件里是别的 agent 的记录，或没有你的记录 | 同一进程里有多个 agent，记录写进最新的未关闭 agent 的文件（[见下文](#同一进程里的多个-agent)）。 |
 | 会话开头不见了 | 轮转把它移到了 `agentao.log.1` … `.5`，超过 5 个备份后已删除。 |
-| 某次请求只显示几条消息 | 日志是增量的，更早的消息在更早的块里。 |
+| 某次请求只显示几条消息 | 日志是增量的，更早的消息在更早的块里。标为 `(rewritten)` 的消息取代之前在同一位置记下的那条。 |
 | `close()` 之后不再有记录 | 设计如此。已关闭 client 的 handler 会丢弃迟到的记录，好让宿主删除目录。 |
 
 记录随写随落盘，进程崩溃不会丢掉崩溃前已写出的记录。
