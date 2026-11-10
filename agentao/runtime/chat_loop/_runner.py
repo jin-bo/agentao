@@ -643,12 +643,15 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
                     return step.value
                 messages_with_system = step.messages_with_system
                 system_prompt = step.system_prompt
-                if step.action == "continue":  # doom-loop Stop-hook re-entry
+                # Both "loop" and a batch ending's Stop-hook "continue" carry
+                # the post-batch bookkeeping; the length-truncation path
+                # carries none and leaves it as it was.
+                if step.active_skills is not None:
+                    current_active_skills = step.active_skills
+                    current_memory_version = step.memory_version
+                if step.action == "continue":  # batch-ending Stop-hook re-entry
                     iteration = 0
                     continue
-                # "loop" — normal end of a tool iteration
-                current_active_skills = step.active_skills
-                current_memory_version = step.memory_version
             else:
                 self._consecutive_length_truncations = 0
                 step = self._handle_final_response(
@@ -965,6 +968,38 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
         agent._turn_tool_count = (
             getattr(agent, "_turn_tool_count", 0) + len(clean_tool_calls)
         )
+        # One post-batch step runs before any ending is chosen (#632). The hook
+        # stop, ``complete_task`` and doom-loop endings used to return before
+        # it, so they skipped both halves:
+        #
+        # 1. Skill/memory events first. A ``save_memory`` or skill activation
+        #    in this batch already took effect, so its event fires even when
+        #    the batch was cancelled — the event reports what happened.
+        # 2. Then the cancel. A cancel wins over every ending, including an
+        #    answer ``complete_task`` already produced: the user asked to stop,
+        #    and the other calls of a cancelled batch may be incomplete, so an
+        #    answer built on them is not one to hand back as a success.
+        new_active_skills = frozenset(agent.skill_manager.get_active_skills().keys())
+        new_memory_version = agent.memory_manager.write_version
+        bookkeeping_changed = (
+            new_active_skills != active_skills
+            or new_memory_version != memory_version
+        )
+        if bookkeeping_changed:
+            self._emit_skill_and_memory_diffs(
+                prev_active=active_skills,
+                new_active=new_active_skills,
+                prev_memory_version=memory_version,
+                new_memory_version=new_memory_version,
+            )
+            active_skills = new_active_skills
+            memory_version = new_memory_version
+        if token.is_cancelled:
+            raise AgentCancelledError(token.reason)
+        if bookkeeping_changed:
+            # Rebuilt before the endings too: a Stop hook that forces the turn
+            # to continue re-enters with this prompt.
+            system_prompt = agent._build_system_prompt()
         if hook_stop is not None:
             # ``continue: false`` on a Post* event ends the **turn**, not the
             # call: the tool already ran and its result is recorded above. The
@@ -977,13 +1012,13 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             }
             _attach_reasoning_echo(final_msg_hook, reasoning_content)
             sanitize_assistant_message(final_msg_hook)
-            return self._resolve_stop_hook(
+            return self._with_bookkeeping(self._resolve_stop_hook(
                 turn_end_reason="hook_stop",
                 assistant_content=stop_content,
                 final_msg=final_msg_hook,
                 system_prompt=system_prompt,
                 incomplete_reason=INCOMPLETE_HOOK_STOP,
-            )
+            ), active_skills, memory_version)
         _raw_complete = getattr(agent.tool_runner, "last_task_complete", None)
         if isinstance(_raw_complete, str):
             # ``complete_task`` is the sub-agent's answer, so the turn ends on it
@@ -1002,13 +1037,13 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             answer = (final_msg_done.get("content") or "").strip()
             if not answer:
                 final_msg_done["content"] = EMPTY_RESPONSE_PLACEHOLDER
-            return self._resolve_stop_hook(
+            return self._with_bookkeeping(self._resolve_stop_hook(
                 turn_end_reason="final_response",
                 assistant_content=final_msg_done["content"],
                 final_msg=final_msg_done,
                 system_prompt=system_prompt,
                 incomplete_reason=None if answer else INCOMPLETE_NO_OUTPUT,
-            )
+            ), active_skills, memory_version)
         if doom_triggered:
             doom_content = (assistant_msg.get("content") or "").strip()
             assistant_content_doom = (
@@ -1028,31 +1063,13 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             # ToolRunner's doom counter is NOT reset across a Stop-hook
             # force_continue — re-tripping doom is a reasonable outcome of
             # "host insisted on continuing despite the model misbehaving."
-            return self._resolve_stop_hook(
+            return self._with_bookkeeping(self._resolve_stop_hook(
                 turn_end_reason="doom_loop",
                 assistant_content=assistant_content_doom,
                 final_msg=final_msg_doom,
                 system_prompt=system_prompt,
                 incomplete_reason=INCOMPLETE_DOOM_LOOP,
-            )
-        if token.is_cancelled:
-            raise AgentCancelledError(token.reason)
-
-        new_active_skills = frozenset(agent.skill_manager.get_active_skills().keys())
-        new_memory_version = agent.memory_manager.write_version
-        if (
-            new_active_skills != active_skills
-            or new_memory_version != memory_version
-        ):
-            self._emit_skill_and_memory_diffs(
-                prev_active=active_skills,
-                new_active=new_active_skills,
-                prev_memory_version=memory_version,
-                new_memory_version=new_memory_version,
-            )
-            active_skills = new_active_skills
-            memory_version = new_memory_version
-            system_prompt = agent._build_system_prompt()
+            ), active_skills, memory_version)
         messages_with_system = [
             {"role": "system", "content": system_prompt}
         ] + agent.messages
@@ -1135,6 +1152,22 @@ class ChatLoopRunner(_CompactionMixin, _HookDispatchMixin):
             system_prompt=system_prompt,
             incomplete_reason=incomplete_reason,
         )
+
+    @staticmethod
+    def _with_bookkeeping(
+        step: "ChatLoopRunner._Step",
+        active_skills: frozenset,
+        memory_version: int,
+    ) -> "ChatLoopRunner._Step":
+        """Carry the post-batch skill/memory bookkeeping on an ending's step.
+
+        The batch endings refresh the bookkeeping before they run (#632). On
+        a Stop-hook ``continue`` the loop goes on, so it must start from the
+        refreshed values, or the next batch would emit the same diff again.
+        """
+        step.active_skills = active_skills
+        step.memory_version = memory_version
+        return step
 
     def _resolve_stop_hook(
         self,
