@@ -72,7 +72,7 @@ Rules:
 - A `session/set_config_option` provider switch resolves against the session's own snapshot, never the process environment.
 
 ::: warning Changed in 0.5.8 — the project `.env` supplies only LLM settings
-One ACP process serves sessions from several projects. Loading one project's `.env` into the shared environment once leaked its credentials into every later session. The default session path now writes nothing into `os.environ`. Everything else a `.env` used to provide must come from the **launch environment**: MCP `${VAR}` expansion in `mcp.json`, web-tool keys (`JINA_API_KEY`, `BOCHA_API_KEY`), `GITHUB_TOKEN`, the URL-policy allowlist. A host that injects its own `agent_factory` / `provider_resolver` keeps the old behaviour.
+One ACP process serves sessions from several projects. Loading one project's `.env` into the shared environment once leaked its credentials into every later session. The default session path now writes nothing into `os.environ`. Everything else a `.env` used to provide must come from the **launch environment**: MCP `${VAR}` expansion in `mcp.json`, web-tool keys (`TAVILY_API_KEY`, `JINA_API_KEY`, and the `DEEPSEEK_API_KEY` + `DEEPSEEK_BASE_URL` pair that `web_search` reuses), `GITHUB_TOKEN`, the URL-policy allowlist. A host that injects its own `agent_factory` / `provider_resolver` keeps the old behaviour.
 :::
 
 ### Client notes

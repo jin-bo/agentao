@@ -156,8 +156,9 @@ def test_allowlist_unknown_name_rejected(tmp_path):
 def test_allowlist_known_builtin_without_extra_is_legal(tmp_path):
     """A valid built-in name is accepted even if its optional dep is absent.
 
-    ``web_search`` only registers with the ``[web]`` extra, but it's a legal
-    built-in name, so allowlisting it must not be flagged as a typo.
+    ``web_search`` only registers when a search key resolves (none does under
+    the test env scrub), but it's a legal built-in name, so allowlisting it
+    must not be flagged as a typo.
     """
     agent = make_dummy_agent(tmp_path, enabled_tools={"read_file", "web_search"})
     try:

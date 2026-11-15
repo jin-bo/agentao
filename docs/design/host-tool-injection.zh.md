@@ -1,6 +1,6 @@
 # Host 工具注入：`extra_tools` / `disable_tools`（首版）
 
-**状态：** **首版发布于 0.4.9**；`copies_to_subagents`——宿主工具下放到子代理的声明，每次启动做一次浅拷贝——**发布于 0.4.24**（见 §11，测试 `tests/test_subagent_host_tool_declaration.py`）。首版即 `extra_tools` + `disable_tools` + `WebSearchTool(backend/api_key)`，测试 `tests/test_host_tool_injection.py`。`tool_options` / settings.json 仍推迟，见 §10。
+**状态：** **首版发布于 0.4.9**；`copies_to_subagents`——宿主工具下放到子代理的声明，每次启动做一次浅拷贝——**发布于 0.4.24**（见 §11，测试 `tests/test_subagent_host_tool_declaration.py`）。首版即 `extra_tools` + `disable_tools` + `WebSearchTool(backend/api_key)`，测试 `tests/test_host_tool_injection.py`。`tool_options` / settings.json 仍推迟，见 §10。**0.5.21：** `web_search` 的后端改为 `deepseek` / `tavily` / `jina`，`api_key`（Bocha 的 key）改为按后端区分的 `deepseek_api_key` / `tavily_api_key` / `jina_api_key`，`bocha` 和 `duckduckgo` 已退役。下文分析保留当时的名称；当前契约见 `docs/reference/configuration.zh.md`。
 **读者：** 要给 host 一个声明式工具注入口的 agentao 维护者；以及后续 PR 的评审者。
 **配套：**
 - `docs/design/host-tool-injection.md` — 英文版
@@ -219,7 +219,7 @@ from agentao import Agentao
 # 配置内置（密钥由 host 代码持有,不落任何配置文件）
 agent = Agentao(
     working_directory=wd,
-    extra_tools=[WebSearchTool(backend="bocha", api_key=key)],  # 同名替换内置
+    extra_tools=[WebSearchTool(backend="tavily", tavily_api_key=key)],  # 同名替换内置
 )
 
 # 移除内置搜索/抓取,另新增一个自研检索工具(不同名 —— 是新增,不是替换原 web_search 语义)

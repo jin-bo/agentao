@@ -137,47 +137,49 @@ def test_disable_plus_extra_replacement(tmp_path):
 
 
 def test_web_search_explicit_args_beat_env(monkeypatch):
-    monkeypatch.setenv("BOCHA_API_KEY", "from-env")
-    tool = WebSearchTool(backend="bocha", api_key="explicit")
-    assert tool._bocha_api_key == "explicit"
-    assert tool._provider == "bocha"
+    monkeypatch.setenv("TAVILY_API_KEY", "from-env")
+    tool = WebSearchTool(backend="tavily", tavily_api_key="explicit")
+    assert tool._tavily_api_key == "explicit"
+    assert tool._provider == "tavily"
 
 
 def test_web_search_env_is_fallback(monkeypatch):
-    monkeypatch.delenv("JINA_API_KEY", raising=False)  # else jina precedes bocha
-    monkeypatch.setenv("BOCHA_API_KEY", "from-env")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)  # else deepseek precedes tavily
+    monkeypatch.setenv("TAVILY_API_KEY", "from-env")
     tool = WebSearchTool()
-    assert tool._bocha_api_key == "from-env"
-    assert tool._provider == "bocha"
+    assert tool._tavily_api_key == "from-env"
+    assert tool._provider == "tavily"
 
 
-def test_web_search_no_key_defaults_duckduckgo(monkeypatch):
-    monkeypatch.delenv("BOCHA_API_KEY", raising=False)
-    monkeypatch.delenv("JINA_API_KEY", raising=False)
+def test_web_search_no_key_has_no_backend(monkeypatch):
+    for var in ("DEEPSEEK_API_KEY", "TAVILY_API_KEY", "JINA_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
     tool = WebSearchTool()
-    assert tool._provider == "duckduckgo"
+    assert tool._provider is None
+    assert tool.backends == ()
 
 
 def test_web_search_empty_api_key_overrides_env(monkeypatch):
-    """Explicit api_key='' (force-unset) must beat the env var, not fall back."""
-    monkeypatch.delenv("JINA_API_KEY", raising=False)
-    monkeypatch.setenv("BOCHA_API_KEY", "from-env")
-    tool = WebSearchTool(api_key="")
-    assert tool._bocha_api_key == ""
-    assert tool._provider == "duckduckgo"
+    """Explicit tavily_api_key='' (force-unset) must beat the env var, not fall back."""
+    for var in ("DEEPSEEK_API_KEY", "JINA_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("TAVILY_API_KEY", "from-env")
+    tool = WebSearchTool(tavily_api_key="")
+    assert tool._tavily_api_key == ""
+    assert tool.backends == ()
 
 
 def test_web_search_unknown_backend_raises(monkeypatch):
-    monkeypatch.setenv("BOCHA_API_KEY", "k")
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
     with pytest.raises(ValueError, match="unknown backend"):
         WebSearchTool(backend="brave")
 
 
-def test_web_search_bocha_backend_without_key_raises(monkeypatch):
-    """Forcing backend='bocha' with no key fails loudly, not as a 'Bearer None' 401."""
-    monkeypatch.delenv("BOCHA_API_KEY", raising=False)
+def test_web_search_tavily_backend_without_key_raises(monkeypatch):
+    """Forcing backend='tavily' with no key fails loudly, not as a 'Bearer None' 401."""
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     with pytest.raises(ValueError, match="requires an API key"):
-        WebSearchTool(backend="bocha")
+        WebSearchTool(backend="tavily")
 
 
 # ── Validation edge cases ─────────────────────────────────────────────────
@@ -197,8 +199,8 @@ def test_extra_tools_override_is_logged_and_unwarned(tmp_path, caplog):
     """
     import logging
 
-    # ``read_file`` is unconditional — without it (e.g. overriding the
-    # bs4-gated web_search on a bare install) replace would be False and the
+    # ``read_file`` is unconditional — without it (e.g. overriding
+    # web_search, which needs a search key) replace would be False and the
     # asserted INFO line would never fire.
     custom = NamedTool("read_file", description="host-owned")
     with caplog.at_level(logging.INFO):
@@ -217,18 +219,18 @@ def test_extra_tools_override_is_logged_and_unwarned(tmp_path, caplog):
 # ── Supporting invariant: BUILTIN_TOOL_NAMES stays in sync ────────────────
 
 
-def test_builtin_tool_names_constant_in_sync(tmp_path):
+def test_builtin_tool_names_constant_in_sync(tmp_path, monkeypatch):
     """The static name set must equal what registration actually produces.
 
     Pins the hand-maintained constant to reality so a tool rename can't
     silently desync the ``disable_tools`` validator. bg_store is forced
     live so the conditional bg-agent tools register.
 
-    The web tools are conditional on the ``[web]`` extra, so instead of
+    ``web_fetch`` is conditional on the ``[web]`` extra, so instead of
     *skipping* without ``bs4`` (which would leave the constant un-guarded on
-    a no-[web] CI lane and let a rename slip through), we subtract the web
-    names from the expected set when ``bs4`` is absent — the invariant is
-    still enforced in both environments.
+    a no-[web] CI lane and let a rename slip through), we subtract it from
+    the expected set when ``bs4`` is absent — the invariant is still enforced
+    in both environments. ``web_search`` needs a search key, so one is set.
     """
     import importlib.util
     from unittest.mock import Mock
@@ -249,13 +251,123 @@ def test_builtin_tool_names_constant_in_sync(tmp_path):
     from agentao.tools.base import ToolRegistry
 
     fake.tools = ToolRegistry()
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
     register_builtin_tools(fake)
 
     expected = set(BUILTIN_TOOL_NAMES)
     if importlib.util.find_spec("bs4") is None:
-        expected -= {"web_fetch", "web_search"}  # not registered without [web]
+        expected -= {"web_fetch"}  # not registered without [web]
 
     assert set(fake.tools.tools) == expected
+
+
+def _no_search_keys(monkeypatch):
+    for var in ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "TAVILY_API_KEY", "JINA_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def _omitted_notes(caplog):
+    return [r for r in caplog.records if "web_search omitted" in r.getMessage()]
+
+
+def test_web_search_is_omitted_without_a_search_key(tmp_path, monkeypatch, caplog):
+    """Every backend needs a key; with none, the tool would only ever return a
+    configuration error after a confirmation prompt, so it is not offered."""
+    import logging
+
+    _no_search_keys(monkeypatch)
+    with caplog.at_level(logging.INFO):
+        agent = make_dummy_agent(tmp_path)
+    try:
+        assert "web_search" not in agent.tools.tools
+        assert len(_omitted_notes(caplog)) == 1
+    finally:
+        agent.close()
+
+
+def test_web_search_registers_with_a_search_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    agent = make_dummy_agent(tmp_path)
+    try:
+        assert agent.tools.tools["web_search"].backends == ("tavily",)
+    finally:
+        agent.close()
+
+
+def test_web_search_does_not_need_the_web_extra(tmp_path, monkeypatch, caplog):
+    """No backend parses HTML; only web_fetch needs beautifulsoup4."""
+    import importlib.util
+    import logging
+
+    real_find_spec = importlib.util.find_spec
+
+    def find_spec(name, *args, **kwargs):
+        if name == "bs4":
+            return None
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    monkeypatch.setenv("TAVILY_API_KEY", "k")
+    with caplog.at_level(logging.INFO):
+        agent = make_dummy_agent(tmp_path)
+    try:
+        assert "web_search" in agent.tools.tools
+        assert "web_fetch" not in agent.tools.tools
+        notes = [r.getMessage() for r in caplog.records if "beautifulsoup4" in r.getMessage()]
+        assert notes and all("web_search" not in n for n in notes)
+    finally:
+        agent.close()
+
+
+def test_omitted_note_is_logged_once_per_process(tmp_path, monkeypatch, caplog):
+    """A sub-agent spawn builds the registry again; the note must not repeat."""
+    import logging
+
+    _no_search_keys(monkeypatch)
+    with caplog.at_level(logging.INFO):
+        first = make_dummy_agent(tmp_path / "a")
+        second = make_dummy_agent(tmp_path / "b")
+    try:
+        assert "web_search" not in second.tools.tools
+        assert len(_omitted_notes(caplog)) == 1
+    finally:
+        first.close()
+        second.close()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"disable_tools": {"web_search"}},
+        {"enabled_tools": {"read_file"}},
+        {"extra_tools": [NamedTool("web_search", description="host-owned")]},
+    ],
+    ids=["disabled", "not-enabled", "replaced"],
+)
+def test_host_owned_web_search_skips_the_default(tmp_path, monkeypatch, caplog, kwargs):
+    """The default is not even built, so no "omitted" note claims otherwise."""
+    import logging
+
+    import agentao.tooling.registry as registry
+
+    built = []
+
+    class _Counting(registry.WebSearchTool):
+        def __init__(self, *a, **k):
+            built.append(1)
+            super().__init__(*a, **k)
+
+    monkeypatch.setattr(registry, "WebSearchTool", _Counting)
+    _no_search_keys(monkeypatch)
+    with caplog.at_level(logging.INFO):
+        agent = make_dummy_agent(tmp_path, **kwargs)
+    try:
+        assert built == []
+        assert _omitted_notes(caplog) == []
+        if "extra_tools" in kwargs:
+            assert agent.tools.tools["web_search"].description == "host-owned"
+    finally:
+        agent.close()
 
 
 def test_registrable_tool_reexport_identity():

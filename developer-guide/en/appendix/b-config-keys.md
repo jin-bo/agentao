@@ -36,7 +36,9 @@ Every knob Agentao reads — environment variables first, then on-disk JSON. All
 | Key | Consumed by | Purpose |
 |-----|-------------|---------|
 | `GITHUB_TOKEN` | Skill catalog fetcher | Higher-rate GitHub API access |
-| `BOCHA_API_KEY` | `web_search` tool | Use Bocha Search API instead of DuckDuckGo. If absent, the tool falls back to DuckDuckGo automatically. |
+| `TAVILY_API_KEY` | `web_search` tool | Tavily backend. The fallback chain is `deepseek` → `tavily` → `jina`; each backend joins only when its key resolves. With no key, `web_search` is not registered. |
+| `DEEPSEEK_API_KEY` + `DEEPSEEK_BASE_URL` | `web_search` tool | The `deepseek` backend reuses the chat key, but only when `DEEPSEEK_BASE_URL` is an `https` URL on `api.deepseek.com`. A key behind a proxy or gateway does not enable search. |
+| `JINA_API_KEY` | `web_search` tool | Jina backend (`s.jina.ai`, which needs a key). Also lifts the rate limit of `web_fetch`'s `jina` fallback. |
 
 MCP servers and custom tools typically read their own env keys — those are defined in your `.agentao/mcp.json` or your custom-tool code, not here.
 

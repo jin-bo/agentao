@@ -23,7 +23,7 @@ Agentao 源码库使用 **`uv`** 做包管理与运行。嵌入你的应用时�
 # 嵌入宿主（`from agentao import Agentao`）—— 闭包最小
 pip install agentao
 
-# 用 web_fetch / web_search 工具 —— 加 beautifulsoup4
+# 用 web_fetch 工具 —— 加 beautifulsoup4（web_search 只需要一个搜索 key）
 pip install 'agentao[web]'
 
 # 用中文记忆召回 —— 加 jieba
@@ -96,7 +96,7 @@ Agentao 通过 OpenAI 兼容接口调用 LLM。你至少需要**一组凭据**�
 ```bash
 # CLI / 交互 UI（P0.9 把这些从默认核心里拆出来）
 pip install 'agentao[cli]'       # rich + prompt-toolkit + readchar + pygments
-pip install 'agentao[web]'       # beautifulsoup4 —— web_fetch / web_search 必需
+pip install 'agentao[web]'       # beautifulsoup4 —— web_fetch 必需
 pip install 'agentao[i18n]'      # jieba —— 中文记忆召回
 
 # 较重的可选能力
@@ -113,8 +113,10 @@ pip install 'agentao[full]'        # cli + web + i18n + playwright + tokenizer
 > `docs/design/optimization-opportunities-review.md` T1.1），`[crawl4ai]` 在
 > **0.4.18 被 `[playwright]` 取代**。它们现在都解析不到了。
 
-> 不装 `[web]` 时注册阶段就会**跳过** `web_fetch` / `web_search`——LLM 在工具
-> 列表里看不到它们，避免 model 调一个会失败的工具。不装 `[i18n]` 时 CJK 记忆
+> 不装 `[web]` 时注册阶段就会**跳过** `web_fetch`——LLM 在工具列表里看不到它，
+> 避免 model 调一个会失败的工具。`web_search` 不需要 `[web]`，但需要一个搜索
+> key（`TAVILY_API_KEY`、`JINA_API_KEY`，或 `DEEPSEEK_API_KEY` 加指向
+> `api.deepseek.com` 的 `DEEPSEEK_BASE_URL`），没有 key 时跳过。不装 `[i18n]` 时 CJK 记忆
 > 召回会一次性 warning 并降级（Latin 查询完全跳过 jieba，零成本）。`[cli]` 是
 > 跑 `agentao` 命令行的必需 extras——裸装运行 `agentao` 会输出友好提示
 > `pip install agentao[cli]` 并 exit 2。0.5.9 起有两个例外：`agentao --acp` 和

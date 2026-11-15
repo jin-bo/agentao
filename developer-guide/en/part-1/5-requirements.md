@@ -24,7 +24,7 @@ install line that matches your usage:
 # Embedding host (`from agentao import Agentao`) — minimum closure
 pip install agentao
 
-# Need the web_fetch / web_search tools — adds beautifulsoup4
+# Need the web_fetch tool — adds beautifulsoup4 (web_search needs only a search key)
 pip install 'agentao[web]'
 
 # Need Chinese-text memory recall — adds jieba
@@ -98,7 +98,7 @@ Capabilities split into extras post-0.4.0; combine them with comma syntax
 ```bash
 # CLI / interactive UI (P0.9 demoted these from the bundled core)
 pip install 'agentao[cli]'       # rich + prompt-toolkit + readchar + pygments
-pip install 'agentao[web]'       # beautifulsoup4 — required for web_fetch / web_search
+pip install 'agentao[web]'       # beautifulsoup4 — required for web_fetch
 pip install 'agentao[i18n]'      # jieba — Chinese-text memory recall
 
 # Heavier optional capabilities
@@ -116,9 +116,12 @@ pip install 'agentao[full]'        # cli + web + i18n + playwright + tokenizer
 > `docs/design/optimization-opportunities-review.md` T1.1), and `[crawl4ai]`
 > was **replaced by `[playwright]` in 0.4.18**. None of them resolve any more.
 
-> Without `[web]`, the registry **omits** `web_fetch` and `web_search` entirely
-> — the model will not see them in its tool schema, avoiding the trap where a
-> model calls a tool that fails with a generic ImportError. Without `[i18n]`,
+> Without `[web]`, the registry **omits** `web_fetch` entirely — the model
+> will not see it in its tool schema, avoiding the trap where a model calls a
+> tool that fails with a generic ImportError. `web_search` does not need
+> `[web]`; it needs a search key (`TAVILY_API_KEY`, `JINA_API_KEY`, or
+> `DEEPSEEK_API_KEY` with `DEEPSEEK_BASE_URL` on `api.deepseek.com`), and is
+> omitted without one. Without `[i18n]`,
 > CJK memory recall degrades gracefully (one-time warning + empty CJK tokens);
 > Latin queries skip jieba entirely so they pay no cost. The `[cli]` extra is
 > required to run the `agentao` console script — bare installs print a friendly

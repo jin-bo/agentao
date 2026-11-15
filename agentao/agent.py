@@ -722,7 +722,7 @@ class Agentao:
           (:data:`BUILTIN_TOOL_NAMES`) — a typo (``{"web_serach"}``) raises
           instead of becoming a no-op. The check is against *static
           registration eligibility*, not live availability, so disabling
-          ``web_search`` is legal even when ``[web]`` isn't installed
+          ``web_search`` is legal even when no search key is set
           (it's just a no-op then).
         * ``enabled_tools`` (when not ``None``) must be mutually exclusive
           with ``disable_tools`` and must not name a reserved tool

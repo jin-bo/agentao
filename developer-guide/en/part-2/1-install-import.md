@@ -15,7 +15,7 @@ Chinese tokenization are opt-in extras.
 # Embedding host (`from agentao import Agentao`) — minimum closure
 pip install 'agentao>=0.5.0'
 
-# Need the web_fetch / web_search tools — adds beautifulsoup4
+# Need the web_fetch tool — adds beautifulsoup4 (web_search needs only a search key)
 pip install 'agentao[web]>=0.5.0'
 
 # Need Chinese-text memory recall — adds jieba
@@ -63,7 +63,7 @@ What stays lazy now (load on first runtime use):
 | Library | First triggered by |
 |---|---|
 | `openai` | `LLMClient(...)` construction (default LLM client only — hosts that inject `llm_client=` never load it) |
-| `bs4` / `httpx` | `WebFetchTool.execute()` / `WebSearchTool.execute()` — note: post-0.4.0 these tools are skipped at registration if `bs4` is absent (the `[web]` extra is opt-in), so the model never sees a tool whose execute would fail |
+| `bs4` | `WebFetchTool.execute()` — note: post-0.4.0 the tool is skipped at registration if `bs4` is absent (the `[web]` extra is opt-in), so the model never sees a tool whose execute would fail. `WebSearchTool` needs only `httpx` (core) since 0.5.21, and registers when a search key resolves |
 | `jieba` | CJK-bearing query through `MemoryRetriever` — pure-Latin queries skip jieba entirely; if `[i18n]` is absent, CJK recall degrades to empty with a one-time warning |
 | `filelock` | `SkillRegistry.save()` (CLI / `agentao plugin install`) |
 | `mcp` SDK (`McpClientManager`, `McpTool`) | first MCP server attach (`init_mcp` or hosts that pass `mcp_manager=`) |
