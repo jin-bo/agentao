@@ -39,6 +39,7 @@ from ._compat import (
     McpProtocolError,
     READ_SUPPORTS_INPUT_REQUIRED,
     UnexpectedClaimedResult,
+    annotations_dict,
     field,
     httpx_for_mcp,
     is_tool_list_changed,
@@ -69,6 +70,7 @@ from .resources import (
 from .oauth import AuthVerdict, StoredTokenAuth
 from ._dispatch import Dispatch, current_dispatch, guard_client
 from .oauth_store import OAuthRuntime
+from .tool import annotations_claim_read_only
 from . import skills as _skills
 
 logger = logging.getLogger("agentao.mcp")
@@ -2687,6 +2689,12 @@ class McpClientManager:
                 ),
                 "skills_error": client.skills_problem if client.skills_requested else None,
                 "trusted": client.is_trusted,
+                # Tools the server marks read-only. The marks count only for a
+                # trusted server (``McpTool.is_read_only``).
+                "read_only_marked": sum(
+                    1 for t in client.tools
+                    if annotations_claim_read_only(annotations_dict(t.annotations))
+                ),
                 "error": client.error_message,
             })
         return result

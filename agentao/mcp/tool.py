@@ -71,6 +71,20 @@ def parse_mcp_tool_name(fqn: str) -> tuple:
     return rest[:idx], rest[idx + 1:]
 
 
+def annotations_claim_read_only(annotations: Dict[str, Any]) -> bool:
+    """Whether a server's annotations mark a tool read-only.
+
+    ``destructiveHint: true`` overrides ``readOnlyHint`` when a server sends
+    both: a contradictory pair must not let the call through the read-only
+    gate. This says what the server claims; whether the claim counts is
+    :attr:`McpTool.is_read_only`, which also requires a trusted server.
+    """
+    return (
+        annotations.get("readOnlyHint") is True
+        and annotations.get("destructiveHint") is not True
+    )
+
+
 class McpTool(Tool):
     """Wraps an MCP-discovered tool as a Agentao Tool."""
 
@@ -143,16 +157,18 @@ class McpTool(Tool):
     @property
     def is_read_only(self) -> bool:
         # Per MCP spec: never honor annotations from an untrusted server.
-        # destructiveHint=true overrides readOnlyHint when a server sends
-        # both — a contradictory pair must not let the call slip through
-        # the read-only gate. Security-positive: assume destructive in doubt.
         if not self._trusted:
             return False
-        ann = self.mcp_annotations
-        return (
-            ann.get("readOnlyHint") is True
-            and ann.get("destructiveHint") is not True
-        )
+        return annotations_claim_read_only(self.mcp_annotations)
+
+    @property
+    def read_only_hint_ignored(self) -> bool:
+        """The server marks this tool read-only, but the server is not trusted.
+
+        Read-only mode blocks such a tool, and the block message says why:
+        the mark counts only once the server has ``"trust": true``.
+        """
+        return not self._trusted and annotations_claim_read_only(self.mcp_annotations)
 
     @property
     def requires_confirmation(self) -> bool:

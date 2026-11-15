@@ -337,7 +337,7 @@ If a server declares standard MCP `ToolAnnotations`, Agentao consults them — *
 
 | `trust` | annotation | effect |
 |---|---|---|
-| `false` (default) | any | hints ignored — server may lie; confirmation always required |
+| `false` (default) | any | hints ignored — server may lie; confirmation always required. In read-only mode, a tool marked `readOnlyHint: true` is blocked, and the block message says the mark needs `trust: true` |
 | `true` | `readOnlyHint: true` | `is_read_only=True` (read-only mode permits the call), no confirmation |
 | `true` | `destructiveHint: true` | confirmation required — overrides the trust default |
 | `true` | none / neither | current trusted behavior — no confirmation |

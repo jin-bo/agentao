@@ -79,6 +79,16 @@ _DO_NOT_RETRY_CLOSE = (
     "or use a different tool to achieve the same outcome."
 )
 
+# Added to the read-only block of an MCP tool whose server marks it read-only
+# but is not trusted. Fixed text: nothing server-authored goes in it. It
+# names trust's cost too, so a model relaying it does not present trust as
+# a free fix.
+_UNTRUSTED_READ_ONLY_MARK = (
+    "Its MCP server marks it read-only, but that mark counts only for a "
+    'server with "trust": true in mcp.json, and trust also lets that '
+    "server's tools not marked destructive run without confirmation. "
+)
+
 # Close for a call that needed approval when no one could give it (#565). It
 # bars the same call and leaves the model the tools the rules already allow.
 _APPROVAL_UNAVAILABLE_CLOSE = (
@@ -364,9 +374,15 @@ class ToolExecutor:
             detail = plan.permission_detail
             deny_reason = detail.reason if detail is not None else None
             if readonly_mode and not tool.is_read_only:
+                # ``is True``: a duck-typed tool (or a MagicMock) answers any
+                # attribute, and only a real McpTool says this.
+                untrusted_mark = (
+                    getattr(tool, "read_only_hint_ignored", False) is True
+                )
                 result_text = (
                     f"[Readonly mode] Tool '{fn}' is blocked — "
                     f"only read-only tools are permitted in readonly mode. "
+                    + (_UNTRUSTED_READ_ONLY_MARK if untrusted_mark else "")
                     + _DO_NOT_RETRY_CLOSE
                 )
                 summary = "denied by permission engine"

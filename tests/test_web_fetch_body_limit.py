@@ -240,6 +240,38 @@ def test_the_jina_fallback_is_capped_too(monkeypatch, route_httpx):
     assert stream.pulled < 10
 
 
+def test_a_jina_timeout_is_reported_by_name(monkeypatch, route_httpx):
+    """The whole-call ceiling raises ``asyncio.TimeoutError``, whose ``str`` is
+    empty; the fallback's error used to end at the label's colon."""
+    monkeypatch.setenv("AGENTAO_WEB_FETCH_FALLBACK", "jina")
+    monkeypatch.setattr(web_mod, "_FETCH_TOTAL_TIMEOUT_S", 0.05)
+
+    async def stalls(request):
+        await asyncio.sleep(5)
+        return httpx.Response(200, text="never")
+
+    route_httpx(stalls)
+    tool = web_mod.WebFetchTool()
+    body, error = asyncio.run(tool._run_fallback("https://example.com/", reason="test"))
+    assert body is None
+    assert error.startswith("jina reader (") and error.endswith("TimeoutError")
+
+
+def test_a_playwright_timeout_is_reported_by_name(monkeypatch):
+    """The render ceiling raises ``asyncio.TimeoutError`` too; the playwright
+    fallback's error must name it, as the jina and deepseek ones do."""
+    monkeypatch.setenv("AGENTAO_WEB_FETCH_FALLBACK", "playwright")
+
+    async def times_out(url, allow_networks=None):
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(web_mod, "_render_with_playwright", times_out)
+    tool = web_mod.WebFetchTool()
+    body, error = asyncio.run(tool._run_fallback("https://example.com/", reason="test"))
+    assert body is None
+    assert error.startswith("playwright (") and error.endswith("TimeoutError")
+
+
 def test_the_limit_is_one_implementation():
     """Both surfaces and the jina path read through the shared helpers."""
     import inspect

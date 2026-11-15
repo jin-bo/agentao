@@ -137,6 +137,15 @@ def _truncate(text: str, limit: int) -> str:
     return text
 
 
+def _error_text(e: BaseException) -> str:
+    """``str(e)``, or the exception's type name when that is empty.
+
+    ``asyncio.TimeoutError`` (every whole-call ceiling here) and some httpx
+    transport errors have an empty ``str``; a reported failure is never blank.
+    """
+    return str(e) or type(e).__name__
+
+
 def _format_fallback_body(url: str, label: str, body: str) -> str:
     body = body or "[No content extracted]"
     return f"URL: {url}\nFallback: {label}\n\n{_truncate(body, 20000)}"
@@ -1022,18 +1031,18 @@ class WebFetchTool(AsyncToolBase):
             return message
         except httpx.HTTPError as e:
             fallback_result, fallback_error = await self._run_fallback(
-                url, reason=f"httpx error: {e}", extract_text=extract_text
+                url, reason=f"httpx error: {_error_text(e)}", extract_text=extract_text
             )
             if fallback_result is not None:
                 return fallback_result
             # The httpx error is the more accurate diagnosis of what the site
             # did; the fallback's failure is appended, not substituted.
-            message = f"Error fetching URL: {e}"
+            message = f"Error fetching URL: {_error_text(e)}"
             if fallback_error:
                 message += f"\nFallback also failed: {fallback_error}"
             return message
         except Exception as e:
-            return f"Error: {e}"
+            return f"Error: {_error_text(e)}"
 
     async def _run_fallback(
         self, url: str, *, reason: str, extract_text: bool = True
@@ -1074,8 +1083,8 @@ class WebFetchTool(AsyncToolBase):
         try:
             markdown = await _fetch_via_jina(url)
         except Exception as e:
-            logger.warning("jina reader failed for %s: %s", url, e)
-            return None, f"{label}: {e}"
+            logger.warning("jina reader failed for %s: %r", url, e)
+            return None, f"{label}: {_error_text(e)}"
         return _format_fallback_body(url, label, markdown), None
 
     async def _deepseek_fetch(self, url: str) -> tuple[str | None, str | None]:
@@ -1103,9 +1112,7 @@ class WebFetchTool(AsyncToolBase):
             logger.warning("deepseek fetch failed for %s: %r", url, e)
             if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 404:
                 return None, f"{label}: HTTP 404 — DeepSeek could not get usable content"
-            # ``asyncio.TimeoutError`` (the whole-call ceiling) has an empty
-            # ``str``; name the type so the reported failure is never blank.
-            return None, f"{label}: {str(e) or type(e).__name__}"
+            return None, f"{label}: {_error_text(e)}"
         body = f"Title: {title}\n\n{content}" if title else content
         return _format_fallback_body(url, label, body), None
 
@@ -1140,8 +1147,8 @@ class WebFetchTool(AsyncToolBase):
             # Playwright reports at launch, not at import), the render
             # timeout, and a parse failure on a multi-megabyte SPA DOM —
             # which must not escape into the caller's own except handler.
-            logger.warning("playwright render failed for %s: %s", url, e)
-            return None, f"{label}: {e}"
+            logger.warning("playwright render failed for %s: %r", url, e)
+            return None, f"{label}: {_error_text(e)}"
         return _format_fallback_body(url, label, body), None
 
 
