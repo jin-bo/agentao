@@ -35,7 +35,10 @@ logger = logging.getLogger("agentao.tools.web")
 _FALLBACK_NONE = "none"
 _FALLBACK_JINA = "jina"
 _FALLBACK_PLAYWRIGHT = "playwright"
-_VALID_FALLBACKS = {_FALLBACK_NONE, _FALLBACK_JINA, _FALLBACK_PLAYWRIGHT}
+_FALLBACK_DEEPSEEK = "deepseek"
+_VALID_FALLBACKS = {
+    _FALLBACK_NONE, _FALLBACK_JINA, _FALLBACK_PLAYWRIGHT, _FALLBACK_DEEPSEEK,
+}
 
 #: Retired value → its replacement. ``crawl4ai`` named the *engine*, and the
 #: engine changed (0.4.18) while the behavior — render locally in a headless
@@ -180,7 +183,7 @@ _HTTP_TIMEOUT_S = 30.0
 #: so a server that keeps sending — a byte every few seconds — resets it on each
 #: read and is never cut off by it alone.
 _FETCH_TOTAL_TIMEOUT_S = 60.0
-#: Decoded bytes the httpx and jina paths will hold for one response. The tool
+#: Decoded bytes the httpx, jina and deepseek paths will hold for one response. The tool
 #: returns at most 10,000 characters, so anything near this is already mostly
 #: discarded; 5 MiB leaves room for a heavy HTML page (a 2.2 MB DOM is the
 #: largest measured below) while keeping a hostile or accidental multi-GB body
@@ -792,6 +795,17 @@ class WebFetchTool(AsyncToolBase):
         # tells the LLM and the host operator exactly where outbound traffic
         # can go before the user is ever asked to confirm a fetch.
         self._fallback, self._retired_fallback_value = _read_fallback_setting()
+        # ``deepseek`` needs a key, under the same rule as ``web_search``. With
+        # none, there is no fallback, and the description says so: telling the
+        # model the URL may go to DeepSeek when nothing will be sent would make
+        # the audit surface wrong in the other direction.
+        self._deepseek_api_key: Optional[str] = None
+        self._deepseek_unavailable = False
+        if self._fallback == _FALLBACK_DEEPSEEK:
+            self._deepseek_api_key = _deepseek_key_from_env("web_fetch", "fetch fallback")
+            if not self._deepseek_api_key:
+                self._fallback = _FALLBACK_NONE
+                self._deepseek_unavailable = True
         # Opt-in SSRF allowlist (AGENTAO_WEB_FETCH_ALLOW_CIDRS): CIDRs that are
         # not globally routable but the operator trusts — e.g. a fake-IP proxy
         # range (Clash/V2Ray → 198.18.0.0/15) or an internal service. Empty =
@@ -816,6 +830,12 @@ class WebFetchTool(AsyncToolBase):
                 " fetch fails, falls back to Jina Reader — the URL is sent"
                 " to https://r.jina.ai and rendered server-side."
             )
+        elif self._fallback == _FALLBACK_DEEPSEEK:
+            base += (
+                " If the page requires JavaScript rendering or the direct"
+                " fetch fails, falls back to DeepSeek's Fetch API — the URL is"
+                " sent to https://api.deepseek.com and fetched server-side."
+            )
         elif self._fallback == _FALLBACK_PLAYWRIGHT:
             base += (
                 " If the page requires JavaScript rendering or the direct"
@@ -825,6 +845,8 @@ class WebFetchTool(AsyncToolBase):
             )
         else:
             base += " No JS-rendering fallback is configured."
+        if self._deepseek_unavailable:
+            base += f" NOTE: {_DEEPSEEK_NO_KEY_NOTE}, so no fallback is configured."
         if self._retired_fallback_value:
             base += (
                 f" NOTE: AGENTAO_WEB_FETCH_FALLBACK={self._retired_fallback_value}"
@@ -950,11 +972,19 @@ class WebFetchTool(AsyncToolBase):
                     f" configured fallback failed ({fallback_error}); only the"
                     " static shell was captured.\n"
                 )
+            elif self._deepseek_unavailable:
+                # ``=deepseek`` is already set; telling the model to set it
+                # would be wrong. Name what is missing instead.
+                js_note = (
+                    "Note: page appears to require JS rendering; only the static"
+                    f" shell was captured. {_DEEPSEEK_NO_KEY_NOTE}.\n"
+                )
             else:
                 js_note = (
                     "Note: page appears to require JS rendering; only the static"
                     " shell was captured. Set AGENTAO_WEB_FETCH_FALLBACK=jina"
-                    " (sends URL to r.jina.ai) or =playwright (local headless"
+                    " (sends URL to r.jina.ai), =deepseek (sends URL to"
+                    " api.deepseek.com) or =playwright (local headless"
                     " browser) to enable a fallback.\n"
                 )
             # Second hop rather than folding this into `_parse_page`: the
@@ -1023,16 +1053,19 @@ class WebFetchTool(AsyncToolBase):
         ``validate_outbound_url`` on the primary path (a blocked target raises
         ``UrlPolicyError``, which the caller returns without falling back).
         In-browser navigation is re-validated per request by
-        ``_guard_context_requests``. **Jina is not** — it fetches the target
-        server-side, where agentao has no visibility. That fallback stays opt-in
-        (``AGENTAO_WEB_FETCH_FALLBACK``, default ``none``) and is surfaced in
-        the tool description.
+        ``_guard_context_requests``. **Jina and DeepSeek are not** — they
+        fetch the target server-side, where agentao has no visibility. Those
+        fallbacks stay opt-in (``AGENTAO_WEB_FETCH_FALLBACK``, default
+        ``none``) and are surfaced in the tool description.
         """
         if self._fallback == _FALLBACK_NONE:
             return None, None
         if self._fallback == _FALLBACK_JINA:
             logger.info("web_fetch fallback=jina for %s (%s)", url, reason)
             return await self._jina_fetch(url)
+        if self._fallback == _FALLBACK_DEEPSEEK:
+            logger.info("web_fetch fallback=deepseek for %s (%s)", url, reason)
+            return await self._deepseek_fetch(url)
         logger.info("web_fetch fallback=playwright for %s (%s)", url, reason)
         return await self._playwright_fetch(url, extract_text=extract_text)
 
@@ -1044,6 +1077,37 @@ class WebFetchTool(AsyncToolBase):
             logger.warning("jina reader failed for %s: %s", url, e)
             return None, f"{label}: {e}"
         return _format_fallback_body(url, label, markdown), None
+
+    async def _deepseek_fetch(self, url: str) -> tuple[str | None, str | None]:
+        import httpx
+
+        label = f"deepseek fetch ({_DEEPSEEK_FETCH_URL})"
+        # Refused here, not by the API: a URL's credentials must never reach a
+        # third party, and an over-long URL would only cost a 400 round trip.
+        try:
+            parts = urlsplit(url)
+            has_credentials = parts.username is not None or parts.password is not None
+        except ValueError:
+            # Fail closed: a URL we cannot parse is not sent to a third party.
+            return None, f"{label}: the URL cannot be parsed, so it is not sent to DeepSeek"
+        if has_credentials:
+            return None, f"{label}: the URL carries credentials, which are not sent to DeepSeek"
+        if len(url) > _DEEPSEEK_FETCH_MAX_URL_CHARS:
+            return None, (
+                f"{label}: the URL is {len(url)} characters; the Fetch API accepts"
+                f" at most {_DEEPSEEK_FETCH_MAX_URL_CHARS}"
+            )
+        try:
+            title, content = await _fetch_via_deepseek(url, self._deepseek_api_key or "")
+        except Exception as e:
+            logger.warning("deepseek fetch failed for %s: %r", url, e)
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 404:
+                return None, f"{label}: HTTP 404 — DeepSeek could not get usable content"
+            # ``asyncio.TimeoutError`` (the whole-call ceiling) has an empty
+            # ``str``; name the type so the reported failure is never blank.
+            return None, f"{label}: {str(e) or type(e).__name__}"
+        body = f"Title: {title}\n\n{content}" if title else content
+        return _format_fallback_body(url, label, body), None
 
     async def _playwright_fetch(
         self, url: str, *, extract_text: bool = True
@@ -1120,16 +1184,26 @@ def _format_search_results(query: str, items: list[dict]) -> str:
     return out
 
 
-#: The only host whose ``DEEPSEEK_BASE_URL`` lets ``web_search`` reuse the
-#: chat key ``DEEPSEEK_API_KEY``. A key behind any other base URL is a key for
-#: some other service (a proxy, a reseller, a self-hosted gateway), and sending
-#: it to DeepSeek's Search API would be wrong at best.
+#: The only host whose ``DEEPSEEK_BASE_URL`` lets ``web_search`` and the
+#: ``web_fetch`` fallback reuse the chat key ``DEEPSEEK_API_KEY``. A key behind
+#: any other base URL is a key for some other service (a proxy, a reseller, a
+#: self-hosted gateway), and sending it to DeepSeek's Search or Fetch API would
+#: be wrong at best.
 _DEEPSEEK_OFFICIAL_HOST = "api.deepseek.com"
 _DEEPSEEK_SEARCH_URL = "https://api.deepseek.com/v1/tools/search"
 #: Measured from the API reference (2026-11): ``query`` is 1–128 characters,
 #: ``count`` is 1–50.
 _DEEPSEEK_MAX_QUERY_CHARS = 128
 _DEEPSEEK_MAX_COUNT = 50
+#: Fetch API (2026-11 reference): ``url`` is 1–8192 characters, ``http`` or
+#: ``https`` with a host, and must not carry a username or password.
+_DEEPSEEK_FETCH_URL = "https://api.deepseek.com/v1/tools/fetch"
+_DEEPSEEK_FETCH_MAX_URL_CHARS = 8192
+#: Shared by the tool description and the JS-shell note, so the two never drift.
+_DEEPSEEK_NO_KEY_NOTE = (
+    "AGENTAO_WEB_FETCH_FALLBACK=deepseek is set but no DeepSeek key resolves"
+    " (DEEPSEEK_API_KEY with DEEPSEEK_BASE_URL on https://api.deepseek.com)"
+)
 _TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 _TAVILY_MAX_RESULTS = 20
 
@@ -1157,6 +1231,74 @@ def _is_official_deepseek_base_url(url: Optional[str]) -> bool:
         and parts.password is None
         and port in (None, 443)
     )
+
+
+def _deepseek_key_from_env(tool: str, role: str) -> Optional[str]:
+    """Reuse the chat key only when the chat endpoint is DeepSeek's own.
+
+    ``tool`` / ``role`` only word the once-per-process note (``web_search`` /
+    ``search backend``, ``web_fetch`` / ``fetch fallback``); the rule is the
+    same for both.
+    """
+    key = os.getenv("DEEPSEEK_API_KEY")
+    if not key:
+        return None
+    if _is_official_deepseek_base_url(os.getenv("DEEPSEEK_BASE_URL")):
+        return key
+    # Names only, never values: the base URL can carry credentials.
+    info_once(
+        logger,
+        f"{tool}:deepseek-base-url",
+        "%s: DEEPSEEK_API_KEY is set but DEEPSEEK_BASE_URL is not "
+        "https://%s; the deepseek %s stays off.",
+        tool,
+        _DEEPSEEK_OFFICIAL_HOST,
+        role,
+    )
+    return None
+
+
+async def _fetch_via_deepseek(url: str, api_key: str) -> tuple[str, str]:
+    """Fetch ``url`` through DeepSeek's Fetch API; return ``(title, content)``.
+
+    Raises on HTTP, parse or shape failure, or on empty content, so the caller
+    reports the fallback as failed. A 404 is DeepSeek saying it got no usable content (unavailable
+    page, site policy, unsupported type, nothing to extract). Billed only on a
+    200 with a result (2026-11 pricing). Like the jina path, the response is
+    streamed under ``_MAX_BODY_BYTES`` and the call under
+    ``_FETCH_TOTAL_TIMEOUT_S``; there is no ``validate_outbound_url`` because
+    the target is the fixed DeepSeek host and DeepSeek fetches ``url``.
+    """
+    import httpx
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_S) as client:
+
+        async def _post() -> "httpx.Response":
+            response = await client.send(
+                client.build_request(
+                    "POST", _DEEPSEEK_FETCH_URL, json={"url": url}, headers=headers
+                ),
+                stream=True,
+            )
+            await aread_capped(response, _MAX_BODY_BYTES)
+            return response
+
+        response = await asyncio.wait_for(_post(), timeout=_FETCH_TOTAL_TIMEOUT_S)
+        response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, dict) or not isinstance(data.get("content"), str):
+        raise ValueError("unexpected response shape (no 'content' string)")
+    # A 200 with nothing in it is not a render: counting it as one would
+    # replace the static shell the caller still holds with an empty page.
+    if not data["content"].strip():
+        raise ValueError("empty 'content' in a 200 response")
+    title = data.get("title")
+    return (title if isinstance(title, str) else ""), data["content"]
 
 
 def _post_search_json(url: str, payload: dict, api_key: Optional[str]) -> Any:
@@ -1260,7 +1402,7 @@ class WebSearchTool(Tool):
             # neither read it nor spend the once-per-process base-URL note.
             self._deepseek_api_key = None
         else:
-            self._deepseek_api_key = self._deepseek_key_from_env()
+            self._deepseek_api_key = _deepseek_key_from_env("web_search", "search backend")
         self._tavily_api_key = (
             tavily_api_key if tavily_api_key is not None else os.getenv("TAVILY_API_KEY")
         )
@@ -1315,24 +1457,6 @@ class WebSearchTool(Tool):
         }
         for name in self._chain:
             note_credential_value(explicit[name])
-
-    @staticmethod
-    def _deepseek_key_from_env() -> Optional[str]:
-        """Reuse the chat key only when the chat endpoint is DeepSeek's own."""
-        key = os.getenv("DEEPSEEK_API_KEY")
-        if not key:
-            return None
-        if _is_official_deepseek_base_url(os.getenv("DEEPSEEK_BASE_URL")):
-            return key
-        # Names only, never values: the base URL can carry credentials.
-        info_once(
-            logger,
-            "web_search:deepseek-base-url",
-            "web_search: DEEPSEEK_API_KEY is set but DEEPSEEK_BASE_URL is not "
-            "https://%s; the deepseek search backend stays off.",
-            _DEEPSEEK_OFFICIAL_HOST,
-        )
-        return None
 
     @property
     def backends(self) -> tuple[str, ...]:

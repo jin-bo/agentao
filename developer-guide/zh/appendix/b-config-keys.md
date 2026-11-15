@@ -37,7 +37,7 @@ Agentao 读取的所有开关——先看环境变量，再看磁盘上的 JSON�
 |----|--------|------|
 | `GITHUB_TOKEN` | 技能目录抓取器 | 提升 GitHub API 频控上限 |
 | `TAVILY_API_KEY` | `web_search` 工具 | Tavily 后端。回退链为 `deepseek` → `tavily` → `jina`，每个后端只在其 key 存在时加入。一个 key 都没有时不注册 `web_search`。 子进程（shell、MCP、ACP、hooks）都不会继承它（见 `AGENTAO_SCRUB_CHILD_ENV`）。 |
-| `DEEPSEEK_API_KEY` + `DEEPSEEK_BASE_URL` | `web_search` 工具 | `deepseek` 后端复用聊天 key，但只在 `DEEPSEEK_BASE_URL` 是 `api.deepseek.com` 上的 `https` URL 时启用。经代理或网关的 key 不会开启搜索。 |
+| `DEEPSEEK_API_KEY` + `DEEPSEEK_BASE_URL` | `web_search` 工具、`web_fetch` 回退 | `deepseek` 搜索后端和 `deepseek` 抓取回退（`AGENTAO_WEB_FETCH_FALLBACK=deepseek`）复用聊天 key，但只在 `DEEPSEEK_BASE_URL` 是 `api.deepseek.com` 上的 `https` URL 时启用。经代理或网关的 key 两者都不会开启。 |
 | `JINA_API_KEY` | `web_search` 工具 | Jina 后端（`s.jina.ai`，需要 key）。也用于提高 `web_fetch` 的 `jina` 回退的速率上限。 子进程（shell、MCP、ACP、hooks）都不会继承它（见 `AGENTAO_SCRUB_CHILD_ENV`）。 |
 
 MCP 服务器和自定义工具通常有自己的 env 键——写在 `.agentao/mcp.json` 或自定义工具代码里，不在此表。

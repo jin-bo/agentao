@@ -98,7 +98,7 @@ Agentao 的 `web_fetch` 通过 `agentao/security/url_policy.py::guarded_get_asyn
 
 - 单次操作超时 30 秒，整次抓取（所有跳转加响应体）另有 60 秒总时限——持续一点点发字节的服务器每次读取都会重置单次超时，只有总时限能终止它
 - 最多 20 次重定向，由 agentao 而非 httpx 跟随：**每一跳都重新解析并按 SSRF 策略重新校验**（含 `AGENTAO_WEB_FETCH_ALLOW_CIDRS`），跳转响应的 body 不读取、直接释放
-- 最终响应体最多读取**解码后 5 MiB**；声明的 `Content-Length` 超过上限时，一个字节都不读就拒绝；实际更大的 body（无论是否声明长度、是否压缩）以错误结束抓取，且不走回退。Jina 回退受同一上限和总时限约束。Playwright 回退不在此列：页面在浏览器进程里
+- 最终响应体最多读取**解码后 5 MiB**；声明的 `Content-Length` 超过上限时，一个字节都不读就拒绝；实际更大的 body（无论是否声明长度、是否压缩）以错误结束抓取，且不走回退。Jina 和 DeepSeek 回退受同一上限和总时限约束。Playwright 回退不在此列：页面在浏览器进程里
 - TLS 验证开启
 - User-Agent 可定制
 
