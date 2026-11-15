@@ -80,11 +80,11 @@ def _fresh_credential_registry(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _fresh_info_once_notes(monkeypatch):
-    """Forget which once-per-process INFO notes (``web._info_once``) were
-    logged, so a test that asserts a note does not depend on test order."""
-    from agentao.tools import web
+    """Forget which once-per-process INFO notes (``logging_utils.info_once``)
+    were logged, so a test that asserts a note does not depend on test order."""
+    from agentao import logging_utils
 
-    monkeypatch.setattr(web, "_INFO_ONCE_KEYS", set())
+    monkeypatch.setattr(logging_utils, "_INFO_ONCE_KEYS", set())
 
 
 @pytest.fixture

@@ -12,6 +12,7 @@ import importlib.util
 import logging
 from typing import TYPE_CHECKING
 
+from ..logging_utils import info_once
 from ..agents.tools import CancelBackgroundAgentTool, CheckBackgroundAgentTool
 from .agent_tools import transport_ask_user
 from ..tools import (
@@ -27,7 +28,6 @@ from ..tools import (
     WebSearchTool,
     WriteFileTool,
 )
-from ..tools.web import _info_once
 
 if TYPE_CHECKING:
     from ..agent import Agentao
@@ -152,11 +152,11 @@ def register_builtin_tools(agent: "Agentao") -> None:
     if importlib.util.find_spec("bs4") is not None:
         tools_to_register.append(WebFetchTool())
     else:
-        _info_once(
+        info_once(
+            _logger,
             "registry:no-bs4",
             "beautifulsoup4 not installed; web_fetch tool omitted. "
             "Run `pip install 'agentao[web]'` to enable.",
-            log=_logger,
         )
     # web_search needs only httpx (a core dependency), but every backend needs
     # a key. With none resolved the tool could only return a configuration
@@ -168,12 +168,12 @@ def register_builtin_tools(agent: "Agentao") -> None:
         if web_search.backends:
             tools_to_register.append(web_search)
         else:
-            _info_once(
+            info_once(
+                _logger,
                 "registry:no-search-key",
                 "No web_search backend configured; web_search omitted. Set "
                 "DEEPSEEK_API_KEY (with DEEPSEEK_BASE_URL on https://api.deepseek.com), "
                 "TAVILY_API_KEY or JINA_API_KEY to enable it.",
-                log=_logger,
             )
     tools_to_register.extend([
         agent.memory_tool,

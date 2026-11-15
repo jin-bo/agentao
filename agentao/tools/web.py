@@ -16,7 +16,8 @@ if TYPE_CHECKING:
     from bs4 import BeautifulSoup as _BeautifulSoup_t
 
 from .base import AsyncToolBase, Tool
-from ..capabilities.process import build_child_env
+from ..logging_utils import info_once
+from ..capabilities.process import build_child_env, note_credential_value
 from ..security.url_policy import (
     ResponseTooLargeError,
     UrlPolicyError,
@@ -1080,32 +1081,6 @@ class WebFetchTool(AsyncToolBase):
         return _format_fallback_body(url, label, body), None
 
 
-#: Keys of the INFO notes already logged by :func:`_info_once` in this process.
-_INFO_ONCE_KEYS: set[str] = set()
-_INFO_ONCE_LOCK = threading.Lock()
-
-
-def _info_once(key: str, msg: str, *args: Any, log: Optional[logging.Logger] = None) -> None:
-    """Log an INFO note once per process.
-
-    The web_search configuration notes are rebuilt with every ``Agentao``,
-    sub-agent spawns included; the state they report does not change in
-    between, so repeating them only fills ``agentao.log``.
-
-    The key is spent only when a handler can receive the note. A tool built
-    before ``agentao.log`` is attached (a host's ``extra_tools`` entry, say)
-    would otherwise use the one emit on a logger that drops it.
-    """
-    target = log or logger
-    if not (target.isEnabledFor(logging.INFO) and target.hasHandlers()):
-        return
-    with _INFO_ONCE_LOCK:
-        if key in _INFO_ONCE_KEYS:
-            return
-        _INFO_ONCE_KEYS.add(key)
-    target.info(msg, *args)
-
-
 #: Per-snippet cap so one verbose result can't dominate the tool output.
 _SNIPPET_LIMIT = 300
 
@@ -1292,7 +1267,6 @@ class WebSearchTool(Tool):
         self._jina_api_key = (
             jina_api_key if jina_api_key is not None else os.getenv("JINA_API_KEY")
         )
-
         if backend in self._RETIRED_BACKENDS:
             raise ValueError(
                 f"WebSearchTool(backend=): {backend!r} was retired in 0.5.21; "
@@ -1329,6 +1303,19 @@ class WebSearchTool(Tool):
         # no backend is configured. Kept for back-compat (tests + description).
         self._provider: Optional[str] = self._chain[0] if self._chain else None
 
+        # A key the host passes may come from any variable (``MY_TAVILY_PROD``);
+        # record its value so ``build_child_env`` drops that variable too, as
+        # ``LLMClient`` does for the chat key. Only once construction succeeded,
+        # and only for a backend in the chain: a key this tool never sends is
+        # not agentao's. The default names are already in ``HARNESS_ENV_KEYS``.
+        explicit = {
+            "deepseek": deepseek_api_key,
+            "tavily": tavily_api_key,
+            "jina": jina_api_key,
+        }
+        for name in self._chain:
+            note_credential_value(explicit[name])
+
     @staticmethod
     def _deepseek_key_from_env() -> Optional[str]:
         """Reuse the chat key only when the chat endpoint is DeepSeek's own."""
@@ -1338,7 +1325,8 @@ class WebSearchTool(Tool):
         if _is_official_deepseek_base_url(os.getenv("DEEPSEEK_BASE_URL")):
             return key
         # Names only, never values: the base URL can carry credentials.
-        _info_once(
+        info_once(
+            logger,
             "web_search:deepseek-base-url",
             "web_search: DEEPSEEK_API_KEY is set but DEEPSEEK_BASE_URL is not "
             "https://%s; the deepseek search backend stays off.",

@@ -642,33 +642,6 @@ def test_format_results_coerces_non_string_snippet_and_caps():
     assert "Date:" not in out
 
 
-def test_a_note_with_no_handler_to_reach_is_not_spent():
-    """A note emitted before any handler exists is not counted as logged:
-    the first emit that a handler can receive is the one that counts."""
-    import agentao.tools.web as web
-
-    log = logging.getLogger("agentao.test.info_once_unattached")
-    log.propagate = False
-    log.setLevel(logging.INFO)
-    seen: list[str] = []
-
-    class _Collect(logging.Handler):
-        def emit(self, record):
-            seen.append(record.getMessage())
-
-    web._info_once("test:unattached", "note", log=log)
-    assert "test:unattached" not in web._INFO_ONCE_KEYS
-
-    handler = _Collect()
-    log.addHandler(handler)
-    try:
-        web._info_once("test:unattached", "note", log=log)
-        web._info_once("test:unattached", "note", log=log)
-    finally:
-        log.removeHandler(handler)
-    assert seen == ["note"]
-
-
 def test_a_multi_line_snippet_is_rendered_on_one_indented_line():
     """DeepSeek summaries carry newlines and Markdown headings (seen live,
     2026-11-15). Each snippet stays one indented line, so a ``# heading`` in

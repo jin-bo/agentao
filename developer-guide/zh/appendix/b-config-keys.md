@@ -29,16 +29,16 @@ Agentao 读取的所有开关——先看环境变量，再看磁盘上的 JSON�
 | `LLM_PROMPT_CACHE_TTL` | `5m` | 上述标记的保留时长提示：`5m` 或 `1h`。`LLM_PROMPT_CACHE` 关闭时不读取 —— 连校验也不做。等价于构造参数 `prompt_cache_ttl=` |
 | `AGENTAO_CONTEXT_TOKENS` | `256000` | 上下文预算；超出触发压缩 |
 | `AGENTAO_WORKING_DIRECTORY` | — | 启动时覆盖工作目录（等价于构造器 `working_directory=`） |
-| `AGENTAO_SCRUB_CHILD_ENV` | 开启 | shell 与 MCP 子进程是否继承 agentao **自己的** provider 凭据。默认会把 `HARNESS_ENV_KEYS`（`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`LLM_EXTRA_BODY`……）、`{LLM_PROVIDER}_API_KEY`，以及值等于本进程用过的 key 的任何变量（`/provider`、`set_provider()` 之后，或 `api_key=` 取自你自己的变量时；短于 16 个字符的值不匹配）从子进程环境剔除。设为 `0`/`false`/`no`/`off` 恢复完整继承——在 agent 自己的 shell 里跑 `agentao run` 或任何调用 provider 的脚本时需要。只剔除 agentao 自己的 key；`AWS_*`、`GITHUB_TOKEN`、`DATABASE_URL` 原样保留。见 `capabilities/process.py::build_child_env` |
+| `AGENTAO_SCRUB_CHILD_ENV` | 开启 | 子进程（shell、MCP、ACP、hooks）是否继承 agentao **自己的**凭据：provider 密钥和 `web_search` 密钥。默认会把 `HARNESS_ENV_KEYS`（`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`LLM_EXTRA_BODY`……，以及 `web_search` 的 `TAVILY_API_KEY` 和 `JINA_API_KEY`）、`{LLM_PROVIDER}_API_KEY`，以及值等于本进程用过的 key 的任何变量（`/provider`、`set_provider()` 之后，或 `api_key=` 取自你自己的变量时；短于 16 个字符的值不匹配）从子进程环境剔除。设为 `0`/`false`/`no`/`off` 恢复完整继承——在 agent 自己的 shell 里跑 `agentao run`，或任何调用 provider 或 Tavily / Jina API 的脚本时需要。只剔除 agentao 自己的 key；`AWS_*`、`GITHUB_TOKEN`、`DATABASE_URL` 原样保留。见 `capabilities/process.py::build_child_env` |
 
 ### 内置工具读取的第三方键
 
 | 键 | 使用方 | 作用 |
 |----|--------|------|
 | `GITHUB_TOKEN` | 技能目录抓取器 | 提升 GitHub API 频控上限 |
-| `TAVILY_API_KEY` | `web_search` 工具 | Tavily 后端。回退链为 `deepseek` → `tavily` → `jina`，每个后端只在其 key 存在时加入。一个 key 都没有时不注册 `web_search`。 |
+| `TAVILY_API_KEY` | `web_search` 工具 | Tavily 后端。回退链为 `deepseek` → `tavily` → `jina`，每个后端只在其 key 存在时加入。一个 key 都没有时不注册 `web_search`。 子进程（shell、MCP、ACP、hooks）都不会继承它（见 `AGENTAO_SCRUB_CHILD_ENV`）。 |
 | `DEEPSEEK_API_KEY` + `DEEPSEEK_BASE_URL` | `web_search` 工具 | `deepseek` 后端复用聊天 key，但只在 `DEEPSEEK_BASE_URL` 是 `api.deepseek.com` 上的 `https` URL 时启用。经代理或网关的 key 不会开启搜索。 |
-| `JINA_API_KEY` | `web_search` 工具 | Jina 后端（`s.jina.ai`，需要 key）。也用于提高 `web_fetch` 的 `jina` 回退的速率上限。 |
+| `JINA_API_KEY` | `web_search` 工具 | Jina 后端（`s.jina.ai`，需要 key）。也用于提高 `web_fetch` 的 `jina` 回退的速率上限。 子进程（shell、MCP、ACP、hooks）都不会继承它（见 `AGENTAO_SCRUB_CHILD_ENV`）。 |
 
 MCP 服务器和自定义工具通常有自己的 env 键——写在 `.agentao/mcp.json` 或自定义工具代码里，不在此表。
 

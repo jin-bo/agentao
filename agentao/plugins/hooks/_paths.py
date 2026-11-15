@@ -9,7 +9,8 @@ defines one.
 
 **The trap this module exists to keep visible** (§7.1): ``_run_subprocess``
 passes no ``env=`` today, which is precisely why the hook child gets
-``build_child_env()`` and the harness's provider credentials are stripped — one
+``build_child_env()`` and the harness's own credentials (provider and
+``web_search`` keys) are stripped — one
 of the five places agentao leads both peers. Writing the export as ``env={...}``
 or ``env=os.environ | {...}`` deletes that scrub silently. The only correct
 spelling is ``env=build_child_env({...})``, which applies overrides *after* the

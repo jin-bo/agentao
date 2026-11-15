@@ -270,7 +270,7 @@ Only `terminal` methods run in Agentao. For an `agent` method (the default when 
 
 #### Provider keys are not inherited
 
-Agentao starts ACP servers without its own provider keys in the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …), the same as MCP servers and hooks. An agent that reads its key from the environment therefore answers `auth_required`, even when the key is set in your shell. Log in, or give the key to that server in its `env` block:
+Agentao starts ACP servers without its own provider keys in the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …) or its `web_search` keys (`TAVILY_API_KEY`, `JINA_API_KEY`), the same as MCP servers and hooks. An agent that reads its key from the environment therefore answers `auth_required`, even when the key is set in your shell. Log in, or give the key to that server in its `env` block:
 
 ```json
 "env": { "GEMINI_API_KEY": "${GEMINI_API_KEY}" }

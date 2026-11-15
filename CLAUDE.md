@@ -505,6 +505,6 @@ See [docs/guides/adding-components.md](docs/guides/adding-components.md). Tools 
   - `subprocess.run(timeout=)` kills only the direct child. A grandchild that holds the pipe then hangs the turn.
   - `run_captured` runs the child in its own process group, sets stdin to `DEVNULL` unless you give `input=`, and decodes with `errors="replace"`.
   - On timeout, it kills the whole tree (`kill_process_tree`). Use `killpg(pid)`. Never use `getpgid`.
-  - It defaults `env=` to `build_child_env()`, which strips the provider credentials. To opt out, give an explicit `env=` or set `AGENTAO_SCRUB_CHILD_ENV=0`.
+  - It defaults `env=` to `build_child_env()`, which strips agentao's own credentials (provider keys and the `web_search` keys). To opt out, give an explicit `env=` or set `AGENTAO_SCRUB_CHILD_ENV=0`.
   - `LocalShellExecutor.run` keeps its own streaming loop. It shares `kill_process_tree` and the scrubbed env.
 - **`run_loop` (`cli/input_loop.py`) imports `sys` locally, further down.** Thus `sys.exit()` near its top raises `UnboundLocalError`. Use `raise SystemExit(...)` there (#507).

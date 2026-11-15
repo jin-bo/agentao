@@ -1,10 +1,12 @@
-"""Helpers for routing noisy third-party startup output into Agentao logs."""
+"""Logging helpers: routing noisy third-party startup output into Agentao
+logs, and INFO notes logged once per process."""
 
 from __future__ import annotations
 
 import contextlib
 import io
 import logging
+import threading
 from collections.abc import Callable, Iterable
 
 
@@ -66,3 +68,28 @@ def capture_third_party_output(
             continue
         message = f"{prefix}{line}" if prefix else line
         target_logger.log(target_level, message)
+
+
+#: Keys of the INFO notes already logged by :func:`info_once` in this process.
+_INFO_ONCE_KEYS: set[str] = set()
+_INFO_ONCE_LOCK = threading.Lock()
+
+
+def info_once(log: logging.Logger, key: str, msg: str, *args: object) -> None:
+    """Log an INFO note on ``log`` once per process, per ``key``.
+
+    For configuration notes that are rebuilt with every ``Agentao``, sub-agent
+    spawns included: the state they report does not change in between, so
+    repeating them only fills ``agentao.log``.
+
+    The key is spent only when a handler can receive the note. A tool built
+    before ``agentao.log`` is attached (a host's ``extra_tools`` entry, say)
+    would otherwise use the one emit on a logger that drops it.
+    """
+    if not (log.isEnabledFor(logging.INFO) and log.hasHandlers()):
+        return
+    with _INFO_ONCE_LOCK:
+        if key in _INFO_ONCE_KEYS:
+            return
+        _INFO_ONCE_KEYS.add(key)
+    log.info(msg, *args)
