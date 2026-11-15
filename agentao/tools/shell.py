@@ -630,7 +630,7 @@ class ShellTool(Tool):
         ``/c``. Everything else is ``LegacyLaunch``, which is exactly what shipped.
 
         The environment is ``build_child_env()`` on both paths — inherited minus agentao's own
-        provider credentials, so a command the model wrote cannot read the key back out — and
+        credentials (provider and ``web_search`` keys), so a command the model wrote cannot read the key back out — and
         it is rebuilt per call, because an installer that edits ``PATH`` does not reach a
         process that is already running.
 

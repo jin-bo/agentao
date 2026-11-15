@@ -29,16 +29,16 @@ Every knob Agentao reads — environment variables first, then on-disk JSON. All
 | `LLM_PROMPT_CACHE_TTL` | `5m` | Retention hint for those markers: `5m` or `1h`. Unread — validation included — while `LLM_PROMPT_CACHE` is off. Equivalent to the constructor `prompt_cache_ttl=` |
 | `AGENTAO_CONTEXT_TOKENS` | `256000` | Context budget; triggers compression when exceeded |
 | `AGENTAO_WORKING_DIRECTORY` | — | Override working directory at startup (alternative to constructor `working_directory=`) |
-| `AGENTAO_SCRUB_CHILD_ENV` | on | Whether shell and MCP child processes inherit agentao's **own** provider credentials. Default drops `HARNESS_ENV_KEYS` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `LLM_EXTRA_BODY`, …), `{LLM_PROVIDER}_API_KEY`, and any variable whose value is a key agentao has used this process (after `/provider`, `set_provider()`, or an `api_key=` read from your own variable; values under 16 characters are not matched) from the child env. Set to `0`/`false`/`no`/`off` to restore full inheritance — needed to run `agentao run`, or any provider-calling script, from inside the agent's own shell. Only agentao's keys are dropped; `AWS_*`, `GITHUB_TOKEN`, `DATABASE_URL` are untouched. See `capabilities/process.py::build_child_env` |
+| `AGENTAO_SCRUB_CHILD_ENV` | on | Whether child processes (shell, MCP, ACP, hooks) inherit agentao's **own** credentials: its provider keys and its `web_search` keys. Default drops `HARNESS_ENV_KEYS` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `LLM_EXTRA_BODY`, …, and the `web_search` keys `TAVILY_API_KEY` and `JINA_API_KEY`), `{LLM_PROVIDER}_API_KEY`, and any variable whose value is a key agentao has used this process (after `/provider`, `set_provider()`, or an `api_key=` read from your own variable; values under 16 characters are not matched) from the child env. Set to `0`/`false`/`no`/`off` to restore full inheritance — needed to run `agentao run`, or any script that calls the provider or the Tavily / Jina API, from inside the agent's own shell. Only agentao's keys are dropped; `AWS_*`, `GITHUB_TOKEN`, `DATABASE_URL` are untouched. See `capabilities/process.py::build_child_env` |
 
 ### Third-party keys consumed by built-in tools
 
 | Key | Consumed by | Purpose |
 |-----|-------------|---------|
 | `GITHUB_TOKEN` | Skill catalog fetcher | Higher-rate GitHub API access |
-| `TAVILY_API_KEY` | `web_search` tool | Tavily backend. The fallback chain is `deepseek` → `tavily` → `jina`; each backend joins only when its key resolves. With no key, `web_search` is not registered. |
+| `TAVILY_API_KEY` | `web_search` tool | Tavily backend. The fallback chain is `deepseek` → `tavily` → `jina`; each backend joins only when its key resolves. With no key, `web_search` is not registered. No child process (shell, MCP, ACP, hooks) inherits it (`AGENTAO_SCRUB_CHILD_ENV`). |
 | `DEEPSEEK_API_KEY` + `DEEPSEEK_BASE_URL` | `web_search` tool | The `deepseek` backend reuses the chat key, but only when `DEEPSEEK_BASE_URL` is an `https` URL on `api.deepseek.com`. A key behind a proxy or gateway does not enable search. |
-| `JINA_API_KEY` | `web_search` tool | Jina backend (`s.jina.ai`, which needs a key). Also lifts the rate limit of `web_fetch`'s `jina` fallback. |
+| `JINA_API_KEY` | `web_search` tool | Jina backend (`s.jina.ai`, which needs a key). Also lifts the rate limit of `web_fetch`'s `jina` fallback. No child process (shell, MCP, ACP, hooks) inherits it (`AGENTAO_SCRUB_CHILD_ENV`). |
 
 MCP servers and custom tools typically read their own env keys — those are defined in your `.agentao/mcp.json` or your custom-tool code, not here.
 

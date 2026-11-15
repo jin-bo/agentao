@@ -270,7 +270,7 @@ Agentao 里只能运行 `terminal` 方法。`agent` 方法（方法没写 `type`
 
 #### 不继承服务商密钥
 
-Agentao 启动 ACP 服务器时，会从环境里去掉自己的服务商密钥（`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY` 等），与 MCP 服务器和 hooks 相同。因此从环境读密钥的 agent 会回 `auth_required`，哪怕你的 shell 里设了这个密钥。请登录，或在该服务器的 `env` 块里显式传入：
+Agentao 启动 ACP 服务器时，会从环境里去掉自己的服务商密钥（`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY` 等）和 `web_search` 密钥（`TAVILY_API_KEY`、`JINA_API_KEY`），与 MCP 服务器和 hooks 相同。因此从环境读密钥的 agent 会回 `auth_required`，哪怕你的 shell 里设了这个密钥。请登录，或在该服务器的 `env` 块里显式传入：
 
 ```json
 "env": { "GEMINI_API_KEY": "${GEMINI_API_KEY}" }

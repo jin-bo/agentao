@@ -43,11 +43,17 @@ __all__ = [
 ]
 
 
-# Environment variables that carry *agentao's own* provider credentials.
+# Environment variables that carry *agentao's own* credentials: the provider
+# keys and the ``web_search`` keys.
 # These are the harness's keys, not the user's: the agent is a separate
 # principal from the person running it, and nothing an LLM decides to run
 # needs the key that pays for the LLM. Stripping them means a prompt-
 # injected ``run_shell_command("env")`` yields nothing worth stealing.
+#
+# The keys of agentao's own search backends (``web_search``: Tavily, Jina;
+# Jina also backs the ``web_fetch`` fallback) are the harness's for the same
+# reason: the tool runs in this process and reads them here, so no child needs
+# them. ``DEEPSEEK_API_KEY`` is already listed as a provider key.
 #
 # Deliberately narrow. Scrubbing the user's *other* secrets (AWS, GitHub,
 # database URLs) is the host's call, not the harness's — a host that wants
@@ -70,6 +76,8 @@ HARNESS_ENV_KEYS: frozenset = frozenset({
     "XAI_API_KEY",
     "LLM_API_KEY",
     "LLM_EXTRA_BODY",
+    "TAVILY_API_KEY",
+    "JINA_API_KEY",
 })
 
 
@@ -105,12 +113,13 @@ _MIN_CREDENTIAL_LEN = 16
 
 
 def note_credential_value(value: Optional[str]) -> None:
-    """Record that ``value`` is an LLM credential this process uses.
+    """Record that ``value`` is a credential agentao itself uses.
 
     :func:`build_child_env` drops every variable whose value is a recorded
     one, whatever its name. ``LLMClient`` calls this each time it takes a
-    key. Do not widen the scrub to every ``*_API_KEY`` name: those belong to
-    the user's own tools as often as to agentao.
+    key, and ``WebSearchTool`` for each search key a host passes it. Do not
+    widen the scrub to every ``*_API_KEY`` name: those belong to the user's
+    own tools as often as to agentao.
     """
     if not isinstance(value, str) or len(value) < _MIN_CREDENTIAL_LEN:
         return

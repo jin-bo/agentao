@@ -197,6 +197,22 @@ class TestChildEnvironment:
         monkeypatch.delenv("AGENTAO_SCRUB_CHILD_ENV", raising=False)
         assert "OPENAI_API_KEY" not in build_child_env()
 
+    @pytest.mark.parametrize("name", ["TAVILY_API_KEY", "JINA_API_KEY"])
+    def test_search_backend_keys_are_dropped_but_the_tool_still_reads_them(
+        self, monkeypatch, name,
+    ):
+        """The search keys belong to agentao's own ``web_search``, which runs in
+        this process: a child never sees them, the tool still does, and an
+        explicit ``env=`` (or the opt-out) still hands one to a child."""
+        from agentao.tools.web import WebSearchTool
+
+        monkeypatch.delenv("AGENTAO_SCRUB_CHILD_ENV", raising=False)
+        monkeypatch.setenv(name, FAKE_KEY)
+        assert name not in build_child_env()
+        assert build_child_env({name: "explicit"})[name] == "explicit"
+        backend = "tavily" if name == "TAVILY_API_KEY" else "jina"
+        assert backend in WebSearchTool().backends
+
     def test_every_declared_key_is_actually_dropped(self):
         base = {k: "secret" for k in HARNESS_ENV_KEYS}
         base["KEEP"] = "yes"
@@ -218,6 +234,28 @@ class TestUsedCredentialValues:
         assert build_child_env(base=base)["MY_CORP_LLM_TOKEN"] == self.HOST_KEY
         note_credential_value(self.HOST_KEY)
         assert build_child_env(base=base) == {"LLM_PROVIDER": "OPENAI", "KEEP": "yes"}
+
+    @pytest.mark.parametrize("kwarg", ["deepseek_api_key", "tavily_api_key", "jina_api_key"])
+    def test_a_search_key_passed_by_the_host_is_scrubbed(self, kwarg):
+        """A host may read a search key from its own variable and pass it in;
+        that variable must not reach a child either."""
+        from agentao.tools.web import WebSearchTool
+
+        base = {"MY_SEARCH_PROD": self.HOST_KEY, "KEEP": "yes"}
+        assert build_child_env(base=base)["MY_SEARCH_PROD"] == self.HOST_KEY
+        WebSearchTool(**{kwarg: self.HOST_KEY})
+        assert build_child_env(base=base) == {"KEEP": "yes"}
+
+    def test_a_search_key_the_tool_never_sends_is_not_recorded(self):
+        """A key for a backend outside the chain, or passed to a constructor
+        that raises, is not agentao's: its variable stays in a child's env."""
+        from agentao.tools.web import WebSearchTool
+
+        base = {"MY_SEARCH_PROD": self.HOST_KEY}
+        WebSearchTool(backend="jina", tavily_api_key=self.HOST_KEY)
+        with pytest.raises(ValueError):
+            WebSearchTool(backend="bocha", tavily_api_key=self.HOST_KEY)
+        assert build_child_env(base=base) == base
 
     def test_other_api_keys_are_left_alone(self):
         """Only values agentao used: ``*_API_KEY`` is the user's tools' too."""

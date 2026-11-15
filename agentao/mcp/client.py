@@ -1112,7 +1112,7 @@ class McpClient:
         args = self.config.get("args", [])
 
         # Build environment: sanitized base + explicit env vars.
-        # The base drops agentao's own provider credentials — an MCP server
+        # The base drops agentao's own credentials (provider and web_search keys) — an MCP server
         # is a third-party binary and has no business inheriting the key
         # that pays for the LLM. Server-specific vars from mcp.json are
         # applied after the scrub, so a server that genuinely needs a
