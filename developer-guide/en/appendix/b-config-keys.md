@@ -37,7 +37,7 @@ Every knob Agentao reads — environment variables first, then on-disk JSON. All
 |-----|-------------|---------|
 | `GITHUB_TOKEN` | Skill catalog fetcher | Higher-rate GitHub API access |
 | `TAVILY_API_KEY` | `web_search` tool | Tavily backend. The fallback chain is `deepseek` → `tavily` → `jina`; each backend joins only when its key resolves. With no key, `web_search` is not registered. No child process (shell, MCP, ACP, hooks) inherits it (`AGENTAO_SCRUB_CHILD_ENV`). |
-| `DEEPSEEK_API_KEY` + `DEEPSEEK_BASE_URL` | `web_search` tool | The `deepseek` backend reuses the chat key, but only when `DEEPSEEK_BASE_URL` is an `https` URL on `api.deepseek.com`. A key behind a proxy or gateway does not enable search. |
+| `DEEPSEEK_API_KEY` + `DEEPSEEK_BASE_URL` | `web_search` tool, `web_fetch` fallback | The `deepseek` search backend and the `deepseek` fetch fallback (`AGENTAO_WEB_FETCH_FALLBACK=deepseek`) reuse the chat key, but only when `DEEPSEEK_BASE_URL` is an `https` URL on `api.deepseek.com`. A key behind a proxy or gateway enables neither. |
 | `JINA_API_KEY` | `web_search` tool | Jina backend (`s.jina.ai`, which needs a key). Also lifts the rate limit of `web_fetch`'s `jina` fallback. No child process (shell, MCP, ACP, hooks) inherits it (`AGENTAO_SCRUB_CHILD_ENV`). |
 
 MCP servers and custom tools typically read their own env keys — those are defined in your `.agentao/mcp.json` or your custom-tool code, not here.

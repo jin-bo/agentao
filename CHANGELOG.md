@@ -11,6 +11,8 @@ _Targeting 0.5.22. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`web_fetch` has a `deepseek` fallback: `AGENTAO_WEB_FETCH_FALLBACK=deepseek`.** When a page needs JavaScript or the direct fetch fails, the URL goes to DeepSeek's Fetch API (`POST https://api.deepseek.com/v1/tools/fetch`), which returns the page as Markdown. It is opt-in like `jina`, and the tool description and the result's `Fallback:` line say where the URL went. It reuses `DEEPSEEK_API_KEY` under the `web_search` rule: only when `DEEPSEEK_BASE_URL` is an `https` URL on `api.deepseek.com`. Without such a key there is no fallback, the tool description says so, and an INFO line names the variables. A blocked target never reaches it, a URL with credentials in it is never sent, a URL over the API's 8,192 characters is refused before the request, and the response is capped like the other paths. DeepSeek's 404 (no usable content), or a 200 with empty content, is reported as a failed fallback beside the direct fetch's own error. Billed per successful fetch.
+
 ### Changed
 
 ### Fixed

@@ -98,7 +98,7 @@ Agentao's `web_fetch` uses `httpx` through `agentao/security/url_policy.py::guar
 
 - 30 s per-operation timeout, and a 60 s ceiling on the whole fetch (every hop plus the body) — a server that keeps trickling bytes resets the per-operation timeout on each read, so only the ceiling ends it
 - Up to 20 redirects, chased by agentao rather than httpx: **each hop is resolved and re-validated** against the SSRF policy (and `AGENTAO_WEB_FETCH_ALLOW_CIDRS`), and a hop's body is released unread
-- The final body is read up to **5 MiB decoded**; a declared `Content-Length` over that is refused before any byte is read, and a larger body — declared or not, compressed or not — ends the fetch with an error and no fallback. The Jina fallback reads under the same cap and ceiling. The Playwright fallback is not covered: its page lives in the browser process
+- The final body is read up to **5 MiB decoded**; a declared `Content-Length` over that is refused before any byte is read, and a larger body — declared or not, compressed or not — ends the fetch with an error and no fallback. The Jina and DeepSeek fallbacks read under the same cap and ceiling. The Playwright fallback is not covered: its page lives in the browser process
 - TLS verification on
 - Customizable User-Agent
 
