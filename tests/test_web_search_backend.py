@@ -5,7 +5,9 @@ The chain/selection logic is tested directly off ``_chain`` / ``backends``;
 the fallback loop is tested by monkeypatching ``_dispatch`` so no network is
 needed. Response parsing runs a real ``httpx.Client`` over an
 ``httpx.MockTransport``, so ``raise_for_status`` and ``.json()`` are httpx's
-own, not a stand-in's.
+own, not a stand-in's. The network-failure section drives each backend's own
+request code: httpx's transport exceptions through ``MockTransport``, and a
+refused port and a silent server over real local sockets.
 """
 
 from __future__ import annotations
@@ -663,3 +665,172 @@ def test_deepseek_dates_are_kept_in_the_debug_log(monkeypatch, caplog):
         out = _deepseek_tool(monkeypatch)._search_deepseek("q", num_results=3)
     assert "2013-03-12" not in out
     assert any("2013-03-12T16:00:00+00:00" in r.getMessage() for r in caplog.records)
+
+
+# ── Network failures ───────────────────────────────────────────────────────
+#
+# The fallback tests above fake ``_dispatch``. These drive each backend's own
+# request code, so the exception is the one httpx raises for that failure.
+
+_BACKEND_HOSTS = {"deepseek": "api.deepseek.com", "tavily": "api.tavily.com", "jina": "s.jina.ai"}
+
+_OK_BODIES = {
+    "deepseek": {"results": [{"title": "T", "url": "https://ok", "summary": "s"}]},
+    "tavily": {"results": [{"title": "T", "url": "https://ok", "content": "s"}]},
+    "jina": {"code": 200, "data": [{"title": "T", "url": "https://ok", "description": "s"}]},
+}
+
+
+def _all_keys_tool(monkeypatch, chain):
+    _clear_keys(monkeypatch)
+    tool = WebSearchTool(deepseek_api_key="dk", tavily_api_key="tk", jina_api_key="jk")
+    tool._chain = list(chain)
+    tool._provider = chain[0]
+    return tool
+
+
+def _next_backend(backend):
+    return {"deepseek": "tavily", "tavily": "jina", "jina": "deepseek"}[backend]
+
+
+@pytest.mark.parametrize("backend", ["deepseek", "tavily", "jina"])
+@pytest.mark.parametrize(
+    "error",
+    [httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError, httpx.RemoteProtocolError],
+)
+def test_a_network_failure_falls_back_to_the_next_backend(monkeypatch, backend, error):
+    """A timeout, a refused or reset connection on one backend is a backend
+    error: the chain moves on and the result says which backend failed."""
+    fallback = _next_backend(backend)
+
+    def handler(request):
+        if request.url.host == _BACKEND_HOSTS[backend]:
+            raise error("simulated network failure", request=request)
+        return httpx.Response(200, json=_OK_BODIES[fallback])
+
+    _mock_httpx(monkeypatch, handler)
+    out = _all_keys_tool(monkeypatch, [backend, fallback]).execute("q")
+    assert out.startswith(f"[Note: backend(s) {backend} failed; these results are from the fallback backend '{fallback}'.]")
+    assert "https://ok" in out
+
+
+@pytest.mark.parametrize("backend", ["deepseek", "tavily", "jina"])
+def test_a_non_json_200_falls_back(monkeypatch, backend):
+    """A proxy or captive portal can answer 200 with an HTML page."""
+    fallback = _next_backend(backend)
+
+    def handler(request):
+        if request.url.host == _BACKEND_HOSTS[backend]:
+            return httpx.Response(200, text="<html>Sign in to the network</html>")
+        return httpx.Response(200, json=_OK_BODIES[fallback])
+
+    _mock_httpx(monkeypatch, handler)
+    out = _all_keys_tool(monkeypatch, [backend, fallback]).execute("q")
+    assert f"backend(s) {backend} failed" in out and "https://ok" in out
+
+
+@pytest.mark.parametrize("backend", ["deepseek", "tavily", "jina"])
+def test_every_backend_request_has_a_finite_timeout(monkeypatch, backend):
+    """With ``timeout=None`` a server that accepts and never answers hangs the
+    turn: no exception, so no fallback either. Checked on the client actually
+    built, so httpx's own default (5 s) counts as finite too."""
+    clients = []
+    real_client = httpx.Client
+
+    def _client(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(
+            lambda request: httpx.Response(200, json=_OK_BODIES[backend])
+        )
+        client = real_client(*args, **kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(httpx, "Client", _client)
+    _all_keys_tool(monkeypatch, [backend]).execute("q")
+    (client,) = clients
+    t = client.timeout
+    assert all(v is not None and 0 < v <= 60 for v in (t.connect, t.read, t.write, t.pool))
+
+
+def _route_to_local(monkeypatch, port, timeout):
+    """Send every ``httpx.Client`` request to ``127.0.0.1:port`` over a real
+    socket, with a short timeout, keeping the backend's own URL and headers."""
+    real_client = httpx.Client
+
+    class _Redirect(httpx.HTTPTransport):
+        def handle_request(self, request):
+            request.url = request.url.copy_with(scheme="http", host="127.0.0.1", port=port)
+            return super().handle_request(request)
+
+    def _client(*args, **kwargs):
+        kwargs["transport"] = _Redirect()
+        kwargs["timeout"] = timeout
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", _client)
+
+
+def test_a_refused_connection_on_a_real_socket_reports_every_backend(monkeypatch):
+    import socket
+
+    with socket.socket() as s:  # bind, then close: the port is now refused
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    _route_to_local(monkeypatch, port, timeout=2.0)
+    out = _all_keys_tool(monkeypatch, ["deepseek", "tavily", "jina"]).execute("q")
+    assert out.startswith("Error: all web_search backends failed (")
+    for backend in ("deepseek", "tavily", "jina"):
+        assert f"{backend}: " in out
+    assert "dk" not in out and "tk" not in out and "jk" not in out  # no key in the message
+
+
+def test_a_server_that_never_answers_times_out_and_falls_back(monkeypatch):
+    """A real socket that accepts the connection and never replies: the read
+    timeout fires, and the next backend answers."""
+    import socket
+    import threading
+    import time
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(4)
+    port = server.getsockname()[1]
+    held = []
+    stop = threading.Event()
+
+    def accept_and_hold():
+        server.settimeout(0.1)
+        while not stop.is_set():
+            try:
+                conn, _ = server.accept()
+                held.append(conn)  # read nothing, answer nothing
+            except OSError:
+                continue
+
+    threading.Thread(target=accept_and_hold, daemon=True).start()
+    real_client = httpx.Client
+
+    class _Route(httpx.HTTPTransport):
+        def handle_request(self, request):
+            if request.url.host == "api.deepseek.com":
+                request.url = request.url.copy_with(scheme="http", host="127.0.0.1", port=port)
+                return super().handle_request(request)
+            return httpx.Response(200, json=_OK_BODIES["tavily"], request=request)
+
+    def _client(*args, **kwargs):
+        kwargs["transport"] = _Route()
+        kwargs["timeout"] = 0.5
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", _client)
+    try:
+        start = time.monotonic()
+        out = _all_keys_tool(monkeypatch, ["deepseek", "tavily"]).execute("q")
+        elapsed = time.monotonic() - start
+    finally:
+        stop.set()
+        for conn in held:
+            conn.close()
+        server.close()
+    assert out.startswith("[Note: backend(s) deepseek failed; these results are from the fallback backend 'tavily'.]")
+    assert elapsed < 5
