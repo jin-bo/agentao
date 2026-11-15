@@ -45,7 +45,7 @@ read from `Agentao.__init__`.
 `conftest.py::_scrub_llm_env` removes every `LLM_*`, `OPENAI_*`, `ANTHROPIC_*`
 and `*_API_KEY` / `*_BASE_URL` / `*_MODEL` / `*_API_FORMAT` variable, and
 `AGENTAO_CONTEXT_TOKENS`, before each test (the `_API_KEY` suffix takes the web
-tools' `JINA_API_KEY` / `BOCHA_API_KEY` too), so the stubs above are what a
+tools' `TAVILY_API_KEY` / `JINA_API_KEY` too, and the `_BASE_URL` suffix takes `DEEPSEEK_BASE_URL`, which gates the `deepseek` search backend), so the stubs above are what a
 test sees, whatever the developer exported. Before, `LLM_PROVIDER` in the shell handed tests that provider's real
 key, and a malformed `LLM_TEMPERATURE` failed them on that machine only. A test
 that needs one of these sets it with `monkeypatch`. The one way back to the

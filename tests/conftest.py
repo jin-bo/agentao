@@ -35,7 +35,7 @@ def _is_llm_env_key(key: str) -> bool:
     (``OPENAI_ORG_ID``, ``ANTHROPIC_AUTH_TOKEN``) when a client gets ``None``.
     ``AGENTAO_CONTEXT_TOKENS`` sizes the CLI's context window and goes through
     ``int()`` there. The ``_API_KEY`` suffix also takes the web tools' keys
-    (``JINA_API_KEY``, ``BOCHA_API_KEY``), which no test should read from the
+    (``TAVILY_API_KEY``, ``JINA_API_KEY``), which no test should read from the
     shell either.
     """
     return (
@@ -76,6 +76,15 @@ def _fresh_credential_registry(monkeypatch):
     from agentao.capabilities import process
 
     monkeypatch.setattr(process, "_used_credential_values", set())
+
+
+@pytest.fixture(autouse=True)
+def _fresh_info_once_notes(monkeypatch):
+    """Forget which once-per-process INFO notes (``web._info_once``) were
+    logged, so a test that asserts a note does not depend on test order."""
+    from agentao.tools import web
+
+    monkeypatch.setattr(web, "_INFO_ONCE_KEYS", set())
 
 
 @pytest.fixture

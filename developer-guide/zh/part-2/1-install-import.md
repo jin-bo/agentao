@@ -14,7 +14,7 @@ CLI / web fetch / 中文分词都是显式声明的 extras。
 # 嵌入宿主（`from agentao import Agentao`）—— 闭包最小
 pip install 'agentao>=0.5.0'
 
-# 用 web_fetch / web_search 工具 —— 加上 beautifulsoup4
+# 用 web_fetch 工具 —— 加上 beautifulsoup4（web_search 只需要一个搜索 key）
 pip install 'agentao[web]>=0.5.0'
 
 # 用中文记忆召回 —— 加上 jieba
@@ -62,7 +62,7 @@ from agentao.cancellation import AgentCancelledError  # 不从 agentao.host 导�
 | 库 | 首次触发点 |
 |---|---|
 | `openai` | `LLMClient(...)` 构造（仅默认 LLM 客户端会用到——宿主自己注入 `llm_client=` 永远不加载） |
-| `bs4` / `httpx` | `WebFetchTool.execute()` / `WebSearchTool.execute()` —— 注：0.4.0 起若 `bs4` 缺失，这两个工具在注册阶段就被跳过（`[web]` extra 是显式 opt-in），LLM 看不到一个会执行失败的工具 |
+| `bs4` | `WebFetchTool.execute()` —— 注：0.4.0 起若 `bs4` 缺失，该工具在注册阶段就被跳过（`[web]` extra 是显式 opt-in），LLM 看不到一个会执行失败的工具。0.5.21 起 `WebSearchTool` 只需要 `httpx`（核心依赖），有搜索 key 时注册 |
 | `jieba` | 含 CJK 字符的查询触发 `MemoryRetriever`——纯 Latin 查询完全跳过 jieba；若 `[i18n]` 缺失，CJK 召回会一次性 warning 并降级为空 |
 | `filelock` | `SkillRegistry.save()`（CLI / `agentao plugin install`） |
 | `mcp` SDK（`McpClientManager`、`McpTool`） | 首次接入 MCP server（`init_mcp` 或宿主传 `mcp_manager=`） |

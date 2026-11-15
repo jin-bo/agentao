@@ -72,7 +72,7 @@ stdout 上应看到（节选）：
 - `session/set_config_option` 切换提供方时，按会话自己的快照解析，从不读进程环境。
 
 ::: warning 0.5.8 起的变化——项目 `.env` 只提供 LLM 设置
-一个 ACP 进程服务多个项目的会话。把某个项目的 `.env` 加载进共享环境，曾让它的凭据泄漏到之后的每个会话。默认会话路径现在不往 `os.environ` 写任何东西。`.env` 以前提供的其他东西都必须来自**启动环境**：`mcp.json` 里的 MCP `${VAR}` 展开、web 工具的 key（`JINA_API_KEY`、`BOCHA_API_KEY`）、`GITHUB_TOKEN`、URL 策略白名单。自己注入 `agent_factory` / `provider_resolver` 的宿主保留旧行为。
+一个 ACP 进程服务多个项目的会话。把某个项目的 `.env` 加载进共享环境，曾让它的凭据泄漏到之后的每个会话。默认会话路径现在不往 `os.environ` 写任何东西。`.env` 以前提供的其他东西都必须来自**启动环境**：`mcp.json` 里的 MCP `${VAR}` 展开、web 工具的 key（`TAVILY_API_KEY`、`JINA_API_KEY`，以及 `web_search` 复用的 `DEEPSEEK_API_KEY` + `DEEPSEEK_BASE_URL`）、`GITHUB_TOKEN`、URL 策略白名单。自己注入 `agent_factory` / `provider_resolver` 的宿主保留旧行为。
 :::
 
 ### 客户端说明

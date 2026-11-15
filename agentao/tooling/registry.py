@@ -27,6 +27,7 @@ from ..tools import (
     WebSearchTool,
     WriteFileTool,
 )
+from ..tools.web import _info_once
 
 if TYPE_CHECKING:
     from ..agent import Agentao
@@ -43,9 +44,10 @@ _logger = logging.getLogger(__name__)
 # actually produced by ``register_builtin_tools`` so it can't drift.
 #
 # Scope is *static registration eligibility*, not live availability:
-# ``web_search`` is listed even when ``[web]`` is absent (disabling it is
-# then a harmless no-op). Agent-path tools (codebase_investigator /
-# cli_help) register elsewhere and are intentionally out of scope.
+# ``web_fetch`` is listed even when ``[web]`` is absent, and ``web_search``
+# even when no search key resolves (disabling either is then a harmless
+# no-op). Agent-path tools (codebase_investigator / cli_help) register
+# elsewhere and are intentionally out of scope.
 BUILTIN_TOOL_NAMES: frozenset = frozenset({
     "read_file",
     "write_file",
@@ -69,7 +71,7 @@ BUILTIN_TOOL_NAMES: frozenset = frozenset({
 # ``resources``, so they are kept out of ``BUILTIN_TOOL_NAMES`` (pinned to what
 # ``register_builtin_tools`` produces) — but both ``disable_tools`` and
 # ``enabled_tools`` validate against them: registration-eligible, like
-# ``web_search`` without ``[web]``. A literal, not an import, so this module
+# ``web_search`` without a search key. A literal, not an import, so this module
 # never loads the MCP SDK; a test pins it to the tool module's names.
 MCP_RESOURCE_TOOL_NAMES: frozenset = frozenset({
     "list_mcp_resources",
@@ -101,6 +103,27 @@ def _bind_and_register(
     agent.tools.register(tool, replace=replace, origin=origin)
 
 
+def _host_owns_web_search(agent: "Agentao") -> bool:
+    """True when the host disabled ``web_search``, left it out of
+    ``enabled_tools``, or supplies its own through ``extra_tools``.
+
+    Each attribute is type-checked, not merely read: a stand-in agent (a
+    ``Mock`` in tests) answers any attribute, and a wrong "yes" here would
+    drop the built-in. An unexpected type reads as "not owned", which only
+    builds the default as before.
+    """
+    disabled = getattr(agent, "_disable_tools", None)
+    if isinstance(disabled, (set, frozenset)) and "web_search" in disabled:
+        return True
+    enabled = getattr(agent, "_enabled_tools", None)
+    if isinstance(enabled, (set, frozenset)) and "web_search" not in enabled:
+        return True
+    extra = getattr(agent, "_extra_tools", None)
+    if isinstance(extra, (list, tuple)):
+        return any(getattr(t, "name", None) == "web_search" for t in extra)
+    return False
+
+
 def register_builtin_tools(agent: "Agentao") -> None:
     """Register all built-in tools on ``agent.tools``.
 
@@ -122,18 +145,36 @@ def register_builtin_tools(agent: "Agentao") -> None:
         SearchTextTool(),
         ShellTool(),
     ]
-    # Web tools depend on the `[web]` extra (beautifulsoup4). Skip
+    # web_fetch depends on the `[web]` extra (beautifulsoup4). Skip
     # registration when bs4 is missing so the LLM-visible schema does
-    # not advertise tools whose execute() would fail with a generic
+    # not advertise a tool whose execute() would fail with a generic
     # ImportError. Mirrors the bg_store pattern below.
     if importlib.util.find_spec("bs4") is not None:
         tools_to_register.append(WebFetchTool())
-        tools_to_register.append(WebSearchTool())
     else:
-        _logger.info(
-            "beautifulsoup4 not installed; web_fetch / web_search tools omitted. "
-            "Run `pip install 'agentao[web]'` to enable."
+        _info_once(
+            "registry:no-bs4",
+            "beautifulsoup4 not installed; web_fetch tool omitted. "
+            "Run `pip install 'agentao[web]'` to enable.",
+            log=_logger,
         )
+    # web_search needs only httpx (a core dependency), but every backend needs
+    # a key. With none resolved the tool could only return a configuration
+    # error — after a confirmation prompt — so it is left out on the same rule.
+    # Not built at all when the host disabled it or supplies its own: the
+    # default would be dropped anyway, and its "omitted" note would be wrong.
+    if not _host_owns_web_search(agent):
+        web_search = WebSearchTool()
+        if web_search.backends:
+            tools_to_register.append(web_search)
+        else:
+            _info_once(
+                "registry:no-search-key",
+                "No web_search backend configured; web_search omitted. Set "
+                "DEEPSEEK_API_KEY (with DEEPSEEK_BASE_URL on https://api.deepseek.com), "
+                "TAVILY_API_KEY or JINA_API_KEY to enable it.",
+                log=_logger,
+            )
     tools_to_register.extend([
         agent.memory_tool,
         ActivateSkillTool(agent.skill_manager),
@@ -215,7 +256,7 @@ def apply_enabled_tools(agent: "Agentao") -> None:
 
     # Typo guard: every allowlisted name must resolve to a registerable tool.
     # Union with BUILTIN_TOOL_NAMES so a legal-but-absent built-in (e.g.
-    # ``web_search`` without the ``[web]`` extra) isn't flagged as a typo —
+    # ``web_search`` without a search key) isn't flagged as a typo —
     # same "registration eligibility != live availability" rule as disable_tools.
     known = (
         set(agent.tools.tools)

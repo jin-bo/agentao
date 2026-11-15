@@ -6,7 +6,7 @@ import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Dict, Optional
-from urllib.parse import quote_plus, urlparse, urlunparse
+from urllib.parse import urlparse, urlsplit, urlunparse
 
 # `httpx`, `bs4`, and `playwright` are deferred (P0.5): the web tools may
 # never be registered in an embedded host that doesn't expose web
@@ -1080,6 +1080,32 @@ class WebFetchTool(AsyncToolBase):
         return _format_fallback_body(url, label, body), None
 
 
+#: Keys of the INFO notes already logged by :func:`_info_once` in this process.
+_INFO_ONCE_KEYS: set[str] = set()
+_INFO_ONCE_LOCK = threading.Lock()
+
+
+def _info_once(key: str, msg: str, *args: Any, log: Optional[logging.Logger] = None) -> None:
+    """Log an INFO note once per process.
+
+    The web_search configuration notes are rebuilt with every ``Agentao``,
+    sub-agent spawns included; the state they report does not change in
+    between, so repeating them only fills ``agentao.log``.
+
+    The key is spent only when a handler can receive the note. A tool built
+    before ``agentao.log`` is attached (a host's ``extra_tools`` entry, say)
+    would otherwise use the one emit on a logger that drops it.
+    """
+    target = log or logger
+    if not (target.isEnabledFor(logging.INFO) and target.hasHandlers()):
+        return
+    with _INFO_ONCE_LOCK:
+        if key in _INFO_ONCE_KEYS:
+            return
+        _INFO_ONCE_KEYS.add(key)
+    target.info(msg, *args)
+
+
 #: Per-snippet cap so one verbose result can't dominate the tool output.
 _SNIPPET_LIMIT = 300
 
@@ -1087,12 +1113,17 @@ _SNIPPET_LIMIT = 300
 def _format_search_results(query: str, items: list[dict]) -> str:
     """Render a normalized result list to the shared ``web_search`` text block.
 
-    Each backend (bocha / jina / duckduckgo) maps its own response shape to a
+    Each backend (deepseek / tavily / jina) maps its own response shape to a
     list of ``{"title", "url", "snippet"}`` dicts and calls this — the single
     source for the heading, numbering, the "No search results" sentinel, and
     snippet capping. Values are coerced to ``str`` so a non-string field in a
     backend payload can never raise (the f-strings stringify ``title``/``url``;
     ``snippet`` is coerced explicitly because it is sliced).
+
+    Other keys on an item (DeepSeek's ``date``) are not rendered. DeepSeek's
+    ``date`` is unreliable (measured 2026-11-15: python.org's 3.13.13 release
+    page, released 2026-04, came back as ``2013-03-12``), and the model would
+    read a ``Date:`` line as fact.
     """
     if not items:
         return f"No search results found for: {query}"
@@ -1101,6 +1132,9 @@ def _format_search_results(query: str, items: list[dict]) -> str:
         snippet = item.get("snippet") or ""
         if not isinstance(snippet, str):
             snippet = str(snippet)
+        # One line per snippet: DeepSeek summaries carry newlines and Markdown
+        # headings, which would break the indented layout and read as structure.
+        snippet = " ".join(snippet.split())
         if len(snippet) > _SNIPPET_LIMIT:
             snippet = snippet[:_SNIPPET_LIMIT] + "…"
         out += f"{i}. {item.get('title') or '(no title)'}\n"
@@ -1111,35 +1145,111 @@ def _format_search_results(query: str, items: list[dict]) -> str:
     return out
 
 
+#: The only host whose ``DEEPSEEK_BASE_URL`` lets ``web_search`` reuse the
+#: chat key ``DEEPSEEK_API_KEY``. A key behind any other base URL is a key for
+#: some other service (a proxy, a reseller, a self-hosted gateway), and sending
+#: it to DeepSeek's Search API would be wrong at best.
+_DEEPSEEK_OFFICIAL_HOST = "api.deepseek.com"
+_DEEPSEEK_SEARCH_URL = "https://api.deepseek.com/v1/tools/search"
+#: Measured from the API reference (2026-11): ``query`` is 1–128 characters,
+#: ``count`` is 1–50.
+_DEEPSEEK_MAX_QUERY_CHARS = 128
+_DEEPSEEK_MAX_COUNT = 50
+_TAVILY_SEARCH_URL = "https://api.tavily.com/search"
+_TAVILY_MAX_RESULTS = 20
+
+
+def _is_official_deepseek_base_url(url: Optional[str]) -> bool:
+    """Return True only for an ``https`` URL on ``api.deepseek.com``.
+
+    The path is not checked: the official endpoint is served under ``/``,
+    ``/v1``, ``/beta`` and ``/anthropic``, and the Search API URL is fixed
+    anyway. Anything else fails closed: another scheme, another host (a
+    subdomain or a lookalike included), credentials in the URL, a port other
+    than 443, or a URL that does not parse.
+    """
+    if not isinstance(url, str) or not url.strip():
+        return False
+    try:
+        parts = urlsplit(url.strip())
+        port = parts.port
+    except ValueError:
+        return False
+    return (
+        parts.scheme.lower() == "https"
+        and parts.hostname == _DEEPSEEK_OFFICIAL_HOST
+        and parts.username is None
+        and parts.password is None
+        and port in (None, 443)
+    )
+
+
+def _post_search_json(url: str, payload: dict, api_key: Optional[str]) -> Any:
+    """POST a JSON search request with a Bearer key and return the parsed body.
+
+    Shared by the ``deepseek`` and ``tavily`` backends. Raises on HTTP or
+    parse failure so ``WebSearchTool.execute`` falls back.
+    """
+    import httpx
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=30.0) as client:
+        response = client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+
+def _results_list(data: Any, key: str, backend: str) -> list:
+    """Return ``data[key]`` when it is a list, else raise.
+
+    A missing / non-list hit list is a malformed (soft-error) 200: raising
+    lets ``WebSearchTool.execute`` fall back instead of reporting a misleading
+    "no results". An *empty* list is a genuine no-match answer.
+    """
+    raw = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(raw, list):
+        raise ValueError(f"{backend}: unexpected response shape (no {key!r} list)")
+    return raw
+
+
 class WebSearchTool(Tool):
-    #: Known search backends. ``duckduckgo`` is the only keyless one, so it is
-    #: the universal last-resort fallback — but keyless is not the same as
-    #: reliable: see ``_search_duckduckgo`` for the bot-challenge guard.
-    #: ``jina`` and ``bocha`` both need a key. (``s.jina.ai`` *was* keyless when
-    #: this backend landed; measured 2026-07-22 it answers 401 without one.)
-    _KNOWN_BACKENDS = ("jina", "bocha", "duckduckgo")
+    #: Known search backends, in auto-chain order. All three need a key.
+    #: ``bocha`` and ``duckduckgo`` were retired in 0.5.21: keyless DuckDuckGo
+    #: answered a captcha for every query (measured 2026-07-22), so a keyless
+    #: install had a search tool that always failed.
+    _KNOWN_BACKENDS = ("deepseek", "tavily", "jina")
+    _RETIRED_BACKENDS = ("bocha", "duckduckgo")
 
     def __init__(
         self,
         *,
         backend: Optional[str] = None,
-        api_key: Optional[str] = None,
+        deepseek_api_key: Optional[str] = None,
+        tavily_api_key: Optional[str] = None,
         jina_api_key: Optional[str] = None,
     ) -> None:
         """Web-search tool.
 
         Args:
-            backend: Search provider override (``"jina"`` / ``"bocha"`` /
-                ``"duckduckgo"``). When ``None``, the tool runs in **auto mode**
-                and builds a fallback chain from key availability (see below).
-            api_key: Bocha API key. When ``None``, falls back to the
-                ``BOCHA_API_KEY`` process env var.
-            jina_api_key: Jina API key. When ``None``, falls back to the
+            backend: Search provider override (``"deepseek"`` / ``"tavily"`` /
+                ``"jina"``). When ``None``, the tool runs in **auto mode** and
+                builds a fallback chain from key availability (see below).
+            deepseek_api_key: DeepSeek key for the Search API. When ``None``,
+                the tool reuses the chat key ``DEEPSEEK_API_KEY``, but **only**
+                when ``DEEPSEEK_BASE_URL`` is an ``https`` URL on
+                ``api.deepseek.com``. An explicit key skips that check: the
+                host chose it, and the Search API URL is fixed.
+            tavily_api_key: Tavily key. When ``None``, falls back to the
+                ``TAVILY_API_KEY`` process env var.
+            jina_api_key: Jina key. When ``None``, falls back to the
                 ``JINA_API_KEY`` process env var. Required in practice —
                 ``s.jina.ai`` answers 401 without one (see ``_search_jina``) —
-                but deliberately *not* enforced at construction the way
-                ``bocha`` is: the endpoint used to be keyless, so a keyless pin
-                stays constructible and surfaces the 401 as a search error.
+                but deliberately *not* enforced at construction the way the
+                other two are: the endpoint used to be keyless, so a keyless
+                pin stays constructible and surfaces the 401 as a search error.
 
         Backend resolution:
 
@@ -1147,56 +1257,99 @@ class WebSearchTool(Tool):
           fallback. A host that deliberately pins a provider is honored (it is
           never silently re-routed through another third party).
         * **Auto mode (``backend=None``)** → an ordered fallback chain that, on a
-          backend *error* (not an empty result), retreats to the next backend
-          and ends at the keyless ``duckduckgo``: ``jina`` (if a Jina key
-          resolves) → ``bocha`` (if a Bocha key resolves) → ``duckduckgo``.
+          backend *error* (not an empty result), retreats to the next backend:
+          ``deepseek`` → ``tavily`` → ``jina``, each only if its key resolves.
+          With no key the chain is empty: :attr:`backends` is ``()``, the
+          built-in registration leaves the tool out, and ``execute`` returns a
+          configuration error.
 
         Explicit args take precedence over the env var so two Agentao instances
         in the same process can use different search backends — the env read is
-        only a fallback, not a process-global override. Pass a configured
-        instance via ``Agentao(extra_tools=[...])``.
+        only a fallback, not a process-global override. An explicit ``""``
+        forces that backend off. Pass a configured instance via
+        ``Agentao(extra_tools=[...])``.
 
         Raises:
-            ValueError: if ``backend`` is not a known provider, or if
-                ``backend="bocha"`` is requested without a resolvable key.
-                Fails loudly at construction rather than emitting a
-                ``Bearer None`` request (401) on the first query.
+            ValueError: if ``backend`` is unknown or retired, or if
+                ``backend="deepseek"`` / ``"tavily"`` is requested without a
+                resolvable key. Fails loudly at construction rather than
+                emitting a ``Bearer None`` request (401) on the first query.
         """
-        # ``is not None`` (not ``or``) so an explicit api_key="" — a host
+        # ``is not None`` (not ``or``) so an explicit key="" — a host
         # deliberately forcing "no key" — is honored and does NOT silently
         # fall back to the process-global env var.
-        self._bocha_api_key = (
-            api_key if api_key is not None else os.getenv("BOCHA_API_KEY")
+        if deepseek_api_key is not None:
+            self._deepseek_api_key = deepseek_api_key
+        elif backend not in (None, "deepseek"):
+            # Pinned to another backend: the deepseek key is never used, so
+            # neither read it nor spend the once-per-process base-URL note.
+            self._deepseek_api_key = None
+        else:
+            self._deepseek_api_key = self._deepseek_key_from_env()
+        self._tavily_api_key = (
+            tavily_api_key if tavily_api_key is not None else os.getenv("TAVILY_API_KEY")
         )
         self._jina_api_key = (
             jina_api_key if jina_api_key is not None else os.getenv("JINA_API_KEY")
         )
+
+        if backend in self._RETIRED_BACKENDS:
+            raise ValueError(
+                f"WebSearchTool(backend=): {backend!r} was retired in 0.5.21; "
+                f"use one of {', '.join(repr(b) for b in self._KNOWN_BACKENDS)}."
+            )
         if backend is not None and backend not in self._KNOWN_BACKENDS:
             raise ValueError(
                 f"WebSearchTool(backend=): unknown backend {backend!r}; "
                 f"expected one of {', '.join(repr(b) for b in self._KNOWN_BACKENDS)}."
             )
-        if backend == "bocha" and not self._bocha_api_key:
+        if backend == "deepseek" and not self._deepseek_api_key:
             raise ValueError(
-                "WebSearchTool: backend 'bocha' requires an API key — pass "
-                "api_key= or set BOCHA_API_KEY."
+                "WebSearchTool: backend 'deepseek' requires an API key — pass "
+                "deepseek_api_key=, or set DEEPSEEK_API_KEY with DEEPSEEK_BASE_URL "
+                f"on https://{_DEEPSEEK_OFFICIAL_HOST}."
+            )
+        if backend == "tavily" and not self._tavily_api_key:
+            raise ValueError(
+                "WebSearchTool: backend 'tavily' requires an API key — pass "
+                "tavily_api_key= or set TAVILY_API_KEY."
             )
 
         if backend is not None:
             # Explicit pin: single backend, no auto-fallback (literal contract).
             self._chain = [backend]
         else:
-            # Auto mode: jina (keyed) → bocha (keyed) → duckduckgo (keyless).
-            chain = []
-            if self._jina_api_key:
-                chain.append("jina")
-            if self._bocha_api_key:
-                chain.append("bocha")
-            chain.append("duckduckgo")
-            self._chain = chain
-        # ``_provider`` = the primary (first attempted) backend. Kept for
-        # back-compat (tests + description) now that a chain exists behind it.
-        self._provider = self._chain[0]
+            keys = {
+                "deepseek": self._deepseek_api_key,
+                "tavily": self._tavily_api_key,
+                "jina": self._jina_api_key,
+            }
+            self._chain = [b for b in self._KNOWN_BACKENDS if keys[b]]
+        # ``_provider`` = the primary (first attempted) backend, ``None`` when
+        # no backend is configured. Kept for back-compat (tests + description).
+        self._provider: Optional[str] = self._chain[0] if self._chain else None
+
+    @staticmethod
+    def _deepseek_key_from_env() -> Optional[str]:
+        """Reuse the chat key only when the chat endpoint is DeepSeek's own."""
+        key = os.getenv("DEEPSEEK_API_KEY")
+        if not key:
+            return None
+        if _is_official_deepseek_base_url(os.getenv("DEEPSEEK_BASE_URL")):
+            return key
+        # Names only, never values: the base URL can carry credentials.
+        _info_once(
+            "web_search:deepseek-base-url",
+            "web_search: DEEPSEEK_API_KEY is set but DEEPSEEK_BASE_URL is not "
+            "https://%s; the deepseek search backend stays off.",
+            _DEEPSEEK_OFFICIAL_HOST,
+        )
+        return None
+
+    @property
+    def backends(self) -> tuple[str, ...]:
+        """The backends this instance tries, in order. Empty when none resolved."""
+        return tuple(self._chain)
 
     @property
     def is_read_only(self) -> bool:
@@ -1209,6 +1362,8 @@ class WebSearchTool(Tool):
     @property
     def description(self) -> str:
         base = "Search the web. Returns search results with titles, URLs, and snippets. "
+        if not self._chain:
+            return base + "No backend is configured."
         if len(self._chain) > 1:
             return base + f"Backend order (falls back on failure): {' → '.join(self._chain)}."
         return base + f"Backend: {self._provider}."
@@ -1245,6 +1400,21 @@ class WebSearchTool(Tool):
         the backends that failed. If the whole chain fails, the combined error
         is returned.
         """
+        if not self._chain:
+            return (
+                "Error: web_search has no backend configured. Set DEEPSEEK_API_KEY "
+                f"(with DEEPSEEK_BASE_URL on https://{_DEEPSEEK_OFFICIAL_HOST}), "
+                "TAVILY_API_KEY or JINA_API_KEY."
+            )
+        # A blank query is refused here, before the chain: a backend-level
+        # refusal would only fall back to a backend that then sends the blank
+        # query anyway. (``_search_deepseek`` keeps its own check for direct
+        # calls, which never reach this one.)
+        if not isinstance(query, str) or not query.strip():
+            return "Error: web_search needs a non-empty query."
+        # Surrounding whitespace is not part of the query: it would only count
+        # against deepseek's 128-character limit and refuse a query that fits.
+        query = query.strip()
         # num_results is LLM-supplied: coerce + clamp so a 0/negative value can't
         # silently truncate (slice ``[:-1]``) or yield a header-only "success"
         # that suppresses the fallback chain. Backends differ on degenerate
@@ -1280,50 +1450,78 @@ class WebSearchTool(Tool):
         return f"Error: all web_search backends failed ({detail})"
 
     def _dispatch(self, backend: str, query: str, num_results: int) -> str:
-        if backend == "bocha":
-            return self._search_bocha(query, num_results)
-        if backend == "jina":
-            return self._search_jina(query, num_results)
-        return self._search_duckduckgo(query, num_results)
+        if backend == "deepseek":
+            return self._search_deepseek(query, num_results)
+        if backend == "tavily":
+            return self._search_tavily(query, num_results)
+        return self._search_jina(query, num_results)
 
-    def _search_bocha(self, query: str, num_results: int) -> str:
-        """Query Bocha. Raises on HTTP / parse failure so ``execute`` can fall back."""
-        import httpx
+    def _search_deepseek(self, query: str, num_results: int) -> str:
+        """Query DeepSeek's Search API. Raises on HTTP / parse failure so
+        ``execute`` falls back.
 
-        payload = {"query": query, "count": num_results, "summary": True}
-        headers = {
-            "Authorization": f"Bearer {self._bocha_api_key}",
-            "Content-Type": "application/json",
-        }
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(
-                "https://api.bochaai.com/v1/web-search",
-                json=payload,
-                headers=headers,
+        The query is refused, not cut, past 128 characters: a cut query
+        searches for something the model did not ask for. The refusal is a
+        backend error, so the chain falls back to a backend without the limit.
+        """
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("deepseek: the query is empty")
+        if len(query) > _DEEPSEEK_MAX_QUERY_CHARS:
+            raise ValueError(
+                f"deepseek: the query is {len(query)} characters; the Search API "
+                f"accepts at most {_DEEPSEEK_MAX_QUERY_CHARS}"
             )
-            response.raise_for_status()
-            data = response.json()
+        payload = {"query": query, "count": min(num_results, _DEEPSEEK_MAX_COUNT)}
+        data = _post_search_json(_DEEPSEEK_SEARCH_URL, payload, self._deepseek_api_key)
 
-        # Guard every level before ``.get`` — a malformed HTTP-200 body (root or
-        # ``webPages`` not an object) is a parse failure that should raise (→ the
-        # chain falls back), not crash with AttributeError.
-        if not isinstance(data, dict):
-            raise ValueError("bocha: unexpected response shape (root is not an object)")
-        inner = data.get("data")
-        web_pages = inner.get("webPages") if isinstance(inner, dict) else None
-        raw_results: list = []
-        if isinstance(web_pages, dict) and isinstance(web_pages.get("value"), list):
-            raw_results = web_pages["value"]
-        elif isinstance(inner, list):
-            raw_results = inner
-        elif isinstance(data.get("results"), list):
-            raw_results = data["results"]
+        # A missing / non-list ``results`` is a malformed 200 — raise so the
+        # chain falls back. An *empty* list is the API's documented no-match
+        # answer and terminates the chain.
+        raw_results = _results_list(data, "results", "deepseek")
 
         items = [
             {
-                "title": item.get("name") or item.get("title"),
+                "title": item.get("title"),
                 "url": item.get("url"),
-                "snippet": item.get("snippet") or item.get("summary") or "",
+                # ``summary`` is the API's model-oriented summary; ``snippet``
+                # is the short UI line.
+                "snippet": item.get("summary") or item.get("snippet") or "",
+                # Kept for debugging, never shown: see ``_format_search_results``.
+                "date": item.get("date"),
+            }
+            for item in raw_results[:num_results]
+            if isinstance(item, dict)
+        ]
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "web_search deepseek: result dates (not shown to the model): %s",
+                [(i["url"], i["date"]) for i in items],
+            )
+        return _format_search_results(query, items)
+
+    def _search_tavily(self, query: str, num_results: int) -> str:
+        """Query Tavily search. Raises on HTTP / parse failure so ``execute``
+        falls back.
+
+        ``include_answer`` stays off: with it, Tavily writes an LLM answer, and
+        this backend would hand the model a second model's summary instead of
+        a result list.
+        """
+        payload = {
+            "query": query,
+            "max_results": min(num_results, _TAVILY_MAX_RESULTS),
+            "search_depth": "basic",
+            "include_answer": False,
+        }
+        data = _post_search_json(_TAVILY_SEARCH_URL, payload, self._tavily_api_key)
+
+        raw_results = _results_list(data, "results", "tavily")
+
+        items = [
+            {
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "snippet": item.get("content") or "",
             }
             for item in raw_results[:num_results]
             if isinstance(item, dict)
@@ -1358,9 +1556,7 @@ class WebSearchTool(Tool):
         # (soft-error) 200 — raise so the chain falls back, rather than reporting
         # a misleading "no results". An *empty* list is a genuine no-results
         # answer and terminates the chain.
-        raw_results = data.get("data") if isinstance(data, dict) else None
-        if not isinstance(raw_results, list):
-            raise ValueError("jina: unexpected response shape (no 'data' list)")
+        raw_results = _results_list(data, "data", "jina")
 
         items = [
             {
@@ -1372,57 +1568,3 @@ class WebSearchTool(Tool):
             if isinstance(item, dict)
         ]
         return _format_search_results(query, items)
-
-    def _search_duckduckgo(self, query: str, num_results: int) -> str:
-        """Query DuckDuckGo HTML. Raises on HTTP / parse / bot-challenge failure
-        so ``execute`` can fall back (or report an error)."""
-        import httpx
-        from bs4 import BeautifulSoup
-
-        encoded_query = quote_plus(query)
-        url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
-
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(url, headers=headers)
-            response.raise_for_status()
-
-            soup = BeautifulSoup(response.text, "html.parser")
-
-            # A real SERP — *including* a genuine zero-hit one — always renders
-            # the ``#links`` results container (a zero-hit page puts a
-            # ``.no-results`` notice inside it). The bot-challenge page renders
-            # none of that and answers 202 rather than 200, so ``raise_for_status``
-            # waves it through. Either signal means the body is not a result set.
-            #
-            # Raise rather than return an empty list: ``find_all("div", "result")``
-            # yields 0 on a challenge page, which would otherwise be formatted
-            # into a confident "No search results found" — indistinguishable
-            # from a real empty answer. ``duckduckgo`` is last in every auto
-            # chain (and the *only* entry when no key resolves), so a silent
-            # empty here is the entire search surface failing quietly.
-            # Measured 2026-07-22: keyless html.duckduckgo.com answers 202 with
-            # a captcha page for every query.
-            if response.status_code == 202 or soup.select_one("#links, .results") is None:
-                raise ValueError(
-                    "duckduckgo: bot-challenge page, not a result set "
-                    f"(HTTP {response.status_code}, no '#links' results container)"
-                )
-
-            items = []
-
-            for result_div in soup.find_all("div", class_="result", limit=num_results):
-                title_elem = result_div.find("a", class_="result__a")
-                snippet_elem = result_div.find("a", class_="result__snippet")
-
-                if title_elem:
-                    items.append({
-                        "title": title_elem.get_text(strip=True),
-                        "url": title_elem.get("href", ""),
-                        "snippet": snippet_elem.get_text(strip=True) if snippet_elem else "",
-                    })
-
-            return _format_search_results(query, items)

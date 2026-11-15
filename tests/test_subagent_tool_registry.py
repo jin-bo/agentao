@@ -273,12 +273,16 @@ def test_a_replacement_made_from_the_built_ins_own_class_is_left_out(
 
 def test_a_configured_web_search_is_not_swapped_for_the_default(tmp_path, monkeypatch):
     """The example in ``docs/design/host-tool-injection.md``. The sub-agent's own
-    ``WebSearchTool()`` has none of the host's configuration and, with no keys
-    set, searches DuckDuckGo."""
-    pytest.importorskip("bs4")
+    ``WebSearchTool()`` has none of the host's configuration: here it would
+    search Tavily, not the DeepSeek backend the host pinned. A Tavily key is set
+    so the default really registers; without one this would pass vacuously."""
     from agentao.tools import WebSearchTool
 
-    parent = _parent(tmp_path, extra_tools=[WebSearchTool(backend="bocha", api_key="host-key")])
+    monkeypatch.setenv("TAVILY_API_KEY", "env-key")
+    parent = _parent(
+        tmp_path,
+        extra_tools=[WebSearchTool(backend="deepseek", deepseek_api_key="host-key")],
+    )
     _, sub_agents = _sub_agents_call(monkeypatch)
     try:
         _run(parent)
