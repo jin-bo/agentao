@@ -61,6 +61,16 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
                 if s.get("skills_error"):
                     skills_line = f"skills unavailable: {s['skills_error']}"
                 console.print(f"    [dim]{escape(skills_line)}[/dim]")
+            marked = s.get("read_only_marked", 0)
+            # Only for a live connection: a failed server's list is from its
+            # last connection, and none of those tools are registered now.
+            if marked and not s["trusted"] and s["status"] == "connected":
+                # Read-only mode blocks these tools, and nothing else in the
+                # listing says why: the marks count only on a trusted server.
+                console.print(
+                    f'    [dim]{marked} tool(s) marked read-only; '
+                    f'the marks count only with "trust": true[/dim]'
+                )
             if s["error"]:
                 console.print(f"    [red]{escape(s['error'])}[/red]")
         console.print()

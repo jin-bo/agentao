@@ -336,7 +336,7 @@ MCP 工具默认**也需要确认**（等同 `requires_confirmation=True`），�
 
 | `trust` | 注解 | 效果 |
 |---|---|---|
-| `false`（默认） | 任何 | 注解被忽略 —— server 可能撒谎；总是要求确认 |
+| `false`（默认） | 任何 | 注解被忽略 —— server 可能撒谎；总是要求确认。在 read-only 模式下，标了 `readOnlyHint: true` 的工具会被拦下，拦截消息会说明该标注需要 `trust: true` |
 | `true` | `readOnlyHint: true` | `is_read_only=True`（read-only 模式可放行该调用），不要确认 |
 | `true` | `destructiveHint: true` | 要求确认 —— 覆盖 trust 默认 |
 | `true` | 无 / 都没有 | 当前 trusted 行为 —— 不要求确认 |

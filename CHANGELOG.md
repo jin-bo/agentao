@@ -15,7 +15,11 @@ _Targeting 0.5.22. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **Read-only mode says why it blocks a read-only-marked MCP tool.** `McpTool.is_read_only` honours a server's `readOnlyHint` only when the server has `"trust": true`, so read-only mode blocks the tools of an untrusted server even when the server marks them read-only. The block message now adds that the mark counts only for a server with `"trust": true` in `mcp.json`, and that trust also lets that server's tools not marked destructive run without confirmation. It says so only when the server does mark the tool read-only (and not also `destructiveHint: true`), because trust would not let any other tool through. `/mcp list` adds a line under such a server: `N tool(s) marked read-only; the marks count only with "trust": true`. New for hosts: `McpTool.read_only_hint_ignored`, `agentao.mcp.tool.annotations_claim_read_only()`, and a `read_only_marked` count in `McpClientManager.get_server_status()`.
+
 ### Fixed
+
+- **A `web_fetch` jina fallback that timed out reported an empty error.** The whole-call ceiling raises `asyncio.TimeoutError`, whose message is empty, so the error ended at `jina reader (…):`. It now names the exception type, as the deepseek fallback does. The playwright fallback, the primary fetch's `httpx` error and its catch-all had the same blank message and now name the type too (`web.py::_error_text`).
 
 ## [0.5.21] — 2026-11-15
 
