@@ -82,7 +82,7 @@ MCP Servers (3):
 
 对开启了 `"skills": true` 的 server，`/mcp list` 会在它下面多显示一行：它提供的 skill 数量，或者 skills 不可用的原因。
 
-对没有 `"trust": true`、但把部分工具标成 `readOnlyHint: true` 的 server，它会多显示 `N tool(s) marked read-only; the marks count only with "trust": true`。在 server 受信任之前，read-only 模式会拦下这些工具，拦截消息里也会说明这一点。trust 同时会去掉这些工具的确认，所以只信任你愿意让它不经询问就执行的 server。
+对已连接、没有 `"trust": true`、但把部分工具标成 `readOnlyHint: true` 的 server，它会多显示 `N tool(s) marked read-only; the marks count only with "trust": true`。在 server 受信任之前，read-only 模式会拦下这些工具，拦截消息里也会说明这一点。trust 同时会去掉这些工具的确认，所以只信任你愿意让它不经询问就执行的 server。
 
 `/mcp add` 写到**项目**配置（`.agentao/mcp.json`）— 不动用户全局那一份。如果该文件存在但无法读成 JSON object，`/mcp add` 和 `/mcp remove` 会打印错误并保持文件不变，而不是覆盖它、丢掉其中的 server。修好文件或把它移开后再运行一次。
 
