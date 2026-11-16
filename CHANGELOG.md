@@ -5,17 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
-
-_Targeting 0.5.22. Add entries under the relevant heading as work lands._
+## [0.5.22] — 2026-11-15
 
 ### Added
 
 - **`web_fetch` has a `deepseek` fallback: `AGENTAO_WEB_FETCH_FALLBACK=deepseek`.** When a page needs JavaScript or the direct fetch fails, the URL goes to DeepSeek's Fetch API (`POST https://api.deepseek.com/v1/tools/fetch`), which returns the page as Markdown. It is opt-in like `jina`, and the tool description and the result's `Fallback:` line say where the URL went. It reuses `DEEPSEEK_API_KEY` under the `web_search` rule: only when `DEEPSEEK_BASE_URL` is an `https` URL on `api.deepseek.com`. Without such a key there is no fallback, the tool description says so, and an INFO line names the variables. A blocked target never reaches it, a URL with credentials in it is never sent, a URL over the API's 8,192 characters is refused before the request, and the response is capped like the other paths. DeepSeek's 404 (no usable content), or a 200 with empty content, is reported as a failed fallback beside the direct fetch's own error. Billed per successful fetch.
+- **Host API for an MCP server's read-only marks.** `McpTool.read_only_hint_ignored` is `True` when the server marks the tool read-only but is not trusted, so the mark does not count. `agentao.mcp.tool.annotations_claim_read_only(annotations)` says whether an annotations dict marks a tool read-only (`readOnlyHint: true` and not `destructiveHint: true`), whatever the trust. `McpClientManager.get_server_status()` gives a `read_only_marked` count per server. See Changed for what read-only mode and `/mcp list` do with them.
 
 ### Changed
 
-- **Read-only mode says why it blocks a read-only-marked MCP tool.** `McpTool.is_read_only` honours a server's `readOnlyHint` only when the server has `"trust": true`, so read-only mode blocks the tools of an untrusted server even when the server marks them read-only. The block message now adds that the mark counts only for a server with `"trust": true` in `mcp.json`, and that trust also lets that server's tools not marked destructive run without confirmation. It says so only when the server does mark the tool read-only (and not also `destructiveHint: true`), because trust would not let any other tool through. `/mcp list` adds a line under such a server: `N tool(s) marked read-only; the marks count only with "trust": true`. New for hosts: `McpTool.read_only_hint_ignored`, `agentao.mcp.tool.annotations_claim_read_only()`, and a `read_only_marked` count in `McpClientManager.get_server_status()`.
+- **Read-only mode says why it blocks a read-only-marked MCP tool.** `McpTool.is_read_only` honours a server's `readOnlyHint` only when the server has `"trust": true`, so read-only mode blocks the tools of an untrusted server even when the server marks them read-only. The block message now adds that the mark counts only for a server with `"trust": true` in `mcp.json`, and that trust also lets that server's tools not marked destructive run without confirmation. It says so only when the server does mark the tool read-only (and not also `destructiveHint: true`), because trust would not let any other tool through. `/mcp list` adds a line under such a server while it is connected: `N tool(s) marked read-only; the marks count only with "trust": true`. The new host API is under Added.
 
 ### Fixed
 
