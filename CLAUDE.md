@@ -151,22 +151,6 @@ Invariants (`docs/design/llm-api-adapters.md` §2.3):
 
 **Prompt-cache breakpoints are opt-in** (`LLM_PROMPT_CACHE=anthropic` / `prompt_cache=`). A request gets at most 3 `cache_control` markers. The adapter's `build_request` places them **copy-on-mark** (`llm/_cache_control.py`), so a marker never enters history. Never infer this setting from a URL or a model name.
 
-### Conversation flow
-
-```
-Agentao.chat() / Agentao.arun()
-  └─ ChatLoopRunner.run()                  # runtime/chat_loop/_runner.py
-       loop (max_iterations):
-         ├─ run_llm_call(messages, tools)  # runtime/llm_call.py
-         ├─ if tool_calls:
-         │    └─ ToolRunner.run()          # runtime/tool_runner.py
-         │         plan → execute → format → sanitize
-         │           (gates: PermissionEngine + transport.confirm_tool)
-         └─ else: return assistant text
-```
-
-`arun()` is the async path. It wraps the sync `chat()`: it submits `chat()` to its own worker pool (`_get_arun_pool`) and awaits the result.
-
 ### Compaction
 
 Design: `docs/design/compaction-orchestration-plan.md`. Six entry points hand off to one `CompactionCoordinator` (`agent.compaction_coordinator`):
@@ -301,73 +285,11 @@ Data types:
 
 ### Plugin hooks
 
-There are eight events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `SessionStart`, `SessionEnd`, `PreCompact`.
-- Runtime: `agentao/plugins/hooks/`. Discovery: `embedding/plugins/`. Config: `docs/reference/configuration.md` §11.
-- Design: `docs/design/hooks-claude-contract-conformance-plan.md`. Measured upstream behaviour: `docs/reference/hooks-probe-2.1.251.md`.
-
-**Contract detection.** The parser finds the contract of each file from its shape (`_parser.py::_detect_entry_shape`):
-- `hooks: []` without `type`: official.
-- `type` without an array: flat.
-- **Both**: the parser disables the file.
-- **Neither**: the parser gives a warning for that rule only.
-
-**The two contracts:**
-- `agentao-v1` is **frozen**. Gate every behaviour change on the contract, and test both halves.
-- `claude-code@profile-1` is an **enumerated capability profile** (`_profile.py`, data).
-- The dispatcher **ignores an unimplemented key with a one-time diagnostic, never a schema error.** To add a field, add its row.
-- The dispatcher reports profile disposition (`accept` / `ignore`) once per (rule, field). Delivery (`honored` / `discarded`) is **silent**.
-
-**Precedence** is `_resolve.py::resolve`: exit 2, then `continue`, then the event's own decision. Exit 2 can mean block, feed the model, or notify, as each event defines.
-
-**A stop from a tool worker:**
-- The verdict travels on `ToolExecutionResult.hook_stop_reason`, then `ToolRunner.last_hook_stop`, then `INCOMPLETE_HOOK_STOP`.
-- The runner selects it in **plan order, never completion order**.
-- Reset `last_hook_stop` at the **top** of `execute()`.
-- Both seams read a **string**, because a `MagicMock` answers any attribute.
-
-**Mixed-contract dispatch** partitions, runs, and merges once (`_dispatcher.py::_merge_pre_tool_use`). The lattice is `deny > ask > allow`. The reason tie-break ranks in the winning class, by declaration order.
-
-- **For the path placeholders, the only correct spelling is `env=build_child_env({...})`.** `env={...}` or `env=os.environ | {...}` removes the credential scrub.
-- The profile matcher is `re.fullmatch`, with special cases for `*` and `""` (`_matchers.py`).
-- The diagnostic registry has **session** scope. Its key is the rule *content* (`_diagnostics.py::rule_key`), never `id(rule)`.
+Eight events, two contracts (`agentao-v1` is frozen). The rules are in `agentao/plugins/hooks/CLAUDE.md`. Read it before you change hook parsing, dispatch or the profile.
 
 ### MCP
 
-- Config: `.agentao/mcp.json` (project) and `<home>/.agentao/mcp.json` (global).
-- Key files: `agentao/mcp/config.py`, `client.py`, `tool.py`, `_compat.py`, `resources.py`, `resource_tools.py`, `skills.py`, `skill_tools.py`.
-- CLI: `/mcp list`, `/mcp add [--http|--sse] <name> <command|url>`, `/mcp remove <name>`, `/mcp resources [server]`.
-
-**Transports** (`config.py::resolve_transport`, fail-closed):
-- `command` gives stdio. `url` gives **Streamable HTTP by default**. Add `"type": "sse"` for legacy SSE.
-- A bare `url` used to mean SSE (a breaking change). Tools register as `mcp_{server}_{tool}`.
-
-**Threading:**
-- `McpClientManager` runs one loop on its own thread (`agentao-mcp-loop`). Sync callers submit to it with `run_coroutine_threadsafe` (#241).
-- A call to the manager *from* that thread raises. Each `McpClient` holds its connection in an **owner task**. That task opens and closes the transport (#243).
-- `disconnect_all(timeout=)` is final and bounded.
-
-**SDK versions:**
-- Agentao supports both SDK majors (`mcp>=1.26.0,<3`). `_compat.py` absorbs the 2.0 breaks. It **probes the installed SDK and never parses a version string.** Read it before you touch `client.py` or `tool.py`.
-- **Tests must use real `mcp.types` models.** Never use `SimpleNamespace` or `MagicMock` fakes.
-
-**Protocol era** (`McpClient._negotiate()`):
-- Send `initialize` first. Escalate to `server/discover` only on a protocol rejection (`-32022` or `-32601`).
-- **This is deliberately the reverse of upstream `mode='auto'`** (`docs/design/mcp-streamable-http.md` §5.8.1).
-- Exception: a server with `"skills": true` starts with `server/discover`. Tripwire test: `test_a_dual_era_server_is_left_on_the_handshake_era`.
-- `McpClient.protocol_version` is a ceiling. Gate on `>=`.
-
-**OAuth** (`docs/design/mcp-oauth.md`):
-- Every URL server gets `StoredTokenAuth`, except stdio, `"oauth": false`, or a server with its own `Authorization` header.
-- Only `/mcp login` or `agentao mcp login` opens a browser. `agentao run` and ACP never do.
-- Records are in `~/.agentao/mcp-oauth/`. The key is the canonical URL plus the optional `oauth.profile`.
-- **With no profile, the key is the URL alone. Do not "simplify" the key.**
-- A server that ACP supplies is always `"oauth": false`.
-
-**Resources** (`docs/design/mcp-resources.md`):
-- Three read-only tools are in `mcp/resource_tools.py`, not `tools/`, to prevent an import cycle. They register only when a server declares `resources`.
-- Each call checks **config, then reconnect, then live capability**, in that order.
-- The tool saves a binary under its own bound `working_directory`. There is no fallback to the process cwd.
-- Their names are in `MCP_RESOURCE_TOOL_NAMES`, outside `BUILTIN_TOOL_NAMES`. `disable_tools` and `enabled_tools` accept them.
+The rules for config, transports, threading, SDK versions, protocol era, OAuth and resources are in `agentao/mcp/CLAUDE.md`. Read it before you change anything under `agentao/mcp/`.
 
 **Skills** (`docs/design/mcp-skills.md`). They need mcp 2.x and are opt-in with `"skills": true`. Only `True` counts.
 - **State:**
@@ -392,45 +314,9 @@ There are eight events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `User
   - **The tail points at an active MCP skill's copy in history** (#552): its latest `activate_skill` result when unchanged (`skills/manager.py::_activation_result_holds`), else its `Skill loaded` message. Microcompaction keeps whole exactly the results the tail points at, as `SkillManager.mcp_pointer_targets` reports them through `ContextManager.mcp_pointer_provider`. A missing or failing answer must keep more, never less. A compaction that replaces history makes the runner build a tail that carries the pointer again (`chat_loop/_runner.py`, `provenance.tail_points_into_history`).
 - Test server: `tests/support/skills_mcp_server.py`.
 
-### LLM wire protocols
+### LLM wire protocols and logging
 
-Design: `docs/design/llm-api-adapters.md`.
-
-`LLMClient` (`llm/client.py`) is a retry and logging shell over one adapter. `api_format` (`{PROVIDER}_API_FORMAT`) selects it: `openai-completions` (default, `_openai_completions.py`), `anthropic-messages` (`_anthropic_messages.py`), `openai-responses` (`_openai_responses.py`).
-
-- **`api_format` is not the provider.** Never infer it from a URL, a provider name or a model name. An unimplemented format fails closed.
-- After construction, only a provider switch changes the format (`reconfigure(api_format=)`). A wire change is a switch, as `runtime/model.py::set_provider` defines it.
-- **History never changes shape.** `agent.messages` stays OpenAI dicts on every wire. Adapters translate an outbound copy and build responses through `_StreamAccumulator` (`_stream_response.py`). A new wire adds an adapter, never a new message model.
-- **The Chat Completions adapter stays byte-identical** to a capture made before the extraction (`tests/test_llm_api_extraction_noop.py`, golden file in `tests/data/`).
-- **Never regenerate that golden file from the current build.** `LLMClient.client` and its two latches stay on `LLMClient`.
-
-**Signed thinking:**
-- Anthropic blocks ride `anthropic_thinking_blocks`. Responses reasoning rides `openai_reasoning_items`.
-- The runtime attaches them at the two sites that record the model's own output (`chat_loop/_serialize.py::_attach_thinking_blocks`).
-- **A new carrier key goes in `WIRE_CARRIER_KEYS` and nowhere else.** That tuple drives both the recording and the purge on a switch.
-
-**The Responses wire:**
-- It is stateless (`store: false`, no `previous_response_id`). History stores a function call's id as `call_id|fc_…` (`llm/_tool_ids.py`). Split on the last `|`, and only when the tail starts with `fc_`.
-- `_with_wire_tool_ids` rewrites composite ids for Chat Completions, which allows 64 characters.
-- **When there are no composite ids, `_with_wire_tool_ids` returns the same list.** This keeps the golden file true.
-- Send a call's `fc_` item id back only with the reasoning it came from.
-- The `openai` SDK *yields* `error` and `response.failed`. The adapter must raise them.
-
-**SDK facts:**
-- `openai` has no upper pin. A fresh install gets 3.x, but `uv.lock` has 2.x. To check 3.x, run `uv run --with 'openai==3.16.2' python -m pytest tests/ -n logical`.
-- Anthropic SDK facts (measured): it has no `temperature` parameter. It refuses a non-streaming request above about 21k `max_tokens`, so `chat()` consumes a stream. An in-stream `error` arrives as `APIStatusError(status_code=200)`.
-- **openai 3.38+ leaves the error JSON out of `str(exc)`.** A classifier reads `llm/_retry.py::api_error_text(exc)`, which adds `exc.body`. Show the user `str(exc)`.
-- **Ask the Models API in `prepare()`**, which runs before `_build_request_kwargs`. Never ask it at construction or in `build_request`.
-- **`usage.prompt_tokens` is the whole prompt.** On Anthropic it is `input_tokens + cache_creation + cache_read`. Do not copy this mapping to other adapters.
-- **Test a wire adapter against the real SDK.** Replace only the socket (`tests/support/anthropic_wire.py`, `tests/support/openai_responses_wire.py`). Keep fixtures on `stream_of`.
-
-### Logging
-
-`agentao.log` records every LLM request and response, tool call, tool result and token usage, without truncation.
-- The logger is in `agentao/llm/client.py`. Read it first when you debug tool execution or LLM behaviour.
-- **Request logging compares, it does not count** (#635, `llm/_logging.py`). The turn's channel (`chat_stream`, and `chat` when the Gemini bypass or the streaming fallback sends the turn's request) keeps one fingerprint per logged history message. A one-off `chat` call keeps none and is logged whole. A request logs new and changed messages, a changed one marked `(rewritten)`. Never go back to `messages[count:]`: a compaction rewrites messages in place. Pass the trailing request-only count (`request_only=`), so the tail is logged each time and never remembered.
-- On `anthropic-messages`, the log has the canonical OpenAI-shaped list, not the translated body.
-- **The log is redacted.** `_RedactingFormatter` rewrites credential-shaped strings with the patterns in `security/secret_scan.py`. It is a `Formatter`, not a `Filter`, so the redaction never leaks into an embedding host's handlers. To get raw bytes, bypass this formatter (the only place to do so).
+`LLMClient` (`llm/client.py`) is a retry and logging shell over one wire adapter, selected by `api_format`. **History never changes shape** (OpenAI dicts on every wire). `agentao.log` records every LLM request and response, tool call and result. Read it first when you debug. The rules are in `agentao/llm/CLAUDE.md`. Read it before you change an adapter, retry, thinking carriers or the logger.
 
 ### CLI slash commands
 
