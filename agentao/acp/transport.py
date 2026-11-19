@@ -470,6 +470,33 @@ class ACPTransport(_ReplayMixin, _InteractionMixin):
                 update["content"] = entries
             return update
 
+        if etype == EventType.LLM_RETRY:
+            # Sent before the backoff sleep, so the client can say why the
+            # turn went still: up to four waits of up to 60 s each.
+            # Newlines on both sides, because a failed attempt's reasoning
+            # may already have streamed and does not end on one.
+            retry, max_retries = data.get("retry"), data.get("max_retries")
+            if (
+                not isinstance(retry, int) or isinstance(retry, bool)
+                or not isinstance(max_retries, int) or isinstance(max_retries, bool)
+            ):
+                return None
+            detail = []
+            reason = data.get("reason")
+            if isinstance(reason, str) and reason:
+                detail.append(reason)
+            delay = data.get("delay_s")
+            if isinstance(delay, (int, float)) and not isinstance(delay, bool):
+                detail.append(f"retrying in {delay:.1f}s")
+            marker = f"[retry {retry}/{max_retries}"
+            if detail:
+                marker += f": {', '.join(detail)}"
+            marker += "]"
+            return {
+                "sessionUpdate": "agent_thought_chunk",
+                "content": _text_block(f"\n{marker}\n"),
+            }
+
         if etype == EventType.AGENT_START:
             agent_name = str(data.get("agent", "unknown"))
             task = str(data.get("task", ""))

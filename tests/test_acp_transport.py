@@ -448,6 +448,39 @@ def test_agent_end_without_turns_leaves_the_count_out(transport):
 
 
 # ---------------------------------------------------------------------------
+# LLM_RETRY → agent_thought_chunk marker
+# ---------------------------------------------------------------------------
+
+def test_llm_retry_emits_a_thought_marker(transport):
+    """Without it the client sees nothing for up to four 60 s backoff waits."""
+    t, server = transport
+    t.emit(AgentEvent(EventType.LLM_RETRY, {
+        "retry": 2, "max_retries": 4, "delay_s": 15.3, "reason": "status=503",
+    }))
+    upd = _last_update(server)
+    assert upd["sessionUpdate"] == "agent_thought_chunk"
+    assert upd["content"]["text"] == "\n[retry 2/4: status=503, retrying in 15.3s]\n"
+
+
+def test_llm_retry_without_reason_or_delay(transport):
+    t, server = transport
+    t.emit(AgentEvent(EventType.LLM_RETRY, {"retry": 1, "max_retries": 4}))
+    assert _last_update(server)["content"]["text"] == "\n[retry 1/4]\n"
+
+
+@pytest.mark.parametrize("data", [
+    {},
+    {"retry": "1", "max_retries": 4},
+    {"retry": 1, "max_retries": None},
+    {"retry": True, "max_retries": 4},
+])
+def test_malformed_llm_retry_emits_nothing(transport, data):
+    t, server = transport
+    t.emit(AgentEvent(EventType.LLM_RETRY, data))
+    assert server.notifications == []
+
+
+# ---------------------------------------------------------------------------
 # ERROR → agent_message_chunk
 # ---------------------------------------------------------------------------
 

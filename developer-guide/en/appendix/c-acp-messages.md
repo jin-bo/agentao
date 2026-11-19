@@ -149,6 +149,7 @@ The live mapping from runtime events, in [`agentao/acp/transport.py`](https://gi
 | `TOOL_OUTPUT` | `tool_call_update` | `status:"in_progress"`, the whole output so far as one text entry. Throttled — see *Streamed tool output* |
 | `TOOL_COMPLETE` | `tool_call_update` | `status:"completed"` for `ok`, `"failed"` for `error` or `cancelled`. `content` is restated when the call streamed or has an error line. Otherwise it is left out, so an opening `diff` stays |
 | `todo_write` (valid checklist) | `plan` | Sent at `TOOL_COMPLETE`, only when the call applied. No `tool_call` is opened. A malformed checklist falls back to a normal `tool_call` |
+| `LLM_RETRY` | `agent_thought_chunk` | `[retry <n>/<max>: <reason>, retrying in <s>s]` on its own line, sent before the backoff wait. `: …` is left out when there is no reason or delay. Since 0.5.23 |
 | `AGENT_START` | `agent_thought_chunk` | `[sub-agent started: <name>] <task>` |
 | `AGENT_END` | `agent_thought_chunk` | `[sub-agent finished: <name> (<state>, <N> turns)]`. `, <N> turns` is left out when the count is unknown |
 | `PLUGIN_HOOK_FIRED` (user notices) | `agent_message_chunk` | One `⚠ ` line per hook notice |

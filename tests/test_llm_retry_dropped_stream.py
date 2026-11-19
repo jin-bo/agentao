@@ -360,6 +360,41 @@ def test_a_turn_emits_llm_retry_on_the_transport():
     assert kinds.index(EventType.LLM_RETRY) < kinds.index(EventType.LLM_TEXT)
 
 
+def test_a_turns_llm_retry_reaches_an_acp_client():
+    """The producer's real payload, mapped by the ACP transport."""
+    from pathlib import Path
+
+    from agentao import Agentao
+    from agentao.acp.transport import ACPTransport
+    from agentao.transport import EventType
+
+    from .support.acp_server import RecordingServer
+
+    agent = Agentao(api_key="k", base_url="http://wire.test/v1", model="gpt-test",
+                    api_format="openai-responses", working_directory=Path.cwd())
+    events: List[Any] = []
+    try:
+        agent.transport.subscribe(events.append)
+        rw.attach(agent.llm, rw.Wire(
+            (503, {"error": {"message": "busy", "type": "server_error"}}),
+            _responses_answer("hello"),
+        ))
+        assert agent.chat("hi") == "hello"
+    finally:
+        agent.close()
+    server = RecordingServer()
+    acp = ACPTransport(server=server, session_id="s")
+    for event in events:
+        if event.type == EventType.LLM_RETRY:
+            acp.emit(event)
+    ((_, params),) = server.notifications
+    update = params["update"]
+    assert update["sessionUpdate"] == "agent_thought_chunk"
+    text = update["content"]["text"]
+    assert text.startswith(f"\n[retry 1/{MAX_RETRY_ATTEMPTS - 1}: status=503, retrying in ")
+    assert text.endswith("s]\n")
+
+
 @pytest.fixture
 def printed(monkeypatch) -> List[str]:
     lines: List[str] = []

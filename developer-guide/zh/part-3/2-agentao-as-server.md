@@ -336,7 +336,7 @@ ACP v1 的 `stopReason` 是封闭的五元枚举，既没有 `error` 成员，�
 | 值 | 含义 |
 |----|------|
 | `agent_message_chunk` | 流式文本 chunk（错误也走这里，以 `Error: ` 开头） |
-| `agent_thought_chunk` | 思考过程，以及子 agent 的开始 / 结束标记 |
+| `agent_thought_chunk` | 思考过程、子 agent 的开始 / 结束标记，以及 LLM 重试提示 |
 | `tool_call` | 工具开始调用 |
 | `tool_call_update` | 工具执行进度/输出/结果 |
 | `plan` | `todo_write` 的任务清单 |
