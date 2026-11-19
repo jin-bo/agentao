@@ -150,7 +150,7 @@ agent.set_permission_mode("read-only")                   # 返回 PermissionMode
 }
 ```
 
-带 `command` 正则的 shell `allow` 只对**简单命令**生效：不含 `;`、`&&`、`||`、`|`、`&`、换行，不含重定向、子 shell 或开头的变量赋值（`NAME=value cmd`），引号外不含 `$`、反引号、glob 或花括号展开（按实际执行它的 shell 方言判断）。其他命令会跳过这条规则，由后续规则决定，因此 `docker ps && curl … | sh` 会落到你的 `deny` / `ask` 规则，而不会借 `^docker ` 放行。命令其余部分仍由正则负责，请写明具体子命令（`^docker (ps|images)$`，两端都要锚定：`git fetch --upload-pack=<cmd> .` 就是一条会执行程序的简单命令）。不带 `command` 条件的规则不受影响。shell `command` 上的 `deny` 或 `ask` 正则匹配时不区分大小写（0.5.23 起），因为在 macOS 和 Windows 默认文件系统上 `GIT push` 运行的就是 git，PowerShell 和 cmd 也不区分大小写：`Remove-Item` 同样能拦住 `remove-item`。这样可能顺带匹配到本意之外的选项（`-x` 也匹配 `-X`），只会多拒绝或多询问；要让某部分区分大小写，写成 `(?-i:-x)`。`allow` 正则仍区分大小写。
+带 `command` 正则的 shell `allow` 只对**简单命令**生效：不含 `;`、`&&`、`||`、`|`、`&`、换行，不含重定向、子 shell 或开头的变量赋值（`NAME=value cmd`），引号外不含 `$`、反引号、glob 或花括号展开（按实际执行它的 shell 方言判断）。其他命令会跳过这条规则，由后续规则决定，因此 `docker ps && curl … | sh` 会落到你的 `deny` / `ask` 规则，而不会借 `^docker ` 放行。命令其余部分仍由正则负责，请写明具体子命令（`^docker (ps|images)$`，两端都要锚定：`git fetch --upload-pack=<cmd> .` 就是一条会执行程序的简单命令）。不带 `command` 条件的规则不受影响。shell `command` 上的 `deny` 或 `ask` 正则匹配时不区分大小写（0.5.23 起），因为在 macOS 和 Windows 默认文件系统上 `GIT push` 运行的就是 git，PowerShell 和 cmd 也不区分大小写：`Remove-Item` 同样能拦住 `remove-item`。这样可能顺带匹配到本意之外的选项（`-x` 也匹配 `-X`），只会多拒绝或多询问；要让某部分区分大小写，写成 `(?-i:-x)`。它还会对去掉引号、转义（`\`、cmd 的 `^`、PowerShell 的反引号）、开头的 `&` / `@`、程序所在目录（包括带空格的加引号路径）和 `.exe` / `.cmd` / `.bat` / `.com` 后缀、并把连续空格合并后的命令再匹配一次，所以 `g''it push`、`/usr/bin/git push`、`& "C:\Program Files\Git\bin\git.exe" push`、`git.exe  push` 也会被拦下。程序前的包装（`command git push`、`env git push`、`(git push)`）或子命令前的选项（`git -C . push`）拦不住，所以命令 `deny` 只能尽力而为，能不写 `^` 就不写。`allow` 正则仍区分大小写，并且只匹配原文。
 
 ### `domain` — URL 域名匹配（专为 web_fetch 等）
 
@@ -215,8 +215,9 @@ WORKSPACE_WRITE 模式自带规则（源码 `agentao/permissions.py::_PRESET_RUL
   {"tool": "replace", "action": "allow"},
   // 只读 shell 命令白名单（git status/log/diff、ls、cat、echo、pwd、which、head、tail 等）
   {"tool": "run_shell_command", "args": {"command": "^(git (status|log|...)|ls\\b|cat\\b|...)"}, "action": "allow"},
-  // 危险命令黑名单（rm -rf、sudo、mkfs、dd if=）
-  {"tool": "run_shell_command", "args": {"command": "rm\\s+-rf|sudo\\s|mkfs|dd\\s+if="}, "action": "deny"},
+  // 危险命令黑名单：任意选项写法的递归强制 rm、sudo、mkfs、dd if=
+  //（简化写法；实际正则见 permissions.py::_PRESET_SHELL_DENY_RE）
+  {"tool": "run_shell_command", "args": {"command": "rm (-rf|-fr|-r -f|...)|sudo\\s|mkfs|dd\\s+if="}, "action": "deny"},
   // 其他 shell 问用户
   {"tool": "run_shell_command", "action": "ask"},
   // 可信域名直接允许 web_fetch

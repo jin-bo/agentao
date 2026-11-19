@@ -7,6 +7,7 @@ non-``None`` return into a DENY decision before rule evaluation.
 """
 
 import copy
+import functools
 import re
 from enum import Enum
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse
 
 from .permissions_hardline import hardline_check
-from .permissions_hardline._contexts import _position_contexts
+from .permissions_hardline._contexts import _position_contexts, _shell_word_normalize
 
 if TYPE_CHECKING:
     from .host.models import ActivePermissions
@@ -611,8 +612,102 @@ def shell_command_is_simple(command: str, dialect: Optional[str]) -> bool:
     )
 
 
+# A program's ``.exe`` / ``.com`` / ``.cmd`` / ``.bat`` suffix, only on a word
+# in command position (the start, or after ``;`` ``&`` ``|`` ``(`` or a newline):
+# stripped from an argument it would turn ``curl x.com`` into ``curl x`` and
+# fire a ``deny`` whose negative lookahead was meant to spare that URL.
+# The program word may not run past a separator, or ``;a;a;a…`` would be
+# rescanned from every ``;`` (quadratic).
+_EXE_SUFFIX = re.compile(r"(?i)((?:^|[;&|(\n])[ \t]*[^\s;&|()]*?\w)\.(?:exe|com|cmd|bat)(?=\s|$)")
+_WHITESPACE_RUN = re.compile(r"[ \t]+")
+# A program's directory, on a word in command position (as for
+# ``_EXE_SUFFIX``), so ``ls && /usr/bin/git push`` reads ``ls && git push``.
+_PROGRAM_DIRECTORY = re.compile(r"((?:^|[;&|(\n])[ \t]*)[^\s;&|()]*[/\\](?=[^\s;&|()])")
+# A quoted program path in command position, which may hold spaces:
+# ``"C:\Program Files\Git\bin\git.exe" push``, also after ``&&``. Its
+# directory has to go before the quotes do, or the space splits the program
+# word. Each scan stops at the next quote, so it stays linear.
+_QUOTED_PROGRAM = re.compile(
+    r"""((?:^|[;&|(\n])[ \t]*(?:[&@][ \t]*)?)(["'])[^"'\n]*[/\\]([^"'/\\\n]+)\2"""
+)
+# PowerShell's ``&`` call operator and cmd's ``@`` (echo off) before the
+# program: ``& git push`` and ``@git push`` run ``git push``.
+_LEADING_CALL_OPERATOR = re.compile(r"^[ \t]*[&@][ \t]*")
+
+
+def _canonical_tail(text: str) -> str:
+    text = _WHITESPACE_RUN.sub(" ", text).lstrip(" \t")
+    text = _PROGRAM_DIRECTORY.sub(r"\1", text)
+    return _EXE_SUFFIX.sub(r"\1", text)
+
+
+def _posix_reading(command: str) -> str:
+    try:
+        # A backslash-newline is a line continuation: bash drops both.
+        posix, _ = _shell_word_normalize(command.replace("\\\n", ""))
+    except Exception:  # a deny check must never raise
+        posix = command
+    return _canonical_tail(posix.replace("^", ""))
+
+
+def _windows_reading(command: str) -> str:
+    # cmd escapes with ``^``, PowerShell with a backtick.
+    # Line continuations first: cmd drops ``^`` + newline, PowerShell reads
+    # a backtick + newline as a space.
+    text = re.sub(r"\^\r?\n", "", command)
+    text = re.sub(r"`\r?\n", " ", text)
+    text = text.replace('"', "").replace("'", "").replace("^", "").replace("`", "")
+    return _canonical_tail(_LEADING_CALL_OPERATOR.sub("", text, count=1))
+
+
+def _compute_shell_command_canonicals(command: str) -> Tuple[str, ...]:
+    sources = [command]
+    unquoted = _QUOTED_PROGRAM.sub(r"\1\3", command)
+    if unquoted != command:
+        sources.append(unquoted)
+    out: List[str] = []
+    for source in sources:
+        for text in (_posix_reading(source), _windows_reading(source)):
+            if text != command and text not in out:
+                out.append(text)
+    return tuple(out)
+
+
+# The cache holds the command strings themselves, and a shell command can carry
+# a whole file in a heredoc, so only short commands are cached: 256 entries of
+# at most 4 KiB each.
+_CANONICALS_CACHE_MAX_CHARS = 4096
+_shell_command_canonicals_cached = functools.lru_cache(maxsize=256)(
+    _compute_shell_command_canonicals
+)
+
+
+def _shell_command_canonicals(command: str) -> List[str]:
+    """Spellings of *command* with the ways around a ``deny`` taken out.
+
+    ``g''it push``, ``"git" push``, ``g\\it push``, cmd's ``g^it push`` and
+    PowerShell's ``g`it push`` all run ``git push``, as do ``git.exe push``,
+    ``/usr/bin/git push``, ``C:\\Tools\\git.exe push``,
+    ``"C:\\Program Files\\Git\\bin\\git.exe" push``, ``& git push``,
+    ``@git push``, `` git push`` and ``git  push``. A ``deny`` / ``ask``
+    pattern is matched against these as well as the raw text. Two readings,
+    because a backslash is an escape in POSIX and a path separator on
+    Windows. The results are never run, and never matched by an ``allow``:
+    matching more spellings would grant more. Cached, because every shell
+    ``deny`` / ``ask`` rule asks for the same command's spellings.
+    """
+    if len(command) > _CANONICALS_CACHE_MAX_CHARS:
+        return list(_compute_shell_command_canonicals(command))
+    return list(_shell_command_canonicals_cached(command))
+
+
+def _shell_command_canonical(command: str) -> str:
+    """The POSIX reading of :func:`_shell_command_canonicals`."""
+    return _posix_reading(command)
+
+
 def _rule_vouches_for_shell_command(rule: Dict[str, Any], tool_name: str) -> bool:
-    """A custom ``allow`` that granted a shell call because of its command text."""
+    """An ``allow`` (custom or preset) that granted a shell call because of its command text."""
     if tool_name != _SHELL_TOOL:
         return False
     if str(rule.get("action", "ask")).lower() != "allow":
@@ -620,6 +715,30 @@ def _rule_vouches_for_shell_command(rule: Dict[str, Any], tool_name: str) -> boo
     args = rule.get("args")
     return isinstance(args, dict) and "command" in args
 
+
+# The presets' shell deny: a recursive force ``rm`` in any flag spelling
+# (``-rf``, ``-fr``, ``-r -f``, ``--recursive --force`` or GNU's abbreviations
+# such as ``--rec --forc``, within one command),
+# ``sudo``, ``mkfs`` and ``dd if=``. Matched without case, like every shell
+# deny pattern (:meth:`PermissionEngine._matches`). Each lookahead stops at the
+# end of the command or at the next ``rm``, so ``rm rm rm …`` stays linear,
+# and a flag is checked with a lookahead before it is consumed, so a long
+# ``-rrrr…`` word is not backtracked over once per split point. ``--rm``
+# (``docker run --rm``) is an option, not the ``rm`` program.
+# ``rm`` as a word of its own: not ``--rm`` (``docker run --rm``), not the last
+# part of a path (``build/rm``). A path such as ``/bin/rm -rf`` is still caught,
+# because a deny is also matched against the command with the program's
+# directory taken out (``_shell_command_canonicals``). The scan for the flags
+# stops at the end of the command or at the next such ``rm``, which keeps
+# ``rm rm rm …`` linear without letting ``rm -r build/rm -f`` cut it short.
+_RM_WORD = r"(?<![^\s;&|(])rm(?![^\s;&|)])"
+_RM_ARGS = rf"(?:(?!{_RM_WORD})[^;&|\n])*"
+_PRESET_SHELL_DENY_RE = (
+    _RM_WORD +
+    rf"(?={_RM_ARGS}\s(?:-(?=[a-z]*r)[a-z]+|--r[a-z]*)(?=[\s;&|()<>]|$))"
+    rf"(?={_RM_ARGS}\s(?:-(?=[a-z]*f)[a-z]+|--f[a-z]*)(?=[\s;&|()<>]|$))"
+    r"|sudo\s|mkfs|dd\s+if="
+)
 
 # Shell commands both ``workspace-write`` and ``plan`` run without asking.
 # Anything that does not match falls through to the mode's own ASK / DENY,
@@ -695,7 +814,7 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
         {"tool": "run_shell_command", "args": {"command": _SHELL_READ_ONLY_ALLOW_RE}, "action": "allow"},
         {
             "tool": "run_shell_command",
-            "args": {"command": r"rm\s+-rf|sudo\s|mkfs|dd\s+if="},
+            "args": {"command": _PRESET_SHELL_DENY_RE},
             "action": "deny",
         },
         # ASK — not DENY — so installers/devops scripts can proceed with
@@ -738,7 +857,7 @@ _PRESET_RULES: Dict[str, List[Dict[str, Any]]] = {
         {"tool": "save_memory", "action": "deny"},
         {"tool": "todo_write", "action": "deny"},
         {"tool": "run_shell_command", "args": {"command": _SHELL_READ_ONLY_ALLOW_RE}, "action": "allow"},
-        {"tool": "run_shell_command", "args": {"command": r"rm\s+-rf|sudo\s|mkfs|dd\s+if="}, "action": "deny"},
+        {"tool": "run_shell_command", "args": {"command": _PRESET_SHELL_DENY_RE}, "action": "deny"},
         {"tool": "run_shell_command", "action": "deny"},
         # Domain-tiered web_fetch (same as workspace-write)
         {
@@ -1046,15 +1165,15 @@ class PermissionEngine:
                     continue
                 if not self._matches(rule, tool_name, tool_args):
                     continue
-                # A custom shell ``allow`` vouches only for a command whose text
-                # is what runs. For a chained, redirected or expanding command
-                # it is skipped and evaluation goes on, so a later ``deny``
-                # still applies. Presets are exempt: theirs is a fixed regex
-                # that already refuses this syntax, and ``full-access`` grants
-                # every command on purpose.
+                # A shell ``allow`` on a command pattern vouches only for a
+                # command whose text is what runs. For a chained, redirected or
+                # expanding command it is skipped and evaluation goes on, so a
+                # later ``deny`` still applies. The presets' read-only list goes
+                # through this too: its regex refuses POSIX syntax only, and on
+                # cmd ``echo %VAR%`` expands. ``full-access`` has no command
+                # pattern and still grants every command.
                 if (
-                    rules is not self._mode_rules
-                    and _rule_vouches_for_shell_command(rule, tool_name)
+                    _rule_vouches_for_shell_command(rule, tool_name)
                     and not shell_command_is_simple(
                         str(tool_args.get("command", "")), dialect,
                     )
@@ -1101,6 +1220,10 @@ class PermissionEngine:
                 and str(rule.get("action", "ask")).lower() != "allow"
             ):
                 candidates = self._path_candidates(arg_value)
+            elif arg_key == "command" and tool_name == _SHELL_TOOL and (
+                str(rule.get("action", "ask")).lower() != "allow"
+            ):
+                candidates = [arg_value, *_shell_command_canonicals(arg_value)]
             else:
                 candidates = [arg_value]
             # ``GIT push`` runs git on macOS's and Windows' default
