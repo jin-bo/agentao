@@ -154,7 +154,7 @@ Multiple args must all match:
 }
 ```
 
-A shell `allow` with a `command` pattern applies only to a **simple command**: no `;`, `&&`, `||`, `|`, `&` or newline, no redirection, subshell or leading variable assignment (`NAME=value cmd`), and no `$`, backtick, glob or brace expansion outside quotes (read in the dialect of the shell that runs it). For anything else the rule is skipped and the rules after it decide, so `docker ps && curl … | sh` falls through to your `deny` / `ask` rules instead of riding on `^docker `. The pattern still vouches for the rest of the command, so pin the subcommands you mean (`^docker (ps|images)$`, anchored at both ends: `git fetch --upload-pack=<cmd> .` is a simple command that runs a program). Rules without a `command` condition are not affected. A `deny` or `ask` pattern on a shell `command` matches without case (since 0.5.23), because `GIT push` runs git on macOS's and Windows' default filesystems and PowerShell and cmd ignore case: `Remove-Item` also catches `remove-item`. It can then catch a flag it did not mean (`-x` matches `-X`), which only refuses or asks more; write `(?-i:-x)` to keep a part exact. An `allow` pattern stays case-sensitive.
+A shell `allow` with a `command` pattern applies only to a **simple command**: no `;`, `&&`, `||`, `|`, `&` or newline, no redirection, subshell or leading variable assignment (`NAME=value cmd`), and no `$`, backtick, glob or brace expansion outside quotes (read in the dialect of the shell that runs it). For anything else the rule is skipped and the rules after it decide, so `docker ps && curl … | sh` falls through to your `deny` / `ask` rules instead of riding on `^docker `. The pattern still vouches for the rest of the command, so pin the subcommands you mean (`^docker (ps|images)$`, anchored at both ends: `git fetch --upload-pack=<cmd> .` is a simple command that runs a program). Rules without a `command` condition are not affected. A `deny` or `ask` pattern on a shell `command` matches without case (since 0.5.23), because `GIT push` runs git on macOS's and Windows' default filesystems and PowerShell and cmd ignore case: `Remove-Item` also catches `remove-item`. It can then catch a flag it did not mean (`-x` matches `-X`), which only refuses or asks more; write `(?-i:-x)` to keep a part exact. It is also tried on the command with quotes, escapes (`\`, cmd's `^`), a program's directory and `.exe` / `.cmd` / `.bat` / `.com` suffix taken out and runs of spaces collapsed, so `g''it push`, `/usr/bin/git push` and `git.exe  push` are caught too. An `allow` pattern stays case-sensitive and sees only the raw text.
 
 ### `domain` — URL host (for web_fetch etc.)
 
@@ -219,8 +219,9 @@ The WORKSPACE_WRITE preset (source `agentao/permissions.py::_PRESET_RULES`):
   {"tool": "replace", "action": "allow"},
   // Read-only shell allowlist (git status/log/diff, ls, cat, echo, pwd, which, head, tail, …)
   {"tool": "run_shell_command", "args": {"command": "^(git (status|log|...)|ls\\b|cat\\b|...)"}, "action": "allow"},
-  // Dangerous-command denylist (rm -rf, sudo, mkfs, dd if=)
-  {"tool": "run_shell_command", "args": {"command": "rm\\s+-rf|sudo\\s|mkfs|dd\\s+if="}, "action": "deny"},
+  // Dangerous-command denylist: a recursive force rm in any flag spelling, sudo, mkfs, dd if=
+  // (simplified; the real pattern is permissions.py::_PRESET_SHELL_DENY_RE)
+  {"tool": "run_shell_command", "args": {"command": "rm (-rf|-fr|-r -f|...)|sudo\\s|mkfs|dd\\s+if="}, "action": "deny"},
   {"tool": "run_shell_command", "action": "ask"},
   {"tool": "web_fetch", "domain": {"allowlist": [".github.com", ".docs.python.org", ".wikipedia.org", "r.jina.ai", ".pypi.org", ".readthedocs.io"]}, "action": "allow"},
   {"tool": "web_fetch", "domain": {"blocklist": ["localhost", "127.0.0.1", "0.0.0.0", "169.254.169.254", ".internal", ".local", "::1"]}, "action": "deny"},
