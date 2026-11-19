@@ -66,6 +66,9 @@ def deny_push(tmp_path: Path):
     '"C:\\Program Files\\Git\\bin\\git.exe" push',
     '& "C:\\Program Files\\Git\\bin\\git.exe" push',
     '"/opt/my tools/git" push',
+    "git \\\npush",
+    "git ^\npush",
+    "git `\npush",
 ])
 def test_deny_catches_other_spellings(deny_push, command):
     assert _decide(deny_push, command) is DENY
@@ -96,8 +99,21 @@ def test_allow_does_not_match_other_spellings(tmp_path: Path):
     "find . -exec rm -rf {} +",
     "RM -Rf build",
     "rm --rec --forc build",
+    "rm build -rf;ls",
+    "rm build -rf&&ls",
 ])
 def test_preset_denies_every_recursive_force_rm(tmp_path: Path, command):
+    engine = PermissionEngine(rules=[], project_root=tmp_path)
+    assert _decide(engine, command) is DENY
+
+
+@pytest.mark.parametrize("command", [
+    "rm -r build/rm -f /data",
+    "/bin/rm -rf x",
+    "(rm -rf x)",
+    "echo hi; rm -f x -r",
+])
+def test_preset_rm_deny_reads_rm_as_a_word(tmp_path: Path, command):
     engine = PermissionEngine(rules=[], project_root=tmp_path)
     assert _decide(engine, command) is DENY
 
@@ -117,6 +133,8 @@ def test_preset_rm_deny_needs_both_flags_in_one_command(tmp_path: Path, command)
 @pytest.mark.parametrize("text", [
     "rm" + " -r" * 20000,
     "rm " * 20000,
+    "build/rm " * 8000,
+    "(rm " * 15000,
     "rm -r " * 5000,
     "rm" + " x" * 40000 + " -f",
     "rm -" + "r" * 20000 + "1",
@@ -148,6 +166,8 @@ def test_suffix_is_stripped_only_from_the_program(tmp_path: Path):
     ";/" * 20000,
     '"' + "/" * 40000,
     "& " * 20000,
+    ';"/' * 20000,
+    ';"' + "/" * 40000,
 ])
 def test_canonical_spellings_are_linear(text):
     started = time.perf_counter()
@@ -182,3 +202,15 @@ def test_full_access_still_allows_everything(tmp_path: Path):
     engine = PermissionEngine(rules=[], project_root=tmp_path)
     engine.set_mode(PermissionMode.FULL_ACCESS)
     assert _decide(engine, "echo %X% && git status", "cmd") is ALLOW
+
+
+def test_deny_catches_quoted_program_path_after_a_separator(tmp_path: Path):
+    engine = PermissionEngine(
+        rules=[
+            {"tool": "run_shell_command", "args": {"command": "git push"}, "action": "deny"},
+            {"tool": "run_shell_command", "action": "allow"},
+        ],
+        project_root=tmp_path,
+    )
+    assert _decide(engine, 'ls && "C:\\Program Files\\Git\\bin\\git.exe" push') is DENY
+    assert _decide(engine, 'ls; "/opt/my tools/git" push') is DENY

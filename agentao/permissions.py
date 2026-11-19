@@ -623,11 +623,12 @@ _WHITESPACE_RUN = re.compile(r"[ \t]+")
 # A program's directory, on a word in command position (as for
 # ``_EXE_SUFFIX``), so ``ls && /usr/bin/git push`` reads ``ls && git push``.
 _PROGRAM_DIRECTORY = re.compile(r"((?:^|[;&|(\n])[ \t]*)[^\s;&|()]*[/\\](?=[^\s;&|()])")
-# A quoted program path at the start, which may hold spaces:
-# ``"C:\Program Files\Git\bin\git.exe" push``. Its directory has to go
-# before the quotes do, or the space splits the program word.
-_LEADING_QUOTED_PROGRAM = re.compile(
-    r"""^[ \t]*(?:[&@][ \t]*)?(["'])[^"'\n]*[/\\]([^"'/\\\n]+)\1"""
+# A quoted program path in command position, which may hold spaces:
+# ``"C:\Program Files\Git\bin\git.exe" push``, also after ``&&``. Its
+# directory has to go before the quotes do, or the space splits the program
+# word. Each scan stops at the next quote, so it stays linear.
+_QUOTED_PROGRAM = re.compile(
+    r"""((?:^|[;&|(\n])[ \t]*(?:[&@][ \t]*)?)(["'])[^"'\n]*[/\\]([^"'/\\\n]+)\2"""
 )
 # PowerShell's ``&`` call operator and cmd's ``@`` (echo off) before the
 # program: ``& git push`` and ``@git push`` run ``git push``.
@@ -642,7 +643,8 @@ def _canonical_tail(text: str) -> str:
 
 def _posix_reading(command: str) -> str:
     try:
-        posix, _ = _shell_word_normalize(command)
+        # A backslash-newline is a line continuation: bash drops both.
+        posix, _ = _shell_word_normalize(command.replace("\\\n", ""))
     except Exception:  # a deny check must never raise
         posix = command
     return _canonical_tail(posix.replace("^", ""))
@@ -650,13 +652,17 @@ def _posix_reading(command: str) -> str:
 
 def _windows_reading(command: str) -> str:
     # cmd escapes with ``^``, PowerShell with a backtick.
-    text = command.replace('"', "").replace("'", "").replace("^", "").replace("`", "")
+    # Line continuations first: cmd drops ``^`` + newline, PowerShell reads
+    # a backtick + newline as a space.
+    text = re.sub(r"\^\r?\n", "", command)
+    text = re.sub(r"`\r?\n", " ", text)
+    text = text.replace('"', "").replace("'", "").replace("^", "").replace("`", "")
     return _canonical_tail(_LEADING_CALL_OPERATOR.sub("", text, count=1))
 
 
 def _compute_shell_command_canonicals(command: str) -> Tuple[str, ...]:
     sources = [command]
-    unquoted = _LEADING_QUOTED_PROGRAM.sub(r"\2", command, count=1)
+    unquoted = _QUOTED_PROGRAM.sub(r"\1\3", command)
     if unquoted != command:
         sources.append(unquoted)
     out: List[str] = []
@@ -719,11 +725,18 @@ def _rule_vouches_for_shell_command(rule: Dict[str, Any], tool_name: str) -> boo
 # and a flag is checked with a lookahead before it is consumed, so a long
 # ``-rrrr…`` word is not backtracked over once per split point. ``--rm``
 # (``docker run --rm``) is an option, not the ``rm`` program.
-_RM_ARGS = r"(?:(?!\brm\b)[^;&|\n])*"
+# ``rm`` as a word of its own: not ``--rm`` (``docker run --rm``), not the last
+# part of a path (``build/rm``). A path such as ``/bin/rm -rf`` is still caught,
+# because a deny is also matched against the command with the program's
+# directory taken out (``_shell_command_canonicals``). The scan for the flags
+# stops at the end of the command or at the next such ``rm``, which keeps
+# ``rm rm rm …`` linear without letting ``rm -r build/rm -f`` cut it short.
+_RM_WORD = r"(?<![^\s;&|(])rm(?![^\s;&|)])"
+_RM_ARGS = rf"(?:(?!{_RM_WORD})[^;&|\n])*"
 _PRESET_SHELL_DENY_RE = (
-    r"(?<!--)\brm\b"
-    rf"(?={_RM_ARGS}\s(?:-(?=[a-z]*r)[a-z]+|--r[a-z]*)(?=\s|$))"
-    rf"(?={_RM_ARGS}\s(?:-(?=[a-z]*f)[a-z]+|--f[a-z]*)(?=\s|$))"
+    _RM_WORD +
+    rf"(?={_RM_ARGS}\s(?:-(?=[a-z]*r)[a-z]+|--r[a-z]*)(?=[\s;&|()<>]|$))"
+    rf"(?={_RM_ARGS}\s(?:-(?=[a-z]*f)[a-z]+|--f[a-z]*)(?=[\s;&|()<>]|$))"
     r"|sudo\s|mkfs|dd\s+if="
 )
 
