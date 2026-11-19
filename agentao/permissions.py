@@ -1098,6 +1098,20 @@ class PermissionEngine:
                 and str(rule.get("action", "ask")).lower() != "allow"
             ):
                 candidates = self._path_candidates(arg_value)
+            elif (
+                arg_key == "command"
+                and tool_name == _SHELL_TOOL
+                and str(rule.get("action", "ask")).lower() != "allow"
+            ):
+                # ``GIT push`` runs git on macOS's and Windows' default
+                # filesystems, and PowerShell and cmd ignore case, so a
+                # ``deny`` / ``ask`` pattern is also tried on the lowercased
+                # command. An ``allow`` sees only the raw text: matching it
+                # against more spellings would grant more.
+                candidates = [arg_value]
+                lowered = arg_value.lower()
+                if lowered != arg_value:
+                    candidates.append(lowered)
             else:
                 candidates = [arg_value]
             if not any(_arg_matches(arg_pattern, c) for c in candidates):
