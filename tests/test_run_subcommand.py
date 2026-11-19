@@ -1428,6 +1428,102 @@ def test_session_start_hook_notices_reach_the_emitted_result(
     assert "startup-problem" in json.loads(capsys.readouterr().out)["warnings"]
 
 
+def _deliver(signame):
+    import os
+    import signal
+
+    os.kill(os.getpid(), getattr(signal, signame))
+    # The handler runs between bytecodes; give it a moment.
+    time.sleep(0.05)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="os.kill(SIGTERM) terminates on Windows")
+def test_a_sigterm_during_session_start_is_caught_and_reported(
+    monkeypatch, stub_pipeline, capsys,
+):
+    """Before, the handlers went in after SessionStart: the signal killed the
+    process with the default action and no result was written."""
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    def _session_start(agent, sid, *, source="startup"):
+        _deliver("SIGTERM")
+        return []
+
+    monkeypatch.setattr("agentao.cli.session.dispatch_plugin_session_start", _session_start)
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == run.EXIT_TERMINATED
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["message"] == "interrupted (sigterm)"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="os.kill(SIGTERM) terminates on Windows")
+def test_a_sigterm_during_session_end_still_writes_the_result(
+    monkeypatch, stub_pipeline, capsys,
+):
+    """The turn already finished, so its result stands; the write is not lost."""
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    def _session_end(agent, sid, *, reason="other"):
+        _deliver("SIGTERM")
+        return []
+
+    monkeypatch.setattr("agentao.cli.session.dispatch_plugin_session_end", _session_end)
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["final_text"] == "stub final text"
+
+
+def test_handlers_are_restored_after_the_run(monkeypatch, stub_pipeline, capsys):
+    import signal
+
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    before = (signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM))
+    run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+    assert (signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM)) == before
+
+
+@pytest.mark.parametrize("signame,code", [("SIGTERM", 143), ("SIGINT", 130)])
+def test_a_second_signal_exits_at_once(monkeypatch, signame, code):
+    """A tool that blocks and never checks the token must not make kill a no-op."""
+    import signal
+
+    from agentao.cancellation import CancellationToken
+    from agentao.cli import run
+
+    exits = []
+
+    class _Exited(Exception):
+        pass
+
+    def _fake_exit(status):
+        exits.append(status)
+        raise _Exited
+
+    monkeypatch.setattr(run.os, "_exit", _fake_exit)
+    token = CancellationToken()
+    prev = run._install_signal_handlers(token)
+    if prev == (None, None):
+        pytest.skip("signal handlers can only be installed on the main thread")
+    try:
+        signum = getattr(signal, signame)
+        handler = signal.getsignal(signum)
+        handler(signum, None)
+        assert token.is_cancelled and exits == []
+        with pytest.raises(_Exited):
+            handler(signum, None)
+    finally:
+        run._restore_signal_handlers(*prev)
+    assert exits == [code]
+
+
 def test_mid_turn_hook_notices_reach_the_emitted_result(
     monkeypatch, stub_pipeline, capsys,
 ):

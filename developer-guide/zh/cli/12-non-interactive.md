@@ -225,6 +225,8 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 | `130`  | 被 SIGINT（Ctrl+C）中断。`error.message` 为 `interrupted (sigint)` |
 | `143`  | 被 SIGTERM 终止（`kill`、systemd、容器或 CI 关停）。`error.message` 为 `interrupted (sigterm)`。0.5.23 之前退出码为 `130`。以第一个信号为准：先 Ctrl+C 再收到 SIGTERM，仍退出 `130` |
 
+信号（0.5.23 起）：第一个 SIGINT 或 SIGTERM 在任何阶段都会取消运行，包括构建 agent、SessionStart 或 SessionEnd hook 运行期间以及写出结果时。当前 turn 在下一次检查时停止，结果文档照常写出。turn 结束后才到达的信号不改变已有的结果和退出码。**第二个**信号会立即以它自己的退出码（`130` / `143`）退出，向 stderr 写 `agentao run: second signal, exiting now`，并且**不写结果文档**。当某个工具或 LLM 请求卡住、没有响应第一个信号时使用。
+
 完整 M0 设计 —— 合并规则、Non-goals、Post-MVP 范围（`jsonl` 事件流、`attachments`、`provider`、每次 run 的 `plugins`、session resume）—— 见 [docs/history/implementation/non-interactive-run-plan.md](https://github.com/jin-bo/agentao/blob/main/docs/history/implementation/non-interactive-run-plan.md)。
 
 ## `--resume` — 启动即恢复会话

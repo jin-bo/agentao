@@ -651,9 +651,35 @@ def _run_pipeline(
     output_format: str,
     warnings: List[str],
 ) -> int:
+    """Run *spec* with SIGINT / SIGTERM routed to the run's token throughout.
+
+    The handlers go in before the agent is built and come out after the
+    result is written and the agent closed. A signal during a SessionStart
+    or SessionEnd hook, the build or the write therefore cancels the run
+    instead of killing the process with no output. A second signal exits at
+    once (:func:`_install_signal_handlers`).
+    """
+    from ..cancellation import CancellationToken
+
+    token = CancellationToken()
+    prev_sigint, prev_sigterm = _install_signal_handlers(token)
+    try:
+        return _run_pipeline_with_token(
+            spec, token=token, output_format=output_format, warnings=warnings,
+        )
+    finally:
+        _restore_signal_handlers(prev_sigint, prev_sigterm)
+
+
+def _run_pipeline_with_token(
+    spec: RunSpec,
+    *,
+    token: Any,
+    output_format: str,
+    warnings: List[str],
+) -> int:
     # Local imports keep ``agentao --help`` snappy and avoid pulling
     # the LLM stack when the user only inspects --help.
-    from ..cancellation import CancellationToken
     from ..embedding import build_from_environment
     from ..host.models import PermissionDecisionEvent
     from ..permissions import PermissionMode
@@ -675,7 +701,6 @@ def _run_pipeline(
         else spec.max_iterations
     )
 
-    token = CancellationToken()
     transport = NonInteractiveTransport(
         token=token,
         policy=spec.interaction_policy or "reject",
@@ -844,8 +869,6 @@ def _run_pipeline(
         agent, agent._session_id or "", source="startup",
     ))
 
-    prev_sigint, prev_sigterm = _install_signal_handlers(token)
-
     def _on_event(event: Any) -> None:
         if not isinstance(event, PermissionDecisionEvent):
             return
@@ -937,7 +960,6 @@ def _run_pipeline(
     finally:
         agent.remove_host_event_observer(_on_event)
         transport_unsubscribe()
-        _restore_signal_handlers(prev_sigint, prev_sigterm)
 
     if replay_path is None and agent.replay_manager is not None:
         recorder = agent.replay_manager.recorder
@@ -1104,12 +1126,28 @@ def _install_signal_handlers(token) -> Tuple[Any, Any]:
     The reason names the signal (``"sigint"`` / ``"sigterm"``), and
     :func:`_classify_outcome` maps it to exit code 130 or 143.
 
+    The first signal only cancels: the turn stops at its next check and the
+    run still writes its result. A second signal exits at once with that
+    signal's code (130 / 143) and writes no result. Without it, a tool that
+    blocks and never checks the token would leave ``kill`` with no effect,
+    and a supervisor would have to escalate to SIGKILL.
+
     Returns the previous handlers so :func:`_restore_signal_handlers`
     can put them back. ``(None, None)`` is returned when the install
     fails (not on the main thread); the restore is then a no-op.
     """
+    received = [0]
+
     def _on_signal(signum, frame):  # noqa: ARG001
-        token.cancel("sigterm" if signum == signal.SIGTERM else "sigint")
+        received[0] += 1
+        is_term = signum == signal.SIGTERM
+        if received[0] > 1:
+            try:
+                os.write(2, b"agentao run: second signal, exiting now\n")
+            except OSError:
+                pass
+            os._exit(EXIT_TERMINATED if is_term else EXIT_INTERRUPTED)
+        token.cancel("sigterm" if is_term else "sigint")
 
     try:
         prev_sigint = signal.signal(signal.SIGINT, _on_signal)
