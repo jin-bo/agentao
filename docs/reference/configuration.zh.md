@@ -169,7 +169,7 @@
 ```json
 {
   "rules": [
-    {"tool": "run_shell_command", "args": {"command": "^git "}, "action": "allow"},
+    {"tool": "run_shell_command", "args": {"command": "^git (status|branch)$"}, "action": "allow"},
     {"tool": "write_file", "action": "ask"},
     {"tool": "run_shell_command", "args": {"command": "rm\\s+-rf"}, "action": "deny"},
     {
@@ -184,7 +184,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `tool` | string | 是 | 工具名；通过 `re.fullmatch` 当作 regex 匹配（`"*"` 表示通配）。 |
-| `args` | object | 否 | `<arg_name>` → regex 的映射；**所有**条目都需 `re.search` 命中规则才生效。坏 regex 会回退为字面相等比较。对 `read_file` / `write_file` / `replace` 的 `file_path`，`deny` 或 `ask` 的 pattern 会分别对原始参数、resolve 后的绝对路径、（项目内时）resolve 后的项目相对 POSIX 路径做匹配，任一命中即算命中 —— 因此 `^secrets/` 也覆盖 `./secrets/k`、`sub/../secrets/k`、绝对路径写法和符号链接别名。`allow` 的 pattern 只匹配原始参数：匹配的写法越多放行得越多，而且像 `^(?!secrets/)` 这样的负向前瞻会命中它本想排除的那个文件的绝对路径写法。 |
+| `args` | object | 否 | `<arg_name>` → regex 的映射；**所有**条目都需 `re.search` 命中规则才生效。坏 regex 会回退为字面相等比较。对 `read_file` / `write_file` / `replace` 的 `file_path`，`deny` 或 `ask` 的 pattern 会分别对原始参数、resolve 后的绝对路径、（项目内时）resolve 后的项目相对 POSIX 路径做匹配，任一命中即算命中 —— 因此 `^secrets/` 也覆盖 `./secrets/k`、`sub/../secrets/k`、绝对路径写法和符号链接别名。`allow` 的 pattern 只匹配原始参数：匹配的写法越多放行得越多，而且像 `^(?!secrets/)` 这样的负向前瞻会命中它本想排除的那个文件的绝对路径写法。 **`run_shell_command` 上带 `args.command` 条件的自定义 `allow` 只对简单命令生效**（0.5.23 起）：命令不含串联（`;` `&&` `||` `|` `&` 换行）、重定向、子 shell、命令或进程替换，也不含开头的变量赋值（`NAME=value cmd`）或变量、glob、花括号展开；按实际执行该命令的 shell 方言判断（POSIX 会识别引号，PowerShell 和 cmd 按字符检查）。其他命令会跳过这条规则，由后续规则决定，因此后面的 `deny` 仍然生效。此前 `^git ` 会放行 `git status && curl … | sh`。命令其余部分仍由 pattern 负责，请写明具体子命令，并用 `$` 锚定结尾：`git fetch --upload-pack=<cmd> .` 是简单命令，却会执行 `<cmd>`。preset 与不带 `args.command` 条件的 `allow` 规则不受影响。 |
 | `domain` | object | 否 | URL 类工具专用（如 `web_fetch`）。键：`url_arg`（默认 `"url"`）、`allowlist`、`blocklist`。以 `.` 开头的 pattern 做后缀匹配（如 `.github.com` 同时匹配 `github.com` 与 `api.github.com`）；否则做精确匹配。带 `domain` 的规则**只有**当 hostname 命中其中一个列表时才匹配。 |
 | `action` | string | 是 | `"allow"` \| `"deny"` \| `"ask"`。大小写不敏感。**未知值一律拒绝**（0.4.20 变更）—— 此前按 `"ask"` 处理，正是这一点让 `{"action": "alow"}` 静静躺在配置里什么也不做，而 `/permissions` 还把它原样打印成 `[? ALOW]`。 |
 

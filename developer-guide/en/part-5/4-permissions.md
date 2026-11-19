@@ -154,6 +154,8 @@ Multiple args must all match:
 }
 ```
 
+A shell `allow` with a `command` pattern applies only to a **simple command**: no `;`, `&&`, `||`, `|`, `&` or newline, no redirection, subshell or leading variable assignment (`NAME=value cmd`), and no `$`, backtick, glob or brace expansion outside quotes (read in the dialect of the shell that runs it). For anything else the rule is skipped and the rules after it decide, so `docker ps && curl … | sh` falls through to your `deny` / `ask` rules instead of riding on `^docker `. The pattern still vouches for the rest of the command, so pin the subcommands you mean (`^docker (ps|images)$`, anchored at both ends: `git fetch --upload-pack=<cmd> .` is a simple command that runs a program). Rules without a `command` condition are not affected.
+
 ### `domain` — URL host (for web_fetch etc.)
 
 ```json
@@ -314,6 +316,8 @@ The same surface drives `PermissionDecisionEvent.loaded_sources` on the public e
   ]
 }
 ```
+
+> ⚠️ The first rule hands the model any code: `python -c '…'`, `node -e '…'`, `npm exec …` and `docker run …` are simple commands, so they are allowed without a prompt. Use this template only where the sandbox itself is the boundary. Elsewhere, anchor each pattern to the subcommands you mean (`^npm (test|run lint)$`).
 
 ### Template C · CI / unattended
 
