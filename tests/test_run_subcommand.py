@@ -1068,9 +1068,13 @@ def test_a_delivered_signal_cancels_with_its_own_reason(signame, reason):
 
     token = CancellationToken()
     prev = run._install_signal_handlers(token)
+    # A failed install (not the main thread) would deliver the real signal
+    # to the test process: SIGTERM kills the worker, SIGINT aborts the run.
+    if prev == (None, None):
+        pytest.skip("signal handlers can only be installed on the main thread")
     try:
         os.kill(os.getpid(), getattr(signal, signame))
-        # The handler runs between bytecodes; a no-op call lets it fire.
+        # The handler runs between bytecodes; poll until it has fired.
         for _ in range(100):
             if token.is_cancelled:
                 break

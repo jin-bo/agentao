@@ -1113,10 +1113,19 @@ def _install_signal_handlers(token) -> Tuple[Any, Any]:
 
     try:
         prev_sigint = signal.signal(signal.SIGINT, _on_signal)
-        prev_sigterm = signal.signal(signal.SIGTERM, _on_signal)
-        return prev_sigint, prev_sigterm
     except (ValueError, OSError):
         return None, None
+    try:
+        prev_sigterm = signal.signal(signal.SIGTERM, _on_signal)
+    except (ValueError, OSError):
+        # Do not leave SIGINT bound to this run's token when the pair
+        # cannot be installed; the caller's restore is a no-op then.
+        try:
+            signal.signal(signal.SIGINT, prev_sigint)
+        except (ValueError, OSError):
+            pass
+        return None, None
+    return prev_sigint, prev_sigterm
 
 
 def _restore_signal_handlers(prev_sigint, prev_sigterm) -> None:
