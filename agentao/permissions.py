@@ -611,15 +611,29 @@ def shell_command_is_simple(command: str, dialect: Optional[str]) -> bool:
     )
 
 
-_EXE_SUFFIX = re.compile(r"(?i)(?<=\w)\.(?:exe|com|cmd|bat)(?=\s|$)")
+# A program's ``.exe`` / ``.com`` / ``.cmd`` / ``.bat`` suffix, only on a word
+# in command position (the start, or after ``;`` ``&`` ``|`` ``(`` or a newline):
+# stripped from an argument it would turn ``curl x.com`` into ``curl x`` and
+# fire a ``deny`` whose negative lookahead was meant to spare that URL.
+# The program word may not run past a separator, or ``;a;a;a…`` would be
+# rescanned from every ``;`` (quadratic).
+_EXE_SUFFIX = re.compile(r"(?i)((?:^|[;&|(\n])[ \t]*[^\s;&|()]*?\w)\.(?:exe|com|cmd|bat)(?=\s|$)")
 _WHITESPACE_RUN = re.compile(r"[ \t]+")
-_LEADING_DIRECTORY = re.compile(r"^[ \t]*\S*[/\\](?=\S)")
+_LEADING_DIRECTORY = re.compile(r"^\S*[/\\](?=\S)")
 
 
 def _canonical_tail(text: str) -> str:
-    text = _EXE_SUFFIX.sub("", text)
-    text = _WHITESPACE_RUN.sub(" ", text)
-    return _LEADING_DIRECTORY.sub("", text, count=1)
+    text = _WHITESPACE_RUN.sub(" ", text).lstrip(" \t")
+    text = _LEADING_DIRECTORY.sub("", text, count=1)
+    return _EXE_SUFFIX.sub(r"\1", text)
+
+
+def _posix_reading(command: str) -> str:
+    try:
+        posix, _ = _shell_word_normalize(command)
+    except Exception:  # a deny check must never raise
+        posix = command
+    return _canonical_tail(posix.replace("^", ""))
 
 
 def _shell_command_canonicals(command: str) -> List[str]:
@@ -627,19 +641,15 @@ def _shell_command_canonicals(command: str) -> List[str]:
 
     ``g''it push``, ``"git" push``, ``g\\it push`` and cmd's ``g^it push``
     all run ``git push``, as do ``git.exe push``, ``/usr/bin/git push``,
-    ``C:\\Tools\\git.exe push`` and ``git  push``. A ``deny`` / ``ask``
-    pattern is matched against these as well as the raw text. Two readings,
-    because a backslash is an escape in POSIX and a path separator on
-    Windows. The results are never run, and never matched by an ``allow``:
+    ``C:\\Tools\\git.exe push``, `` git push`` and ``git  push``. A ``deny`` /
+    ``ask`` pattern is matched against these as well as the raw text. Two
+    readings, because a backslash is an escape in POSIX and a path separator
+    on Windows. The results are never run, and never matched by an ``allow``:
     matching more spellings would grant more.
     """
-    try:
-        posix, _ = _shell_word_normalize(command)
-    except Exception:  # a deny check must never raise
-        posix = command
     windows = command.replace('"', "").replace("'", "").replace("^", "")
     out: List[str] = []
-    for text in (_canonical_tail(posix.replace("^", "")), _canonical_tail(windows)):
+    for text in (_posix_reading(command), _canonical_tail(windows)):
         if text != command and text not in out:
             out.append(text)
     return out
@@ -647,11 +657,7 @@ def _shell_command_canonicals(command: str) -> List[str]:
 
 def _shell_command_canonical(command: str) -> str:
     """The POSIX reading of :func:`_shell_command_canonicals`."""
-    try:
-        posix, _ = _shell_word_normalize(command)
-    except Exception:
-        posix = command
-    return _canonical_tail(posix.replace("^", ""))
+    return _posix_reading(command)
 
 
 def _rule_vouches_for_shell_command(rule: Dict[str, Any], tool_name: str) -> bool:
@@ -663,6 +669,22 @@ def _rule_vouches_for_shell_command(rule: Dict[str, Any], tool_name: str) -> boo
     args = rule.get("args")
     return isinstance(args, dict) and "command" in args
 
+
+# The presets' shell deny: a recursive force ``rm`` in any flag spelling
+# (``-rf``, ``-fr``, ``-r -f``, ``--recursive --force``, within one command),
+# ``sudo``, ``mkfs`` and ``dd if=``. Matched without case, like every shell
+# deny pattern (:meth:`PermissionEngine._matches`). Each lookahead stops at the
+# end of the command or at the next ``rm``, so ``rm rm rm …`` stays linear,
+# and a flag is checked with a lookahead before it is consumed, so a long
+# ``-rrrr…`` word is not backtracked over once per split point. ``--rm``
+# (``docker run --rm``) is an option, not the ``rm`` program.
+_RM_ARGS = r"(?:(?!\brm\b)[^;&|\n])*"
+_PRESET_SHELL_DENY_RE = (
+    r"(?<!--)\brm\b"
+    rf"(?={_RM_ARGS}\s(?:-(?=[a-z]*r)[a-z]+|--recursive)(?=\s|$))"
+    rf"(?={_RM_ARGS}\s(?:-(?=[a-z]*f)[a-z]+|--force)(?=\s|$))"
+    r"|sudo\s|mkfs|dd\s+if="
+)
 
 # Shell commands both ``workspace-write`` and ``plan`` run without asking.
 # Anything that does not match falls through to the mode's own ASK / DENY,
@@ -690,19 +712,6 @@ def _rule_vouches_for_shell_command(rule: Dict[str, Any], tool_name: str) -> boo
 # ``git status`` / ``git diff`` (a clean filter, a textconv on ``git log -p``);
 # this list keeps the model from *adding* one, through the protected-path
 # rules below, and does not claim more.
-# The presets' shell deny: a recursive force ``rm`` in any flag spelling
-# (``-rf``, ``-fr``, ``-r -f``, ``--recursive --force``, within one command),
-# ``sudo``, ``mkfs`` and ``dd if=``. Matched without case, like every shell
-# deny pattern (:meth:`PermissionEngine._matches`). Each lookahead stops at the
-# end of the command or at the next ``rm``, so ``rm rm rm …`` stays linear.
-_RM_ARGS = r"(?:(?!\brm\b)[^;&|\n])*"
-_PRESET_SHELL_DENY_RE = (
-    r"\brm\b"
-    rf"(?={_RM_ARGS}\s(?:-[a-z]*r[a-z]*|--recursive)(?=\s|$))"
-    rf"(?={_RM_ARGS}\s(?:-[a-z]*f[a-z]*|--force)(?=\s|$))"
-    r"|sudo\s|mkfs|dd\s+if="
-)
-
 _SHELL_READ_ONLY_ALLOW_RE = (
     r"^(?:"
     r"git[ \t]+(?:status|log|diff|show|stash[ \t]+list|shortlog|describe|blame"

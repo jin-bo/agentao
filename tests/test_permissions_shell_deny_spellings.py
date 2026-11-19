@@ -18,6 +18,7 @@ from agentao.permissions import (
     PermissionDecision,
     PermissionEngine,
     _shell_command_canonical,
+    _shell_command_canonicals,
 )
 
 ALLOW, ASK, DENY = PermissionDecision.ALLOW, PermissionDecision.ASK, PermissionDecision.DENY
@@ -57,6 +58,8 @@ def deny_push(tmp_path: Path):
     "C:\\Tools\\git.exe push",
     "git  push",
     "git\tpush",
+    " git push",
+    "\tgit push",
 ])
 def test_deny_catches_other_spellings(deny_push, command):
     assert _decide(deny_push, command) is DENY
@@ -97,6 +100,7 @@ def test_preset_denies_every_recursive_force_rm(tmp_path: Path, command):
     "rm -f build",
     "rm -f x; rm -r y",
     "farm -rf",
+    "docker run --rm img pytest -rf",
 ])
 def test_preset_rm_deny_needs_both_flags_in_one_command(tmp_path: Path, command):
     engine = PermissionEngine(rules=[], project_root=tmp_path)
@@ -108,6 +112,8 @@ def test_preset_rm_deny_needs_both_flags_in_one_command(tmp_path: Path, command)
     "rm " * 20000,
     "rm -r " * 5000,
     "rm" + " x" * 40000 + " -f",
+    "rm -" + "r" * 20000 + "1",
+    "rm -" + "f" * 20000 + "1 -r",
 ])
 def test_preset_deny_is_linear(text):
     started = time.perf_counter()
@@ -115,10 +121,37 @@ def test_preset_deny_is_linear(text):
     assert time.perf_counter() - started < 1.0
 
 
+def test_suffix_is_stripped_only_from_the_program(tmp_path: Path):
+    engine = PermissionEngine(
+        rules=[
+            {"tool": "run_shell_command", "args": {"command": r"^curl (?!https://docs\.example\.com)"}, "action": "deny"},
+            {"tool": "run_shell_command", "action": "allow"},
+        ],
+        project_root=tmp_path,
+    )
+    assert _decide(engine, "curl https://docs.example.com") is ALLOW
+    assert _decide(engine, "curl.exe https://evil.example") is DENY
+
+
+@pytest.mark.parametrize("text", [
+    ";a" * 30000,
+    ("x" * 100 + ";") * 500,
+    "a" * 50000 + ".x",
+    "g''it " * 20000,
+])
+def test_canonical_spellings_are_linear(text):
+    started = time.perf_counter()
+    _shell_command_canonicals(text)
+    assert time.perf_counter() - started < 1.0
+
+
 def test_canonical_spelling():
     assert _shell_command_canonical("g''it  push") == "git push"
     assert _shell_command_canonical('/usr/bin/"git".exe push') == "git push"
     assert _shell_command_canonical("plain") == "plain"
+    assert _shell_command_canonical("  git push") == "git push"
+    assert _shell_command_canonical("ls && git.exe push") == "ls && git push"
+    assert _shell_command_canonical("ping example.com") == "ping example.com"
 
 
 @pytest.mark.parametrize("dialect,expected", [
