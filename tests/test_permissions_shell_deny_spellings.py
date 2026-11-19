@@ -60,6 +60,12 @@ def deny_push(tmp_path: Path):
     "git\tpush",
     " git push",
     "\tgit push",
+    "g`it push",
+    "& git push",
+    "@git push",
+    '"C:\\Program Files\\Git\\bin\\git.exe" push',
+    '& "C:\\Program Files\\Git\\bin\\git.exe" push',
+    '"/opt/my tools/git" push',
 ])
 def test_deny_catches_other_spellings(deny_push, command):
     assert _decide(deny_push, command) is DENY
@@ -89,6 +95,7 @@ def test_allow_does_not_match_other_spellings(tmp_path: Path):
     "xargs rm -rf",
     "find . -exec rm -rf {} +",
     "RM -Rf build",
+    "rm --rec --forc build",
 ])
 def test_preset_denies_every_recursive_force_rm(tmp_path: Path, command):
     engine = PermissionEngine(rules=[], project_root=tmp_path)
@@ -138,6 +145,9 @@ def test_suffix_is_stripped_only_from_the_program(tmp_path: Path):
     ("x" * 100 + ";") * 500,
     "a" * 50000 + ".x",
     "g''it " * 20000,
+    ";/" * 20000,
+    '"' + "/" * 40000,
+    "& " * 20000,
 ])
 def test_canonical_spellings_are_linear(text):
     started = time.perf_counter()
@@ -152,6 +162,8 @@ def test_canonical_spelling():
     assert _shell_command_canonical("  git push") == "git push"
     assert _shell_command_canonical("ls && git.exe push") == "ls && git push"
     assert _shell_command_canonical("ping example.com") == "ping example.com"
+    assert _shell_command_canonical("ls && /usr/bin/git push") == "ls && git push"
+    assert _shell_command_canonical("ls ./a/b") == "ls ./a/b"
 
 
 @pytest.mark.parametrize("dialect,expected", [
