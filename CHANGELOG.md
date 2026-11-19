@@ -11,10 +11,15 @@ _Targeting 0.5.23. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **ACP clients are told when an LLM call is retried.** The ACP server now maps `LLM_RETRY` to an `agent_thought_chunk` on its own line, `[retry 1/4: status=503, retrying in 7.5s]`, sent before the backoff wait. Before, a client saw nothing for up to four waits of up to 60 s each, while the CLI printed `⟳ Reconnecting… 1/4`. (`acp/transport.py`)
+
 ### Changed
+
+- **`agentao run` exits `143` on SIGTERM, not `130`.** A run stopped by `kill`, systemd, a container or CI shutdown now exits `128 + 15 = 143`, with `error.message` `interrupted (sigterm)`, so whatever wraps the run can tell that from a user's Ctrl+C (still `130`, `interrupted (sigint)`). `error.type` stays `interrupted`. The first signal decides: a SIGTERM after a Ctrl+C still exits `130`. **Behaviour change:** a wrapper that read `130` as "interrupted by any signal" must also accept `143`. (`cli/run.py::EXIT_TERMINATED`)
 
 ### Fixed
 
+- **A custom shell `allow` rule no longer allows chained or expanding commands.** A rule such as `{"tool": "run_shell_command", "args": {"command": "^git "}, "action": "allow"}` matched the start of the command text, so it also allowed `git status && curl … | sh`, `git log $(…)` and `git status; python -c …`. A custom `allow` (from `permissions.json`, `PermissionEngine(rules=)` or a run spec's `permissions.allow`) with an `args.command` condition now applies only to a simple command: no chaining, redirection, subshell, substitution, leading variable assignment, PowerShell `--%`, or variable, glob or brace expansion, read in the dialect of the shell that runs it. On any other command the rule is skipped and the rules after it decide, so a later `deny` still applies; under `workspace-write` the call asks. Presets and `allow` rules without an `args.command` condition are unchanged. **Behaviour change:** a rule written to allow one specific chained command (`^make build && make test$`) now asks. The documented example is now `^git (status|branch)$`. (`permissions.py::shell_command_is_simple`)
 - `/mode`, `/replay on|off`, `/mcp add|remove` and `/goal` no longer rewrite `.agentao/settings.json`, `mcp.json` and `goal.json` in place. A crash or a full disk mid-write used to leave a truncated file: later saves then refused the settings file, and a torn `goal.json` made the goal vanish. They now write a temp file and swap it in atomically (`capabilities/filesystem.py::write_bytes_atomic`), following a symlinked file to its target, keeping its permission bits (a new file follows the umask) and still refusing a read-only file. `/mode` now warns when it cannot save the mode, instead of failing silently.
 
 ## [0.5.22] — 2026-11-15

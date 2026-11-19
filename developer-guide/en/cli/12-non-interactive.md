@@ -222,7 +222,8 @@ Note that a turn can end this way *after* running tools: the model may do the wo
 | `2`   | Invalid usage / spec validation failed / unknown spec field |
 | `3`   | Permission or interaction required (no interactive approval available; under `deny`, past `max_denials`) |
 | `4`   | Max tool iterations reached; answer may be incomplete |
-| `130` | Interrupted (SIGINT / SIGTERM) |
+| `130` | Interrupted by SIGINT (Ctrl+C). `error.message` is `interrupted (sigint)` |
+| `143` | Terminated by SIGTERM (`kill`, systemd, a container or CI shutdown). `error.message` is `interrupted (sigterm)`. Before 0.5.23 this exited `130`. The first signal decides: a SIGTERM after a Ctrl+C still exits `130` |
 
 For the full M0 design — merge rules, non-goals, post-MVP scope (`jsonl` event stream, `attachments`, `provider`, per-run `plugins`, session resume) — see [docs/history/implementation/non-interactive-run-plan.md](https://github.com/jin-bo/agentao/blob/main/docs/history/implementation/non-interactive-run-plan.md).
 

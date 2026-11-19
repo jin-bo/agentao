@@ -149,6 +149,7 @@ Agentao 的 ACP 服务器/客户端发出的每种消息的字段级速查。端
 | `TOOL_OUTPUT` | `tool_call_update` | `status:"in_progress"`，把目前为止的全部输出作为一条文本条目。有节流——见下文*流式工具输出* |
 | `TOOL_COMPLETE` | `tool_call_update` | `ok` → `status:"completed"`；`error` 或 `cancelled` → `"failed"`。调用有过流式输出或有错误行时重述 `content`；否则省略，开头的 `diff` 保持不动 |
 | `todo_write`（合法清单） | `plan` | 在 `TOOL_COMPLETE` 时发送，且只在调用生效时发送；不会打开 `tool_call`。清单格式不对时退回普通 `tool_call` |
+| `LLM_RETRY` | `agent_thought_chunk` | 单独一行的 `[retry <n>/<max>: <reason>, retrying in <s>s]`，在退避等待之前发送；没有原因和等待时间时省略 `: …`。自 0.5.23 起 |
 | `AGENT_START` | `agent_thought_chunk` | `[sub-agent started: <name>] <task>` |
 | `AGENT_END` | `agent_thought_chunk` | `[sub-agent finished: <name> (<state>, <N> turns)]`；轮数未知时省略 `, <N> turns` |
 | `PLUGIN_HOOK_FIRED`（用户通知） | `agent_message_chunk` | 每条钩子通知一行，以 `⚠ ` 开头 |

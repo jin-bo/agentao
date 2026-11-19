@@ -183,7 +183,7 @@ See [developer guide 5.4](../../developer-guide/en/part-5/4-permissions.md) for 
 ```json
 {
   "rules": [
-    {"tool": "run_shell_command", "args": {"command": "^git "}, "action": "allow"},
+    {"tool": "run_shell_command", "args": {"command": "^git (status|branch)$"}, "action": "allow"},
     {"tool": "write_file", "action": "ask"},
     {"tool": "run_shell_command", "args": {"command": "rm\\s+-rf"}, "action": "deny"},
     {
@@ -198,7 +198,7 @@ See [developer guide 5.4](../../developer-guide/en/part-5/4-permissions.md) for 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `tool` | string | yes | Tool name; matched as a regex via `re.fullmatch` (use `"*"` for wildcard). |
-| `args` | object | no | Map of `<arg_name>` → regex; **all** entries must `re.search`-match for the rule to fire. Bad regex falls back to literal equality. For `file_path` on `read_file` / `write_file` / `replace`, a `deny` or `ask` pattern is tried against the raw argument, its resolved absolute path, and (inside the project) its resolved project-relative POSIX path, and matches if any of them does — so `^secrets/` covers `./secrets/k`, `sub/../secrets/k`, the absolute spelling and a symlinked alias. An `allow` pattern sees only the raw argument: matched against more spellings it would grant more, and a negative lookahead such as `^(?!secrets/)` matches the absolute spelling of the file it excludes. |
+| `args` | object | no | Map of `<arg_name>` → regex; **all** entries must `re.search`-match for the rule to fire. Bad regex falls back to literal equality. For `file_path` on `read_file` / `write_file` / `replace`, a `deny` or `ask` pattern is tried against the raw argument, its resolved absolute path, and (inside the project) its resolved project-relative POSIX path, and matches if any of them does — so `^secrets/` covers `./secrets/k`, `sub/../secrets/k`, the absolute spelling and a symlinked alias. An `allow` pattern sees only the raw argument: matched against more spellings it would grant more, and a negative lookahead such as `^(?!secrets/)` matches the absolute spelling of the file it excludes. **A custom `allow` on `run_shell_command` with an `args.command` condition applies only to a simple command** (since 0.5.23): one with no command chaining (`;` `&&` `||` `|` `&` newline), redirection, subshell, command or process substitution, no leading variable assignment (`NAME=value cmd`), and no variable, glob or brace expansion, read in the dialect of the shell that will run it (POSIX quoting is honoured; PowerShell and cmd are checked by character). On any other command the rule is skipped and the rules after it decide, so a later `deny` still applies. Before, `^git ` allowed `git status && curl … | sh`. The pattern still vouches for everything else in the command, so name the subcommands you mean and anchor the end with `$`: `git fetch --upload-pack=<cmd> .` is a simple command that runs `<cmd>`. Presets and `allow` rules without an `args.command` condition are unchanged. |
 | `domain` | object | no | URL-tool only (`web_fetch`). Keys: `url_arg` (default `"url"`), `allowlist`, `blocklist`. Patterns starting with `.` do suffix matching (e.g. `.github.com` matches `github.com` and `api.github.com`); otherwise exact match. A rule with `domain` matches **only** when the hostname hits one of its lists. |
 | `action` | string | yes | `"allow"` \| `"deny"` \| `"ask"`. Case-insensitive. **Unknown values are rejected** as of 0.4.20 — they were previously treated as `"ask"`, which is what let `{"action": "alow"}` sit in a config doing nothing while `/permissions` printed it back as `[? ALOW]`. |
 
@@ -561,6 +561,7 @@ Full schema, tables, and lifecycle → [developer guide 5.5](../../developer-gui
 | 3 | Permission denied or interaction required |
 | 4 | Max iterations |
 | 130 | Interrupted (SIGINT) |
+| 143 | Terminated (SIGTERM). Since 0.5.23; before, `130` |
 
 `error.type` discriminates outcomes that share an exit code. Every turn the
 runtime classifies as having no complete answer (the six `reason` values
