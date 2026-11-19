@@ -623,6 +623,10 @@ def save_mcp_config(
             f"encode ({exc.reason}). Fix the file, then try again."
         ) from exc
 
+    from ..capabilities.filesystem import write_bytes_atomic
+
     config_dir.mkdir(parents=True, exist_ok=True)
-    config_path.write_bytes(payload)
+    # Atomic: a crash or full disk mid-write must not leave a torn file that
+    # the next ``/mcp add`` refuses (#497) and startup ignores.
+    write_bytes_atomic(config_path, payload)
     return config_path

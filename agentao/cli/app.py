@@ -465,11 +465,20 @@ class AgentaoCLI:
             )
             return
         data["mode"] = self.current_mode.value
+        from ..capabilities.filesystem import write_bytes_atomic
+
         try:
             path.parent.mkdir(exist_ok=True)
-            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except OSError:
-            pass
+            # Atomic: a crash or full disk mid-write must not truncate the
+            # file, which would make every later save refuse it (above).
+            write_bytes_atomic(path, json.dumps(data, indent=2).encode("utf-8"))
+        except OSError as exc:
+            from rich.markup import escape as _esc
+
+            console.print(
+                f"[warning]Mode not saved to {_esc(str(path))}: "
+                f"{_esc(str(exc))}. It still applies for this session.[/warning]"
+            )
 
     def _apply_mode(self, mode) -> None:
         from ..permissions import PermissionMode

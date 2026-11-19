@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import errno
 import os
+import secrets
 import time
 import tempfile
 from dataclasses import dataclass
@@ -134,6 +135,84 @@ def _replace_with_retry(tmp_path: Path, target: Path) -> None:
             if not _REPLACE_RETRY_ON_BUSY or attempt == _REPLACE_RETRY_ATTEMPTS - 1:
                 raise
             time.sleep(_REPLACE_RETRY_DELAY_S)
+
+
+def write_bytes_atomic(path: Path, payload: bytes) -> None:
+    """Replace the contents of *path* with *payload*, never leaving a torn file.
+
+    ``Path.write_text`` truncates first, so a full disk or a crash mid-write
+    leaves an empty or half-written file behind. For a config file that is
+    worse than losing the one change: the next read refuses the file (#495,
+    #497) and every later save is blocked. This writes a sibling temp file,
+    flushes it to disk and swaps it in with :func:`_replace_with_retry`.
+
+    - A symlinked *path* is resolved first, so the link's target is updated
+      and the link stays a link, as a plain write would have done.
+    - An existing file keeps its own permission bits. A new file gets
+      ``0o666`` less the umask, as ``open()`` would give it, never a fixed
+      mode: ``mcp.json`` can hold credentials and a ``umask 077`` user must
+      not see it created world-readable.
+    - A read-only target raises ``PermissionError``, as the in-place write
+      did. ``os.replace`` only needs a writable directory, so without the
+      check an atomic write would silently defeat ``chmod 444``.
+    - A writable file in a directory where no temp file can be created
+      (``EACCES`` / ``EPERM`` / ``EROFS`` only) is written in place, as
+      :meth:`LocalFileSystem.write_text` does, rather than refusing a write
+      that used to succeed.
+    - The parent directory must exist. Any other failure raises ``OSError``
+      and leaves *path* as it was; the temp file is removed.
+    - The swap installs a new inode: the file's owner and group become the
+      writer's, and a hard link to the old file keeps the old content.
+    """
+    target = Path(os.path.realpath(path))
+    try:
+        existing_mode: "int | None" = os.stat(target).st_mode & 0o7777
+    except FileNotFoundError:
+        existing_mode = None
+    if existing_mode is not None and not os.access(target, os.W_OK):
+        raise PermissionError(
+            errno.EACCES, "Permission denied (file is not writable)", str(target),
+        )
+
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    fd = -1
+    tmp = ""
+    for _ in range(100):
+        tmp = str(target.parent / f".{target.name}.{secrets.token_hex(6)}.tmp")
+        try:
+            # 0o666 through ``os.open`` so the kernel applies the umask.
+            fd = os.open(tmp, flags, 0o666)
+            break
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            if (
+                existing_mode is None
+                or exc.errno not in (errno.EACCES, errno.EPERM, errno.EROFS)
+            ):
+                raise
+            with open(target, "wb") as f:
+                f.write(payload)
+            return
+    else:
+        raise FileExistsError(errno.EEXIST, "No usable temp file name", str(target.parent))
+
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        if existing_mode is not None:
+            os.chmod(tmp, existing_mode)
+        _replace_with_retry(Path(tmp), target)
+    except BaseException:
+        # BaseException: an interrupt must not leave a temp file behind.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
 
 class LocalFileSystem:
     """Default :class:`FileSystem` backed by ``pathlib`` / ``os``.
