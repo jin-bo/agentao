@@ -211,7 +211,7 @@ if event.type == EventType.TOOL_COMPLETE:
 |------|------|
 | 触发时机 | provider 调用以可重试错误失败、客户端即将等待后再试 —— 在退避等待**之前**发出。只在尚未显示正文时发生：已经流出文本的调用不会重试，所以它不会与 `LLM_TEXT` 交错。推理可能已经流出；自 #548 起，推理已显示后，参数修正或非流式回退重新发送请求时也会发一个，`delay_s` 为 0，`reason` 为 `parameter_repair` / `streaming_unsupported` |
 | `data` | `{"retry": 1, "max_retries": 4, "delay_s": 1.62, "reason": "status=503"}` —— `retry` 从 1 起算（首次请求不算重试）；`reason` 是 `status=<code>` 或异常类名（`RemoteProtocolError`、`ReadTimeout`、`StreamEndedEarlyError` 等），从不含 provider 的报错原文 |
-| 典型用法 | 告诉用户屏幕为什么停住了 —— CLI 打印 `⟳ Reconnecting… 1/4`。自 0.5.4 起 |
+| 典型用法 | 告诉用户屏幕为什么停住了 —— CLI 打印 `⟳ Reconnecting… 1/4`，ACP 服务端发送 `agent_thought_chunk` `[retry 1/4: …]`（0.5.23 起）。自 0.5.4 起 |
 
 重试按次数限制（共 5 次尝试，即 4 次重试），不按墙钟预算。没有 `Retry-After` 时，等待从 7.5 秒起翻倍——7.5、15、30、60 秒，各自再加至多 30% 的抖动，但都不超过 60 秒；`Retry-After` 同样按 60 秒封顶。重试范围：408/409/425/429/5xx/529（表示**额度耗尽**的 429 除外）、响应到达前的连接或超时失败，以及自 0.5.4 起的**读取响应体期间**连接断开，和 `anthropic-messages` / `openai-responses` 上在终止事件之前就结束的流。
 

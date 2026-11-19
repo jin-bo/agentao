@@ -11,6 +11,8 @@ _Targeting 0.5.23. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **ACP clients are told when an LLM call is retried.** The ACP server now maps `LLM_RETRY` to an `agent_thought_chunk` on its own line, `[retry 1/4: status=503, retrying in 7.5s]`, sent before the backoff wait. Before, a client saw nothing for up to four waits of up to 60 s each, while the CLI printed `⟳ Reconnecting… 1/4`. (`acp/transport.py`)
+
 ### Changed
 
 ### Fixed

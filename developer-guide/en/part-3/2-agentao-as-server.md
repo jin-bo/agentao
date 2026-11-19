@@ -336,7 +336,7 @@ Key `sessionUpdate` values:
 | Value | Meaning |
 |-------|---------|
 | `agent_message_chunk` | Streamed text chunk (also errors, prefixed `Error: `) |
-| `agent_thought_chunk` | Thinking/reasoning, and sub-agent start / finish markers |
+| `agent_thought_chunk` | Thinking/reasoning, sub-agent start / finish markers, and LLM retry notices |
 | `tool_call` | Tool invocation started |
 | `tool_call_update` | Tool progress/output/result |
 | `plan` | The `todo_write` checklist |
