@@ -42,6 +42,10 @@ EXIT_INVALID_USAGE = 2
 EXIT_PERMISSION_OR_INTERACTION = 3
 EXIT_MAX_ITERATIONS = 4
 EXIT_INTERRUPTED = 130
+#: 128 + SIGTERM (15): a supervisor stopped the run (``kill``, systemd,
+#: a Kubernetes pod shutdown, a CI job timeout). Kept apart from 130 so
+#: whatever wraps the run can tell that from a user's Ctrl+C.
+EXIT_TERMINATED = 143
 
 DEFAULT_MAX_ITERATIONS = 100
 
@@ -1040,14 +1044,15 @@ def _classify_outcome(
             "error",
         )
     if token.is_cancelled:
-        # SIGINT path. ``runtime/turn.py`` already swallowed the
-        # KeyboardInterrupt and returned sentinel text.
+        # SIGINT / SIGTERM path. ``runtime/turn.py`` already swallowed the
+        # KeyboardInterrupt and returned sentinel text. The token keeps the
+        # first signal's reason, so a SIGTERM after a Ctrl+C still exits 130.
         return (
             RunErrorEnvelope(
                 type="interrupted",
                 message=f"interrupted ({token.reason or 'sigint'})",
             ),
-            EXIT_INTERRUPTED,
+            EXIT_TERMINATED if token.reason == "sigterm" else EXIT_INTERRUPTED,
             "error",
         )
     if runtime_error is not None:
@@ -1094,21 +1099,33 @@ def _classify_outcome(
 
 
 def _install_signal_handlers(token) -> Tuple[Any, Any]:
-    """Route SIGINT/SIGTERM through ``token.cancel("sigint")``.
+    """Route SIGINT and SIGTERM through ``token.cancel``.
+
+    The reason names the signal (``"sigint"`` / ``"sigterm"``), and
+    :func:`_classify_outcome` maps it to exit code 130 or 143.
 
     Returns the previous handlers so :func:`_restore_signal_handlers`
     can put them back. ``(None, None)`` is returned when the install
     fails (not on the main thread); the restore is then a no-op.
     """
     def _on_signal(signum, frame):  # noqa: ARG001
-        token.cancel("sigint")
+        token.cancel("sigterm" if signum == signal.SIGTERM else "sigint")
 
     try:
         prev_sigint = signal.signal(signal.SIGINT, _on_signal)
-        prev_sigterm = signal.signal(signal.SIGTERM, _on_signal)
-        return prev_sigint, prev_sigterm
     except (ValueError, OSError):
         return None, None
+    try:
+        prev_sigterm = signal.signal(signal.SIGTERM, _on_signal)
+    except (ValueError, OSError):
+        # Do not leave SIGINT bound to this run's token when the pair
+        # cannot be installed; the caller's restore is a no-op then.
+        try:
+            signal.signal(signal.SIGINT, prev_sigint)
+        except (ValueError, OSError):
+            pass
+        return None, None
+    return prev_sigint, prev_sigterm
 
 
 def _restore_signal_handlers(prev_sigint, prev_sigterm) -> None:
@@ -1131,6 +1148,7 @@ __all__ = [
     "EXIT_OK",
     "EXIT_PERMISSION_OR_INTERACTION",
     "EXIT_RUNTIME_ERROR",
+    "EXIT_TERMINATED",
     "_execute_with_args",
     "add_run_subparser",
     "execute",

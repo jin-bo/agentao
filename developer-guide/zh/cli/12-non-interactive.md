@@ -222,7 +222,8 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 | `2`    | 用法错误 / spec 校验失败 / 未知 spec 字段 |
 | `3`    | 需要权限或交互（非交互环境无人审批；`deny` 下超过 `max_denials`） |
 | `4`    | 达到最大工具迭代数，回答可能不完整 |
-| `130`  | 被中断（SIGINT / SIGTERM） |
+| `130`  | 被 SIGINT（Ctrl+C）中断。`error.message` 为 `interrupted (sigint)` |
+| `143`  | 被 SIGTERM 终止（`kill`、systemd、容器或 CI 关停）。`error.message` 为 `interrupted (sigterm)`。0.5.23 之前退出码为 `130`。以第一个信号为准：先 Ctrl+C 再收到 SIGTERM，仍退出 `130` |
 
 完整 M0 设计 —— 合并规则、Non-goals、Post-MVP 范围（`jsonl` 事件流、`attachments`、`provider`、每次 run 的 `plugins`、session resume）—— 见 [docs/history/implementation/non-interactive-run-plan.md](https://github.com/jin-bo/agentao/blob/main/docs/history/implementation/non-interactive-run-plan.md)。
 

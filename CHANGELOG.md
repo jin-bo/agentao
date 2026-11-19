@@ -15,6 +15,8 @@ _Targeting 0.5.23. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **`agentao run` exits `143` on SIGTERM, not `130`.** A run stopped by `kill`, systemd, a container or CI shutdown now exits `128 + 15 = 143`, with `error.message` `interrupted (sigterm)`, so whatever wraps the run can tell that from a user's Ctrl+C (still `130`, `interrupted (sigint)`). `error.type` stays `interrupted`. The first signal decides: a SIGTERM after a Ctrl+C still exits `130`. **Behaviour change:** a wrapper that read `130` as "interrupted by any signal" must also accept `143`. (`cli/run.py::EXIT_TERMINATED`)
+
 ### Fixed
 
 - **A custom shell `allow` rule no longer allows chained or expanding commands.** A rule such as `{"tool": "run_shell_command", "args": {"command": "^git "}, "action": "allow"}` matched the start of the command text, so it also allowed `git status && curl … | sh`, `git log $(…)` and `git status; python -c …`. A custom `allow` (from `permissions.json`, `PermissionEngine(rules=)` or a run spec's `permissions.allow`) with an `args.command` condition now applies only to a simple command: no chaining, redirection, subshell, substitution, leading variable assignment, PowerShell `--%`, or variable, glob or brace expansion, read in the dialect of the shell that runs it. On any other command the rule is skipped and the rules after it decide, so a later `deny` still applies; under `workspace-write` the call asks. Presets and `allow` rules without an `args.command` condition are unchanged. **Behaviour change:** a rule written to allow one specific chained command (`^make build && make test$`) now asks. The documented example is now `^git (status|branch)$`. (`permissions.py::shell_command_is_simple`)

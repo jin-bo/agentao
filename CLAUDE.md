@@ -29,7 +29,7 @@ uv run agentao run --prompt "..."     # Non-interactive automation (M0)
 uv run agentao --acp --stdio          # ACP server (Issue 12)
 ```
 
-`agentao run` is the canonical non-interactive surface. Its exit codes are `0` ok, `1` runtime, `2` invalid usage, `3` permission/interaction, `4` max iterations, `130` interrupted. See `agentao/cli/run.py` and `docs/reference/configuration.md`. `agentao -p "..."` is a thin shim over `agentao run`.
+`agentao run` is the canonical non-interactive surface. Its exit codes are `0` ok, `1` runtime, `2` invalid usage, `3` permission/interaction, `4` max iterations, `130` interrupted (SIGINT), `143` terminated (SIGTERM). See `agentao/cli/run.py` and `docs/reference/configuration.md`. `agentao -p "..."` is a thin shim over `agentao run`.
 
 ## Testing
 

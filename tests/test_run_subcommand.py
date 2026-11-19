@@ -17,6 +17,7 @@ import argparse
 import io
 import json
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List
@@ -1032,6 +1033,71 @@ def test_sigint_exit_130(monkeypatch, tmp_path, stub_pipeline, capsys):
     assert rc == run.EXIT_INTERRUPTED
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"]["type"] == "interrupted"
+
+
+def test_sigterm_exit_143(monkeypatch, tmp_path, stub_pipeline, capsys):
+    """A supervisor's SIGTERM is not a user's Ctrl+C: 128 + 15, not 130."""
+    captured, StubAgent = stub_pipeline
+
+    def chat(self, prompt, max_iterations=100, cancellation_token=None):
+        if cancellation_token is not None:
+            cancellation_token.cancel("sigterm")
+        return "[Interrupted by user]"
+
+    monkeypatch.setattr(StubAgent, "chat", chat)
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    args = _build_args(prompt="hi", output_format="json")
+    rc = run._execute_with_args(args)
+    assert rc == run.EXIT_TERMINATED == 143
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error"]["type"] == "interrupted"
+    assert payload["error"]["message"] == "interrupted (sigterm)"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="os.kill(SIGTERM) terminates on Windows")
+@pytest.mark.parametrize("signame,reason", [("SIGINT", "sigint"), ("SIGTERM", "sigterm")])
+def test_a_delivered_signal_cancels_with_its_own_reason(signame, reason):
+    """Real delivery through the installed handler, not a stubbed cancel."""
+    import os
+    import signal
+
+    from agentao.cancellation import CancellationToken
+    from agentao.cli import run
+
+    token = CancellationToken()
+    prev = run._install_signal_handlers(token)
+    # A failed install (not the main thread) would deliver the real signal
+    # to the test process: SIGTERM kills the worker, SIGINT aborts the run.
+    if prev == (None, None):
+        pytest.skip("signal handlers can only be installed on the main thread")
+    try:
+        os.kill(os.getpid(), getattr(signal, signame))
+        # The handler runs between bytecodes; poll until it has fired.
+        for _ in range(100):
+            if token.is_cancelled:
+                break
+            time.sleep(0.01)
+    finally:
+        run._restore_signal_handlers(*prev)
+    assert token.reason == reason
+
+
+def test_a_sigterm_after_a_ctrl_c_keeps_exit_130(monkeypatch, tmp_path, stub_pipeline, capsys):
+    captured, StubAgent = stub_pipeline
+
+    def chat(self, prompt, max_iterations=100, cancellation_token=None):
+        cancellation_token.cancel("sigint")
+        cancellation_token.cancel("sigterm")
+        return "[Interrupted by user]"
+
+    monkeypatch.setattr(StubAgent, "chat", chat)
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+    assert rc == run.EXIT_INTERRUPTED
 
 
 def test_unknown_interaction_policy_exit_2(monkeypatch, tmp_path, stub_pipeline, capsys):
