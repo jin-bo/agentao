@@ -561,6 +561,7 @@ Full schema, tables, and lifecycle → [developer guide 5.5](../../developer-gui
 | 3 | Permission denied or interaction required |
 | 4 | Max iterations |
 | 130 | Interrupted (SIGINT) |
+| 143 | Terminated (SIGTERM). Since 0.5.23; before, `130` |
 
 `error.type` discriminates outcomes that share an exit code. Every turn the
 runtime classifies as having no complete answer (the six `reason` values
