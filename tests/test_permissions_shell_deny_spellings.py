@@ -28,6 +28,13 @@ def _spec(dialect):
     return SimpleNamespace(dialect=SimpleNamespace(value=dialect))
 
 
+def _short_id(text):
+    # pytest puts the test id in PYTEST_CURRENT_TEST, and Windows refuses an
+    # environment variable over 32,767 characters: a long input as its own
+    # id fails the test at setup there.
+    return f"{text[:8]}-{len(text)}"
+
+
 def _decide(engine, command, dialect="posix"):
     detail = engine.decide_detail(
         "run_shell_command", {"command": command}, shell_spec=_spec(dialect),
@@ -139,7 +146,7 @@ def test_preset_rm_deny_needs_both_flags_in_one_command(tmp_path: Path, command)
     "rm" + " x" * 40000 + " -f",
     "rm -" + "r" * 20000 + "1",
     "rm -" + "f" * 20000 + "1 -r",
-])
+], ids=_short_id)
 def test_preset_deny_is_linear(text):
     started = time.perf_counter()
     re.search(_PRESET_SHELL_DENY_RE, text, re.IGNORECASE)
@@ -168,7 +175,7 @@ def test_suffix_is_stripped_only_from_the_program(tmp_path: Path):
     "& " * 20000,
     ';"/' * 20000,
     ';"' + "/" * 40000,
-])
+], ids=_short_id)
 def test_canonical_spellings_are_linear(text):
     started = time.perf_counter()
     _shell_command_canonicals(text)
