@@ -511,8 +511,10 @@ _SHELL_TOOL = "run_shell_command"
 # POSIX characters that, unquoted and unescaped, join a second command
 # (``;`` ``&`` ``|`` newline), redirect (``<`` ``>``), open a subshell or a
 # process substitution (``(`` ``)``), or expand when the command runs (``$``,
-# a backtick, a glob, a brace group).
-_POSIX_UNQUOTED_SYNTAX = frozenset(";&|<>()\n\r$`*?[]{}")
+# a backtick, a glob). Brace expansion is checked separately: ``{`` and ``}``
+# alone are text (``stash@{0}``), and only a group holding ``,`` or ``..``
+# expands.
+_POSIX_UNQUOTED_SYNTAX = frozenset(";&|<>()\n\r$`*?[]")
 # Inside double quotes only expansion is live.
 _POSIX_DOUBLE_QUOTED_SYNTAX = frozenset("$`")
 # PowerShell and cmd are checked without reading their quoting: any of these
@@ -523,8 +525,22 @@ _POWERSHELL_SYNTAX = frozenset(";&|<>(){}$@`\n\r")
 _CMD_SYNTAX = frozenset("&|<>()^%!\n\r")
 
 
+# ``NAME=value cmd`` sets a variable for the command it prefixes, and
+# ``PAGER='sh -c …' git log`` runs what the variable names. The reserved
+# words ``!`` and ``time [-p]`` may come before the assignment, and a line
+# continuation (backslash-newline) is removed before the shell reads words.
+_POSIX_ASSIGNMENT_PREFIX = re.compile(
+    r"(?:[ \t]*(?:!|time|-p)(?=[ \t]))*[ \t]*[A-Za-z_][A-Za-z0-9_]*\+?="
+)
+
+
 def _posix_command_is_simple(command: str) -> bool:
+    if _POSIX_ASSIGNMENT_PREFIX.match(command.replace("\\\n", "")):
+        return False
     contexts, escaped = _position_contexts(command)
+    # One entry per open unquoted ``{``: whether it holds ``,`` or ``..`` at
+    # its own level, which is what makes bash expand it.
+    brace_groups: List[bool] = []
     for i, c in enumerate(command):
         if i in escaped:
             continue
@@ -532,6 +548,22 @@ def _posix_command_is_simple(command: str) -> bool:
         if ctx is None:
             if c in _POSIX_UNQUOTED_SYNTAX:
                 return False
+            if c == "{":
+                brace_groups.append(False)
+            elif c == "}" and brace_groups:
+                if brace_groups.pop():
+                    return False
+            elif brace_groups and (
+                c == ","
+                or (
+                    c == "."
+                    and i + 1 < len(command)
+                    and command[i + 1] == "."
+                    and contexts[i + 1] is None
+                    and i + 1 not in escaped
+                )
+            ):
+                brace_groups[-1] = True
         elif ctx == '"':
             if c in _POSIX_DOUBLE_QUOTED_SYNTAX:
                 return False
@@ -539,6 +571,12 @@ def _posix_command_is_simple(command: str) -> bool:
             # Inside a ``$(...)`` or backtick substitution.
             return False
     return True
+
+
+def _powershell_command_is_simple(command: str) -> bool:
+    # ``--%`` stops PowerShell's parsing: the rest goes to the program as-is,
+    # with cmd-style ``%VAR%`` expansion.
+    return not (set(command) & _POWERSHELL_SYNTAX) and "--%" not in command
 
 
 def shell_command_is_simple(command: str, dialect: Optional[str]) -> bool:
@@ -560,12 +598,13 @@ def shell_command_is_simple(command: str, dialect: Optional[str]) -> bool:
     if d == "posix":
         return _posix_command_is_simple(command)
     if d == "powershell":
-        return not (set(command) & _POWERSHELL_SYNTAX)
+        return _powershell_command_is_simple(command)
     if d == "cmd":
         return not (set(command) & _CMD_SYNTAX)
     return (
         _posix_command_is_simple(command)
-        and not (set(command) & (_POWERSHELL_SYNTAX | _CMD_SYNTAX))
+        and _powershell_command_is_simple(command)
+        and not (set(command) & _CMD_SYNTAX)
     )
 
 
@@ -742,7 +781,7 @@ class PermissionEngine:
 
         {
             "rules": [
-                {"tool": "run_shell_command", "args": {"command": "^git (status|fetch)( |$)"}, "action": "allow"},
+                {"tool": "run_shell_command", "args": {"command": "^git (status|branch)$"}, "action": "allow"},
                 {"tool": "write_file", "action": "ask"},
                 {"tool": "run_shell_command", "args": {"command": "rm -rf"}, "action": "deny"}
             ]
@@ -1172,7 +1211,7 @@ class PermissionEngine:
                 "(Project-scope .agentao/permissions.json is no longer honored.)\n\n"
                 "Example:\n"
                 '  {"rules": [\n'
-                '    {"tool": "run_shell_command", "args": {"command": "^git (status|fetch)( |$)"}, "action": "allow"},\n'
+                '    {"tool": "run_shell_command", "args": {"command": "^git (status|branch)$"}, "action": "allow"},\n'
                 '    {"tool": "write_file", "action": "ask"},\n'
                 '    {"tool": "*", "action": "ask"}\n'
                 "  ]}"

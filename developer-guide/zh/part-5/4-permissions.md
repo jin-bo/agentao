@@ -150,7 +150,7 @@ agent.set_permission_mode("read-only")                   # 返回 PermissionMode
 }
 ```
 
-带 `command` 正则的 shell `allow` 只对**简单命令**生效：不含 `;`、`&&`、`||`、`|`、`&`、换行，不含重定向或子 shell，引号外不含 `$`、反引号、glob 或花括号展开（按实际执行它的 shell 方言判断）。其他命令会跳过这条规则，由后续规则决定，因此 `docker ps && curl … | sh` 会落到你的 `deny` / `ask` 规则，而不会借 `^docker ` 放行。命令其余部分仍由正则负责，请写明具体子命令（`^docker (ps|images)( |$)`）。不带 `command` 条件的规则不受影响。
+带 `command` 正则的 shell `allow` 只对**简单命令**生效：不含 `;`、`&&`、`||`、`|`、`&`、换行，不含重定向、子 shell 或开头的变量赋值（`NAME=value cmd`），引号外不含 `$`、反引号、glob 或花括号展开（按实际执行它的 shell 方言判断）。其他命令会跳过这条规则，由后续规则决定，因此 `docker ps && curl … | sh` 会落到你的 `deny` / `ask` 规则，而不会借 `^docker ` 放行。命令其余部分仍由正则负责，请写明具体子命令（`^docker (ps|images)$`，两端都要锚定：`git fetch --upload-pack=<cmd> .` 就是一条会执行程序的简单命令）。不带 `command` 条件的规则不受影响。
 
 ### `domain` — URL 域名匹配（专为 web_fetch 等）
 
@@ -315,6 +315,8 @@ snap = agent.active_permissions()
   ]
 }
 ```
+
+> ⚠️ 第一条规则等于把任意代码交给模型：`python -c '…'`、`node -e '…'`、`npm exec …`、`docker run …` 都是简单命令，会不经询问直接放行。只在沙箱本身就是安全边界的环境里用这个模板。其他环境请把每个正则锚定到具体子命令（`^npm (test|run lint)$`）。
 
 ### 模板 C · CI / 无人值守
 

@@ -112,7 +112,7 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
 ```json
 {
   "rules": [
-    { "tool": "run_shell_command", "args": { "command": "^git (status|fetch)( |$)" }, "action": "allow" },
+    { "tool": "run_shell_command", "args": { "command": "^git (status|branch)$" }, "action": "allow" },
     { "tool": "run_shell_command", "args": { "command": "rm\\s+-rf" }, "action": "deny" },
     { "tool": "write_file", "action": "ask" },
     {
@@ -132,7 +132,7 @@ JSON 配置文件位于 `.agentao/` 目录（项目位于 `<working_directory>/.
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `tool` | string | 是 | 工具名；通过 `re.fullmatch` 按正则匹配（用 `"*"` 通配） |
-| `args` | object | 否 | `<arg_name>` → 正则的映射；**全部**条目都要 `re.search` 命中规则才生效。**`run_shell_command` 上带 `args.command` 条件的自定义 `allow` 只对简单命令生效**（0.5.23 起）：命令不含串联（`;` `&&` `||` `|` `&` 换行）、重定向、子 shell、命令或进程替换，也不含变量、glob、花括号展开；按实际执行该命令的 shell 方言判断（POSIX 会识别引号，PowerShell 和 cmd 按字符检查）。其他命令会跳过这条规则，由后续规则决定，因此后面的 `deny` 仍然生效。此前 `^git ` 会放行 `git status && curl … | sh`。命令其余部分仍由 pattern 负责，请写明具体子命令。preset 与不带 `args.command` 条件的 `allow` 规则不受影响。 |
+| `args` | object | 否 | `<arg_name>` → 正则的映射；**全部**条目都要 `re.search` 命中规则才生效。**`run_shell_command` 上带 `args.command` 条件的自定义 `allow` 只对简单命令生效**（0.5.23 起）：命令不含串联（`;` `&&` `||` `|` `&` 换行）、重定向、子 shell、命令或进程替换，也不含开头的变量赋值（`NAME=value cmd`）或变量、glob、花括号展开；按实际执行该命令的 shell 方言判断（POSIX 会识别引号，PowerShell 和 cmd 按字符检查）。其他命令会跳过这条规则，由后续规则决定，因此后面的 `deny` 仍然生效。此前 `^git ` 会放行 `git status && curl … | sh`。命令其余部分仍由 pattern 负责，请写明具体子命令，并用 `$` 锚定结尾：`git fetch --upload-pack=<cmd> .` 是简单命令，却会执行 `<cmd>`。preset 与不带 `args.command` 条件的 `allow` 规则不受影响。 |
 | `domain` | object | 否 | 仅 URL 类工具（`web_fetch`）；键：`url_arg`（默认 `"url"`）、`allowlist`、`blocklist`。`.` 开头的模式做后缀匹配（如 `.github.com` 命中 `api.github.com`），否则精确匹配 |
 | `action` | string | 是 | `"allow"` \| `"deny"` \| `"ask"`（大小写不敏感） |
 

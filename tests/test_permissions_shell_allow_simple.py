@@ -46,6 +46,11 @@ def engine(tmp_path):
     "git log --format='%h $x'",
     "git status \\; x",
     "git diff HEAD~1",
+    "git show stash@{0}",
+    "git log HEAD@{1}",
+    "git log '{a,b}'",
+    "git log {a\\,b}",
+    "git log {a}",
 ])
 def test_simple_commands_still_allowed(engine, command):
     assert _decide(engine, command) is ALLOW
@@ -71,6 +76,9 @@ def test_simple_commands_still_allowed(engine, command):
     "git diff a?",
     "git diff [ab]",
     "git diff {a,b}",
+    "git diff {a..c}",
+    "git diff x{y{a,b}}",
+    "git diff {a,'b'}",
     "git log $'\\x41'",
 ])
 def test_compound_or_expanding_commands_ask(engine, command):
@@ -145,6 +153,15 @@ def test_decide_without_a_shell_spec_fails_closed(tmp_path):
     ("powershell", "git log $env:HOME", False),
     ("powershell", "git log @(1)", False),
     ("powershell", "git log {x}", False),
+    ("powershell", "git --% log %USERPROFILE%", False),
+    ("posix", "PAGER='sh -c id' git log", False),
+    ("posix", "git log --author=me", True),
+    ("posix", "! PAGER='sh -c id' git log", False),
+    ("posix", "time PAGER='sh -c id' git log", False),
+    ("posix", "time -p PAGER='sh -c id' git log", False),
+    ("posix", "\\\nPAGER='sh -c id' git log", False),
+    ("posix", "PA\\\nGER='sh -c id' git log", False),
+    ("posix", "time git log", True),
     ("cmd", "git status", True),
     ("cmd", "git status & del x", False),
     ("cmd", "git log %PATH%", False),
