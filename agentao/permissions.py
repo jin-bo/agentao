@@ -499,10 +499,13 @@ _PATH_ARG_TOOLS = frozenset({"read_file", "write_file", "replace"})
 _BAD_PATTERN_ERRORS = (re.error, OverflowError, RecursionError)
 
 
-def _arg_matches(pattern: str, value: str) -> bool:
+def _arg_matches(pattern: str, value: str, *, ignore_case: bool = False) -> bool:
     try:
-        return re.search(pattern, value) is not None
+        flags = re.IGNORECASE if ignore_case else 0
+        return re.search(pattern, value, flags) is not None
     except _BAD_PATTERN_ERRORS:
+        if ignore_case:
+            return pattern.casefold() == value.casefold()
         return pattern == value
 
 
@@ -1100,7 +1103,23 @@ class PermissionEngine:
                 candidates = self._path_candidates(arg_value)
             else:
                 candidates = [arg_value]
-            if not any(_arg_matches(arg_pattern, c) for c in candidates):
+            # ``GIT push`` runs git on macOS's and Windows' default
+            # filesystems, and PowerShell and cmd ignore case, so a ``deny`` /
+            # ``ask`` pattern on a shell command matches without case, on both
+            # the pattern and the command (``Remove-Item`` catches
+            # ``remove-item``). It may then catch a flag it did not mean
+            # (``-x`` matches ``-X``), which only refuses or asks more; a
+            # pattern can keep a part exact with ``(?-i:...)``. An ``allow``
+            # stays case-sensitive: matching more spellings would grant more.
+            ignore_case = (
+                arg_key == "command"
+                and tool_name == _SHELL_TOOL
+                and str(rule.get("action", "ask")).lower() != "allow"
+            )
+            if not any(
+                _arg_matches(arg_pattern, c, ignore_case=ignore_case)
+                for c in candidates
+            ):
                 return False
         return True
 
