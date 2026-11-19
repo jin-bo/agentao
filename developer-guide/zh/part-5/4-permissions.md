@@ -150,6 +150,8 @@ agent.set_permission_mode("read-only")                   # 返回 PermissionMode
 }
 ```
 
+带 `command` 正则的 shell `allow` 只对**简单命令**生效：不含 `;`、`&&`、`||`、`|`、`&`、换行，不含重定向或子 shell，引号外不含 `$`、反引号、glob 或花括号展开（按实际执行它的 shell 方言判断）。其他命令会跳过这条规则，由后续规则决定，因此 `docker ps && curl … | sh` 会落到你的 `deny` / `ask` 规则，而不会借 `^docker ` 放行。命令其余部分仍由正则负责，请写明具体子命令（`^docker (ps|images)( |$)`）。不带 `command` 条件的规则不受影响。
+
 ### `domain` — URL 域名匹配（专为 web_fetch 等）
 
 ```json

@@ -154,6 +154,8 @@ Multiple args must all match:
 }
 ```
 
+A shell `allow` with a `command` pattern applies only to a **simple command**: no `;`, `&&`, `||`, `|`, `&` or newline, no redirection or subshell, and no `$`, backtick, glob or brace expansion outside quotes (read in the dialect of the shell that runs it). For anything else the rule is skipped and the rules after it decide, so `docker ps && curl … | sh` falls through to your `deny` / `ask` rules instead of riding on `^docker `. The pattern still vouches for the rest of the command, so pin the subcommands you mean (`^docker (ps|images)( |$)`). Rules without a `command` condition are not affected.
+
 ### `domain` — URL host (for web_fetch etc.)
 
 ```json

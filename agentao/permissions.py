@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse
 
 from .permissions_hardline import hardline_check
+from .permissions_hardline._contexts import _position_contexts
 
 if TYPE_CHECKING:
     from .host.models import ActivePermissions
@@ -505,6 +506,79 @@ def _arg_matches(pattern: str, value: str) -> bool:
         return pattern == value
 
 
+_SHELL_TOOL = "run_shell_command"
+
+# POSIX characters that, unquoted and unescaped, join a second command
+# (``;`` ``&`` ``|`` newline), redirect (``<`` ``>``), open a subshell or a
+# process substitution (``(`` ``)``), or expand when the command runs (``$``,
+# a backtick, a glob, a brace group).
+_POSIX_UNQUOTED_SYNTAX = frozenset(";&|<>()\n\r$`*?[]{}")
+# Inside double quotes only expansion is live.
+_POSIX_DOUBLE_QUOTED_SYNTAX = frozenset("$`")
+# PowerShell and cmd are checked without reading their quoting: any of these
+# characters anywhere makes the command not simple. ``$`` expands inside a
+# PowerShell double-quoted string, and cmd's quoting does not stop ``%`` or
+# ``!`` expansion, so a quote-aware reading would buy little.
+_POWERSHELL_SYNTAX = frozenset(";&|<>(){}$@`\n\r")
+_CMD_SYNTAX = frozenset("&|<>()^%!\n\r")
+
+
+def _posix_command_is_simple(command: str) -> bool:
+    contexts, escaped = _position_contexts(command)
+    for i, c in enumerate(command):
+        if i in escaped:
+            continue
+        ctx = contexts[i]
+        if ctx is None:
+            if c in _POSIX_UNQUOTED_SYNTAX:
+                return False
+        elif ctx == '"':
+            if c in _POSIX_DOUBLE_QUOTED_SYNTAX:
+                return False
+        elif ctx != "'":
+            # Inside a ``$(...)`` or backtick substitution.
+            return False
+    return True
+
+
+def shell_command_is_simple(command: str, dialect: Optional[str]) -> bool:
+    """Whether *command* is one command whose text is what runs.
+
+    A pattern in an ``allow`` rule can only vouch for the text it reads. Text
+    that chains a second command, redirects, opens a subshell or expands when
+    the shell runs it holds something the pattern never saw: ``^git `` matches
+    ``git status && curl … | sh`` and ``git log $(…)``. Such a command is not
+    simple, and a custom ``allow`` rule on ``args.command`` does not apply to
+    it (:meth:`PermissionEngine.decide_detail`).
+
+    The check reads *dialect*'s syntax. POSIX quoting is honoured: ``;`` inside
+    quotes is text, ``$`` inside double quotes is not. PowerShell and cmd are
+    checked by character, without reading quotes. An unknown dialect (``None``
+    or ``"unknown"``) must pass all three checks.
+    """
+    d = (dialect or "unknown").lower()
+    if d == "posix":
+        return _posix_command_is_simple(command)
+    if d == "powershell":
+        return not (set(command) & _POWERSHELL_SYNTAX)
+    if d == "cmd":
+        return not (set(command) & _CMD_SYNTAX)
+    return (
+        _posix_command_is_simple(command)
+        and not (set(command) & (_POWERSHELL_SYNTAX | _CMD_SYNTAX))
+    )
+
+
+def _rule_vouches_for_shell_command(rule: Dict[str, Any], tool_name: str) -> bool:
+    """A custom ``allow`` that granted a shell call because of its command text."""
+    if tool_name != _SHELL_TOOL:
+        return False
+    if str(rule.get("action", "ask")).lower() != "allow":
+        return False
+    args = rule.get("args")
+    return isinstance(args, dict) and "command" in args
+
+
 # Shell commands both ``workspace-write`` and ``plan`` run without asking.
 # Anything that does not match falls through to the mode's own ASK / DENY,
 # so leaving a command out costs a prompt, never access. Every clause below
@@ -668,7 +742,7 @@ class PermissionEngine:
 
         {
             "rules": [
-                {"tool": "run_shell_command", "args": {"command": "^git "}, "action": "allow"},
+                {"tool": "run_shell_command", "args": {"command": "^git (status|fetch)( |$)"}, "action": "allow"},
                 {"tool": "write_file", "action": "ask"},
                 {"tool": "run_shell_command", "args": {"command": "rm -rf"}, "action": "deny"}
             ]
@@ -930,6 +1004,20 @@ class PermissionEngine:
                     continue
                 if not self._matches(rule, tool_name, tool_args):
                     continue
+                # A custom shell ``allow`` vouches only for a command whose text
+                # is what runs. For a chained, redirected or expanding command
+                # it is skipped and evaluation goes on, so a later ``deny``
+                # still applies. Presets are exempt: theirs is a fixed regex
+                # that already refuses this syntax, and ``full-access`` grants
+                # every command on purpose.
+                if (
+                    rules is not self._mode_rules
+                    and _rule_vouches_for_shell_command(rule, tool_name)
+                    and not shell_command_is_simple(
+                        str(tool_args.get("command", "")), dialect,
+                    )
+                ):
+                    continue
                 action = rule.get("action", "ask").lower()
                 decision = _ACTION_TO_DECISION.get(action, PermissionDecision.ASK)
                 return PermissionDecisionDetail(
@@ -1084,7 +1172,7 @@ class PermissionEngine:
                 "(Project-scope .agentao/permissions.json is no longer honored.)\n\n"
                 "Example:\n"
                 '  {"rules": [\n'
-                '    {"tool": "run_shell_command", "args": {"command": "^git "}, "action": "allow"},\n'
+                '    {"tool": "run_shell_command", "args": {"command": "^git (status|fetch)( |$)"}, "action": "allow"},\n'
                 '    {"tool": "write_file", "action": "ask"},\n'
                 '    {"tool": "*", "action": "ask"}\n'
                 "  ]}"

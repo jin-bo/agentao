@@ -15,6 +15,8 @@ _Targeting 0.5.23. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- **A custom shell `allow` rule no longer allows chained or expanding commands.** A rule such as `{"tool": "run_shell_command", "args": {"command": "^git "}, "action": "allow"}` matched the start of the command text, so it also allowed `git status && curl … | sh`, `git log $(…)` and `git status; python -c …`. A custom `allow` (from `permissions.json`, `PermissionEngine(rules=)` or a run spec's `permissions.allow`) with an `args.command` condition now applies only to a simple command: no chaining, redirection, subshell, substitution, or variable, glob or brace expansion, read in the dialect of the shell that runs it. On any other command the rule is skipped and the rules after it decide, so a later `deny` still applies; under `workspace-write` the call asks. Presets and `allow` rules without an `args.command` condition are unchanged. **Behaviour change:** a rule written to allow one specific chained command (`^make build && make test$`) now asks. The documented example is now `^git (status|fetch)( |$)`. (`permissions.py::shell_command_is_simple`)
+
 ## [0.5.22] — 2026-11-15
 
 ### Added
