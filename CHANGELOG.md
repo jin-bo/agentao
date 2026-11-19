@@ -15,6 +15,8 @@ _Targeting 0.5.23. Add entries under the relevant heading as work lands._
 
 ### Fixed
 
+- `/mode`, `/replay on|off`, `/mcp add|remove` and `/goal` no longer rewrite `.agentao/settings.json`, `mcp.json` and `goal.json` in place. A crash or a full disk mid-write used to leave a truncated file: later saves then refused the settings file, and a torn `goal.json` made the goal vanish. They now write a temp file and swap it in atomically (`capabilities/filesystem.py::write_bytes_atomic`), following a symlinked file to its target, keeping its permission bits (a new file follows the umask) and still refusing a read-only file. `/mode` now warns when it cannot save the mode, instead of failing silently.
+
 ## [0.5.22] — 2026-11-15
 
 ### Added

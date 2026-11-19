@@ -204,10 +204,13 @@ def save_goal(goal: GoalState, project_root: Path) -> bool:
     """Persist the goal. Returns whether the write succeeded (``False`` on a
     read-only dir / full disk) so callers can warn instead of losing state
     silently."""
+    from ..capabilities.filesystem import write_bytes_atomic
+
     path = goal_path(project_root)
     try:
         path.parent.mkdir(exist_ok=True)
-        path.write_text(json.dumps(goal.to_dict(), indent=2), encoding="utf-8")
+        # Atomic: a torn goal.json loads as ``None`` and the goal vanishes.
+        write_bytes_atomic(path, json.dumps(goal.to_dict(), indent=2).encode("utf-8"))
         return True
     except OSError:
         return False

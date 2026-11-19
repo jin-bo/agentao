@@ -248,6 +248,9 @@ def save_replay_enabled(
             f"{path} was not changed: it holds a number JSON cannot "
             f"represent ({exc}). Replace it with a finite value."
         ) from exc
+    from ..capabilities.filesystem import write_bytes_atomic
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    # Atomic: a truncated settings.json would be refused by every later save.
+    write_bytes_atomic(path, text.encode("utf-8"))
     return ReplayConfig.from_mapping(replay_block)
