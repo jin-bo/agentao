@@ -34,6 +34,7 @@ import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
+from ._cancellable import CancelledWhileWaiting, call_cancellable
 from ._api_format import (
     ANTHROPIC_MESSAGES,
     OPENAI_COMPLETIONS,
@@ -756,10 +757,11 @@ class LLMClient(_LoggingMixin):
                 request-only. See :meth:`_build_request_kwargs`.
             on_retry: Optional callable told about each retry before its
                 backoff sleep — see :meth:`_notify_retry`.
-            cancellation_token: Optional token polled during a backoff
-                sleep, so a cancel does not wait out a wait of up to
-                :data:`MAX_BACKOFF_SECONDS`. The request itself is not
-                interrupted.
+            cancellation_token: Optional token. A cancel stops the wait for
+                a response (the request runs on a worker thread, see
+                ``_cancellable``) and a backoff sleep of up to
+                :data:`MAX_BACKOFF_SECONDS`. The call then returns an empty
+                response with ``finish_reason_reported`` False.
             _log_channel: Internal. ``"side"`` (the default) for the one-off
                 calls; ``"turn"`` when ``chat_stream`` sends the turn's request
                 through here (the Gemini bypass, the streaming-unsupported
@@ -796,11 +798,46 @@ class LLMClient(_LoggingMixin):
             # attempt is counted from.
             acc = self._adapter.new_accumulator()
             started = time.monotonic()
+            # Who counts this attempt. Normally the caller, once ``send``
+            # returned or raised. After a cancel the worker may still be
+            # filling ``acc`` (a streaming wire's ``message_start`` usage), so
+            # whichever side finishes last counts it, exactly once.
+            count_lock = threading.Lock()
+            count_state = {"done": False, "abandoned": False}
+
+            def _attempt(acc: Any = acc) -> Any:
+                try:
+                    return self._adapter.send(kwargs, acc, cancellation_token)
+                finally:
+                    with count_lock:
+                        count_state["done"] = True
+                        late = count_state["abandoned"]
+                    if late:
+                        self._count_attempt(acc)
+
             try:
                 try:
-                    response = self._adapter.send(kwargs, acc)
-                finally:
+                    # On a worker thread when there is a token, so a cancel
+                    # stops waiting for a request that hangs (``_cancellable``).
+                    response = call_cancellable(_attempt, cancellation_token)
+                except CancelledWhileWaiting:
+                    with count_lock:
+                        count_state["abandoned"] = True
+                        finished = count_state["done"]
+                    if finished:
+                        self._count_attempt(acc)
+                    # The same exit ``chat_stream`` takes for a turn cancelled
+                    # before its request: an empty response with
+                    # ``finish_reason_reported`` False, never a new exception.
+                    self.logger.info(
+                        "%s: cancelled while waiting for the response; "
+                        "any reply is dropped", request_id,
+                    )
+                    return self._adapter.new_accumulator().build()
+                except BaseException:
                     self._count_attempt(acc)
+                    raise
+                self._count_attempt(acc)
 
                 self._log_response(
                     request_id, response, duration_ms=_elapsed_ms(started),

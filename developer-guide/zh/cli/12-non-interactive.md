@@ -227,7 +227,7 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 
 信号（0.5.23 起）：第一个 SIGINT 或 SIGTERM 在任何阶段都会取消运行，包括构建 agent、SessionStart 或 SessionEnd hook 运行期间以及写出结果时。在运行仍可取消时，它会向 stderr 写 `agentao run: cancelling; send the signal again to exit now`。turn 结束后它会写另一行提示，而且这个信号不改变已有的结果和退出码。在 turn 开始前就被取消的运行会跳过剩余的启动步骤（skill 激活、replay、SessionStart hook），不会开始 turn，并以 `130` / `143` 报告 `interrupted`，即使之后构建或某项前置检查失败也是如此。当前 turn 在下一次检查时停止，结果文档照常写出。
 
-**第二个**信号如果在第一个之后至少 0.5 秒到达，会立即退出，并向 stderr 写 `agentao run: second signal, exiting now`。当某个工具或 LLM 请求卡住、没有响应第一个信号时使用。比这更早到达的第二个信号会被视为同一次中断被投递了两次，直接忽略。终端向进程组发信号、包装层又转发一次，或者 supervisor 同时向进程组和进程本身发信号时，就会出现这种情况。这里同样以第一个信号决定退出码：Ctrl+C 之后再收到 SIGTERM，以 `130` 退出。如果结果文档已经写出，则改用结果本身的退出码退出。
+**第二个**信号如果在第一个之后至少 0.5 秒到达，会立即退出，并向 stderr 写 `agentao run: second signal, exiting now`。当某个工具卡住、没有响应第一个信号时使用。卡住的模型请求会被第一个信号停下，大约 0.1 秒内生效。比这更早到达的第二个信号会被视为同一次中断被投递了两次，直接忽略。终端向进程组发信号、包装层又转发一次，或者 supervisor 同时向进程组和进程本身发信号时，就会出现这种情况。这里同样以第一个信号决定退出码：Ctrl+C 之后再收到 SIGTERM，以 `130` 退出。如果结果文档已经写出，则改用结果本身的退出码退出。
 
 立即退出有两个代价：
 
