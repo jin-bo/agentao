@@ -90,6 +90,31 @@ class CancellationToken:
             except Exception:
                 _logger.exception("CancellationToken callback raised")
 
+    def cancel_from_signal(self, reason: str) -> None:
+        """Cancel from a signal handler without deadlocking.
+
+        A signal handler runs on the main thread between two bytecodes. If
+        the main thread holds ``_cb_lock`` at that moment (inside
+        :meth:`add_done_callback` or :meth:`cancel`), a plain :meth:`cancel`
+        would wait for a lock its own thread can never release. When the
+        lock is free the cancel runs here, at once. Otherwise a short-lived
+        thread runs it, and it completes as soon as the holder releases the
+        lock. The lock is not made reentrant: a nested cancel would then run
+        between ``add_done_callback``'s check and its append, and the
+        callback appended afterwards would never fire.
+        """
+        if self._cb_lock.acquire(blocking=False):
+            # The main thread is suspended in this handler, so it cannot
+            # take the lock back before the cancel below; another thread
+            # can, and the cancel then waits for it like any other caller.
+            self._cb_lock.release()
+            self.cancel(reason)
+            return
+        threading.Thread(
+            target=self.cancel, args=(reason,),
+            name="agentao-signal-cancel", daemon=True,
+        ).start()
+
     def check(self) -> None:
         """Raise AgentCancelledError if this token has been cancelled."""
         if self._event.is_set():

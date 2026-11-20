@@ -16,8 +16,9 @@ import re
 import signal
 import stat
 import sys
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from .run_models import (
     PermissionModeName,
@@ -498,17 +499,72 @@ def _emit_invalid_usage(
     return EXIT_INVALID_USAGE
 
 
+def _signal_interruption(token: Any) -> Optional[Tuple[str, str, int]]:
+    """``(type, message, exit_code)`` when a signal cancelled *token*.
+
+    A run that a signal cancelled before its turn reports that, not the
+    failure the cancel caused or happened to land beside: a Ctrl+C during the
+    build exits 130, not 1. Other cancel reasons (a permission deny) are not
+    signals and return ``None``.
+    """
+    if token is None or not token.is_cancelled:
+        return None
+    reason = token.reason
+    if reason not in ("sigint", "sigterm"):
+        return None
+    return (
+        "interrupted",
+        f"interrupted ({reason})",
+        EXIT_TERMINATED if reason == "sigterm" else EXIT_INTERRUPTED,
+    )
+
+
+class _TokenSnapshot(NamedTuple):
+    """The token's state when the turn ended, for :func:`_classify_outcome`."""
+
+    is_cancelled: bool
+    reason: str
+
+
+# A second signal this soon after the first is the same interrupt delivered
+# twice (the terminal signals the process group and a wrapper forwards it, or
+# a supervisor signals both the group and the process), not a user asking to
+# exit now.
+_SIGNAL_DEBOUNCE_S = 0.5
+
+
+class _RunSignals:
+    """State shared between the run and its SIGINT / SIGTERM handler.
+
+    The run records how far it got (:attr:`turn_done`, :attr:`result_code`);
+    the handler records the first signal (:attr:`first_code`) and decides
+    what a second one does. See :func:`_install_signal_handlers`.
+    """
+
+    def __init__(self, token: Any) -> None:
+        self.token = token
+        self.first_code: Optional[int] = None
+        self.first_at = 0.0
+        self.turn_done = False
+        self.result_code: Optional[int] = None
+
+
 def _fail_built(
     agent: Any, cwd: Any, warnings: List[str], output_format: str,
-    error_type: str, message: str, exit_code: int,
+    error_type: str, message: str, exit_code: int, *,
+    signals: Optional[_RunSignals] = None,
 ) -> int:
     """End a run whose agent is built but which never ran a turn.
 
     Emits the error envelope with the agent's session, closes the agent and
     returns ``exit_code``. The agent is closed even when the envelope cannot
     be written (a closed stdout pipe), so its log and MCP connections do not
-    outlive the run.
+    outlive the run. If a signal already cancelled the run, the envelope and
+    exit code report the interruption instead (:func:`_signal_interruption`).
     """
+    interrupted = _signal_interruption(signals.token if signals else None)
+    if interrupted is not None:
+        error_type, message, exit_code = interrupted
     try:
         _emit(RunResult(
             status="error",
@@ -520,6 +576,8 @@ def _fail_built(
             tool_calls=0,
             warnings=warnings,
         ), output_format)
+        if signals is not None:
+            signals.result_code = exit_code
     finally:
         agent.close()
     return exit_code
@@ -651,9 +709,38 @@ def _run_pipeline(
     output_format: str,
     warnings: List[str],
 ) -> int:
+    """Run *spec* with SIGINT / SIGTERM routed to the run's token throughout.
+
+    The handlers go in before the agent is built and come out after the
+    result is written and the agent closed. A signal during a SessionStart
+    or SessionEnd hook, the build or the write therefore cancels the run
+    instead of killing the process with no output. A second signal exits at
+    once (:func:`_install_signal_handlers`).
+    """
+    from ..cancellation import CancellationToken
+
+    token = CancellationToken()
+    signals = _RunSignals(token)
+    prev_sigint, prev_sigterm = _install_signal_handlers(token, signals)
+    try:
+        return _run_pipeline_with_token(
+            spec, signals=signals, output_format=output_format,
+            warnings=warnings,
+        )
+    finally:
+        _restore_signal_handlers(prev_sigint, prev_sigterm)
+
+
+def _run_pipeline_with_token(
+    spec: RunSpec,
+    *,
+    signals: _RunSignals,
+    output_format: str,
+    warnings: List[str],
+) -> int:
+    token = signals.token
     # Local imports keep ``agentao --help`` snappy and avoid pulling
     # the LLM stack when the user only inspects --help.
-    from ..cancellation import CancellationToken
     from ..embedding import build_from_environment
     from ..host.models import PermissionDecisionEvent
     from ..permissions import PermissionMode
@@ -675,7 +762,6 @@ def _run_pipeline(
         else spec.max_iterations
     )
 
-    token = CancellationToken()
     transport = NonInteractiveTransport(
         token=token,
         policy=spec.interaction_policy or "reject",
@@ -716,21 +802,32 @@ def _run_pipeline(
         # JSON callers expect a parseable envelope for every failure
         # mode; without this branch a missing API key would give them
         # only a stderr line + non-zero exit, breaking automation.
+        error_type, message, exit_code = _signal_interruption(token) or (
+            "runtime_error", f"failed to construct agent: {exc}",
+            EXIT_RUNTIME_ERROR,
+        )
         _emit(
             RunResult(
                 status="error",
                 session_id="",
                 cwd=str(cwd),
                 model=spec.model or "",
-                error=RunErrorEnvelope(
-                    type="runtime_error",
-                    message=f"failed to construct agent: {exc}",
-                ),
+                error=RunErrorEnvelope(type=error_type, message=message),
                 warnings=warnings,
             ),
             output_format,
         )
-        return EXIT_RUNTIME_ERROR
+        signals.result_code = exit_code
+        return exit_code
+
+    # A signal during the build cancelled the run, and the build finished
+    # anyway. Stop here rather than load plugins, fetch skills and run hooks
+    # nobody wants any more.
+    if _signal_interruption(token) is not None:
+        return _fail_built(
+            agent, cwd, warnings, output_format, "interrupted", "", 0,
+            signals=signals,
+        )
 
     # Mirror the interactive CLI's session.py wiring: ToolExecutor reads
     # ``tool_runner._session_id`` when stamping PreToolUse/PostToolUse
@@ -778,7 +875,7 @@ def _run_pipeline(
                 return _fail_built(
                     agent, cwd, warnings, output_format,
                     "invalid_spec", f"invalid permissions rule: {exc}",
-                    EXIT_INVALID_USAGE,
+                    EXIT_INVALID_USAGE, signals=signals,
                 )
 
     if spec.thinking is not None:
@@ -793,17 +890,24 @@ def _run_pipeline(
                 return _fail_built(
                     agent, cwd, warnings, output_format,
                     "runtime_error", f"cannot set thinking: {exc}",
-                    EXIT_RUNTIME_ERROR,
+                    EXIT_RUNTIME_ERROR, signals=signals,
                 )
             return _fail_built(
                 agent, cwd, warnings, output_format,
                 "invalid_spec", f"invalid thinking: {exc}", EXIT_INVALID_USAGE,
+                signals=signals,
             )
 
     try:
         _load_and_register_plugins(agent)
     except Exception as exc:
         warnings.append(f"plugin load: {exc}")
+
+    if _signal_interruption(token) is not None:
+        return _fail_built(
+            agent, cwd, warnings, output_format, "interrupted", "", 0,
+            signals=signals,
+        )
 
     if spec.skills:
         available = set(agent.skill_manager.list_available_skills())
@@ -813,7 +917,7 @@ def _run_pipeline(
                 agent, cwd, warnings, output_format,
                 "invalid_spec",
                 "missing skill(s): " + ", ".join(repr(s) for s in missing),
-                EXIT_INVALID_USAGE,
+                EXIT_INVALID_USAGE, signals=signals,
             )
         # The task is a pointer, not ``spec.prompt``. The active-skills block
         # renders it as ``Task:`` in the volatile tail, which is re-sent on
@@ -827,6 +931,14 @@ def _run_pipeline(
             # after the name check above passed. Do not drop it silently.
             if isinstance(result, str) and result.startswith("Error:"):
                 warnings.append(f"skill {skill_name!r}: {result}")
+
+    # Skill activation can fetch from an MCP server; check again before the
+    # replay file and the SessionStart hooks.
+    if _signal_interruption(token) is not None:
+        return _fail_built(
+            agent, cwd, warnings, output_format, "interrupted", "", 0,
+            signals=signals,
+        )
 
     replay_path: Optional[str] = None
     if replay_enabled and agent.replay_manager is not None:
@@ -843,8 +955,6 @@ def _run_pipeline(
     warnings.extend(dispatch_plugin_session_start(
         agent, agent._session_id or "", source="startup",
     ))
-
-    prev_sigint, prev_sigterm = _install_signal_handlers(token)
 
     def _on_event(event: Any) -> None:
         if not isinstance(event, PermissionDecisionEvent):
@@ -926,18 +1036,27 @@ def _run_pipeline(
 
     final_text = ""
     runtime_error: Optional[BaseException] = None
+    turn_token = _TokenSnapshot(False, "")
     try:
-        final_text = agent.chat(
-            spec.prompt or "",
-            max_iterations=max_iterations,
-            cancellation_token=token,
-        )
+        # A signal during the build or SessionStart has already cancelled the
+        # run. Do not start a turn for it: the turn would still fire
+        # UserPromptSubmit and record TURN_BEGIN before its first token check.
+        if not token.is_cancelled:
+            final_text = agent.chat(
+                spec.prompt or "",
+                max_iterations=max_iterations,
+                cancellation_token=token,
+            )
     except Exception as exc:
         runtime_error = exc
     finally:
+        # Snapshot the token as soon as the turn ends, before any cleanup. A
+        # signal that lands after the turn (the cleanup, the SessionEnd hook,
+        # the write) must not turn a finished run into an interrupted one.
+        turn_token = _TokenSnapshot(token.is_cancelled, token.reason)
+        signals.turn_done = True
         agent.remove_host_event_observer(_on_event)
         transport_unsubscribe()
-        _restore_signal_handlers(prev_sigint, prev_sigterm)
 
     if replay_path is None and agent.replay_manager is not None:
         recorder = agent.replay_manager.recorder
@@ -946,7 +1065,7 @@ def _run_pipeline(
 
     error, exit_code, status = _classify_outcome(
         transport=transport,
-        token=token,
+        token=turn_token,
         runtime_error=runtime_error,
         max_iterations=max_iterations,
         incomplete_reason=incomplete_reason,
@@ -998,6 +1117,7 @@ def _run_pipeline(
         result.warnings.append(notice)
 
     _emit(result, output_format)
+    signals.result_code = exit_code
     try:
         agent.close()
     except Exception:
@@ -1098,25 +1218,95 @@ def _classify_outcome(
     return None, EXIT_OK, "ok"
 
 
-def _install_signal_handlers(token) -> Tuple[Any, Any]:
-    """Route SIGINT and SIGTERM through ``token.cancel``.
+def _write_stderr(text: bytes) -> None:
+    """Write to fd 2 from a signal handler (no buffered ``sys.stderr``)."""
+    try:
+        os.write(2, text)
+    except OSError:
+        pass
+
+
+def _install_signal_handlers(
+    token, signals: Optional[_RunSignals] = None,
+) -> Tuple[Any, Any]:
+    """Route SIGINT and SIGTERM through the run's token.
 
     The reason names the signal (``"sigint"`` / ``"sigterm"``), and
-    :func:`_classify_outcome` maps it to exit code 130 or 143.
+    :func:`_classify_outcome` maps it to exit code 130 or 143. The first
+    signal decides the code, also on the quick exit below.
+
+    The first signal only cancels: the turn stops at its next check and the
+    run still writes its result. It also writes one line to stderr, so a
+    user whose run is stuck in a step that does not check the token (an MCP
+    handshake, a blocked tool) sees that the signal arrived. Once the turn
+    has finished the line says so instead of inviting a second signal.
+
+    A second signal at least :data:`_SIGNAL_DEBOUNCE_S` after the first
+    exits at once. Sooner, it is taken for the same interrupt delivered
+    twice and ignored. The quick exit flushes stdout and exits with the
+    result's code once the result is written, else with the first signal's
+    code and no result. Without it, a tool that blocks and never checks the
+    token would leave ``kill`` with no effect, and a supervisor would have
+    to escalate to SIGKILL. It runs no other cleanup: shell children run in
+    their own session, so one still running is left behind.
 
     Returns the previous handlers so :func:`_restore_signal_handlers`
     can put them back. ``(None, None)`` is returned when the install
     fails (not on the main thread); the restore is then a no-op.
     """
+    if signals is None:
+        signals = _RunSignals(token)
+
     def _on_signal(signum, frame):  # noqa: ARG001
-        token.cancel("sigterm" if signum == signal.SIGTERM else "sigint")
+        now = time.monotonic()
+        is_term = signum == signal.SIGTERM
+        if signals.first_code is None:
+            signals.first_code = EXIT_TERMINATED if is_term else EXIT_INTERRUPTED
+            signals.first_at = now
+            if signals.result_code is not None:
+                _write_stderr(b"agentao run: result written, closing\n")
+            elif signals.turn_done:
+                _write_stderr(
+                    b"agentao run: the turn has finished, writing its result;"
+                    b" a second signal exits now without it\n"
+                )
+            else:
+                _write_stderr(
+                    b"agentao run: cancelling; send the signal again to exit now\n"
+                )
+            token.cancel_from_signal("sigterm" if is_term else "sigint")
+            return
+        if now - signals.first_at < _SIGNAL_DEBOUNCE_S:
+            return
+        _write_stderr(b"agentao run: second signal, exiting now\n")
+        if signals.result_code is not None:
+            # Only a written result is flushed. Before that, the buffer can
+            # hold part of a result ``_emit`` is still writing, and a flush
+            # would hand the caller a truncated document.
+            try:
+                sys.stdout.flush()
+            except Exception:
+                pass
+        os._exit(
+            signals.result_code
+            if signals.result_code is not None
+            else signals.first_code
+        )
 
     try:
+        # ``None`` means the previous handler was not set from Python (an
+        # embedding host). It cannot be put back, and returning it would make
+        # the restore a no-op that leaves this run's handler, with its quick
+        # exit, installed after the run. Restore the default action instead.
         prev_sigint = signal.signal(signal.SIGINT, _on_signal)
+        if prev_sigint is None:
+            prev_sigint = signal.SIG_DFL
     except (ValueError, OSError):
         return None, None
     try:
         prev_sigterm = signal.signal(signal.SIGTERM, _on_signal)
+        if prev_sigterm is None:
+            prev_sigterm = signal.SIG_DFL
     except (ValueError, OSError):
         # Do not leave SIGINT bound to this run's token when the pair
         # cannot be installed; the caller's restore is a no-op then.

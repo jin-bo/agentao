@@ -15,6 +15,13 @@ _Targeting 0.5.23. Add entries under the relevant heading as work lands._
 
 ### Changed
 
+- **`agentao run` handles signals for the whole run, and a second signal exits at once.** The SIGINT / SIGTERM handlers used to be installed only around the turn. A signal during the agent build, a SessionStart or SessionEnd hook, or the result write took the default action and killed the process with no result document. They now go in before the build and come out after the agent is closed.
+  - The first signal cancels the run as before. While the run can still be cancelled, it writes `agentao run: cancelling; send the signal again to exit now` to stderr, so a run stuck in a step that does not check for a cancel (an MCP handshake, a blocked tool) is no longer silent. After the turn the line says the result is being written, and the signal does not change the exit code.
+  - A run that a signal cancelled before its turn skips the rest of the setup (skill activation, replay, SessionStart hooks), starts no turn and reports `interrupted` with `130` / `143`, even when the build or an early check then fails, instead of `1` or `2`.
+  - A second signal at least 0.5 s after the first exits immediately, so a tool or LLM request that blocks and ignores the first signal no longer forces a supervisor to SIGKILL. A second signal sooner than that is the same interrupt delivered twice (a wrapper forwarding it, a supervisor signalling group and process) and is ignored. The first signal decides the exit code, also here. Once the result is written, the quick exit flushes it and keeps its code.
+  - The signal handler no longer deadlocks when it lands while the run holds the cancellation token's lock (`CancellationToken.cancel_from_signal`).
+  - **Behaviour change:** before, a second signal did nothing more. A second signal before the result is written now loses the result document. The quick exit runs no cleanup (SessionEnd, replay flush, `agent.close()`). Shell children run in their own session, so a command still running is left behind.
+  - (`cli/run.py::_run_pipeline`, `_install_signal_handlers`, `_signal_interruption`)
 - **`agentao run` exits `143` on SIGTERM, not `130`.** A run stopped by `kill`, systemd, a container or CI shutdown now exits `128 + 15 = 143`, with `error.message` `interrupted (sigterm)`, so whatever wraps the run can tell that from a user's Ctrl+C (still `130`, `interrupted (sigint)`). `error.type` stays `interrupted`. The first signal decides: a SIGTERM after a Ctrl+C still exits `130`. **Behaviour change:** a wrapper that read `130` as "interrupted by any signal" must also accept `143`. (`cli/run.py::EXIT_TERMINATED`)
 
 ### Fixed
