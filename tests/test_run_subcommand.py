@@ -1431,7 +1431,12 @@ def test_session_start_hook_notices_reach_the_emitted_result(
 def _deliver(signame):
     import os
     import signal
+    import threading
 
+    # Off the main thread the run cannot install its handlers, and a real
+    # SIGTERM would then kill the test process.
+    if threading.current_thread() is not threading.main_thread():
+        pytest.skip("signal handlers can only be installed on the main thread")
     os.kill(os.getpid(), getattr(signal, signame))
     # The handler runs between bytecodes; give it a moment.
     time.sleep(0.05)
@@ -1442,7 +1447,9 @@ def test_a_sigterm_during_session_start_is_caught_and_reported(
     monkeypatch, stub_pipeline, capsys,
 ):
     """Before, the handlers went in after SessionStart: the signal killed the
-    process with the default action and no result was written."""
+    process with the default action and no result was written. The
+    cancelled run must not start a turn either."""
+    captured, _ = stub_pipeline
     _no_stdin(monkeypatch)
     from agentao.cli import run
 
@@ -1457,6 +1464,7 @@ def test_a_sigterm_during_session_start_is_caught_and_reported(
     assert rc == run.EXIT_TERMINATED
     payload = json.loads(capsys.readouterr().out)
     assert payload["error"]["message"] == "interrupted (sigterm)"
+    assert "chat_prompt" not in captured
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="os.kill(SIGTERM) terminates on Windows")
@@ -1479,6 +1487,28 @@ def test_a_sigterm_during_session_end_still_writes_the_result(
     assert json.loads(capsys.readouterr().out)["final_text"] == "stub final text"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="os.kill(SIGTERM) terminates on Windows")
+def test_a_sigterm_after_the_turn_does_not_flip_the_outcome(
+    monkeypatch, stub_pipeline, capsys,
+):
+    """A signal between the turn's end and the classification leaves rc 0."""
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    real_classify = run._classify_outcome
+
+    def _classify(**kwargs):
+        _deliver("SIGTERM")
+        return real_classify(**kwargs)
+
+    monkeypatch.setattr(run, "_classify_outcome", _classify)
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["final_text"] == "stub final text"
+
+
 def test_handlers_are_restored_after_the_run(monkeypatch, stub_pipeline, capsys):
     import signal
 
@@ -1490,9 +1520,78 @@ def test_handlers_are_restored_after_the_run(monkeypatch, stub_pipeline, capsys)
     assert (signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM)) == before
 
 
-@pytest.mark.parametrize("signame,code", [("SIGTERM", 143), ("SIGINT", 130)])
-def test_a_second_signal_exits_at_once(monkeypatch, signame, code):
-    """A tool that blocks and never checks the token must not make kill a no-op."""
+@pytest.mark.skipif(sys.platform == "win32", reason="os.kill(SIGINT) is not a signal on Windows")
+def test_a_build_that_fails_after_a_signal_reports_the_interruption(
+    monkeypatch, stub_pipeline, capsys,
+):
+    """Ctrl+C during the build, then the build raises: 130, not 1."""
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    def _factory(**kwargs):
+        _deliver("SIGINT")
+        raise RuntimeError("MCP handshake aborted")
+
+    monkeypatch.setattr("agentao.embedding.build_from_environment", _factory)
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == run.EXIT_INTERRUPTED
+    error = json.loads(capsys.readouterr().out)["error"]
+    assert (error["type"], error["message"]) == ("interrupted", "interrupted (sigint)")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="os.kill(SIGTERM) terminates on Windows")
+def test_an_early_failure_after_a_signal_reports_the_interruption(
+    monkeypatch, stub_pipeline, capsys,
+):
+    """A missing skill found after a SIGTERM during the build: 143, not 2."""
+    captured, _ = stub_pipeline
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    import agentao.embedding as embedding
+
+    stub_factory = embedding.build_from_environment
+
+    def _factory(**kwargs):
+        agent = stub_factory(**kwargs)
+        _deliver("SIGTERM")
+        return agent
+
+    monkeypatch.setattr("agentao.embedding.build_from_environment", _factory)
+
+    rc = run._execute_with_args(
+        _build_args(prompt="hi", output_format="json", skills=["absent"]),
+    )
+
+    assert rc == run.EXIT_TERMINATED
+    assert json.loads(capsys.readouterr().out)["error"]["type"] == "interrupted"
+    assert captured.get("closed") is True
+
+
+def test_a_permission_cancel_is_not_read_as_a_signal():
+    from agentao.cancellation import CancellationToken
+    from agentao.cli import run
+
+    token = CancellationToken()
+    assert run._signal_interruption(token) is None
+    token.cancel("permission_denied: write_file")
+    assert run._signal_interruption(token) is None
+
+
+class _Exited(Exception):
+    pass
+
+
+@pytest.fixture
+def signal_handler(monkeypatch):
+    """Install the run's handlers; yield ``(fire, signals, exits)``.
+
+    ``fire(signame, at)`` calls the installed handler as if the signal
+    arrived at monotonic time ``at``. ``os._exit`` raises :class:`_Exited`
+    and records its status in ``exits``.
+    """
     import signal
 
     from agentao.cancellation import CancellationToken
@@ -1500,28 +1599,173 @@ def test_a_second_signal_exits_at_once(monkeypatch, signame, code):
 
     exits = []
 
-    class _Exited(Exception):
-        pass
-
     def _fake_exit(status):
         exits.append(status)
         raise _Exited
 
     monkeypatch.setattr(run.os, "_exit", _fake_exit)
+    clock = [0.0]
+    monkeypatch.setattr(run.time, "monotonic", lambda: clock[0])
     token = CancellationToken()
-    prev = run._install_signal_handlers(token)
+    signals = run._RunSignals(token)
+    prev = run._install_signal_handlers(token, signals)
     if prev == (None, None):
         pytest.skip("signal handlers can only be installed on the main thread")
-    try:
+
+    def fire(signame, at):
+        clock[0] = at
         signum = getattr(signal, signame)
-        handler = signal.getsignal(signum)
-        handler(signum, None)
-        assert token.is_cancelled and exits == []
-        with pytest.raises(_Exited):
-            handler(signum, None)
+        signal.getsignal(signum)(signum, None)
+
+    try:
+        yield fire, signals, exits
     finally:
         run._restore_signal_handlers(*prev)
+
+
+@pytest.mark.parametrize("signame,code", [("SIGTERM", 143), ("SIGINT", 130)])
+def test_a_second_signal_exits_at_once(signal_handler, capfd, signame, code):
+    """A tool that blocks and never checks the token must not make kill a no-op."""
+    fire, signals, exits = signal_handler
+    fire(signame, at=10.0)
+    assert signals.token.is_cancelled and exits == []
+    # The first signal says it arrived, so a run stuck in a step that
+    # never checks the token is not silent.
+    assert "send the signal again to exit now" in capfd.readouterr().err
+    with pytest.raises(_Exited):
+        fire(signame, at=11.0)
     assert exits == [code]
+
+
+def test_the_first_signal_decides_the_quick_exit_code(signal_handler):
+    """A Ctrl+C, then a SIGTERM: 130, as the exit-code table says."""
+    fire, _, exits = signal_handler
+    fire("SIGINT", at=10.0)
+    with pytest.raises(_Exited):
+        fire("SIGTERM", at=11.0)
+    assert exits == [130]
+
+
+def test_one_interrupt_delivered_twice_is_not_a_second_signal(signal_handler):
+    """The terminal signals the group and a wrapper forwards it: one interrupt."""
+    fire, signals, exits = signal_handler
+    fire("SIGINT", at=10.0)
+    fire("SIGINT", at=10.0 + 0.001)
+    assert exits == [] and signals.token.reason == "sigint"
+
+
+def test_a_quick_exit_after_the_result_keeps_its_code(signal_handler, capfd):
+    """The result says ok: the exit code must not say terminated."""
+    fire, signals, exits = signal_handler
+    signals.turn_done = True
+    signals.result_code = 0
+    fire("SIGTERM", at=10.0)
+    assert "result written" in capfd.readouterr().err
+    with pytest.raises(_Exited):
+        fire("SIGTERM", at=11.0)
+    assert exits == [0]
+
+
+def test_after_the_turn_the_hint_does_not_invite_a_second_signal(signal_handler, capfd):
+    fire, signals, _ = signal_handler
+    signals.turn_done = True
+    fire("SIGINT", at=10.0)
+    err = capfd.readouterr().err
+    assert "the turn has finished" in err
+    assert "send the signal again" not in err
+
+
+def test_a_signal_while_the_token_lock_is_held_does_not_deadlock():
+    """The handler interrupts the main thread inside add_done_callback."""
+    from agentao.cancellation import CancellationToken
+
+    token = CancellationToken()
+    with token._cb_lock:
+        # A plain cancel() here would wait forever on the lock this thread
+        # holds. This returns, and the cancel completes once it is released.
+        token.cancel_from_signal("sigint")
+        assert not token.is_cancelled
+    for _ in range(200):
+        if token.is_cancelled:
+            break
+        time.sleep(0.005)
+    assert token.reason == "sigint"
+
+
+def test_a_signal_with_the_lock_free_cancels_at_once():
+    from agentao.cancellation import CancellationToken
+
+    token = CancellationToken()
+    calls = []
+    token.add_done_callback(lambda: calls.append(1))
+    token.cancel_from_signal("sigterm")
+    assert token.reason == "sigterm" and calls == [1]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="os.kill(SIGTERM) terminates on Windows")
+def test_a_signal_during_the_build_skips_the_rest_of_the_setup(
+    monkeypatch, stub_pipeline, capsys,
+):
+    """No skill fetch, no SessionStart hook for a run already cancelled."""
+    captured, _ = stub_pipeline
+    _no_stdin(monkeypatch)
+    import agentao.embedding as embedding
+    from agentao.cli import run
+
+    stub_factory = embedding.build_from_environment
+    activated = []
+    started = []
+
+    def _factory(**kwargs):
+        agent = stub_factory(**kwargs)
+        agent.skill_manager = type("SM", (), {
+            "list_available_skills": lambda self_: ["s"],
+            "activate_skill": lambda self_, name, task_description="": activated.append(name),
+        })()
+        _deliver("SIGTERM")
+        return agent
+
+    monkeypatch.setattr("agentao.embedding.build_from_environment", _factory)
+    monkeypatch.setattr(
+        "agentao.cli.session.dispatch_plugin_session_start",
+        lambda agent, sid, *, source="startup": started.append(sid) or [],
+    )
+
+    rc = run._execute_with_args(
+        _build_args(prompt="hi", output_format="json", skills=["s"]),
+    )
+
+    assert rc == run.EXIT_TERMINATED
+    assert json.loads(capsys.readouterr().out)["error"]["type"] == "interrupted"
+    assert activated == [] and started == []
+    assert captured.get("closed") is True
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="os.kill(SIGTERM) terminates on Windows")
+def test_a_signal_during_observer_cleanup_does_not_flip_the_outcome(
+    monkeypatch, stub_pipeline, capsys,
+):
+    _no_stdin(monkeypatch)
+    import agentao.embedding as embedding
+    from agentao.cli import run
+
+    def _remove(cb):
+        _deliver("SIGTERM")
+        return True
+
+    stub_factory = embedding.build_from_environment
+
+    def _factory(**kwargs):
+        agent = stub_factory(**kwargs)
+        agent.remove_host_event_observer = _remove
+        return agent
+
+    monkeypatch.setattr("agentao.embedding.build_from_environment", _factory)
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["final_text"] == "stub final text"
 
 
 def test_mid_turn_hook_notices_reach_the_emitted_result(

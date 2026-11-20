@@ -225,7 +225,14 @@ Note that a turn can end this way *after* running tools: the model may do the wo
 | `130` | Interrupted by SIGINT (Ctrl+C). `error.message` is `interrupted (sigint)` |
 | `143` | Terminated by SIGTERM (`kill`, systemd, a container or CI shutdown). `error.message` is `interrupted (sigterm)`. Before 0.5.23 this exited `130`. The first signal decides: a SIGTERM after a Ctrl+C still exits `130` |
 
-Signals (since 0.5.23): the first SIGINT or SIGTERM cancels the run at any point, including while it is built, while a SessionStart or SessionEnd hook runs and while the result is written. The turn stops at its next check, and the result document is still written. A signal that lands after the turn has finished leaves its result and exit code as they are. A **second** signal exits at once with its own code (`130` / `143`), writes `agentao run: second signal, exiting now` to stderr and **no result document**. Use it when a tool or an LLM request blocks and does not notice the first one.
+Signals (since 0.5.23): the first SIGINT or SIGTERM cancels the run at any point, including while it is built, while a SessionStart or SessionEnd hook runs and while the result is written. While the run can still be cancelled, it writes `agentao run: cancelling; send the signal again to exit now` to stderr. After the turn has finished it writes a different line, and the signal leaves the result and exit code as they are. A run cancelled before its turn skips the rest of the setup (skill activation, replay, SessionStart hooks), starts no turn and reports `interrupted` with `130` / `143`, even if the build or an early check then fails. The turn stops at its next check, and the result document is still written.
+
+A **second** signal, sent at least 0.5 s after the first, exits at once and writes `agentao run: second signal, exiting now` to stderr. Use it when a tool or an LLM request blocks and does not notice the first one. A second signal sooner than that is taken for the same interrupt delivered twice, and is ignored. That happens when the terminal signals the process group and a wrapper forwards the signal, or a supervisor signals both the group and the process. The first signal decides the exit code here too: a SIGTERM after a Ctrl+C exits `130`. If the result document has already been written, the run exits with the result's own code instead.
+
+The quick exit has two costs:
+
+- **Before the result is written, it loses the result.** No result document is written. To keep the result, send one signal and wait.
+- **It runs no cleanup.** SessionEnd hooks, the replay flush and `agent.close()` are skipped. Shell commands run in their own session, so a command still running when agentao exits keeps running. Kill its process group yourself if needed.
 
 For the full M0 design — merge rules, non-goals, post-MVP scope (`jsonl` event stream, `attachments`, `provider`, per-run `plugins`, session resume) — see [docs/history/implementation/non-interactive-run-plan.md](https://github.com/jin-bo/agentao/blob/main/docs/history/implementation/non-interactive-run-plan.md).
 

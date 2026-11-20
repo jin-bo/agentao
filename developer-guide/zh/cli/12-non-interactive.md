@@ -225,7 +225,14 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 | `130`  | 被 SIGINT（Ctrl+C）中断。`error.message` 为 `interrupted (sigint)` |
 | `143`  | 被 SIGTERM 终止（`kill`、systemd、容器或 CI 关停）。`error.message` 为 `interrupted (sigterm)`。0.5.23 之前退出码为 `130`。以第一个信号为准：先 Ctrl+C 再收到 SIGTERM，仍退出 `130` |
 
-信号（0.5.23 起）：第一个 SIGINT 或 SIGTERM 在任何阶段都会取消运行，包括构建 agent、SessionStart 或 SessionEnd hook 运行期间以及写出结果时。当前 turn 在下一次检查时停止，结果文档照常写出。turn 结束后才到达的信号不改变已有的结果和退出码。**第二个**信号会立即以它自己的退出码（`130` / `143`）退出，向 stderr 写 `agentao run: second signal, exiting now`，并且**不写结果文档**。当某个工具或 LLM 请求卡住、没有响应第一个信号时使用。
+信号（0.5.23 起）：第一个 SIGINT 或 SIGTERM 在任何阶段都会取消运行，包括构建 agent、SessionStart 或 SessionEnd hook 运行期间以及写出结果时。在运行仍可取消时，它会向 stderr 写 `agentao run: cancelling; send the signal again to exit now`。turn 结束后它会写另一行提示，而且这个信号不改变已有的结果和退出码。在 turn 开始前就被取消的运行会跳过剩余的启动步骤（skill 激活、replay、SessionStart hook），不会开始 turn，并以 `130` / `143` 报告 `interrupted`，即使之后构建或某项前置检查失败也是如此。当前 turn 在下一次检查时停止，结果文档照常写出。
+
+**第二个**信号如果在第一个之后至少 0.5 秒到达，会立即退出，并向 stderr 写 `agentao run: second signal, exiting now`。当某个工具或 LLM 请求卡住、没有响应第一个信号时使用。比这更早到达的第二个信号会被视为同一次中断被投递了两次，直接忽略。终端向进程组发信号、包装层又转发一次，或者 supervisor 同时向进程组和进程本身发信号时，就会出现这种情况。这里同样以第一个信号决定退出码：Ctrl+C 之后再收到 SIGTERM，以 `130` 退出。如果结果文档已经写出，则改用结果本身的退出码退出。
+
+立即退出有两个代价：
+
+- **在结果写出之前退出会丢掉结果。** 不会写结果文档。要保留结果，只发一个信号并等待。
+- **不做任何清理。** SessionEnd hook、replay 写盘和 `agent.close()` 都会被跳过。shell 命令运行在自己的会话里，agentao 退出时仍在运行的命令会继续运行。需要时请自行杀掉它的进程组。
 
 完整 M0 设计 —— 合并规则、Non-goals、Post-MVP 范围（`jsonl` 事件流、`attachments`、`provider`、每次 run 的 `plugins`、session resume）—— 见 [docs/history/implementation/non-interactive-run-plan.md](https://github.com/jin-bo/agentao/blob/main/docs/history/implementation/non-interactive-run-plan.md)。
 
