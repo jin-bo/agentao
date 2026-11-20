@@ -829,132 +829,164 @@ def _run_pipeline_with_token(
             signals=signals,
         )
 
-    # Mirror the interactive CLI's session.py wiring: ToolExecutor reads
-    # ``tool_runner._session_id`` when stamping PreToolUse/PostToolUse
-    # hook payloads, so plugins lose Session correlation without this.
-    try:
-        agent.tool_runner._session_id = agent._session_id
-    except AttributeError:  # pragma: no cover - test stubs without the attr
-        pass
+    # Everything between the build and the turn. One ``try`` around it: an
+    # exception here (a hook dispatch, a permission or skill call) used to end
+    # the run with a traceback, no result document and the agent left open.
+    # Now it ends through ``_fail_built``, which closes the agent and reports
+    # ``interrupted`` instead when a signal already cancelled the run.
+    replay_path: Optional[str] = None
 
-    # Permission mode + read-only flag, through the one helper the CLI's
-    # ``/mode`` and ACP ``session/set_mode`` also use. The engine's
-    # ``read-only`` preset is empty by design; the runner's gate
-    # (``ToolRunner.readonly_active``) enforces read-only from either the
-    # flag or the engine's mode, and the helper emits both replay events —
-    # here the run's posture differs from the engine's ``workspace-write``
-    # default, so ``--permission-mode`` lands in the replay file as a
-    # transition with ``cause="run"``.
-    if agent.permission_engine is not None:
-        from ..runtime.permission_mode import apply_permission_mode
+    # Set once ``_set_up`` hands the run to ``_fail_built``: if that raises
+    # (a closed stdout), the outer handler must not emit and close again.
+    handed_off = False
 
-        apply_permission_mode(agent, permission_mode, cause="run")
-    else:
-        agent.tool_runner.set_readonly_mode(
-            permission_mode == PermissionMode.READ_ONLY,
-        )
+    def _end_built(*args: Any, **kwargs: Any) -> int:
+        nonlocal handed_off
+        handed_off = True
+        return _fail_built(*args, **kwargs)
 
-    if agent.permission_engine is not None:
-        engine_allow, engine_deny = _spec_engine_rules(spec)
-        if engine_allow or engine_deny:
-            from ..permissions import PermissionRuleError
+    def _set_up() -> Optional[int]:
+        """Prepare the built agent; an exit code ends the run early."""
+        nonlocal replay_path
+        # Mirror the interactive CLI's session.py wiring: ToolExecutor reads
+        # ``tool_runner._session_id`` when stamping PreToolUse/PostToolUse
+        # hook payloads, so plugins lose Session correlation without this.
+        try:
+            agent.tool_runner._session_id = agent._session_id
+        except AttributeError:  # pragma: no cover - test stubs without the attr
+            pass
+
+        # Permission mode + read-only flag, through the one helper the CLI's
+        # ``/mode`` and ACP ``session/set_mode`` also use. The engine's
+        # ``read-only`` preset is empty by design; the runner's gate
+        # (``ToolRunner.readonly_active``) enforces read-only from either the
+        # flag or the engine's mode, and the helper emits both replay events —
+        # here the run's posture differs from the engine's ``workspace-write``
+        # default, so ``--permission-mode`` lands in the replay file as a
+        # transition with ``cause="run"``.
+        if agent.permission_engine is not None:
+            from ..runtime.permission_mode import apply_permission_mode
+
+            apply_permission_mode(agent, permission_mode, cause="run")
+        else:
+            agent.tool_runner.set_readonly_mode(
+                permission_mode == PermissionMode.READ_ONLY,
+            )
+
+        if agent.permission_engine is not None:
+            engine_allow, engine_deny = _spec_engine_rules(spec)
+            if engine_allow or engine_deny:
+                from ..permissions import PermissionRuleError
+
+                try:
+                    agent.permission_engine.add_run_rules(
+                        allow=engine_allow,
+                        deny=engine_deny,
+                        source="run-spec",
+                    )
+                except PermissionRuleError as exc:
+                    # Backstop only. ``_execute_run`` validates these same
+                    # rules — from the same converter — before the agent is
+                    # built, so this is reachable only if a caller reaches
+                    # ``_run_pipeline`` directly. Kept because the envelope
+                    # is still the right answer if that happens: a traceback
+                    # here would give a JSON caller nothing to parse.
+                    return _end_built(
+                        agent, cwd, warnings, output_format,
+                        "invalid_spec", f"invalid permissions rule: {exc}",
+                        EXIT_INVALID_USAGE, signals=signals,
+                    )
+
+        if spec.thinking is not None:
+            from ..llm.thinking import ThinkingUnsupported
 
             try:
-                agent.permission_engine.add_run_rules(
-                    allow=engine_allow,
-                    deny=engine_deny,
-                    source="run-spec",
-                )
-            except PermissionRuleError as exc:
-                # Backstop only. ``_execute_run`` validates these same
-                # rules — from the same converter — before the agent is
-                # built, so this is reachable only if a caller reaches
-                # ``_run_pipeline`` directly. Kept because the envelope
-                # is still the right answer if that happens: a traceback
-                # here would give a JSON caller nothing to parse.
-                return _fail_built(
+                _apply_thinking(agent.llm, spec.thinking)
+            except ValueError as exc:
+                # A client with nowhere to write a level is the runtime's
+                # problem, not the spec's: exit 1, like a failed construction.
+                if isinstance(exc, ThinkingUnsupported):
+                    return _end_built(
+                        agent, cwd, warnings, output_format,
+                        "runtime_error", f"cannot set thinking: {exc}",
+                        EXIT_RUNTIME_ERROR, signals=signals,
+                    )
+                return _end_built(
                     agent, cwd, warnings, output_format,
-                    "invalid_spec", f"invalid permissions rule: {exc}",
-                    EXIT_INVALID_USAGE, signals=signals,
+                    "invalid_spec", f"invalid thinking: {exc}", EXIT_INVALID_USAGE,
+                    signals=signals,
                 )
-
-    if spec.thinking is not None:
-        from ..llm.thinking import ThinkingUnsupported
 
         try:
-            _apply_thinking(agent.llm, spec.thinking)
-        except ValueError as exc:
-            # A client with nowhere to write a level is the runtime's
-            # problem, not the spec's: exit 1, like a failed construction.
-            if isinstance(exc, ThinkingUnsupported):
-                return _fail_built(
-                    agent, cwd, warnings, output_format,
-                    "runtime_error", f"cannot set thinking: {exc}",
-                    EXIT_RUNTIME_ERROR, signals=signals,
-                )
-            return _fail_built(
-                agent, cwd, warnings, output_format,
-                "invalid_spec", f"invalid thinking: {exc}", EXIT_INVALID_USAGE,
+            _load_and_register_plugins(agent)
+        except Exception as exc:
+            warnings.append(f"plugin load: {exc}")
+
+        if _signal_interruption(token) is not None:
+            return _end_built(
+                agent, cwd, warnings, output_format, "interrupted", "", 0,
                 signals=signals,
             )
 
+        if spec.skills:
+            available = set(agent.skill_manager.list_available_skills())
+            missing = [s for s in spec.skills if s not in available]
+            if missing:
+                return _end_built(
+                    agent, cwd, warnings, output_format,
+                    "invalid_spec",
+                    "missing skill(s): " + ", ".join(repr(s) for s in missing),
+                    EXIT_INVALID_USAGE, signals=signals,
+                )
+            # The task is a pointer, not ``spec.prompt``. The active-skills block
+            # renders it as ``Task:`` in the volatile tail, which is re-sent on
+            # every request and never cached. The prompt is already the
+            # first user message in history (#549).
+            for skill_name in spec.skills:
+                result = agent.skill_manager.activate_skill(
+                    skill_name, task_description=_RUN_SPEC_SKILL_TASK,
+                )
+                # An MCP skill can still fail here (fetch or verification),
+                # after the name check above passed. Do not drop it silently.
+                if isinstance(result, str) and result.startswith("Error:"):
+                    warnings.append(f"skill {skill_name!r}: {result}")
+
+        # Skill activation can fetch from an MCP server; check again before the
+        # replay file and the SessionStart hooks.
+        if _signal_interruption(token) is not None:
+            return _end_built(
+                agent, cwd, warnings, output_format, "interrupted", "", 0,
+                signals=signals,
+            )
+
+        if replay_enabled and agent.replay_manager is not None:
+            try:
+                path = agent.replay_manager.start(agent._session_id)
+                if path is not None:
+                    replay_path = str(path)
+            except Exception as exc:  # pragma: no cover - best-effort
+                warnings.append(f"replay start: {exc}")
+
+        # SessionStart notices ride on the same channel SessionEnd's do. They are
+        # collected here rather than printed, because a headless run has one
+        # output and it is written at the end.
+        warnings.extend(dispatch_plugin_session_start(
+            agent, agent._session_id or "", source="startup",
+        ))
+        return None
+
     try:
-        _load_and_register_plugins(agent)
+        ended = _set_up()
     except Exception as exc:
-        warnings.append(f"plugin load: {exc}")
-
-    if _signal_interruption(token) is not None:
+        if handed_off:
+            raise
         return _fail_built(
-            agent, cwd, warnings, output_format, "interrupted", "", 0,
+            agent, cwd, warnings, output_format,
+            "runtime_error", f"run setup failed: {exc}", EXIT_RUNTIME_ERROR,
             signals=signals,
         )
-
-    if spec.skills:
-        available = set(agent.skill_manager.list_available_skills())
-        missing = [s for s in spec.skills if s not in available]
-        if missing:
-            return _fail_built(
-                agent, cwd, warnings, output_format,
-                "invalid_spec",
-                "missing skill(s): " + ", ".join(repr(s) for s in missing),
-                EXIT_INVALID_USAGE, signals=signals,
-            )
-        # The task is a pointer, not ``spec.prompt``. The active-skills block
-        # renders it as ``Task:`` in the volatile tail, which is re-sent on
-        # every request and never cached. The prompt is already the
-        # first user message in history (#549).
-        for skill_name in spec.skills:
-            result = agent.skill_manager.activate_skill(
-                skill_name, task_description=_RUN_SPEC_SKILL_TASK,
-            )
-            # An MCP skill can still fail here (fetch or verification),
-            # after the name check above passed. Do not drop it silently.
-            if isinstance(result, str) and result.startswith("Error:"):
-                warnings.append(f"skill {skill_name!r}: {result}")
-
-    # Skill activation can fetch from an MCP server; check again before the
-    # replay file and the SessionStart hooks.
-    if _signal_interruption(token) is not None:
-        return _fail_built(
-            agent, cwd, warnings, output_format, "interrupted", "", 0,
-            signals=signals,
-        )
-
-    replay_path: Optional[str] = None
-    if replay_enabled and agent.replay_manager is not None:
-        try:
-            path = agent.replay_manager.start(agent._session_id)
-            if path is not None:
-                replay_path = str(path)
-        except Exception as exc:  # pragma: no cover - best-effort
-            warnings.append(f"replay start: {exc}")
-
-    # SessionStart notices ride on the same channel SessionEnd's do. They are
-    # collected here rather than printed, because a headless run has one
-    # output and it is written at the end.
-    warnings.extend(dispatch_plugin_session_start(
-        agent, agent._session_id or "", source="startup",
-    ))
+    if ended is not None:
+        return ended
 
     def _on_event(event: Any) -> None:
         if not isinstance(event, PermissionDecisionEvent):

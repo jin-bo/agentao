@@ -54,6 +54,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from ._cancellable import CancellableStream
 from ._api_format import ANTHROPIC_MESSAGES
 from ._cache_control import apply_cache_control
 from ._image_parts import (
@@ -778,14 +779,20 @@ class AnthropicMessagesAdapter:
 
     # -- response -----------------------------------------------------------
 
-    def send(self, kwargs: Dict[str, Any], acc: _StreamAccumulator) -> Any:
+    def send(
+        self, kwargs: Dict[str, Any], acc: _StreamAccumulator,
+        cancellation_token: Optional[Any] = None,
+    ) -> Any:
         """One ``chat()`` attempt — the stream, consumed with no callback.
 
         The caller's ``acc``, not one built here: ``LLMClient`` counts the
         attempt from it on the way out either way, and this is a stream too —
         ``message_start`` has stated the input before anything can fail.
         """
-        return self.consume_stream(kwargs, acc, None, None)
+        # The token too: ``LLMClient.chat`` runs this on a worker thread
+        # and stops waiting on a cancel, and the stream must then be closed,
+        # not read to its end (``_cancellable``).
+        return self.consume_stream(kwargs, acc, None, cancellation_token)
 
     def new_accumulator(self) -> _StreamAccumulator:
         return _StreamAccumulator(self._owner.model)
@@ -807,7 +814,11 @@ class AnthropicMessagesAdapter:
         early before that raises :class:`StreamEndedEarlyError`, which
         ``LLMClient`` retries.
         """
-        stream = self._owner.client.messages.create(**kwargs)
+        # Opened and read on a worker thread when there is a token, so a
+        # cancel stops a request that hangs on the network (``_cancellable``).
+        stream = CancellableStream(
+            lambda: self._owner.client.messages.create(**kwargs), cancellation_token,
+        )
         # Per open content block, by index: a thinking block being assembled,
         # or a tool call's up-front ``input``.
         pending: Dict[int, Any] = {}

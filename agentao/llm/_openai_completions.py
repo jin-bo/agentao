@@ -22,6 +22,7 @@ import hashlib
 from collections import Counter
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
+from ._cancellable import CancellableStream
 from ._cache_control import apply_cache_control
 from ._tool_ids import split_tool_id
 from ._retry import (
@@ -263,8 +264,14 @@ class OpenAICompletionsAdapter:
         """What ``_log_request`` renders: the request itself, minus ``stream``."""
         return {k: v for k, v in kwargs.items() if k != "stream"}
 
-    def send(self, kwargs: Dict[str, Any], acc: _StreamAccumulator) -> Any:
+    def send(
+        self, kwargs: Dict[str, Any], acc: _StreamAccumulator,
+        cancellation_token: Optional[Any] = None,
+    ) -> Any:
         """One non-streaming attempt.
+
+        ``cancellation_token`` is accepted for the shared signature: a
+        non-streaming request cannot be closed part-way.
 
         ``acc`` carries nothing here but the usage the response stated: it is
         where ``LLMClient`` counts an attempt from, on every wire and on both
@@ -290,67 +297,77 @@ class OpenAICompletionsAdapter:
         cancellation_token: Optional[Any],
     ) -> Any:
         """One streaming attempt, accumulated into ``acc``."""
-        stream = self._owner.client.chat.completions.create(**kwargs)
+        # Opened and read on a worker thread when there is a token, so a
+        # cancel stops a request that hangs on the network (``_cancellable``).
+        stream = CancellableStream(
+            lambda: self._owner.client.chat.completions.create(**kwargs), cancellation_token,
+        )
 
-        for chunk in stream:
-            if cancellation_token and cancellation_token.is_cancelled:
-                break
-            # Capture usage from final usage-only chunk (stream_options include_usage)
-            if hasattr(chunk, "usage") and chunk.usage:
-                acc.usage_data = chunk.usage
-            if not chunk.choices:
-                continue
-            choice = chunk.choices[0]
-            delta = choice.delta
+        # Closed on every way out (``break`` on a cancel, an exception from
+        # ``on_text_chunk``): the worker that reads it then stops, instead of
+        # waiting for the generator to be collected.
+        try:
+            for chunk in stream:
+                if cancellation_token and cancellation_token.is_cancelled:
+                    break
+                # Capture usage from final usage-only chunk (stream_options include_usage)
+                if hasattr(chunk, "usage") and chunk.usage:
+                    acc.usage_data = chunk.usage
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                delta = choice.delta
 
-            # Accumulate the thinking text. DeepSeek, MiniMax, Kimi and older
-            # vLLM name the field ``reasoning_content``; Ollama, newer vLLM and
-            # OpenRouter name it ``reasoning``. Some vLLM versions send both
-            # with the same text, so ``reasoning`` is read only when
-            # ``reasoning_content`` is absent. Either way it is kept as
-            # ``reasoning_content``. Read before ``content``: a chunk that carries
-            # both reaches the host as reasoning first, the order it was written.
-            if delta:
-                reasoning = getattr(delta, "reasoning_content", None) or getattr(
-                    delta, "reasoning", None
-                )
-                if isinstance(reasoning, str) and reasoning:
-                    acc.add_reasoning(reasoning)
+                # Accumulate the thinking text. DeepSeek, MiniMax, Kimi and older
+                # vLLM name the field ``reasoning_content``; Ollama, newer vLLM and
+                # OpenRouter name it ``reasoning``. Some vLLM versions send both
+                # with the same text, so ``reasoning`` is read only when
+                # ``reasoning_content`` is absent. Either way it is kept as
+                # ``reasoning_content``. Read before ``content``: a chunk that carries
+                # both reaches the host as reasoning first, the order it was written.
+                if delta:
+                    reasoning = getattr(delta, "reasoning_content", None) or getattr(
+                        delta, "reasoning", None
+                    )
+                    if isinstance(reasoning, str) and reasoning:
+                        acc.add_reasoning(reasoning)
 
-            # Accumulate text content and fire callback
-            if delta and delta.content:
-                acc.content_parts.append(delta.content)
-                if on_text_chunk:
-                    on_text_chunk(delta.content)
-                    acc.progress_made = True
+                # Accumulate text content and fire callback
+                if delta and delta.content:
+                    acc.content_parts.append(delta.content)
+                    if on_text_chunk:
+                        on_text_chunk(delta.content)
+                        acc.progress_made = True
 
-            # Accumulate tool call deltas. ``acc.tool_call_key`` resolves the
-            # stream-stable key for this delta, tolerating providers that omit
-            # the OpenAI ``index`` field (see _StreamAccumulator.tool_call_key
-            # and goose #10023).
-            if delta and delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    idx = acc.tool_call_key(tc_delta)
-                    if idx not in acc.tool_calls_data:
-                        acc.tool_calls_data[idx] = {"id": "", "name": "", "arguments": ""}
-                    if tc_delta.id:
-                        acc.tool_calls_data[idx]["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            acc.tool_calls_data[idx]["name"] += tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            acc.tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
-                        # Gemini thinking models: preserve thought_signature
-                        thought_sig = getattr(tc_delta.function, "thought_signature", None)
-                        if thought_sig is not None:
-                            acc.tool_calls_data[idx]["thought_signature"] = thought_sig
+                # Accumulate tool call deltas. ``acc.tool_call_key`` resolves the
+                # stream-stable key for this delta, tolerating providers that omit
+                # the OpenAI ``index`` field (see _StreamAccumulator.tool_call_key
+                # and goose #10023).
+                if delta and delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = acc.tool_call_key(tc_delta)
+                        if idx not in acc.tool_calls_data:
+                            acc.tool_calls_data[idx] = {"id": "", "name": "", "arguments": ""}
+                        if tc_delta.id:
+                            acc.tool_calls_data[idx]["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                acc.tool_calls_data[idx]["name"] += tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                acc.tool_calls_data[idx]["arguments"] += tc_delta.function.arguments
+                            # Gemini thinking models: preserve thought_signature
+                            thought_sig = getattr(tc_delta.function, "thought_signature", None)
+                            if thought_sig is not None:
+                                acc.tool_calls_data[idx]["thought_signature"] = thought_sig
 
-            if choice.finish_reason:
-                acc.finish_reason = choice.finish_reason
-                acc.finish_reason_reported = True
+                if choice.finish_reason:
+                    acc.finish_reason = choice.finish_reason
+                    acc.finish_reason_reported = True
 
-            if hasattr(chunk, "model") and chunk.model:
-                acc.response_model = chunk.model
+                if hasattr(chunk, "model") and chunk.model:
+                    acc.response_model = chunk.model
+        finally:
+            stream.close()
 
         # Build a duck-type response that agent.py can consume like a ChatCompletion
         return acc.build()

@@ -37,6 +37,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
+from ._cancellable import CancellableStream
 from ._api_format import OPENAI_RESPONSES
 from ._image_parts import (
     describe_part,
@@ -608,9 +609,15 @@ class OpenAIResponsesAdapter:
 
     # -- response -----------------------------------------------------------
 
-    def send(self, kwargs: Dict[str, Any], acc: _StreamAccumulator) -> Any:
+    def send(
+        self, kwargs: Dict[str, Any], acc: _StreamAccumulator,
+        cancellation_token: Optional[Any] = None,
+    ) -> Any:
         """One ``chat()`` attempt — the stream, consumed with no callback."""
-        return self.consume_stream(kwargs, acc, None, None)
+        # The token too: ``LLMClient.chat`` runs this on a worker thread
+        # and stops waiting on a cancel, and the stream must then be closed,
+        # not read to its end (``_cancellable``).
+        return self.consume_stream(kwargs, acc, None, cancellation_token)
 
     def new_accumulator(self) -> _StreamAccumulator:
         return _StreamAccumulator(self._owner.model)
@@ -632,7 +639,11 @@ class OpenAIResponsesAdapter:
         ``LLMClient`` retries: the terminal event is not optional on this
         API, so its absence is a dropped connection, not a terse server.
         """
-        stream = self._owner.client.responses.create(**kwargs)
+        # Opened and read on a worker thread when there is a token, so a
+        # cancel stops a request that hangs on the network (``_cancellable``).
+        stream = CancellableStream(
+            lambda: self._owner.client.responses.create(**kwargs), cancellation_token,
+        )
         # Output indices whose text arrived as deltas — so the whole-item
         # events that follow do not append the same text a second time.
         streamed_text: set = set()

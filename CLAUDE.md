@@ -387,6 +387,7 @@ See [docs/guides/adding-components.md](docs/guides/adding-components.md). Tools 
   1. Call `submit()` directly.
   2. Cancel the future if it has not started.
   3. Else wait for it under a bounded budget, and log if you give up.
+  - Exception: a model request's worker (`llm/_cancellable.py`) gets no wait, because a wait would bring back the delay on cancel that the hand-off removes. Instead it is woken: a socket shutdown ends a blocked stream read, and only the worker closes the stream while it reads. A worker still inside `create()` is logged and ends when the request returns.
 - **For batch commands, use `capabilities/process.py::run_captured()`, not `subprocess.run`** (PRs #73–#75).
   - `subprocess.run(timeout=)` kills only the direct child. A grandchild that holds the pipe then hangs the turn.
   - `run_captured` runs the child in its own process group, sets stdin to `DEVNULL` unless you give `input=`, and decodes with `errors="replace"`.

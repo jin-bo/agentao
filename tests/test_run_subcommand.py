@@ -1570,6 +1570,48 @@ def test_an_early_failure_after_a_signal_reports_the_interruption(
     assert captured.get("closed") is True
 
 
+def test_an_exception_during_setup_ends_with_a_result_document(
+    monkeypatch, stub_pipeline, capsys,
+):
+    """Before, it ended the run with a traceback, no JSON and the agent open."""
+    captured, _ = stub_pipeline
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    def _session_start(agent, sid, *, source="startup"):
+        raise RuntimeError("hook dispatcher broke")
+
+    monkeypatch.setattr("agentao.cli.session.dispatch_plugin_session_start", _session_start)
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == run.EXIT_RUNTIME_ERROR
+    error = json.loads(capsys.readouterr().out)["error"]
+    assert error["type"] == "runtime_error"
+    assert error["message"] == "run setup failed: hook dispatcher broke"
+    assert captured.get("closed") is True
+    assert "chat_prompt" not in captured
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="os.kill(SIGTERM) terminates on Windows")
+def test_an_exception_during_setup_after_a_signal_reports_the_interruption(
+    monkeypatch, stub_pipeline, capsys,
+):
+    _no_stdin(monkeypatch)
+    from agentao.cli import run
+
+    def _session_start(agent, sid, *, source="startup"):
+        _deliver("SIGTERM")
+        raise RuntimeError("hook dispatcher broke")
+
+    monkeypatch.setattr("agentao.cli.session.dispatch_plugin_session_start", _session_start)
+
+    rc = run._execute_with_args(_build_args(prompt="hi", output_format="json"))
+
+    assert rc == run.EXIT_TERMINATED
+    assert json.loads(capsys.readouterr().out)["error"]["type"] == "interrupted"
+
+
 def test_a_permission_cancel_is_not_read_as_a_signal():
     from agentao.cancellation import CancellationToken
     from agentao.cli import run
