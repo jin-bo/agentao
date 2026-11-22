@@ -226,7 +226,7 @@ entries, unavailable, problem = agent.mcp_manager.skill_listing("docs")
 entry = agent.mcp_manager.get_skill("docs", "skill://pdf-processing/SKILL.md")  # skills/get
 ```
 
-`/skills` 按 server 列出 MCP skill，并说明哪些无法加载以及原因；`/mcp list` 显示每个开启了 skills 的 server 有多少个 skill，或者为什么一个都没有。
+`/skills list` 按 server 列出 MCP skill，并说明哪些无法加载以及原因；`/mcp list` 显示每个开启了 skills 的 server 有多少个 skill，或者为什么一个都没有。
 
 ## 调试 MCP 接入
 

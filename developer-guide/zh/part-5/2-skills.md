@@ -67,7 +67,7 @@ description: 处理客户工单时使用——遵循公司退款规范、用固�
 本地加载器很宽松，所以写坏的技能往往是悄无声息地失效：
 
 - 缺 `name` 时退回用目录名。
-- `description` 为空的技能照样加载，`/skills` 也列得出，但目录里没有它，模型永远不会激活。
+- `description` 为空的技能照样加载，`/skills list` 也列得出，但目录里没有它，模型永远不会激活。
 - YAML 写坏了就当作没有 frontmatter，加载器会往 `agentao.log` 写一条带文件路径的警告。最常见的原因是没加引号的冒号：`description: Deploy to AWS: ECS` 解析失败，`description: "Deploy to AWS: ECS"` 才对。
 - 以 `mcp:` 开头的名字会被拒绝，这个前缀留给 [MCP 技能](/zh/part-5/3-mcp#mcp-skills)。
 
@@ -167,8 +167,11 @@ agent = Agentao(
 ```bash
 /skills disable <name>     # 持久化，重启后仍然有效
 /skills enable <name>      # 撤销
-/skills                    # 列表，其中有独立的 Disabled 段
+/skills list               # 列表，其中有独立的 Disabled 段
+/skills manage             # 复选框选择器（在终端上，不带参数的 /skills 也打开它）
 ```
+
+选择器把每个技能显示为 `[x] name`（启用）或 `[ ] name`（禁用），并带 `(active)`、`(mcp)` 或 `(missing)` 标记。打字搜索，↑/↓ 移动，空格或回车切换，Esc 或 Ctrl+C 关闭。**每次切换立即保存**，走的是与子命令相同的 `disable_skill` / `enable_skill`。保存失败时该行保持原状态并显示错误。关闭时用一行说明改了几个技能。stdin 或 stdout 不是终端时，不带参数的 `/skills` 改为打印列表。
 
 状态存在 `.agentao/skills_config.json` 的 `disabled_skills` 里（仅项目级作用域，见 [附录 B](/zh/appendix/b-config-keys)）。嵌入时要注意三点：
 
@@ -176,7 +179,7 @@ agent = Agentao(
 - **子代理在启动那一刻复制这个禁用集合。** 在子代理运行期间做的禁用，只对**下一个**子代理生效，对正在跑的那个无效。
 - **扫描从不修剪这份名单。** 一次扫不到该技能的 `/skills reload`（共享盘未挂载、目录运行中被改名）会原样保留名字、也不写盘，于是技能回来时仍是禁用状态。扫描分不清「已删除」和「此刻发现不到」，而禁用本身是激活门禁，猜错就等于静默把这个技能重新放行给模型。
 
-最后一条的代价是：名字可能比它禁用的技能活得更久。`/skills` 会把这类名字单列在 **Disabled, not found by the last scan** 之下，而 `/skills enable <name>` 不论该技能当前是否存在都能清掉它。
+最后一条的代价是：名字可能比它禁用的技能活得更久。`/skills list` 会把这类名字单列在 **Disabled, not found by the last scan** 之下，选择器给它们标上 `(missing)`，而 `/skills enable <name>`（或在选择器里切换）不论该技能当前是否存在都能清掉它。
 
 ### `skills_config.json` 怎样写入
 

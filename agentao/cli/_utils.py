@@ -152,7 +152,7 @@ _SLASH_COMMANDS = [
     '/replay', '/replay list', '/replay on', '/replay off',
     '/replay show', '/replay tail', '/replay prune',
     '/replay delete', '/replay delete all',
-    '/skills', '/skills activate', '/skills deactivate',
+    '/skills', '/skills list', '/skills manage', '/skills activate', '/skills deactivate',
     '/skills disable', '/skills enable', '/skills reload', '/status', '/temperature',
     '/thinking', '/todos', '/tools',
 ]

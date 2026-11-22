@@ -175,9 +175,12 @@ def printed(monkeypatch):
     return out
 
 
-def test_skills_bare_lists(printed):
+def test_skills_bare_lists(printed, monkeypatch):
     from agentao.cli.commands import handle_skills_command
+    from agentao.cli.commands import skills as skills_mod
 
+    # Bare ``/skills`` opens the picker on a terminal (``pytest -s``).
+    monkeypatch.setattr(skills_mod, "_interactive_terminal", lambda: False)
     cli = _Cli()
     handle_skills_command(cli, "")
     assert cli.listed

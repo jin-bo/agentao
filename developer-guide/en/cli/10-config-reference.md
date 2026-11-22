@@ -12,7 +12,7 @@ This is a CLI-centric **index** to every config file the CLI reads. The schema r
 | **Shell sandbox** | — *(project file ignored)* | `~/.agentao/sandbox.json` | `/sandbox` | [Part 6.2](/en/part-6/2-shell-sandbox) |
 | **MCP servers** | `.agentao/mcp.json` | `~/.agentao/mcp.json` | `/mcp` | [§5](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#5-mcpjson--mcp-server-registry) |
 | **ACP servers** | `.agentao/acp.json` | — | `/acp` | [§6](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#6-acpjson--acp-subagent-registry) |
-| **Skill enable/disable** | `.agentao/skills_config.json` | — | `/skills enable`, `/skills disable` | [§7](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#7-skills_configjson--per-project-skill-enabledisable) |
+| **Skill enable/disable** | `.agentao/skills_config.json` | — | `/skills enable`, `/skills disable`, `/skills manage` | [§7](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#7-skills_configjson--per-project-skill-enabledisable) |
 | **Project instructions** | `AGENTAO.md` (cwd), else `AGENTS.md` | — | system prompt every turn | [§8](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#8-agentaomd--project-instructions) |
 | **Memory store** | `.agentao/memory.db` | `~/.agentao/memory.db` | `/memory`, `save_memory` tool | [§9](https://github.com/jin-bo/agentao/blob/main/docs/reference/configuration.md#9-memorydb--persistent-memory-store) |
 
@@ -49,7 +49,7 @@ A few things you set with slash commands are **session-only** and don't write to
 | `/context limit <n>` | No | — (current process only; restart reads `AGENTAO_CONTEXT_TOKENS`) |
 | `/sandbox profile <name>` | No | — (edit `~/.agentao/sandbox.json` to persist) |
 | `/replay on` / `/replay off` | **Yes** | `.agentao/settings.json` (`replay.enabled`) |
-| `/skills disable <name>` / `/skills enable <name>` | **Yes** | `.agentao/skills_config.json` |
+| `/skills disable <name>` / `/skills enable <name>` / `/skills manage` | **Yes** | `.agentao/skills_config.json` |
 | `/skills activate` / `/skills deactivate` | No | — |
 | `/mcp add` / `/mcp remove` | **Yes** | `.agentao/mcp.json` (project) |
 | `/memory delete` / `/memory clear` | **Yes** | `memory.db` (soft-delete) |

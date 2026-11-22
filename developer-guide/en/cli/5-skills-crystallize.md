@@ -21,12 +21,12 @@ When the user asks for a PDF → markdown conversion:
 
 The YAML frontmatter is what the agent reads when deciding whether to activate. Once active, the full SKILL.md body is added to the conversation once, as a `Skill loaded` reminder, and is cached from the next request on. It is a snapshot: after you edit the skill, run `/skills activate <name>` again or `/skills reload`. Files under `references/`, `assets/` and `scripts/` are not inlined: activation lists them by absolute path, and the agent reads them with `read_file` when it needs them.
 
-You don't have to know the skill exists — `/skills` lists them, the agent picks them up. You only step in when you want to force, suppress, or build a new one.
+You don't have to know the skill exists — `/skills list` lists them, the agent picks them up. You only step in when you want to force, suppress, or build a new one.
 
 ## `/skills` — list, activate, deactivate, reload
 
 ```text
-> /skills
+> /skills list
 
 Available Skills (3):
 
@@ -41,9 +41,25 @@ Active Skills:
 
 The list shows each enabled skill's name, title and description. **Active Skills** names the skills active in this session, with the task each was activated for. Disabled skills get their own section.
 
+On a terminal, bare `/skills` (or `/skills manage`) opens a checkbox picker instead of the list:
+
+```text
+Enable/Disable Skills
+Turn skills on or off. Each change is saved at once.
+Type to search skills
+› [x] pdf-to-markdown (active)  disabling also deactivates it
+  [x] skill-creator  Create new skills, modify and improve existing skills...
+  [ ] old-helper (missing)
+↑/↓ move · Space/Enter toggle · Esc close
+```
+
+Type to filter by name or description, use ↑/↓ to move, Space or Enter to toggle, and Esc or Ctrl+C to close. Each toggle is saved to `skills_config.json` at once, as `/skills disable` / `enable` would. A failed save leaves the row as it was and shows the error. On close, one line says how many skills changed. `(missing)` marks a disabled name the last scan did not find; toggle it to clear it. When stdin or stdout is not a terminal, bare `/skills` prints the list.
+
 | Subcommand | Effect |
 |-----------|--------|
-| `/skills` | List all skills, then the active ones |
+| `/skills` | Open the checkbox picker on a terminal, else the same as `/skills list` |
+| `/skills list` | List all skills, then the active ones |
+| `/skills manage` | Open the checkbox picker. Off a terminal it says so and prints the list |
 | `/skills activate <name>` | Force-activate. The body is added to the conversation once. Run it again on an active skill to load an edited version. |
 | `/skills deactivate <name>` | Remove from active set. A notice tells the model to stop following it. |
 | `/skills disable <name>` | **Persistent** — saved to `skills_config.json`. Skill won't load even after restart. |
@@ -62,14 +78,14 @@ An MCP server can serve skills too. Turn it on per server in `.agentao/mcp.json`
 { "mcpServers": { "docs": { "url": "https://docs.example/mcp", "skills": true } } }
 ```
 
-`/skills` then shows an **MCP Skills** group. It lists the skills of each server by full name, `mcp:<server>:<SKILL.md URI>`, for example `mcp:docs:skill://pdf-processing/SKILL.md`. It also gives the reason for each skill that cannot be loaded. Compared with a local skill:
+`/skills list` then shows an **MCP Skills** group. It lists the skills of each server by full name, `mcp:<server>:<SKILL.md URI>`, for example `mcp:docs:skill://pdf-processing/SKILL.md`. It also gives the reason for each skill that cannot be loaded. Compared with a local skill:
 
 - **You approve it.** When the model activates one, you are asked once per conversation. The prompt shows the server, the description, and the file count and size. The approval binds to the files the server listed. If the server changes them, you are asked again. `/skills activate mcp:<server>:<uri>` counts as your consent, so it does not ask.
 - **It is verified.** `SKILL.md` and every file read later must match the size, SHA-256 digest and frontmatter the server published. A file that does not match is not used.
 - **Its files stay on the server.** The model reads them with `read_skill_file`, never from disk.
 - **It tightens permissions.** From the first MCP skill loaded until `/clear`, shell commands, sub-agents that can run shell commands, and resource reads from other servers ask first, even in `full-access`. Deactivating the skill does not lift this.
 
-Limits: mcp 2.x, a server on protocol 2026-07-28 or later, at most 512 files and 16 MiB per skill, and a `SKILL.md` of at most 100,000 bytes. `/skills` shows a skill over a limit, or a `"dynamic"` one, as unavailable. Depth for hosts: [Part 5.3, MCP skills](/en/part-5/3-mcp#mcp-skills).
+Limits: mcp 2.x, a server on protocol 2026-07-28 or later, at most 512 files and 16 MiB per skill, and a `SKILL.md` of at most 100,000 bytes. `/skills list` shows a skill over a limit, or a `"dynamic"` one, as unavailable. Depth for hosts: [Part 5.3, MCP skills](/en/part-5/3-mcp#mcp-skills).
 
 ::: tip activate vs. enable
 - **activate / deactivate** is per-session — temporary, for *this* conversation
@@ -231,7 +247,7 @@ cp -R examples/skills/pro-ppt      /path/to/your/project/.agentao/skills/
 pip install -r examples/skills/zootopia-ppt/requirements.txt
 ```
 
-Then `/skills reload` (or restart) and the new skills show up in `/skills`.
+Then `/skills reload` (or restart) and the new skills show up in `/skills list`.
 
 ::: tip Image-gen skills cost real money
 `zootopia-ppt` and `pro-ppt` call paid image-generation APIs (TensorsLab / Gemini / DashScope-Wan / OpenRouter). Run an outline first to gauge token + image cost before generating a 30-page deck. None of the keys are hardcoded — they're read from `.env` or `--api-key`.

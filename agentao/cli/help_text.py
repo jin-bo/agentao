@@ -48,7 +48,9 @@ All commands start with `/`:
   - `/plan clear` - Archive and clear the current plan
   - `/plan history` - List recent archived plans
 - `/skills [subcommand]` - List and manage skills in the current session
-  - `/skills` - List available and active skills
+  - `/skills` - Open the enable/disable checkbox picker (lists the skills when not on a terminal)
+  - `/skills list` - List available and active skills
+  - `/skills manage` - Checkbox picker: type to search, Space/Enter toggles, Esc closes; each change is saved at once
   - `/skills activate <name>` - Activate a skill for this session
   - `/skills deactivate <name>` - Deactivate a skill for this session
   - `/skills disable <name>` - Persistently disable a skill for this project
@@ -144,7 +146,7 @@ The agent has access to the following tools:
 - `todo_write` - Track current task state
 
 **Skills:**
-Type `/skills` to see available skills, or ask the agent to activate a specific skill.
+Type `/skills list` to see available skills, `/skills` to turn them on or off, or ask the agent to activate a specific skill.
 
 **Examples:**
 - "Read the file main.py"

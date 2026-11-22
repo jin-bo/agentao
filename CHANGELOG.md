@@ -11,6 +11,7 @@ _Targeting 0.5.23. Add entries under the relevant heading as work lands._
 
 ### Added
 
+- **`/skills` has a checkbox picker to enable and disable skills.** `/skills manage` lists every skill as `[x] name` or `[ ] name`, with `(active)`, `(mcp)` and `(missing)` tags. Type to search, ↑/↓ to move, Space or Enter to toggle, Esc or Ctrl+C to close. Each toggle is saved at once through `SkillManager.disable_skill` / `enable_skill`, so the lock and the atomic write of `skills_config.json` are unchanged. A failed save leaves the row as it was and shows the error. On close, one line says how many skills changed. A disabled name the last scan did not find is listed too, so it can be cleared without typing it. **Behaviour change:** on a terminal, bare `/skills` now opens the picker. The list moved to the new `/skills list`. When stdin or stdout is not a terminal, bare `/skills` still prints the list. (`cli/skills_picker.py`, `cli/commands/skills.py`)
 - **ACP clients are told when an LLM call is retried.** The ACP server now maps `LLM_RETRY` to an `agent_thought_chunk` on its own line, `[retry 1/4: status=503, retrying in 7.5s]`, sent before the backoff wait. Before, a client saw nothing for up to four waits of up to 60 s each, while the CLI printed `⟳ Reconnecting… 1/4`. (`acp/transport.py`)
 
 ### Changed

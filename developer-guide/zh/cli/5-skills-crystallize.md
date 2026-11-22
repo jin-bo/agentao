@@ -21,12 +21,12 @@ description: 用 marker_single 把 PDF 转成 markdown。命中"convert PDF to m
 
 YAML frontmatter 是 agent 决定要不要激活时读的。激活后，整份 SKILL.md body 作为一条 `Skill loaded` 提醒加入对话一次，从下一次请求起命中缓存。它是快照：修改 skill 后，要再次 `/skills activate <name>` 或运行 `/skills reload`。`references/`、`assets/`、`scripts/` 下的文件不会内联：激活时只按绝对路径列出，agent 需要时用 `read_file` 读取。
 
-你不需要知道有哪些 skill — `/skills` 列得出，agent 自己识别。只在你想强制 / 抑制 / 新建一个 skill 时才介入。
+你不需要知道有哪些 skill — `/skills list` 列得出，agent 自己识别。只在你想强制 / 抑制 / 新建一个 skill 时才介入。
 
 ## `/skills` — 列、激活、停用、reload
 
 ```text
-> /skills
+> /skills list
 
 Available Skills (3):
 
@@ -41,9 +41,25 @@ Active Skills:
 
 列表给出每个已启用 skill 的名字、标题和描述。**Active Skills** 列出本会话已激活的 skill，以及激活时对应的任务。已禁用的 skill 单独成段。
 
+在终端上，不带参数的 `/skills`（或 `/skills manage`）打开复选框选择器，而不是打印列表：
+
+```text
+Enable/Disable Skills
+Turn skills on or off. Each change is saved at once.
+Type to search skills
+› [x] pdf-to-markdown (active)  disabling also deactivates it
+  [x] skill-creator  Create new skills, modify and improve existing skills...
+  [ ] old-helper (missing)
+↑/↓ move · Space/Enter toggle · Esc close
+```
+
+打字按名字或描述过滤，↑/↓ 移动，空格或回车切换，Esc 或 Ctrl+C 关闭。每次切换立即写入 `skills_config.json`，效果与 `/skills disable` / `enable` 相同。保存失败时该行保持原状态并显示错误。关闭时用一行说明改了几个 skill。`(missing)` 表示上次扫描没找到的已禁用名字，切换一下即可清除。stdin 或 stdout 不是终端时，不带参数的 `/skills` 打印列表。
+
 | 子命令 | 作用 |
 |---|---|
-| `/skills` | 列出所有 skill，再列出已激活的 |
+| `/skills` | 在终端上打开复选框选择器，否则等同 `/skills list` |
+| `/skills list` | 列出所有 skill，再列出已激活的 |
+| `/skills manage` | 打开复选框选择器。不在终端上时给出提示并打印列表 |
 | `/skills activate <name>` | 强制激活，正文加入对话一次。对已激活的 skill 再运行一次，会加载修改后的版本 |
 | `/skills deactivate <name>` | 从激活集移除，并追加一条通知，告诉模型不要再遵循它 |
 | `/skills disable <name>` | **持久** — 写到 `skills_config.json`，重启后也不加载 |
@@ -62,14 +78,14 @@ MCP server 也能提供 skill，在 `.agentao/mcp.json` 里按 server 打开：
 { "mcpServers": { "docs": { "url": "https://docs.example/mcp", "skills": true } } }
 ```
 
-之后 `/skills` 里会多出一个 **MCP Skills** 分组：按 server 列出它的 skill，名字是完整的 `mcp:<server>:<SKILL.md URI>`，比如 `mcp:docs:skill://pdf-processing/SKILL.md`，并给出每个无法加载的 skill 的原因。和本地 skill 相比：
+之后 `/skills list` 里会多出一个 **MCP Skills** 分组：按 server 列出它的 skill，名字是完整的 `mcp:<server>:<SKILL.md URI>`，比如 `mcp:docs:skill://pdf-processing/SKILL.md`，并给出每个无法加载的 skill 的原因。和本地 skill 相比：
 
 - **要你批准。** 模型激活时，每次对话问你一次，提示里有 server、描述、文件数和总大小。批准绑定的是 server 列出的那批文件；server 改了文件，会再问一次。`/skills activate mcp:<server>:<uri>` 本身就算你的同意，不会再问。
 - **要校验。** `SKILL.md` 以及之后读取的每个文件，都必须和 server 公布的大小、SHA-256 摘要、frontmatter 一致，对不上就不用。
 - **文件留在 server 上。** 模型用 `read_skill_file` 读取，从不读磁盘。
 - **会收紧权限。** 从加载第一个 MCP skill 起直到 `/clear`，shell 命令、能跑 shell 的子代理、读取其他 server 的资源都会先问你，`full-access` 下也一样。取消激活并不会解除。
 
-限制：需要 mcp 2.x、协议版本 2026-07-28 及以上的 server；每个 skill 最多 512 个文件、16 MiB；`SKILL.md` 最大 100,000 字节。超限的 skill 和 `"dynamic"` skill 在 `/skills` 里显示为不可用。宿主侧细节见 [5.3 节 MCP skills](/zh/part-5/3-mcp#mcp-skills)。
+限制：需要 mcp 2.x、协议版本 2026-07-28 及以上的 server；每个 skill 最多 512 个文件、16 MiB；`SKILL.md` 最大 100,000 字节。超限的 skill 和 `"dynamic"` skill 在 `/skills list` 里显示为不可用。宿主侧细节见 [5.3 节 MCP skills](/zh/part-5/3-mcp#mcp-skills)。
 
 ::: tip activate vs. enable
 - **activate / deactivate** 是会话级 — 临时，只对*当前*这次对话生效
@@ -231,7 +247,7 @@ cp -R examples/skills/pro-ppt      /path/to/your/project/.agentao/skills/
 pip install -r examples/skills/zootopia-ppt/requirements.txt
 ```
 
-然后 `/skills reload`（或重启），新 skill 会出现在 `/skills` 列表里。
+然后 `/skills reload`（或重启），新 skill 会出现在 `/skills list` 列表里。
 
 ::: tip 图像生成 skill 是要花钱的
 `zootopia-ppt` 和 `pro-ppt` 调付费图像生成 API（TensorsLab / Gemini / DashScope-Wan / OpenRouter）。生成 30 页前先跑个大纲看 token + 图量成本。所有 key 都不硬编码 — 读自 `.env` 或 `--api-key`。

@@ -63,7 +63,7 @@ You: Search for all Python files in this directory
 The agent will use the `glob` tool to find all `.py` files.
 
 ```
-You: /skills
+You: /skills list
 ```
 Shows all available skills.
 
@@ -86,7 +86,8 @@ All commands start with `/`:
 - `/status` - Show conversation status (includes current model)
 - `/context` - Show context-window token usage (`/context limit <n>` to change it)
 - `/compact` - Summarize older history now into a compact block (manual compaction)
-- `/skills` - List available skills
+- `/skills list` - List available skills
+- `/skills` - Turn skills on or off in a checkbox picker
 - `/memory` - Show saved memories
 - `/exit` or `/quit` - Exit the program
 
@@ -117,7 +118,7 @@ You: Now help me merge multiple PDFs
 ```
 You: /model              (show current model and available models)
 You: /model gpt-5.4       (switch to GPT-4o)
-You: /skills             (list all skills)
+You: /skills list        (list all skills)
 You: /memory             (show memories)
 You: /status             (show status and current model)
 You: /new                (fresh conversation, memories kept)
