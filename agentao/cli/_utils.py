@@ -140,7 +140,7 @@ _SLASH_COMMANDS = [
     '/plan', '/plan clear', '/plan history', '/plan implement', '/plan show',
     '/compact', '/context', '/context limit', '/exit', '/help',
     '/image', '/image clear',
-    '/mcp', '/mcp add', '/mcp list', '/mcp remove',
+    '/mcp', '/mcp add', '/mcp list', '/mcp remove', '/mcp verbose',
     '/markdown',
     '/memory', '/memory clear', '/memory delete', '/memory list',
     '/memory project', '/memory search', '/memory session', '/memory status',

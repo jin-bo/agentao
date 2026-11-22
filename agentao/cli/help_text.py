@@ -86,6 +86,7 @@ All commands start with `/`:
 - `/permission` - Show active permission rules
 - `/mcp [subcommand]` - Manage MCP servers
   - `/mcp` or `/mcp list` - List MCP servers with status and tools
+  - `/mcp verbose [server]` - Per server: command or URL (secrets masked by rule), env/header names, sign-in state, tools (and any a tool filter hid), resources, templates and skills
   - `/mcp add [--http|--sse] <name> <command|url>` - Add an MCP server (a URL defaults to Streamable HTTP; `--sse` for legacy SSE)
   - `/mcp remove <name>` - Remove an MCP server
   - `/mcp login <name> [--no-browser]` - Authorize an OAuth MCP server in the browser (or paste the redirect URL with `--no-browser`); `agentao mcp login <name>` does the same from a shell

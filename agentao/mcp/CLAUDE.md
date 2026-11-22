@@ -6,7 +6,8 @@ This file loads when Claude works under this folder. It was moved verbatim from 
 
 - Config: `.agentao/mcp.json` (project) and `<home>/.agentao/mcp.json` (global).
 - Key files: `agentao/mcp/config.py`, `client.py`, `tool.py`, `_compat.py`, `resources.py`, `resource_tools.py`, `skills.py`, `skill_tools.py`.
-- CLI: `/mcp list`, `/mcp add [--http|--sse] <name> <command|url>`, `/mcp remove <name>`, `/mcp resources [server]`.
+- CLI: `/mcp list`, `/mcp add [--http|--sse] <name> <command|url>`, `/mcp remove <name>`, `/mcp resources [server]`, `/mcp verbose [server]`.
+- **`/mcp verbose` hides secrets by rule, not by guarantee** (`cli/commands/mcp_verbose.py`, module docstring). Env and header values are masked. A URL shows only `scheme://host[:port]`. Args come from the raw `mcp.json` entry only when it expands to exactly the live args, because the loaded config holds expanded `${VAR}` values, and then go through `mask_args`. Never print the live (expanded) args.
 
 **Transports** (`config.py::resolve_transport`, fail-closed):
 - `command` gives stdio. `url` gives **Streamable HTTP by default**. Add `"type": "sse"` for legacy SSE.
