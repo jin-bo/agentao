@@ -59,6 +59,8 @@
 ```text
 > /mcp                                  # /mcp list 的别名
 > /mcp list                             # 列出所有配置的服务器
+> /mcp verbose                          # 每个 server 的配置、认证、工具、资源、skill
+> /mcp verbose github                   # 只看一个 server
 > /mcp add github npx -y @modelcontextprotocol/server-github
 > /mcp add remote https://api.example.com/mcp
 > /mcp remove github
@@ -78,11 +80,39 @@ MCP Servers (3):
   ● github      command — connected, 24 tool(s) (trusted)
   ● remote      url     — failed
     Connection refused
+Use /mcp verbose [server] for config, auth, tools, resources and skills.
 ```
 
 对开启了 `"skills": true` 的 server，`/mcp list` 会在它下面多显示一行：它提供的 skill 数量，或者 skills 不可用的原因。
 
 对已连接、没有 `"trust": true`、但把部分工具标成 `readOnlyHint: true` 的 server，它会多显示 `N tool(s) marked read-only; the marks count only with "trust": true`。在 server 受信任之前，read-only 模式会拦下这些工具，拦截消息里也会说明这一点。trust 同时会去掉这些工具的确认，所以只信任你愿意让它不经询问就执行的 server。
+
+### `/mcp verbose` —— server 详情
+
+`/mcp verbose [server]` 先打印每个 server 的摘要行，再打印：
+
+```text
+  ● github stdio 2025-11-25 — connected, 4 tool(s) (trusted)
+    • Command: npx -y @modelcontextprotocol/server-github --token '${GITHUB_TOKEN}'
+    • Env: GITHUB_API_URL=*****
+    • Auth: n/a (stdio)
+    • Tools: create_issue, get_file_contents, search_code
+    • Not offered to the model (tool filter or name clash): delete_repo
+    • Resources: (not declared)
+```
+
+- **Command**（参数按 shell 的方式加引号）或 **URL**，以及 **Cwd**。
+- **Auth**：`n/a (stdio)`、`Authorization header`、`off ("oauth": false)`，或 `OAuth: credentials stored` / `no credentials stored` / `login required — run /mcp login <name>`。"credentials stored" 只表示有凭据记录，不代表令牌仍然有效；连接是否正常看上面的摘要行。
+- **Tools** 列出模型能调用的全部工具。server 提供了但本会话没有注册的工具（被工具过滤、名字冲突）单独列出。
+- **Resources** 和 **Resource templates**（各列前 10 个）。列资源会向每个已连接且声明了资源的 server 发请求，所以这个视图比 `/mcp list` 慢。一个 server 失败只在它自己那一行显示。
+- **Skills**（开启了 `"skills": true` 的 server）：列出全部 skill，按本会话状态标上 `(active)` 或 `(disabled)`，无法加载的标 `(unavailable: …)`。
+
+隐藏了什么。以下是规则，不是保证：没有规则覆盖的位置上的秘密（例如作为位置参数直接传入的令牌）仍会被打印。
+
+- **Env** 和 **Headers** 只显示名字，从不显示值。
+- **URL** 只显示 `scheme://host[:port]`。路径、查询串、片段和用户信息都会隐藏，因为有的服务把密钥放在路径里。
+- agentao 加载配置时会填入 `args` 里的 `${VAR}`，所以运行中的配置可能含有真实密钥。显示的参数取自 `mcp.json` 里写的内容，保留 `${VAR}` 名字，而且只有在它们填入后与 server 实际运行的参数完全一致时才显示。否则（ACP 客户端或宿主传入的 server、启动后又改过的文件）该行只显示程序名和 `(args hidden: not read from mcp.json)`。
+- 显示的参数中，所有 `KEY=VALUE` 形式参数的值都会遮住；名字像是秘密的选项（`--token`、`--api-key`、`--header`、`-H` 等）后面的参数、`Bearer` 或 `Basic` 后面的词、以及任何 `scheme://` 参数（`https://` URL，或 `postgresql://user:pass@host/db` 这样的数据库 DSN）中除 `scheme://host[:port]` 以外的部分也会遮住。只是 `${VAR}` 名字的值照常显示。
 
 `/mcp add` 写到**项目**配置（`.agentao/mcp.json`）— 不动用户全局那一份。如果该文件存在但无法读成 JSON object，`/mcp add` 和 `/mcp remove` 会打印错误并保持文件不变，而不是覆盖它、丢掉其中的 server。修好文件或把它移开后再运行一次。
 

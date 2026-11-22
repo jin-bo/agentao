@@ -36,44 +36,11 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
         statuses = manager.get_server_status()
         console.print(f"\n[info]MCP Servers ({len(statuses)}):[/info]\n")
         for s in statuses:
-            color = {"connected": "green", "needs_auth": "yellow"}.get(s["status"], "red")
-            label = "needs login" if s["status"] == "needs_auth" else s["status"]
-            trust_marker = " [dim](trusted)[/dim]" if s["trusted"] else ""
-            if s.get("resources") and s.get("resources_enabled", True):
-                trust_marker = ", resources" + trust_marker
-            elif s.get("resources"):
-                trust_marker = ", resources [dim](disabled by config)[/dim]" + trust_marker
-            # ``protocol`` and ``error`` are server-authored strings, and every
-            # line here is parsed as Rich markup: an unmatched "[/b]" in a
-            # third-party error message raises MarkupError out of the command
-            # and takes the *whole* listing with it, healthy servers included.
-            # Escaping also stops a crafted message from painting itself
-            # "[green]connected[/green]".
-            protocol = f" [dim]{escape(s['protocol'])}[/dim]" if s.get("protocol") else ""
-            console.print(
-                f"  [{color}]●[/{color}] [cyan]{escape(s['name'])}[/cyan] "
-                f"[dim]{escape(s['transport'])}[/dim]{protocol} — "
-                f"[{color}]{label}[/{color}], "
-                f"{s['tools']} tool(s){trust_marker}"
-            )
-            if s.get("skills") is not None:
-                skills_line = f"{s['skills']} skill(s)"
-                if s.get("skills_error"):
-                    skills_line = f"skills unavailable: {s['skills_error']}"
-                console.print(f"    [dim]{escape(skills_line)}[/dim]")
-            marked = s.get("read_only_marked", 0)
-            # Only for a live connection: a failed server's list is from its
-            # last connection, and none of those tools are registered now.
-            if marked and not s["trusted"] and s["status"] == "connected":
-                # Read-only mode blocks these tools, and nothing else in the
-                # listing says why: the marks count only on a trusted server.
-                console.print(
-                    f'    [dim]{marked} tool(s) marked read-only; '
-                    f'the marks count only with "trust": true[/dim]'
-                )
-            if s["error"]:
-                console.print(f"    [red]{escape(s['error'])}[/red]")
-        console.print()
+            print_server_summary(s)
+        console.print(
+            "[dim]Use /mcp verbose \\[server] for config, auth, tools, resources "
+            "and skills.[/dim]\n"
+        )
 
     elif sub == "add":
         tokens = sub_args.split() if sub_args else []
@@ -163,12 +130,62 @@ def handle_mcp_command(cli: AgentaoCLI, args: str) -> None:
     elif sub == "resources":
         _list_resources(cli, sub_args.strip())
 
+    elif sub == "verbose":
+        from .mcp_verbose import show_verbose
+
+        show_verbose(cli, sub_args.strip())
+
     else:
         console.print(unknown_subcommand(sub))
         console.print(
-            "[info]Available: /mcp list, /mcp add, /mcp remove, /mcp login, /mcp logout, "
-            "/mcp resources[/info]\n"
+            "[info]Available: /mcp list, /mcp verbose, /mcp add, /mcp remove, /mcp login, "
+            "/mcp logout, /mcp resources[/info]\n"
         )
+
+
+def print_server_summary(s: dict) -> None:
+    """One server's summary line (and its notes) from ``get_server_status()``."""
+    color = {"connected": "green", "needs_auth": "yellow"}.get(s["status"], "red")
+    label = "needs login" if s["status"] == "needs_auth" else s["status"]
+    trust_marker = " [dim](trusted)[/dim]" if s["trusted"] else ""
+    if s.get("resources") and s.get("resources_enabled", True):
+        trust_marker = ", resources" + trust_marker
+    elif s.get("resources"):
+        trust_marker = ", resources [dim](disabled by config)[/dim]" + trust_marker
+    # ``protocol`` and ``error`` are server-authored strings, and every
+    # line here is parsed as Rich markup: an unmatched "[/b]" in a
+    # third-party error message raises MarkupError out of the command
+    # and takes the *whole* listing with it, healthy servers included.
+    # Escaping also stops a crafted message from painting itself
+    # "[green]connected[/green]".
+    # ``sanitize_terminal_text`` too: escaping does not stop a control byte.
+    def clean(text) -> str:
+        return escape(sanitize_terminal_text(str(text)))
+
+    protocol = f" [dim]{clean(s['protocol'])}[/dim]" if s.get("protocol") else ""
+    console.print(
+        f"  [{color}]●[/{color}] [cyan]{clean(s['name'])}[/cyan] "
+        f"[dim]{clean(s['transport'])}[/dim]{protocol} — "
+        f"[{color}]{label}[/{color}], "
+        f"{s['tools']} tool(s){trust_marker}"
+    )
+    if s.get("skills") is not None:
+        skills_line = f"{s['skills']} skill(s)"
+        if s.get("skills_error"):
+            skills_line = f"skills unavailable: {s['skills_error']}"
+        console.print(f"    [dim]{clean(skills_line)}[/dim]")
+    marked = s.get("read_only_marked", 0)
+    # Only for a live connection: a failed server's list is from its
+    # last connection, and none of those tools are registered now.
+    if marked and not s["trusted"] and s["status"] == "connected":
+        # Read-only mode blocks these tools, and nothing else in the
+        # listing says why: the marks count only on a trusted server.
+        console.print(
+            f'    [dim]{marked} tool(s) marked read-only; '
+            f'the marks count only with "trust": true[/dim]'
+        )
+    if s["error"]:
+        console.print(f"    [red]{clean(s['error'])}[/red]")
 
 
 def _say(text: str) -> None:

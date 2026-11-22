@@ -59,6 +59,8 @@ Env vars in the config use `$VAR_NAME` and are expanded at load time from your s
 ```text
 > /mcp                                  # alias for /mcp list
 > /mcp list                             # list all configured servers
+> /mcp verbose                          # per server: config, auth, tools, resources, skills
+> /mcp verbose github                   # one server only
 > /mcp add github npx -y @modelcontextprotocol/server-github
 > /mcp add remote https://api.example.com/mcp
 > /mcp remove github
@@ -78,11 +80,39 @@ MCP Servers (3):
   ● github      command — connected, 24 tool(s) (trusted)
   ● remote      url     — failed
     Connection refused
+Use /mcp verbose [server] for config, auth, tools, resources and skills.
 ```
 
 For a server with `"skills": true`, `/mcp list` adds a line under it: the number of skills it serves, or why its skills are unavailable.
 
 For a connected server without `"trust": true` that marks some tools `readOnlyHint: true`, it adds `N tool(s) marked read-only; the marks count only with "trust": true`. Read-only mode blocks those tools until the server is trusted, and its block message says the same. Trust also drops their confirmation prompt, so trust only a server you would let run without asking.
+
+### `/mcp verbose` — server details
+
+`/mcp verbose [server]` prints each server's summary line, then:
+
+```text
+  ● github stdio 2025-11-25 — connected, 4 tool(s) (trusted)
+    • Command: npx -y @modelcontextprotocol/server-github --token '${GITHUB_TOKEN}'
+    • Env: GITHUB_API_URL=*****
+    • Auth: n/a (stdio)
+    • Tools: create_issue, get_file_contents, search_code
+    • Not offered to the model (tool filter or name clash): delete_repo
+    • Resources: (not declared)
+```
+
+- **Command** (args quoted like a shell would) or **URL**, plus **Cwd**.
+- **Auth**: `n/a (stdio)`, `Authorization header`, `off ("oauth": false)`, or `OAuth: credentials stored` / `no credentials stored` / `login required — run /mcp login <name>`. "Credentials stored" means a record exists, not that its token still works; the summary line says whether the connection does.
+- **Tools** lists every tool the model can call. A tool the server offers but the session does not register (a tool filter, a name clash) is listed separately.
+- **Resources** and **Resource templates** (first 10 each). Listing them sends requests to each connected server that declares them, so this view is slower than `/mcp list`. A failure on one server is shown on its own line.
+- **Skills**, for a server with `"skills": true`: every skill, tagged `(active)` or `(disabled)` for this session, and `(unavailable: …)` when it cannot be loaded.
+
+What is hidden. These are rules, not a guarantee: a secret in a place no rule covers, such as a bare token passed as a positional arg, is still printed.
+
+- **Env** and **Headers** show names only, never values.
+- A **URL** shows only `scheme://host[:port]`. The path, query, fragment and userinfo are hidden, because some services put the key in the path.
+- Agentao fills in `${VAR}` in `args` when it loads the config, so the running config can hold a real key. The args shown are the ones written in `mcp.json`, with the `${VAR}` names kept, and only when they fill in to exactly what the server runs with. Otherwise (a server an ACP client or a host passed in, a file edited since startup) the line shows only the program and `(args hidden: not read from mcp.json)`.
+- In the args shown, the value of every `KEY=VALUE` arg is masked, as is the arg after a flag whose name suggests a secret (`--token`, `--api-key`, `--header`, `-H`, …), the word after `Bearer` or `Basic`, and everything but `scheme://host[:port]` of any `scheme://` arg (an `https://` URL, or a database DSN such as `postgresql://user:pass@host/db`). A value that is only a `${VAR}` name stays visible.
 
 `/mcp add` writes to the **project** config (`.agentao/mcp.json`) — it never touches the user-global one. If that file exists but cannot be read as a JSON object, `/mcp add` and `/mcp remove` print an error and leave it unchanged rather than replace it and lose the servers in it. Fix the file, or move it aside, and run the command again.
 
