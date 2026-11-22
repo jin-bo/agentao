@@ -33,7 +33,7 @@ cp -R examples/skills/zootopia-ppt /path/to/your/project/.agentao/skills/
 cp -R examples/skills/pro-ppt      /path/to/your/project/.agentao/skills/
 ```
 
-Restart Agentao (or run `/skills` to list) — the skill should appear under "Available skills". Activate via the `activate_skill` tool or by asking the agent to use it. See [docs/features/skills.md](../../docs/features/skills.md) for the activation lifecycle.
+Restart Agentao (or run `/skills list`) — the skill should appear under "Available skills". Activate via the `activate_skill` tool or by asking the agent to use it. See [docs/features/skills.md](../../docs/features/skills.md) for the activation lifecycle.
 
 ## Note on image-gen credits
 

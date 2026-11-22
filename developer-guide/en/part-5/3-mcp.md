@@ -226,7 +226,7 @@ entries, unavailable, problem = agent.mcp_manager.skill_listing("docs")
 entry = agent.mcp_manager.get_skill("docs", "skill://pdf-processing/SKILL.md")  # skills/get
 ```
 
-`/skills` lists MCP skills per server, with the reason any of them cannot be loaded; `/mcp list` shows each opted-in server's skill count, or why it has none.
+`/skills list` lists MCP skills per server, with the reason any of them cannot be loaded; `/mcp list` shows each opted-in server's skill count, or why it has none.
 
 ## Debugging
 

@@ -33,7 +33,7 @@ cp -R examples/skills/zootopia-ppt /path/to/your/project/.agentao/skills/
 cp -R examples/skills/pro-ppt      /path/to/your/project/.agentao/skills/
 ```
 
-重启 Agentao（或在 CLI 中执行 `/skills`），新 skill 应出现在「可用列表」里。通过 `activate_skill` 工具或直接让 agent 使用它来激活。完整生命周期见 [docs/features/skills.md](../../docs/features/skills.md)。
+重启 Agentao（或在 CLI 中执行 `/skills list`），新 skill 应出现在「可用列表」里。通过 `activate_skill` 工具或直接让 agent 使用它来激活。完整生命周期见 [docs/features/skills.md](../../docs/features/skills.md)。
 
 ## 关于图像生成额度
 

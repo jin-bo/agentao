@@ -21,7 +21,9 @@ def handle_skills_command(cli: AgentaoCLI, args: str) -> None:
     """Handle /skills command.
 
     Subcommands:
-        /skills                       List available + active skills.
+        /skills                       Open the picker on a terminal, else list.
+        /skills list                  List available + active skills.
+        /skills manage                Checkbox picker to enable/disable skills.
         /skills activate <name>       Activate for this session.
         /skills deactivate <name>     Deactivate for this session.
         /skills enable <name>         Re-enable a disabled skill.
@@ -29,11 +31,29 @@ def handle_skills_command(cli: AgentaoCLI, args: str) -> None:
         /skills reload                Re-scan the skills directory.
     """
     if not args:
-        cli.list_skills()
+        if _interactive_terminal():
+            _open_picker(cli)
+        else:
+            cli.list_skills()
         return
 
     sub_cmd, sub_arg = split_subcommand(args)
     manager = cli.agent.skill_manager
+
+    if sub_cmd == "list":
+        cli.list_skills()
+        return
+
+    if sub_cmd == "manage":
+        if not _interactive_terminal():
+            console.print(
+                "[warning]/skills manage needs an interactive terminal. "
+                "Use /skills enable <name> or /skills disable <name>.[/warning]"
+            )
+            cli.list_skills()
+            return
+        _open_picker(cli)
+        return
 
     if sub_cmd == "activate":
         if not sub_arg:
@@ -103,5 +123,27 @@ def handle_skills_command(cli: AgentaoCLI, args: str) -> None:
 
     console.print(
         f"[warning]Unknown subcommand '{_safe(sub_cmd)}'. "
-        f"Use: activate, deactivate, disable, enable, reload[/warning]"
+        f"Use: list, manage, activate, deactivate, disable, enable, reload[/warning]"
     )
+
+
+def _interactive_terminal() -> bool:
+    """Whether both ends are a terminal, so the picker can take keys."""
+    import sys
+
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _open_picker(cli: AgentaoCLI) -> None:
+    from ..skills_picker import run_skills_picker
+
+    model = run_skills_picker(cli.agent.skill_manager)
+    if not model.rows:
+        console.print("\n[info]No skills available.[/info]\n")
+        return
+    summary = model.summary()
+    if summary:
+        console.print(f"\n[success]{_safe(summary)}[/success]\n")

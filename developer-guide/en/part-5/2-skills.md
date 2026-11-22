@@ -67,7 +67,7 @@ The `description` is injected into the system prompt's skills catalog. When the 
 The local loader is lenient, so a broken skill fails quietly:
 
 - A missing `name` falls back to the directory name.
-- A skill with an empty `description` loads, and `/skills` lists it. The catalogue leaves it out, so the model never activates it.
+- A skill with an empty `description` loads, and `/skills list` lists it. The catalogue leaves it out, so the model never activates it.
 - Malformed YAML counts as no frontmatter. The loader logs a warning with the file path to `agentao.log`. The usual cause is an unquoted colon: `description: Deploy to AWS: ECS` fails, `description: "Deploy to AWS: ECS"` works.
 - A name that starts with `mcp:` is refused. That prefix is reserved for [MCP skills](/en/part-5/3-mcp#mcp-skills).
 
@@ -171,8 +171,11 @@ See [`prompts/builder.py`](https://github.com/jin-bo/agentao/blob/main/agentao/p
 ```bash
 /skills disable <name>     # persistent — survives restart
 /skills enable <name>      # undo
-/skills                    # list, with its own Disabled section
+/skills list               # list, with its own Disabled section
+/skills manage             # checkbox picker (bare /skills opens it on a terminal)
 ```
+
+The picker shows every skill as `[x] name` (enabled) or `[ ] name` (disabled), with an `(active)`, `(mcp)` or `(missing)` tag. Type to search, use ↑/↓ to move, Space or Enter to toggle, and Esc or Ctrl+C to close. **Each toggle is saved at once**, through the same `disable_skill` / `enable_skill` calls as the subcommands. If a save fails, the row keeps its state and shows the error. On close, one line says how many skills changed. When stdin or stdout is not a terminal, bare `/skills` prints the list instead.
 
 The state lives in `.agentao/skills_config.json` under `disabled_skills` (project scope only — see [Appendix B](/en/appendix/b-config-keys)). Three things matter when you embed:
 
@@ -180,7 +183,7 @@ The state lives in `.agentao/skills_config.json` under `disabled_skills` (projec
 - **A sub-agent copies the disabled set when it starts.** A disable made while a sub-agent is running reaches the *next* sub-agent, not that one.
 - **A scan never prunes the list.** A `/skills reload` that cannot see the skill — unmounted share, directory renamed mid-session — leaves the name in place and writes nothing, so the skill comes back still disabled. A scan cannot tell "deleted" from "not discoverable right now", and since a disable is an activation gate, guessing wrong would silently re-arm the skill for the model.
 
-The cost of that last rule is that a name can outlive the skill it disabled. `/skills` lists those separately, under **Disabled, not found by the last scan**, and `/skills enable <name>` clears such a name whether or not the skill is currently present.
+The cost of that last rule is that a name can outlive the skill it disabled. `/skills list` lists those separately, under **Disabled, not found by the last scan**, the picker tags them `(missing)`, and `/skills enable <name>` (or a toggle in the picker) clears such a name whether or not the skill is currently present.
 
 ### How `skills_config.json` is written
 
