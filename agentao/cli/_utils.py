@@ -148,7 +148,7 @@ _SLASH_COMMANDS = [
     '/sandbox', '/sandbox off', '/sandbox on', '/sandbox profile',
     '/sandbox profiles', '/sandbox status',
     '/sessions', '/sessions clone', '/sessions delete', '/sessions delete all', '/sessions list', '/sessions rename', '/sessions resume',
-    '/plugins', '/plugins list',
+    '/plugins', '/plugins hooks', '/plugins list',
     '/replay', '/replay list', '/replay on', '/replay off',
     '/replay show', '/replay tail', '/replay prune',
     '/replay delete', '/replay delete all',

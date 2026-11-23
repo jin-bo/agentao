@@ -78,7 +78,7 @@ class _StubCli:
     def on_session_start(self, *, source="startup"):
         self.started_with = source
 
-    def _apply_mode(self, mode):
+    def _apply_mode(self, mode, *, cause="cli"):
         self.permission_mode = mode
 
 

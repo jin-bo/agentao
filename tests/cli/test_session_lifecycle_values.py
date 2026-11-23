@@ -112,7 +112,7 @@ class _ResetCli(_RecordingCli):
         self.last_response = None
         self._cached_ctx_pct = 0.0
 
-    def _apply_mode(self, mode):
+    def _apply_mode(self, mode, *, cause="cli"):
         self.permission_mode = mode
 
 

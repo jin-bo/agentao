@@ -72,7 +72,9 @@ def _reset_session(cli: AgentaoCLI, *, clear_memories: bool) -> _ResetOutcome:
     cli._staged_images = []
     cli.last_response = None
     cli._cached_ctx_pct = 0.0
-    cli._apply_mode(PermissionMode.WORKSPACE_WRITE)
+    # Its own cause, so ``/permission`` says "session reset" rather than
+    # ``/mode`` (#668). Recorded even when the mode was already workspace-write.
+    cli._apply_mode(PermissionMode.WORKSPACE_WRITE, cause="cli-reset")
     cli.on_session_start(source="clear")
     return _ResetOutcome(
         not_cleared=not_cleared,

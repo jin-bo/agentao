@@ -57,9 +57,12 @@ def apply_permission_mode(
     so re-setting the current mode does not pollute a replay timeline.
     ``cause`` names the entry path — ``"cli"`` (``/mode``),
     ``"cli-allow-all"`` (answering "2" at the confirmation prompt),
-    ``"cli-plan-implement"``, ``"cli-resume"`` (``/sessions resume`` ending
-    that grant), ``"acp"``, ``"run"``, ``"host"`` — and is the
-    payload's only free-form field.
+    ``"cli-plan"`` (``/plan`` entering plan mode), ``"cli-plan-exit"``
+    (leaving plan mode: ``/plan implement``, ``/plan clear``, a reset),
+    ``"cli-plan-implement"`` (approving a plan, which leaves read-only),
+    ``"cli-reset"`` (``/clear`` or ``/new``), ``"cli-resume"``
+    (``/sessions resume`` ending that grant), ``"acp"``,
+    ``"run"``, ``"host"`` — and is the payload's only free-form field.
 
     ``mode`` may be the string value (``"read-only"`` …) or the enum; it is
     normalised by :func:`~agentao.permissions._parse_permission_mode` before

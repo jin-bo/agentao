@@ -21,7 +21,9 @@ class PlanController:
     permission_engine : PermissionEngine
         The live permission engine instance.
     apply_mode_fn : callable
-        ``CLI._apply_mode`` — switches mode, resets allow_all, etc.
+        ``CLI._apply_mode`` — switches mode, resets allow_all, etc. Called
+        as ``apply_mode_fn(mode)`` when plan mode ends; the CLI binds the
+        ``cli-plan-exit`` cause with ``functools.partial``.
     load_settings_fn : callable
         ``CLI._load_settings`` — reads persisted mode from settings.json.
     """
@@ -32,8 +34,14 @@ class PlanController:
         permission_engine: object,
         apply_mode_fn: Callable,
         load_settings_fn: Callable[[], Dict],
+        enter_mode_fn: Optional[Callable] = None,
     ):
         self._session = session
+        # Switches to the PLAN preset and records the switch
+        # (``apply_permission_mode(..., cause="cli-plan")``). ``None`` keeps
+        # the bare ``engine.set_mode`` for a controller built without an
+        # agent (unit tests); the CLI always passes it.
+        self._enter_mode = enter_mode_fn
         self._engine = permission_engine
         self._apply_mode = apply_mode_fn
         self._load_settings = load_settings_fn
@@ -53,7 +61,10 @@ class PlanController:
         self._session.pre_plan_mode = current_mode
         self._session.pre_plan_allow_all = allow_all
         self._session.phase = PlanPhase.ACTIVE
-        self._engine.set_mode(PermissionMode.PLAN)
+        if self._enter_mode is not None:
+            self._enter_mode(PermissionMode.PLAN)
+        else:
+            self._engine.set_mode(PermissionMode.PLAN)
 
     # ------------------------------------------------------------------
     # Draft management
@@ -167,6 +178,9 @@ class PlanController:
             except ValueError:
                 restore = PermissionMode.WORKSPACE_WRITE
 
+        # One argument, so a host's ``apply_mode_fn`` keeps working. The CLI
+        # binds ``cause="cli-plan-exit"`` (``cli/app.py``): leaving plan mode
+        # is not a ``/mode`` switch, and ``/permission`` names the cause.
         self._apply_mode(restore)
 
         # _apply_mode resets allow_all to False; restore the saved value *after*.

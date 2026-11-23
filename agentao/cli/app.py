@@ -239,6 +239,33 @@ def _check_agent_postconditions(agent, cli: "AgentaoCLI") -> None:
         )
 
 
+def _read_project_settings(project_root) -> tuple:
+    """``(settings, problem)`` for ``<project_root>/.agentao/settings.json``.
+
+    ``problem`` is ``None`` when the file was read, else why it was ignored
+    (the warning is printed here). ``/permission`` names it as the reason
+    the default mode applies (#668).
+    """
+    from ..replay.config import _read_settings, settings_path
+    path = settings_path(project_root)
+    # Runs from AgentaoCLI.__init__, before the factory, so it must not
+    # raise. ``_save_settings`` assigns into the result and
+    # ``_load_saved_mode`` calls ``.get`` on it, so ``_read_settings``
+    # hands back ``{}`` for anything that is not a JSON object.
+    data, problem = _read_settings(path)
+    if problem is not None:
+        # ``escape`` because the interpolated path and exception text are
+        # arbitrary: ``PermissionError`` stringifies as ``[Errno 13] ...``
+        # and an unbalanced ``[/...]`` makes Rich raise ``MarkupError`` —
+        # re-introducing the startup crash this branch exists to prevent.
+        from rich.markup import escape as _esc
+
+        console.print(
+            f"[warning]Ignoring {_esc(str(path))}: {_esc(problem)}[/warning]"
+        )
+    return data, problem
+
+
 class AgentaoCLI:
     """CLI interface for Agentao."""
 
@@ -332,7 +359,7 @@ class AgentaoCLI:
         # once ``_project_root`` is known. Set now so ``current_mode`` exists for
         # anything the factory triggers through ``transport=self``. One read per
         # root, reused below, so a malformed file is reported once, not twice.
-        _settings = self._load_settings()
+        _settings, _settings_problem = self._load_settings_checked()
         self.current_mode: _PM = _load_saved_mode(_settings)
 
         # Resolved here rather than in the signature default so the default
@@ -359,8 +386,26 @@ class AgentaoCLI:
             # read above came from the wrong ``settings.json``. Re-read before
             # anything applies it: otherwise the project's saved posture is
             # ignored at startup and then overwritten on the next ``/mode``.
-            _settings = self._load_settings()
+            _settings, _settings_problem = self._load_settings_checked()
             self.current_mode = _load_saved_mode(_settings)
+        # Where the starting mode came from, and later where each switch came
+        # from (``transport.py::emit_event``), for ``/permission`` (#668).
+        from ..replay.config import settings_path as _settings_path
+        from .session_diagnostics import startup_mode_source
+        self._mode_source = startup_mode_source(
+            _settings, _settings_problem, _settings_path(self._project_root),
+        )
+        # Inputs the permission loader ignored at startup. Recorded now so
+        # ``/permission`` reports this session's state, not today's disk.
+        from ..embedding.permission_loader import (
+            IGNORED_PROJECT_RULE_FILE_REASON,
+            ignored_project_rule_file,
+        )
+        from ..paths import user_root as _user_root
+        _ignored = ignored_project_rule_file(self._project_root, _user_root())
+        self._ignored_permission_inputs: list = (
+            [(str(_ignored), IGNORED_PROJECT_RULE_FILE_REASON)] if _ignored else []
+        )
         # Hold a reference so the CLI can switch modes / inspect rules
         # without going through the agent.
         self.permission_engine = self.agent.permission_engine
@@ -376,8 +421,9 @@ class AgentaoCLI:
         self._plan_controller = PlanController(
             session=self._plan_session,
             permission_engine=self.permission_engine,
-            apply_mode_fn=self._apply_mode,
+            apply_mode_fn=functools.partial(self._apply_mode, cause="cli-plan-exit"),
             load_settings_fn=self._load_settings,
+            enter_mode_fn=self._enter_plan_mode,
         )
         from ..tools.plan import PlanSaveTool, PlanFinalizeTool
         self.agent.tools.register(PlanSaveTool(self._plan_controller), origin="plan")
@@ -387,7 +433,8 @@ class AgentaoCLI:
         self.agent.tool_runner._session_id = self.current_session_id
 
         from .subcommands import _load_and_register_plugins
-        _load_and_register_plugins(self.agent)
+        # Kept for ``/plugins hooks`` (#668): what this session loaded.
+        self._plugin_load_report = _load_and_register_plugins(self.agent)
 
         _kb = KeyBindings()
 
@@ -429,24 +476,11 @@ class AgentaoCLI:
         self.agent.tool_runner.set_readonly_mode(self.readonly_mode)
 
     def _load_settings(self) -> dict:
-        from ..replay.config import _read_settings, settings_path
-        path = settings_path(self._project_root)
-        # Runs from AgentaoCLI.__init__, before the factory, so it must not
-        # raise. ``_save_settings`` assigns into the result and
-        # ``_load_saved_mode`` calls ``.get`` on it, so ``_read_settings``
-        # hands back ``{}`` for anything that is not a JSON object.
-        data, problem = _read_settings(path)
-        if problem is not None:
-            # ``escape`` because the interpolated path and exception text are
-            # arbitrary: ``PermissionError`` stringifies as ``[Errno 13] ...``
-            # and an unbalanced ``[/...]`` makes Rich raise ``MarkupError`` —
-            # re-introducing the startup crash this branch exists to prevent.
-            from rich.markup import escape as _esc
+        return _read_project_settings(self._project_root)[0]
 
-            console.print(
-                f"[warning]Ignoring {_esc(str(path))}: {_esc(problem)}[/warning]"
-            )
-        return data
+    def _load_settings_checked(self) -> tuple:
+        """``(settings, problem)``: ``problem`` says why the file was ignored."""
+        return _read_project_settings(self._project_root)
 
     def _save_settings(self) -> None:
         from ..replay.config import _read_settings, settings_path
@@ -480,20 +514,34 @@ class AgentaoCLI:
                 f"{_esc(str(exc))}. It still applies for this session.[/warning]"
             )
 
-    def _apply_mode(self, mode) -> None:
+    def _apply_mode(self, mode, *, cause: str = "cli") -> None:
         from ..permissions import PermissionMode
         from ..runtime.permission_mode import apply_permission_mode
+        from .session_diagnostics import mode_source_for_cause
 
         self.current_mode = mode
         # Owns the engine's preset, the runner's read-only flag, and the
         # ``READONLY_MODE_CHANGED`` / ``PERMISSION_MODE_CHANGED`` replay
         # events — shared with ACP ``session/set_mode`` and ``agentao run``.
-        apply_permission_mode(self.agent, mode, cause="cli")
+        apply_permission_mode(self.agent, mode, cause=cause)
+        # Also when the preset did not move (no event fires): the mode is
+        # now this switch's, and it was just saved to ``settings.json``.
+        self._mode_source = mode_source_for_cause(cause)
         # The CLI's own mirror of the flag, read by the status toolbar.
         self.readonly_mode = (mode == PermissionMode.READ_ONLY)
         self.allow_all_tools = False
         self._pre_grant_mode = None
         self._save_settings()
+
+    def _enter_plan_mode(self, mode) -> None:
+        """The PLAN switch for ``PlanController.enter``, recorded as ``cli-plan``.
+
+        Not ``_apply_mode``: plan mode is never written to ``settings.json``,
+        and the plan controller handles ``allow_all_tools`` itself.
+        """
+        from ..runtime.permission_mode import apply_permission_mode
+
+        apply_permission_mode(self.agent, mode, cause="cli-plan")
 
     # ── ACP inbox flush (delegated) ─────────────────────────────────────
 

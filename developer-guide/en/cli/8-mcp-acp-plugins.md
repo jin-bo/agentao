@@ -471,6 +471,33 @@ The diagnostic report covers:
 - Warnings (e.g. plugin claims a hook but failed to register)
 - Errors (e.g. import failure)
 
+`/plugins` (and `/plugins list`) discovers plugins on disk each time you run it. If a file changed after startup, its report can differ from what this session loaded.
+
+### `/plugins hooks` — what this session loaded
+
+`/plugins hooks` shows the lifecycle hooks the session loaded at startup, read from the session's own record:
+
+```text
+> /plugins hooks
+Hooks loaded at startup: 2 rule(s)
+(From this session's startup load. Restart to pick up changed files.)
+
+  - PreToolUse  matcher=write_file  type=command  plugin=audit (/repo/.agentao/plugins/local/audit)
+  - SessionStart  matcher=*  type=command  plugin=audit (/repo/.agentao/plugins/local/audit)
+
+Hook parser warnings at startup (skipped entries and notes):
+  - [audit] (hooks) Unsupported hook event 'NotARealEvent' — skipped
+
+Plugins not loaded (their hooks are absent):
+  - broken (/repo/.agentao/plugins/local/broken)
+      skill resolution error: [broken] Command 'x' has neither 'source' nor 'content'
+```
+
+- Each hook shows its event, matcher, type and plugin with its root. The command, arguments, prompt and URL are never shown. Reasons go through secret redaction.
+- *Hook parser warnings* list the hook entries the parser refused (an unsupported event or hook type, a malformed entry), and its notes on entries it kept (a default timeout, a matcher compared as literal text).
+- *Plugins not loaded* names plugins whose skill or agent resolution or registration failed. None of their hooks load. Plugin discovery errors and warnings follow.
+- Opening the view runs no hook and reads no file. Changes on disk show after a restart.
+
 ### When to use
 
 - **Debugging "why is my agent doing X?"** — a plugin may be silently injecting a system prompt or rejecting a tool call

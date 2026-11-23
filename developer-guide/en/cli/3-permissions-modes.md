@@ -163,6 +163,15 @@ Edit `~/.agentao/permissions.json` directly to persist rule changes. The CLI re-
 
 There's also a `/permission` command for inspecting the currently effective rules without leaving the CLI. It's a power-user surface and goes beyond what most CLI users need — see [Part 5.4 · Permission Engine](/en/part-5/4-permissions) for the full reference.
 
+Below the rules, a **Where this comes from** section shows:
+
+- **Source** of the current mode: `default`, `project settings (<path>)`, or the in-session switch that set it — `/mode`, a session reset by `/clear` or `/new`, the temporary full-access grant from answering `2`, `/plan`, leaving plan mode, approving a plan, or `/sessions resume`.
+- **Fallback reason**, when `settings.json` names a mode that is not valid or the file cannot be read. The mode is then the default `workspace-write`, and this line says why.
+- **Policy sources** the engine holds (`preset:<current mode>`, `user:<path>` read at startup, …).
+- **Found at startup, not used by the built-in loader**: a project-scope `.agentao/permissions.json`. The built-in loader accepts only the user-scope `~/.agentao/permissions.json`.
+
+It reports what this session recorded. Editing a config file after startup does not change it until you restart.
+
 ## Pitfalls
 
 - **Confirmation UI hangs** — the spinner stops on confirmation. If the prompt seems frozen, you might be looking at the spinner-stopped state and missed the menu. Scroll up.

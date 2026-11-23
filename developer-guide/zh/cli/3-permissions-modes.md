@@ -163,6 +163,15 @@ Sandbox: enabled
 
 还有一个 `/permission` 命令用于不离开 CLI 查看当前生效规则。这是高级面，多数 CLI 用户用不到 — 完整参考见 [Part 5.4 · 权限引擎](/zh/part-5/4-permissions)。
 
+规则下方的 **Where this comes from** 一节显示：
+
+- 当前模式的**来源**（Source）：`default`、`project settings (<路径>)`，或设置它的会话内切换——`/mode`、`/clear` 或 `/new` 造成的会话重置、回答 `2` 得到的临时 full-access 授权、`/plan`、退出计划模式、批准计划，或 `/sessions resume`。
+- **回退原因**（Fallback reason）：`settings.json` 里的模式值无效或文件读不了时，模式取默认的 `workspace-write`，这一行说明原因。
+- 权限引擎持有的**策略来源**（Policy sources：`preset:<当前模式>`、启动时读取的 `user:<路径>` 等）。
+- **启动时发现、内置加载器不使用的输入**（Found at startup, not used by the built-in loader）：项目级 `.agentao/permissions.json`。内置加载器只接受用户级 `~/.agentao/permissions.json`。
+
+它报告的是本会话记录的状态。启动后改配置文件，重启前不会改变它。
+
 ## 容易踩的坑
 
 - **确认 UI 看着卡住** — 弹确认时 spinner 会停。看着像冻住了，往上滚一下，菜单在那儿。

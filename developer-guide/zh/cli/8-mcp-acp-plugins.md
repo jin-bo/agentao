@@ -471,6 +471,33 @@ Errors: 0
 - Warnings（如插件声明了 hook 但注册失败）
 - Errors（如 import 失败）
 
+`/plugins`（以及 `/plugins list`）每次运行都会重新从磁盘发现插件。启动后改过文件的话，它的结果可能和本会话加载的不同。
+
+### `/plugins hooks` — 本会话加载了什么
+
+`/plugins hooks` 显示会话启动时加载的生命周期 hooks，读的是会话自己的记录：
+
+```text
+> /plugins hooks
+Hooks loaded at startup: 2 rule(s)
+(From this session's startup load. Restart to pick up changed files.)
+
+  - PreToolUse  matcher=write_file  type=command  plugin=audit (/repo/.agentao/plugins/local/audit)
+  - SessionStart  matcher=*  type=command  plugin=audit (/repo/.agentao/plugins/local/audit)
+
+Hook parser warnings at startup (skipped entries and notes):
+  - [audit] (hooks) Unsupported hook event 'NotARealEvent' — skipped
+
+Plugins not loaded (their hooks are absent):
+  - broken (/repo/.agentao/plugins/local/broken)
+      skill resolution error: [broken] Command 'x' has neither 'source' nor 'content'
+```
+
+- 每条 hook 显示事件、matcher、类型，以及插件名和根目录。命令、参数、prompt 和 URL 一律不显示。原因文本经过密钥脱敏。
+- *Hook parser warnings* 列出解析器拒收的 hook 条目（不支持的事件或 hook 类型、格式错误的条目），以及它对保留条目的提示（使用默认超时、matcher 按字面文本比较）。
+- *Plugins not loaded* 列出技能或子 Agent 解析、注册失败的插件，它们的 hook 都不会加载。其后是插件发现阶段的错误和警告。
+- 打开这个视图不会触发 hook，也不读文件。磁盘上的改动要重启后才显示。
+
 ### 什么时候用
 
 - **排查 "agent 怎么会做这事？"** — 可能某个插件在静悄悄地注入系统提示，或拒掉某个工具调用
