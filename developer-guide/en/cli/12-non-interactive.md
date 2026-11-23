@@ -164,6 +164,34 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 
 For the full design rationale — including v1 scope, deferred typing (`number` / `boolean`), and the goose-recipes comparison — see [docs/design/run-spec-parameters.md](https://github.com/jin-bo/agentao/blob/main/docs/design/run-spec-parameters.md).
 
+#### Recipe: review local changes
+
+A read-only review of what you changed, with your own review rules. `read-only` blocks the shell, so the run cannot call `git` itself. Write the diff to a file first; `read_file` may still read it and the changed files. The spec's stdin is the spec itself, and a large diff in `--param` can exceed the command-line length limit, so a file is the reliable route.
+
+```yaml
+# .agentao/runs/review-changes.yaml
+parameters:
+  - name: diff_file
+    default: .agentao/review.diff
+prompt: |
+  Review the code changes in {{ diff_file }}. Read it with read_file, and
+  read the changed files where you need context. Do not change any file.
+  Report correctness bugs, ordered by severity (high, medium, low). For each
+  give `path:line`, the problem, the evidence, and the fix.
+  If nothing needs action, reply exactly: No actionable findings.
+permission_mode: read-only
+max_iterations: 30
+```
+
+```bash
+git diff HEAD > .agentao/review.diff      # staged + unstaged changes
+agentao run --spec .agentao/runs/review-changes.yaml
+```
+
+- **Scope** is whatever you put in the file. `git diff HEAD` holds tracked changes only. For a new file, run `git add -N <file>` first. To review a branch, use `git diff $(git merge-base main HEAD)`: commits since `main` plus uncommitted changes.
+- **Review rules** are yours to edit in `prompt`. The spec sets no `instructions`, so `AGENTAO.md` still applies.
+- Interactively, `/diff` shows the same changes without a model, and `/plan` lets the model run read-only `git diff` / `git log` / `git show` itself while all writes stay blocked.
+
 ### Output
 
 `--format text` writes only the final assistant text to stdout. Diagnostics go to stderr. This is the closest analog to `agentao -p`.
