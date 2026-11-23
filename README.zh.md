@@ -92,7 +92,7 @@ REPL 起来后最先用的几个命令：
 /help       全部 slash 命令 + agent 工具清单
 /status     模型、模式、token 用量、激活的 skills
 /model      在当前 provider 下切换模型
-/mode       切换权限模式（read-only · workspace-write · full-access · plan）
+/mode       切换权限模式（read-only · workspace-write · full-access）
 /plan       进入 plan 模式（只读思考，落 .agentao/plan.md）
 /memory     查看持久记忆
 /mcp list   MCP 服务器状态
@@ -126,8 +126,9 @@ CLI 手册：**[agentao.cn/zh/cli/](https://agentao.cn/zh/cli/)** —— 13 章�
 | **记忆** | SQLite 持久记忆、两个作用域（user / project）、自动召回、jieba 中文分词 | [CLI 第 6 章](developer-guide/zh/cli/6-memory.md) |
 | **Skills** | `skills/` 自动发现、GitHub 安装（`agentao skill install owner/repo[:path][@ref]`）、`/crystallize` 工作流 | [CLI 第 5 章](developer-guide/zh/cli/5-skills-crystallize.md) |
 | **协议** | MCP（stdio / Streamable HTTP / SSE）接工具 · ACP（stdio JSON-RPC）接整个 agent · 插件生命周期 | [CLI 第 8 章](developer-guide/zh/cli/8-mcp-acp-plugins.md) |
+| **会话** | 每轮结束自动保存 · `/sessions` 恢复、改名、克隆 · `agentao --resume` | [CLI 第 11 章](developer-guide/zh/cli/11-sessions-agents.md) |
 | **子 Agent** | 内建 `codebase-investigator` / `generalist`、自定义 `.agentao/agents/<name>.md`、前/后台仪表盘 | [CLI 第 11 章](developer-guide/zh/cli/11-sessions-agents.md) |
-| **回放与输出** | JSONL 会话录制（`.agentao/replays/`）· markdown 切换 · `/copy` 最近回复 | [CLI 第 9 章](developer-guide/zh/cli/9-replay-output.md) |
+| **回放与输出** | JSONL 会话录制（`.agentao/replays/`）· markdown 切换 · `/copy` 最近回复 · `/export` 把对话导出为 Markdown | [CLI 第 9 章](developer-guide/zh/cli/9-replay-output.md) |
 | **嵌入** | `Agentao(...)` 构造器 · `events()` 流 · `active_permissions()` · 能力注入 · ACP Pydantic schema | [DG Part 2](https://agentao.cn/zh/part-2/) · [Part 4](https://agentao.cn/zh/part-4/) |
 
 ---
