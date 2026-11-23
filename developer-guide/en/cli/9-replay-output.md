@@ -1,6 +1,6 @@
 # 9. Replay & Output
 
-Three commands for capturing what the agent did and controlling what you see: `/replay`, `/copy`, `/markdown`.
+Four commands for capturing what the agent did and controlling what you see: `/replay`, `/copy`, `/export`, `/markdown`.
 
 ## `/replay` — record, list, inspect, prune sessions
 
@@ -129,6 +129,23 @@ What gets copied:
 - Excludes tool-use traces and reasoning summaries
 
 If `/copy` says "nothing to copy", you've either just started a session or the last message wasn't an assistant response.
+
+## `/export` — save a conversation as Markdown
+
+```text
+> /export notes/chat.md
+> /export chat.md --session a1b2c3
+> /export chat.md --tools --force
+```
+
+Writes a Markdown transcript to a local file. It reads the conversation history, so it works with replay off. A relative path is relative to the working directory.
+
+- **What it holds.** By default: your own messages and the assistant's replies, under `## User` / `## Assistant`, with a header naming the session, model and export time. System instructions, reasoning, runtime notes (background agent updates, hook follow-ups, skill notes) and tool calls and results are left out. `--tools` adds tool calls and results, each result cut at 4,000 characters with a note. An image becomes `[image]`, another attachment `[<type> attachment]`. Context a `UserPromptSubmit` hook added to a message is removed. A `/goal` continuation prompt is sent as a turn, so it appears under `## User`.
+- **Compacted history.** If the conversation was compacted, the earlier messages are gone. The file says so at the top and marks where the summary was. The summary itself is not included.
+- **Which conversation.** The current one, or a saved one with `--session <id>`: a session-id prefix that matches exactly one session. A prefix that matches several is refused, with the candidates listed.
+- **Existing files.** An existing file is not replaced unless you add `--force`. A missing folder or a directory as the target is an error. The file is written whole and then moved into place.
+
+The title is the session's name (`/sessions rename`) or else its first message.
 
 ## `/markdown` — toggle rich rendering
 

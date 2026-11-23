@@ -118,6 +118,7 @@ All commands start with `/`:
   - `/replay delete <id>` - Delete a single replay file by id (prefix match)
   - `/replay delete all` - Delete all replay files (requires confirmation; skips the active one)
 - `/copy` - Copy the last assistant response (Markdown) to clipboard
+- `/export <path> [--session <id>] [--tools] [--force]` - Save the conversation (or a saved session by id prefix) as a Markdown file; user and assistant messages only unless `--tools`; an existing file needs `--force`
 - `/markdown` - Toggle Markdown rendering ON/OFF (default: ON)
 - `/agent [subcommand]` - List or run sub-agents
   - `/agent` or `/agent list` - List available sub-agents

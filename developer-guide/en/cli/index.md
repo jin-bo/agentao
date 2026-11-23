@@ -26,7 +26,7 @@ You drop into a chat REPL. Type a normal sentence to talk to the agent. Type `/`
 - [**6. Memory**](./6-memory) — `/memory` · what gets remembered, where it lives, how to inspect and clear it
 - [**7. Context & Status**](./7-context-status) — `/context`, `/compact`, `/status` · token budget, compaction, session size
 - [**8. MCP / ACP / Plugins**](./8-mcp-acp-plugins) — `/mcp`, `/acp`, `/plugins` · attach external tool servers
-- [**9. Replay & Output**](./9-replay-output) — `/replay`, `/copy`, `/markdown` · record sessions, copy answers, render control
+- [**9. Replay & Output**](./9-replay-output) — `/replay`, `/copy`, `/export`, `/markdown` · record sessions, copy answers, export transcripts, render control
 - [**10. Configuration Reference**](./10-config-reference) — every config file the CLI reads, with paths and precedence
 - [**11. Sessions, Agents & Tasks**](./11-sessions-agents) — `/sessions`, `/agent`, `/agents`, `/todos`, `/tools` · restore and parallel workbench
 - [**12. Non-Interactive Entry Points**](./12-non-interactive) — `agentao init`, `-p`, `--resume`, `--acp`, `agentao doctor`, `agentao config validate` · scripts, CI checks, and host integration
