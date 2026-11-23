@@ -182,7 +182,7 @@ def load_permission_config(
             sources.append(f"user:{user_path}")
             rules = user_rules
             shell = _parse_shell_block((document or {}).get("shell"), user_path)
-    _warn_on_project_rule_file(project_root)
+    _warn_on_project_rule_file(project_root, user_root)
     _warn_on_unlabelled_shell_rules(rules, shell, user_root)
     return PermissionConfig(rules=rules, sources=sources, shell=shell)
 
@@ -259,7 +259,7 @@ def load_permission_rules(
             sources.append(f"user:{user_path}")
             rules = user_rules
 
-    _warn_on_project_rule_file(project_root)
+    _warn_on_project_rule_file(project_root, user_root)
 
     return rules, sources
 
@@ -272,24 +272,38 @@ IGNORED_PROJECT_RULE_FILE_REASON = (
 )
 
 
-def ignored_project_rule_file(project_root: Path) -> Optional[Path]:
+def ignored_project_rule_file(
+    project_root: Path, user_root: Optional[Path] = None,
+) -> Optional[Path]:
     """The project-scope rule file the loader ignores, if one exists.
 
     The CLI records this at startup so ``/permission`` can name it (#668)
     without reading the disk again when it is opened.
+
+    When the project root is the user's home, ``<project_root>/.agentao`` *is*
+    ``user_root``, and that file is the one the loader honours: it is not
+    reported as ignored.
     """
     project_path = Path(project_root) / ".agentao" / "permissions.json"
     try:
         # ``exists()`` raises on a ``.agentao`` without search permission,
         # and the CLI calls this from ``AgentaoCLI.__init__``.
-        return project_path if project_path.exists() else None
+        if not project_path.exists():
+            return None
+        if user_root is not None:
+            user_path = Path(user_root) / "permissions.json"
+            if project_path.resolve() == user_path.resolve():
+                return None
+        return project_path
     except OSError:
         return None
 
 
-def _warn_on_project_rule_file(project_root: Path) -> None:
+def _warn_on_project_rule_file(
+    project_root: Path, user_root: Optional[Path] = None,
+) -> None:
     """A workspace-scope rule file is never honored, and never silently."""
-    project_path = ignored_project_rule_file(project_root)
+    project_path = ignored_project_rule_file(project_root, user_root)
     if project_path is not None:
         _logger.warning(
             "Ignoring %s: project-scope permission rules are no longer "

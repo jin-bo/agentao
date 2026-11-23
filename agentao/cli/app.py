@@ -401,7 +401,8 @@ class AgentaoCLI:
             IGNORED_PROJECT_RULE_FILE_REASON,
             ignored_project_rule_file,
         )
-        _ignored = ignored_project_rule_file(self._project_root)
+        from ..paths import user_root as _user_root
+        _ignored = ignored_project_rule_file(self._project_root, _user_root())
         self._ignored_permission_inputs: list = (
             [(str(_ignored), IGNORED_PROJECT_RULE_FILE_REASON)] if _ignored else []
         )
@@ -420,7 +421,7 @@ class AgentaoCLI:
         self._plan_controller = PlanController(
             session=self._plan_session,
             permission_engine=self.permission_engine,
-            apply_mode_fn=self._apply_mode,
+            apply_mode_fn=functools.partial(self._apply_mode, cause="cli-plan-exit"),
             load_settings_fn=self._load_settings,
             enter_mode_fn=self._enter_plan_mode,
         )

@@ -485,7 +485,7 @@ Hooks loaded at startup: 2 rule(s)
   - PreToolUse  matcher=write_file  type=command  plugin=audit (/repo/.agentao/plugins/local/audit)
   - SessionStart  matcher=*  type=command  plugin=audit (/repo/.agentao/plugins/local/audit)
 
-Hook entries skipped at startup:
+Hook parser warnings at startup (skipped entries and notes):
   - [audit] (hooks) Unsupported hook event 'NotARealEvent' — skipped
 
 Plugins not loaded (their hooks are absent):
@@ -494,7 +494,7 @@ Plugins not loaded (their hooks are absent):
 ```
 
 - 每条 hook 显示事件、matcher、类型，以及插件名和根目录。命令、参数、prompt 和 URL 一律不显示。原因文本经过密钥脱敏。
-- *Skipped* 是解析器拒收的 hook 条目（不支持的事件或 hook 类型、格式错误的条目）。
+- *Hook parser warnings* 列出解析器拒收的 hook 条目（不支持的事件或 hook 类型、格式错误的条目），以及它对保留条目的提示（使用默认超时、matcher 按字面文本比较）。
 - *Plugins not loaded* 列出技能或子 Agent 解析、注册失败的插件，它们的 hook 都不会加载。其后是插件发现阶段的错误和警告。
 - 打开这个视图不会触发 hook，也不读文件。磁盘上的改动要重启后才显示。
 

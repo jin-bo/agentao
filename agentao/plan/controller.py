@@ -22,7 +22,8 @@ class PlanController:
         The live permission engine instance.
     apply_mode_fn : callable
         ``CLI._apply_mode`` — switches mode, resets allow_all, etc. Called
-        as ``apply_mode_fn(mode, cause="cli-plan-exit")`` when plan mode ends.
+        as ``apply_mode_fn(mode)`` when plan mode ends; the CLI binds the
+        ``cli-plan-exit`` cause with ``functools.partial``.
     load_settings_fn : callable
         ``CLI._load_settings`` — reads persisted mode from settings.json.
     """
@@ -177,9 +178,10 @@ class PlanController:
             except ValueError:
                 restore = PermissionMode.WORKSPACE_WRITE
 
-        # Its own cause, not ``/mode``'s "cli": ``/permission`` names where
-        # the mode came from, and leaving plan mode is not a ``/mode`` switch.
-        self._apply_mode(restore, cause="cli-plan-exit")
+        # One argument, so a host's ``apply_mode_fn`` keeps working. The CLI
+        # binds ``cause="cli-plan-exit"`` (``cli/app.py``): leaving plan mode
+        # is not a ``/mode`` switch, and ``/permission`` names the cause.
+        self._apply_mode(restore)
 
         # _apply_mode resets allow_all to False; restore the saved value *after*.
         # We return restore_allow_all so the CLI can set it on itself.

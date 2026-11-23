@@ -25,8 +25,6 @@ from ..security.secret_scan import redact
 #: Readable labels for the ``cause`` of ``apply_permission_mode``. An unknown
 #: cause (a host-defined one) is shown as written.
 _CAUSE_LABELS = {
-    # ``/clear`` and ``/new`` reset to workspace-write through ``_apply_mode``
-    # with this cause too, so the label names both paths.
     "cli": "/mode in this session",
     "cli-reset": "session reset (/clear or /new)",
     "cli-allow-all": 'temporary full-access grant (answered "2" at a confirmation prompt)',
@@ -106,7 +104,8 @@ def permission_source_lines(
         lines.append(f"  Source: {describe_mode_source(source)}")
         if source.fallback:
             lines.append(f"  Fallback reason: {redact(source.fallback)}")
-    lines.append("Policy sources (as loaded at startup):")
+    # Read from the live engine: the ``preset:`` entry names the current mode.
+    lines.append("Policy sources:")
     for label in loaded_sources or ["(none)"]:
         lines.append(f"  - {label}")
     if ignored_inputs:
@@ -178,7 +177,7 @@ def hooks_report_lines(report: Optional[PluginLoadReport]) -> List[str]:
 
     skipped = [str(w) for w in report.hook_warnings]
     if skipped:
-        lines += ["", "Hook entries skipped at startup:"]
+        lines += ["", "Hook parser warnings at startup (skipped entries and notes):"]
         lines += [f"  - {redact(text)}" for text in skipped]
 
     failed = [(n, r) for n, r, ok in report.plugins if not ok]

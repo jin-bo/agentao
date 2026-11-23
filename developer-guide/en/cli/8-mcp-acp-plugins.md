@@ -485,7 +485,7 @@ Hooks loaded at startup: 2 rule(s)
   - PreToolUse  matcher=write_file  type=command  plugin=audit (/repo/.agentao/plugins/local/audit)
   - SessionStart  matcher=*  type=command  plugin=audit (/repo/.agentao/plugins/local/audit)
 
-Hook entries skipped at startup:
+Hook parser warnings at startup (skipped entries and notes):
   - [audit] (hooks) Unsupported hook event 'NotARealEvent' — skipped
 
 Plugins not loaded (their hooks are absent):
@@ -494,7 +494,7 @@ Plugins not loaded (their hooks are absent):
 ```
 
 - Each hook shows its event, matcher, type and plugin with its root. The command, arguments, prompt and URL are never shown. Reasons go through secret redaction.
-- *Skipped* entries are hook entries the parser refused (an unsupported event or hook type, a malformed entry).
+- *Hook parser warnings* list the hook entries the parser refused (an unsupported event or hook type, a malformed entry), and its notes on entries it kept (a default timeout, a matcher compared as literal text).
 - *Plugins not loaded* names plugins whose skill or agent resolution or registration failed. None of their hooks load. Plugin discovery errors and warnings follow.
 - Opening the view runs no hook and reads no file. Changes on disk show after a restart.
 

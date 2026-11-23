@@ -226,3 +226,16 @@ def test_a_reset_is_named_even_without_a_mode_change(tmp_path, printed, handler_
     perm = _permission_text(cli, printed)
     assert "Mode: workspace-write" in perm
     assert "Source: session reset (/clear or /new)" in perm
+
+
+def test_project_rule_file_at_home_is_the_user_file_not_ignored(tmp_path):
+    """Run from the home directory, ``<root>/.agentao`` is the user root."""
+    from agentao.embedding.permission_loader import ignored_project_rule_file
+
+    (tmp_path / ".agentao").mkdir()
+    (tmp_path / ".agentao" / "permissions.json").write_text("{}", encoding="utf-8")
+    assert ignored_project_rule_file(tmp_path, tmp_path / ".agentao") is None
+    other = tmp_path / "elsewhere"
+    assert ignored_project_rule_file(tmp_path, other) == (
+        tmp_path / ".agentao" / "permissions.json"
+    )

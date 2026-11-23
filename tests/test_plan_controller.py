@@ -107,7 +107,7 @@ def test_exit_restores_mode(tmp_path):
 
     assert restored == PermissionMode.WORKSPACE_WRITE
     assert restore_allow_all is False
-    apply_mode.assert_called_with(PermissionMode.WORKSPACE_WRITE, cause="cli-plan-exit")
+    apply_mode.assert_called_with(PermissionMode.WORKSPACE_WRITE)
     assert session.phase == PlanPhase.INACTIVE
 
 
@@ -121,7 +121,7 @@ def test_exit_full_access_with_allow_all_reads_disk(tmp_path):
 
     assert restored == PermissionMode.READ_ONLY
     assert restore_allow_all is True
-    apply_mode.assert_called_with(PermissionMode.READ_ONLY, cause="cli-plan-exit")
+    apply_mode.assert_called_with(PermissionMode.READ_ONLY)
 
 
 def test_multiple_save_overwrites_draft_id(tmp_path):
