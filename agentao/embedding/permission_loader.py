@@ -264,10 +264,33 @@ def load_permission_rules(
     return rules, sources
 
 
+#: Worded as "found", not "skipped": the CLI records the file's presence, and a
+#: host factory that builds its own engine never runs this loader at all.
+IGNORED_PROJECT_RULE_FILE_REASON = (
+    "project-scope permission file; the built-in loader accepts only "
+    "the user-scope ~/.agentao/permissions.json"
+)
+
+
+def ignored_project_rule_file(project_root: Path) -> Optional[Path]:
+    """The project-scope rule file the loader ignores, if one exists.
+
+    The CLI records this at startup so ``/permission`` can name it (#668)
+    without reading the disk again when it is opened.
+    """
+    project_path = Path(project_root) / ".agentao" / "permissions.json"
+    try:
+        # ``exists()`` raises on a ``.agentao`` without search permission,
+        # and the CLI calls this from ``AgentaoCLI.__init__``.
+        return project_path if project_path.exists() else None
+    except OSError:
+        return None
+
+
 def _warn_on_project_rule_file(project_root: Path) -> None:
     """A workspace-scope rule file is never honored, and never silently."""
-    project_path = project_root / ".agentao" / "permissions.json"
-    if project_path.exists():
+    project_path = ignored_project_rule_file(project_root)
+    if project_path is not None:
         _logger.warning(
             "Ignoring %s: project-scope permission rules are no longer "
             "honored (a checked-in allow-rule could grant the agent "

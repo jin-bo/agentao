@@ -85,8 +85,9 @@ All commands start with `/`:
 - `/image <path>` - Attach an image to your next message (vision models)
   - `/image` - List images staged for the next message
   - `/image clear` - Discard all staged images
-- `/plugins` - List loaded plugins with diagnostics
-- `/permission` - Show active permission rules
+- `/plugins` - List plugins found on disk, with diagnostics
+- `/plugins hooks` - Show the hooks this session loaded at startup, and why any were skipped
+- `/permission` - Show active permission rules, where the mode came from, and policy sources
 - `/mcp [subcommand]` - Manage MCP servers
   - `/mcp` or `/mcp list` - List MCP servers with status and tools
   - `/mcp verbose [server]` - Per server: command or URL (secrets masked by rule), env/header names, sign-in state, tools (and any a tool filter hid), resources, templates and skills

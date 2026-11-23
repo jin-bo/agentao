@@ -210,6 +210,11 @@ def emit_event(cli: AgentaoCLI, event: AgentEvent) -> None:
             on_llm_text(cli, event.data.get("chunk", ""))
         elif t == EventType.PLUGIN_HOOK_FIRED:
             on_hook_notices(event.data.get("user_notices"))
+        elif t == EventType.PERMISSION_MODE_CHANGED:
+            # Every switch goes through ``apply_permission_mode``, which emits
+            # this with its ``cause``; ``/permission`` names it (#668).
+            from .session_diagnostics import mode_source_for_cause
+            cli._mode_source = mode_source_for_cause(event.data.get("cause", "unknown"))
         elif t == EventType.LLM_RETRY:
             on_llm_retry(event.data)
         elif t == EventType.COMPACTION_STARTED:

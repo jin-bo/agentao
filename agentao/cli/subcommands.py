@@ -5,8 +5,12 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ._globals import console, logger, _plugin_inline_dirs
+
+if TYPE_CHECKING:
+    from .session_diagnostics import PluginLoadReport
 
 
 # ------------------------------------------------------------------
@@ -314,8 +318,14 @@ def _plugin_list_cli(args) -> None:
     console.print(diag.format_report())
 
 
-def _load_and_register_plugins(agent) -> None:
-    """Load plugins and register their skills, agents, and MCP servers on *agent*."""
+def _load_and_register_plugins(agent) -> PluginLoadReport:
+    """Load plugins and register their skills, agents, and MCP servers on *agent*.
+
+    Returns what it did, for ``/plugins hooks`` (#668): the failures below are
+    otherwise only logged, and running discovery again later can disagree
+    with what this session loaded.
+    """
+    from .session_diagnostics import PluginLoadReport
     from ..embedding.plugins.diagnostics import build_diagnostics
     from ..embedding.plugins.manager import PluginManager
     from ..embedding.plugins.mcp import merge_plugin_mcp_servers
@@ -324,8 +334,12 @@ def _load_and_register_plugins(agent) -> None:
 
     mgr = PluginManager(inline_dirs=_plugin_inline_dirs or None)
     loaded = mgr.load_plugins()
+    report = PluginLoadReport(
+        discovery_warnings=list(mgr.get_warnings()),
+        discovery_errors=list(mgr.get_errors()),
+    )
     if not loaded:
-        return
+        return report
 
     failed_plugins: set = set()
     for plugin in loaded:
@@ -335,15 +349,18 @@ def _load_and_register_plugins(agent) -> None:
                 reg_errors = agent.skill_manager.register_plugin_skills(entries)
                 for err in reg_errors:
                     logger.warning("Plugin skill registration failed: %s", err)
+                    report.failures.append((plugin.name, f"skill registration failed: {err}"))
                 if reg_errors:
                     failed_plugins.add(plugin.name)
             except Exception as exc:
                 logger.warning("Plugin skill registration error for '%s': %s", plugin.name, exc)
+                report.failures.append((plugin.name, f"skill registration error: {exc}"))
                 failed_plugins.add(plugin.name)
         if errors:
             failed_plugins.add(plugin.name)
         for err in errors:
             logger.warning("Plugin skill resolution error: %s", err)
+            report.failures.append((plugin.name, f"skill resolution error: {err}"))
 
     _agents_added = False
     for plugin in loaded:
@@ -355,17 +372,20 @@ def _load_and_register_plugins(agent) -> None:
                 reg_errors = agent.agent_manager.register_plugin_agents(defs)
                 for err in reg_errors:
                     logger.warning("Plugin agent registration failed: %s", err)
+                    report.failures.append((plugin.name, f"agent registration failed: {err}"))
                 if reg_errors:
                     failed_plugins.add(plugin.name)
                 else:
                     _agents_added = True
             except Exception as exc:
                 logger.warning("Plugin agent registration error for '%s': %s", plugin.name, exc)
+                report.failures.append((plugin.name, f"agent registration error: {exc}"))
                 failed_plugins.add(plugin.name)
         if errors:
             failed_plugins.add(plugin.name)
         for err in errors:
             logger.warning("Plugin agent resolution error: %s", err)
+            report.failures.append((plugin.name, f"agent resolution error: {err}"))
 
     if _agents_added:
         agent._register_agent_tools()
@@ -400,9 +420,35 @@ def _load_and_register_plugins(agent) -> None:
     agent.tool_runner._plugin_hook_rules = hook_rules
     agent.tool_runner._working_directory = agent.working_directory
 
+    report.plugins = [
+        (p.name, str(p.root_path), p.name not in failed_plugins) for p in loaded
+    ]
+    report.hook_rules = list(hook_rules)
+    report.hook_warnings = list(hook_warnings)
+
     diag = build_diagnostics(loaded, mgr.get_warnings(), mgr.get_errors())
     if diag.plugin_count:
         logger.info("Plugins: %s", diag.summary())
+    return report
+
+
+def handle_plugins_command(cli, args: str) -> None:
+    """``/plugins [list]`` discovers plugins on disk; ``/plugins hooks`` shows
+    the hooks this session loaded at startup (#668)."""
+    from rich.markup import escape
+
+    from ._globals import split_subcommand, unknown_subcommand
+    from .session_diagnostics import hooks_report_lines
+
+    sub, _rest = split_subcommand(args, default="list", lower=True)
+    if sub == "list":
+        _handle_plugins_interactive()
+    elif sub == "hooks":
+        report = getattr(cli, "_plugin_load_report", None)
+        console.print("\n" + escape("\n".join(hooks_report_lines(report))) + "\n")
+    else:
+        console.print(unknown_subcommand(escape(sub)))
+        console.print("[dim]Usage: /plugins [list|hooks][/dim]\n")
 
 
 def _handle_plugins_interactive() -> None:

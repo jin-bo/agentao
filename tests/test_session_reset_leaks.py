@@ -481,7 +481,7 @@ def test_reset_tolerates_a_runtime_without_bg_store():
         def on_session_start(self, *, source="startup"):
             self.started = source
 
-        def _apply_mode(self, mode):
+        def _apply_mode(self, mode, *, cause="cli"):
             self.mode = mode
 
     cli = _Cli()

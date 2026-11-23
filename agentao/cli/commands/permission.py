@@ -29,8 +29,26 @@ _MODE_DESCRIPTIONS = {
 
 
 def handle_permission_command(cli: AgentaoCLI, args: str) -> None:
-    """Handle /permission command — show active permission rules."""
+    """Handle /permission — the active rules, then where the mode and policy came from.
+
+    The second part (#668) reads what this session recorded: the mode's
+    source, the engine's loaded sources, and inputs ignored at startup. It
+    reads no file, so a config file edited after startup does not change it.
+    """
     console.print(f"\n{cli.permission_engine.get_rules_display()}\n")
+    from ..session_diagnostics import permission_source_lines
+
+    # The engine, not ``cli.agent``: ``permission_engine`` is in the
+    # agent-factory contract, ``active_permissions`` is not.
+    active = cli.permission_engine.active_permissions()
+    lines = permission_source_lines(
+        mode=active.mode,
+        source=getattr(cli, "_mode_source", None),
+        loaded_sources=list(active.loaded_sources),
+        ignored_inputs=list(getattr(cli, "_ignored_permission_inputs", []) or []),
+    )
+    console.print("[bold]Where this comes from[/bold]")
+    console.print(escape("\n".join(lines)) + "\n")
 
 
 def handle_mode_command(cli: AgentaoCLI, args: str) -> None:

@@ -323,7 +323,7 @@ def _build_command_table() -> Dict[str, "CommandHandler"]:
         handle_crystallize_command,
     )
     from .replay_commands import handle_replay_command
-    from .subcommands import _handle_plugins_interactive
+    from .subcommands import handle_plugins_command
 
     return {
         "acp": handle_acp_command,
@@ -347,8 +347,8 @@ def _build_command_table() -> Dict[str, "CommandHandler"]:
         "new": handle_new_command,
         "permission": handle_permission_command,
         "plan": handle_plan_command,
-        "plugin": lambda cli, args: _handle_plugins_interactive(),
-        "plugins": lambda cli, args: _handle_plugins_interactive(),
+        "plugin": handle_plugins_command,
+        "plugins": handle_plugins_command,
         "provider": handle_provider_command,
         "replay": handle_replay_command,
         "sandbox": handle_sandbox_command,
