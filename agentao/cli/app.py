@@ -250,7 +250,7 @@ def _read_project_settings(project_root) -> tuple:
     path = settings_path(project_root)
     # Runs from AgentaoCLI.__init__, before the factory, so it must not
     # raise. ``_save_settings`` assigns into the result and
-    # ``_load_saved_mode`` calls ``.get`` on it, so ``_read_settings``
+    # ``_saved_permission_mode`` expects a mapping, so ``_read_settings``
     # hands back ``{}`` for anything that is not a JSON object.
     data, problem = _read_settings(path)
     if problem is not None:
@@ -346,21 +346,14 @@ class AgentaoCLI:
         # Markdown mode: this LLM call's text, rendered if a tool call follows.
         self._pending_text: list[str] = []
 
-        from ..permissions import PermissionMode as _PM
-
-        def _load_saved_mode(settings: dict) -> "_PM":
-            saved = settings.get("mode", "workspace-write")
-            try:
-                return _PM(saved)
-            except ValueError:
-                return _PM.WORKSPACE_WRITE
+        from ..permissions import PermissionMode, _saved_permission_mode
 
         # Provisional: the authoritative read happens after the factory returns,
         # once ``_project_root`` is known. Set now so ``current_mode`` exists for
         # anything the factory triggers through ``transport=self``. One read per
         # root, reused below, so a malformed file is reported once, not twice.
         _settings, _settings_problem = self._load_settings_checked()
-        self.current_mode: _PM = _load_saved_mode(_settings)
+        self.current_mode, _ = _saved_permission_mode(_settings)
 
         # Resolved here rather than in the signature default so the default
         # stays explicit and a replaceable callable is not captured in a
@@ -387,7 +380,7 @@ class AgentaoCLI:
             # anything applies it: otherwise the project's saved posture is
             # ignored at startup and then overwritten on the next ``/mode``.
             _settings, _settings_problem = self._load_settings_checked()
-            self.current_mode = _load_saved_mode(_settings)
+            self.current_mode, _ = _saved_permission_mode(_settings)
         # Where the starting mode came from, and later where each switch came
         # from (``transport.py::emit_event``), for ``/permission`` (#668).
         from ..replay.config import settings_path as _settings_path
@@ -466,8 +459,7 @@ class AgentaoCLI:
         self._acp_config_mtime: Optional[float] = None
 
         self.permission_engine.set_mode(self.current_mode)
-        from ..permissions import PermissionMode as _PM2
-        self.readonly_mode = (self.current_mode == _PM2.READ_ONLY)
+        self.readonly_mode = (self.current_mode == PermissionMode.READ_ONLY)
         self._apply_readonly_mode()
 
     # ── Settings management ─────────────────────────────────────────────
@@ -483,7 +475,11 @@ class AgentaoCLI:
         return _read_project_settings(self._project_root)
 
     def _save_settings(self) -> None:
+        from ..permissions import PermissionMode
         from ..replay.config import _read_settings, settings_path
+
+        if self.current_mode is PermissionMode.PLAN:
+            return
         path = settings_path(self._project_root)
         # Same refusal as ``/replay on|off`` (#495): a file that exists but
         # cannot be read as a JSON object (startup already warned about it)
@@ -524,8 +520,8 @@ class AgentaoCLI:
         # ``READONLY_MODE_CHANGED`` / ``PERMISSION_MODE_CHANGED`` replay
         # events — shared with ACP ``session/set_mode`` and ``agentao run``.
         apply_permission_mode(self.agent, mode, cause=cause)
-        # Also when the preset did not move (no event fires): the mode is
-        # now this switch's, and it was just saved to ``settings.json``.
+        # Also when the preset did not move and no event fires: the mode
+        # still came from this switch, so ``/permission`` names it.
         self._mode_source = mode_source_for_cause(cause)
         # The CLI's own mirror of the flag, read by the status toolbar.
         self.readonly_mode = (mode == PermissionMode.READ_ONLY)

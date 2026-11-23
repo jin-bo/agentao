@@ -54,26 +54,14 @@ class ModeSource:
 def startup_mode_source(
     settings: Mapping[str, Any], problem: Optional[str], path: Path,
 ) -> ModeSource:
-    """The source of the mode read from ``settings.json`` at startup.
-
-    Mirrors ``AgentaoCLI._load_saved_mode``: a missing key means the default,
-    and a value that is not a mode falls back to the default without a word.
-    This records that fallback so ``/permission`` can say it happened.
-    """
-    from ..permissions import PermissionMode
+    """The source of the mode read from ``settings.json`` at startup."""
+    from ..permissions import _saved_permission_mode
 
     if problem is not None:
         return ModeSource("default", fallback=f"{path} could not be read: {problem}")
-    if "mode" not in settings:
-        return ModeSource("default")
-    value = settings.get("mode")
-    try:
-        PermissionMode(value)
-    except (ValueError, TypeError):
-        return ModeSource(
-            "default",
-            fallback=f'invalid config value {value!r} for "mode" in {path}',
-        )
+    _, fallback = _saved_permission_mode(settings, path=path)
+    if fallback is not None or "mode" not in settings:
+        return ModeSource("default", fallback=fallback)
     return ModeSource("settings", detail=str(path))
 
 

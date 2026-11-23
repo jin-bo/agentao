@@ -111,17 +111,36 @@ def test_exit_restores_mode(tmp_path):
     assert session.phase == PlanPhase.INACTIVE
 
 
-def test_exit_full_access_with_allow_all_reads_disk(tmp_path):
+def test_exit_never_restores_plan_mode(tmp_path):
+    """A host that enters with PLAN gets workspace-write back, not PLAN with no session (#675)."""
+    ctrl, session, _, apply_mode, _ = _make_controller(tmp_path)
+
+    ctrl.enter(PermissionMode.PLAN, allow_all=False)
+    restored, _ = ctrl.exit_plan_mode()
+
+    assert restored is PermissionMode.WORKSPACE_WRITE
+    apply_mode.assert_called_once_with(PermissionMode.WORKSPACE_WRITE)
+    assert session.phase == PlanPhase.INACTIVE
+    assert not session.is_active
+
+
+@pytest.mark.parametrize(("saved", "expected"), [
+    ({"mode": "read-only"}, PermissionMode.READ_ONLY),
+    ({"mode": "plan"}, PermissionMode.WORKSPACE_WRITE),
+    ({"mode": "bogus"}, PermissionMode.WORKSPACE_WRITE),
+    ({}, PermissionMode.WORKSPACE_WRITE),
+])
+def test_exit_full_access_with_allow_all_reads_disk(tmp_path, saved, expected):
     """FULL_ACCESS + allow_all should read persisted mode from disk."""
     ctrl, session, _, apply_mode, load_settings = _make_controller(tmp_path)
-    load_settings.return_value = {"mode": "read-only"}
+    load_settings.return_value = saved
 
     ctrl.enter(PermissionMode.FULL_ACCESS, allow_all=True)
     restored, restore_allow_all = ctrl.exit_plan_mode()
 
-    assert restored == PermissionMode.READ_ONLY
+    assert restored is expected
     assert restore_allow_all is True
-    apply_mode.assert_called_with(PermissionMode.READ_ONLY)
+    apply_mode.assert_called_with(expected)
 
 
 def test_multiple_save_overwrites_draft_id(tmp_path):

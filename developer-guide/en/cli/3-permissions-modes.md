@@ -166,7 +166,7 @@ There's also a `/permission` command for inspecting the currently effective rule
 Below the rules, a **Where this comes from** section shows:
 
 - **Source** of the current mode: `default`, `project settings (<path>)`, or the in-session switch that set it — `/mode`, a session reset by `/clear` or `/new`, the temporary full-access grant from answering `2`, `/plan`, leaving plan mode, approving a plan, or `/sessions resume`.
-- **Fallback reason**, when `settings.json` names a mode that is not valid or the file cannot be read. The mode is then the default `workspace-write`, and this line says why.
+- **Fallback reason**, when `settings.json` names a mode that is not valid or the file cannot be read. The mode is then the default `workspace-write`, and this line says why. A saved `plan` falls back the same way, because plan mode is entered only with `/plan`.
 - **Policy sources** the engine holds (`preset:<current mode>`, `user:<path>` read at startup, …).
 - **Found at startup, not used by the built-in loader**: a project-scope `.agentao/permissions.json`. The built-in loader accepts only the user-scope `~/.agentao/permissions.json`.
 

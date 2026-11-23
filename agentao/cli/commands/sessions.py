@@ -188,27 +188,17 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
         console.print("[info]Available: /sessions list | /sessions resume <id> | /sessions rename <name> | /sessions clone [id] | /sessions delete <id> | /sessions delete all[/info]\n")
 
 
-def _saved_mode(cli: AgentaoCLI):
-    """The mode in ``settings.json``; ``workspace-write`` when unset or unusable."""
-    from ...permissions import PermissionMode
-
-    try:
-        mode = PermissionMode(cli._load_settings().get("mode", "workspace-write"))
-    except ValueError:
-        return PermissionMode.WORKSPACE_WRITE
-    return PermissionMode.WORKSPACE_WRITE if mode == PermissionMode.PLAN else mode
-
-
 def _mode_before_grant(cli: AgentaoCLI):
     """The mode in force when "2" was pressed; the saved mode if it was not recorded."""
-    from ...permissions import PermissionMode
+    from ...permissions import PermissionMode, _saved_permission_mode
 
     mode = getattr(cli, "_pre_grant_mode", None)
     if isinstance(mode, PermissionMode) and mode not in (
         PermissionMode.FULL_ACCESS, PermissionMode.PLAN,
     ):
         return mode
-    return _saved_mode(cli)
+    saved_mode, _ = _saved_permission_mode(cli._load_settings())
+    return saved_mode
 
 
 def _drop_session_grant(cli: AgentaoCLI):

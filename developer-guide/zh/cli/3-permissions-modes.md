@@ -166,7 +166,7 @@ Sandbox: enabled
 规则下方的 **Where this comes from** 一节显示：
 
 - 当前模式的**来源**（Source）：`default`、`project settings (<路径>)`，或设置它的会话内切换——`/mode`、`/clear` 或 `/new` 造成的会话重置、回答 `2` 得到的临时 full-access 授权、`/plan`、退出计划模式、批准计划，或 `/sessions resume`。
-- **回退原因**（Fallback reason）：`settings.json` 里的模式值无效或文件读不了时，模式取默认的 `workspace-write`，这一行说明原因。
+- **回退原因**（Fallback reason）：`settings.json` 里的模式值无效或文件读不了时，模式取默认的 `workspace-write`，这一行说明原因。保存的 `plan` 也同样回退，因为计划模式只能通过 `/plan` 进入。
 - 权限引擎持有的**策略来源**（Policy sources：`preset:<当前模式>`、启动时读取的 `user:<路径>` 等）。
 - **启动时发现、内置加载器不使用的输入**（Found at startup, not used by the built-in loader）：项目级 `.agentao/permissions.json`。内置加载器只接受用户级 `~/.agentao/permissions.json`。
 

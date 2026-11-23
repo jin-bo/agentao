@@ -133,7 +133,7 @@ Nothing is written into `os.environ`. **Only LLM variables are taken from the pr
 
 | Key | Type | Default | Allowed values | Notes |
 |---|---|---|---|---|
-| `mode` | string | `"workspace-write"` (when key absent) | `"read-only"`, `"workspace-write"`, `"full-access"` | `"plan"` is internal — set by `/plan` flow, never written by users. `"full-access"` disables all per-tool prompting; use deliberately. |
+| `mode` | string | `"workspace-write"` (when key absent) | `"read-only"`, `"workspace-write"`, `"full-access"` | The CLI never saves `"plan"`; a saved `"plan"` falls back to `"workspace-write"` and `/permission` shows the reason. Enter plan mode with `/plan`. `"full-access"` disables all per-tool prompting; use deliberately. |
 | `agents.enable_builtin` | bool | `false` | — | Enables the built-in sub-agent set. Legacy top-level alias `enable_builtin_agents` (bool) is still honored. |
 | `goal.enabled` | bool | `true` (when key absent) | — | Master switch for the `/goal` long-task continuation. Set `false` to disable the command. |
 | `goal.default_max_turns` | int | `25` | positive int, or `0` for no turn cap | Turn cap applied when `/goal` is set without `--turns` (and not `--unbounded`). One *turn* = one outer continuation `chat()` — **not** `max_iterations` (which bounds the inner tool loop). Primary runaway guard. |
