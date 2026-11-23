@@ -10,6 +10,7 @@
 > /sessions
 > /sessions resume a1b2c3
 > /sessions rename Payments refactor
+> /sessions clone
 > /sessions delete a1b2c3
 > /sessions delete all
 ```
@@ -19,6 +20,7 @@
 | `/sessions` 或 `/sessions list` | 列出保存的会话，最新在前 |
 | `/sessions resume <id>` | 按 session id 前缀恢复；模型和激活 skills 会一起恢复 |
 | `/sessions rename <name>` | 给当前会话起名。列表里用这个名字代替从第一条消息生成的标题，之后的保存、退出和恢复都会保留它。改名会立即保存，即使没有新消息；会话还没有消息时，名字随第一条消息一起保存。空白和换行合并成一个空格，超过 60 个字符会被截断 |
+| `/sessions clone [id]` | 用新 id 保存当前会话的副本；也可以复制已保存的会话（id 前缀必须只匹配一个会话）。你留在当前会话，用 `/sessions resume <新 id>` 进入副本。之后两份各自继续。有名字的会话，副本叫 `<名字> (copy)` |
 | `/sessions delete <id>` | 删除一个保存的会话 |
 | `/sessions delete all` | 删除全部保存会话，单键确认 |
 
@@ -30,6 +32,8 @@ agentao --resume a1b2c3   # 恢复指定前缀
 ```
 
 名字只属于一个会话：`/new`、`/clear` 和恢复另一个会话后都不带这个名字。名字功能出现之前保存的会话文件没有 `name` 字段，仍显示生成的标题。恢复仍按 session id 前缀匹配，不按名字。
+
+副本保留消息、压缩摘要、模型、激活的 skills 和 MCP skill 来源。它和原会话共用项目的工作目录和记忆，所以只是把对话历史分开。轮转最多保留 10 个会话文件。已经有 10 个时，`/sessions clone` 会拒绝，而不是把最旧的挤掉；请先删掉一个。
 
 ## `/agent` 与 `/agents` — 子 Agent
 

@@ -1,6 +1,6 @@
 """``/sessions`` and ``resume_session`` — saved-session management.
 
-``handle_sessions_command`` dispatches list/resume/rename/delete; ``resume_session``
+``handle_sessions_command`` dispatches list/resume/rename/clone/delete; ``resume_session``
 is also exported separately because ``cli.entrypoints`` calls it directly
 when the user passes ``--resume`` on launch (no slash-command parse).
 """
@@ -63,6 +63,58 @@ def _rename_session(cli: AgentaoCLI, raw: str) -> None:
     console.print()
 
 
+def _clone_session(cli: AgentaoCLI, prefix: str) -> None:
+    """``/sessions clone [id]`` — save a resumable copy, stay in this session (#666)."""
+    from pathlib import Path
+
+    from ...embedding.sessions import (
+        SessionLimitReached,
+        clone_agent_session,
+        clone_saved_session,
+    )
+    from ..session import session_name
+    from ._session_match import NoUniqueSession, match_one_session
+
+    root = cli.agent.working_directory
+
+    def refuse(text: str) -> None:
+        console.print()
+        console.print(Text(sanitize_terminal_text(text), style="warning"))
+        console.print()
+
+    try:
+        if not prefix:
+            if not cli.agent.messages:
+                return refuse("Nothing to copy yet: the conversation is empty.")
+            path, sid = clone_agent_session(
+                cli.agent, project_root=root, source_name=session_name(cli),
+            )
+            source = "this session"
+        else:
+            try:
+                source_sid, info = match_one_session(root, prefix)
+            except NoUniqueSession as exc:
+                return refuse(str(exc))
+            try:
+                path, sid = clone_saved_session(Path(info["path"]), project_root=root)
+            except ValueError as exc:
+                return refuse(f"Not copied: session {source_sid[:8]}: {exc}.")
+            source = f"session {source_sid[:8]}"
+    except SessionLimitReached as exc:
+        return refuse(
+            f"Not copied: {exc}, and a copy would push the oldest one out. "
+            "Delete one with /sessions delete <id> first."
+        )
+    except OSError as exc:
+        return refuse(f"Not copied: {exc}")
+
+    console.print()
+    console.print(Text(f"Copied {source} to new session {sid[:8]} ({path.name}).", style="success"))
+    console.print(f"[dim]You are still in the current session. Resume the copy with /sessions resume {sid[:8]}.[/dim]")
+    console.print("[dim]Both share this project's working directory and memory.[/dim]")
+    console.print()
+
+
 def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
     """Handle /sessions command."""
     from ...embedding.sessions import (
@@ -98,13 +150,16 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
             if s["active_skills"]:
                 console.print(f"    Skills: {', '.join(s['active_skills'])}")
             console.print()
-        console.print("[info]Usage:[/info] /sessions resume <id>  or  /sessions rename <name>  or  /sessions delete <id>  or  /sessions delete all\n")
+        console.print("[info]Usage:[/info] /sessions resume <id>  or  /sessions rename <name>  or  /sessions clone [id]  or  /sessions delete <id>  or  /sessions delete all\n")
 
     elif sub == "resume":
         resume_session(cli, sub_arg or None)
 
     elif sub == "rename":
         _rename_session(cli, sub_arg)
+
+    elif sub == "clone":
+        _clone_session(cli, sub_arg.strip())
 
     elif sub == "delete":
         if sub_arg == "all":
@@ -130,7 +185,7 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
 
     else:
         console.print(unknown_subcommand(sub))
-        console.print("[info]Available: /sessions list | /sessions resume <id> | /sessions rename <name> | /sessions delete <id> | /sessions delete all[/info]\n")
+        console.print("[info]Available: /sessions list | /sessions resume <id> | /sessions rename <name> | /sessions clone [id] | /sessions delete <id> | /sessions delete all[/info]\n")
 
 
 def _saved_mode(cli: AgentaoCLI):

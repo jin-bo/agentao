@@ -204,6 +204,59 @@ def save_session(
     Returns:
         ``(path, session_id)`` — path of the saved file and the stable session UUID.
     """
+    return _write_session(
+        messages, model, active_skills, session_id,
+        project_root=project_root, supersedes=supersedes,
+        mcp_skill_origins=mcp_skill_origins, name=name, rotate=True,
+    )
+
+
+class SessionLimitReached(Exception):
+    """:func:`clone_session` refused: the directory already holds the most files rotation keeps."""
+
+
+def clone_session(
+    messages: List[Dict[str, Any]],
+    model: str,
+    active_skills: Optional[List[str]] = None,
+    *,
+    project_root: Path,
+    mcp_skill_origins: Optional[List[str]] = None,
+    name: Optional[str] = None,
+) -> Tuple[Path, str]:
+    """Save ``messages`` as a new session with a new id, evicting nothing (#666).
+
+    Same write as :func:`save_session` (atomic publish, fresh ``created_at``),
+    without the rotation: a copy must never push its source, or any other
+    session, out of the directory. When the directory already holds
+    ``_MAX_SESSIONS`` files it raises :class:`SessionLimitReached` instead.
+    The count is best effort: another process may save between the count and
+    the write, and later ordinary saves rotate as usual.
+    """
+    session_dir = _session_dir(project_root)
+    if session_dir.exists() and len(list(session_dir.glob("*.json"))) >= _MAX_SESSIONS:
+        raise SessionLimitReached(
+            f"{_MAX_SESSIONS} saved sessions is the limit"
+        )
+    return _write_session(
+        messages, model, active_skills, None,
+        project_root=project_root, mcp_skill_origins=mcp_skill_origins,
+        name=name, rotate=False,
+    )
+
+
+def _write_session(
+    messages: List[Dict[str, Any]],
+    model: str,
+    active_skills: Optional[List[str]],
+    session_id: Optional[str],
+    *,
+    project_root: Path,
+    supersedes: Optional[Path] = None,
+    mcp_skill_origins: Optional[List[str]] = None,
+    name: Optional[str] = None,
+    rotate: bool,
+) -> Tuple[Path, str]:
     session_dir = _session_dir(project_root)
     session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -279,7 +332,8 @@ def save_session(
             # The new file is on disk; a reader holding the old one open (on
             # Windows) must not turn the save into an error.
             logger.debug("Could not remove superseded %s: %s", Path(supersedes).name, exc)
-    _rotate_sessions(session_dir)
+    if rotate:
+        _rotate_sessions(session_dir)
     return session_file, sid
 
 
@@ -309,19 +363,81 @@ def persist_agent_session(
 
     Shared by the CLI session-end hook and the ACP session teardown so the
     agent→disk extraction (``messages`` / ``get_current_model()`` /
-    ``skill_manager.get_active_skills()``) lives in exactly one place — adding
-    a field to the persisted contract only has to touch this function.
+    ``skill_manager.get_active_skills()``) lives in exactly one place,
+    :func:`_agent_session_fields`, which :func:`clone_agent_session` shares —
+    adding a field to the persisted contract only has to touch that function.
     """
-    active_skills = list(agent.skill_manager.get_active_skills().keys())
     return save_session(
-        messages=agent.messages,
-        model=agent.get_current_model(),
-        active_skills=active_skills,
+        **_agent_session_fields(agent),
         session_id=session_id,
         project_root=project_root,
         supersedes=supersedes,
-        mcp_skill_origins=_mcp_skill_origins(agent, active_skills),
         name=name,
+    )
+
+
+def _agent_session_fields(agent: Any) -> Dict[str, Any]:
+    """The persisted fields of ``agent``'s live conversation, for every agent→disk path."""
+    active_skills = list(agent.skill_manager.get_active_skills().keys())
+    return {
+        "messages": agent.messages,
+        "model": agent.get_current_model(),
+        "active_skills": active_skills,
+        "mcp_skill_origins": _mcp_skill_origins(agent, active_skills),
+    }
+
+
+_COPY_SUFFIX = " (copy)"
+
+
+def _copy_name(name: Any) -> Optional[str]:
+    """``<name> (copy)``, cut so the suffix fits ``_TITLE_MAX_CHARS``; ``None`` for no name.
+
+    A saved file's name may be hand-edited, so control characters go too.
+    """
+    from ..security.terminal_text import sanitize_terminal_text
+
+    base = _clean_name(sanitize_terminal_text(name) if isinstance(name, str) else None)
+    if not base:
+        return None
+    return base[: _TITLE_MAX_CHARS - len(_COPY_SUFFIX)].rstrip() + _COPY_SUFFIX
+
+
+def clone_agent_session(
+    agent: Any, *, project_root: Path, source_name: Optional[str] = None,
+) -> Tuple[Path, str]:
+    """:func:`clone_session` of ``agent``'s live conversation, taken as :func:`persist_agent_session` takes it.
+
+    ``source_name`` is the live session's name; the copy is named ``<name> (copy)``.
+    """
+    return clone_session(
+        **_agent_session_fields(agent), project_root=project_root,
+        name=_copy_name(source_name),
+    )
+
+
+def clone_saved_session(session_file: Path, *, project_root: Path) -> Tuple[Path, str]:
+    """:func:`clone_session` of a saved session file, its fields copied as stored.
+
+    Not through :func:`load_session_record`: that adds the MCP origins into
+    the messages as a provenance record, which a resume of the copy will do
+    itself. Raises ``ValueError`` for a file that is not a session or has no
+    messages, ``OSError`` when it cannot be read.
+    """
+    with open(session_file, "r", encoding="utf-8") as f:
+        data = json_parse.load(f)
+    if not isinstance(data, dict) or not isinstance(data.get("messages"), list):
+        raise ValueError("not a session file")
+    if not data["messages"]:
+        raise ValueError("it has no messages to copy")
+    model, skills, origins = data.get("model"), data.get("active_skills"), data.get("mcp_skill_origins")
+    return clone_session(
+        data["messages"],
+        model if isinstance(model, str) else "unknown",
+        [s for s in skills if isinstance(s, str)] if isinstance(skills, list) else [],
+        project_root=project_root,
+        mcp_skill_origins=[o for o in origins if isinstance(o, str)] if isinstance(origins, list) else None,
+        name=_copy_name(data.get("name")),
     )
 
 

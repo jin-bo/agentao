@@ -62,21 +62,14 @@ def _parse(args: str) -> Tuple[str, Optional[str], bool, bool]:
 
 def _saved_session(cli: AgentaoCLI, prefix: str) -> Tuple[List[Dict[str, Any]], str, str, str]:
     """``(messages, session_id, model, title)`` of the one saved session ``prefix`` names."""
-    from ...embedding.sessions import list_sessions, load_session_record
+    from ...embedding.sessions import load_session_record
+    from ._session_match import NoUniqueSession, match_one_session
 
     root = cli.agent.working_directory
-    matches: Dict[str, Dict[str, Any]] = {}
-    for s in list_sessions(project_root=root):
-        persisted = s.get("session_id")
-        sid = persisted if isinstance(persisted, str) and persisted else s["id"]
-        if sid.startswith(prefix) or s["id"].startswith(prefix):
-            matches.setdefault(sid, s)  # newest first, so the newest file wins
-    if not matches:
-        raise _Refused(f"No saved session matches '{prefix}'. See /sessions list.")
-    if len(matches) > 1:
-        ids = ", ".join(sid[:8] for sid in matches)
-        raise _Refused(f"'{prefix}' matches {len(matches)} sessions ({ids}). Use a longer prefix.")
-    sid, info = next(iter(matches.items()))
+    try:
+        sid, info = match_one_session(root, prefix)
+    except NoUniqueSession as exc:
+        raise _Refused(str(exc)) from exc
     try:
         loaded_sid, messages, model, _skills = load_session_record(sid, project_root=root)
     except (OSError, ValueError) as exc:
