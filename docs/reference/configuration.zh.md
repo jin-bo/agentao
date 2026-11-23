@@ -128,7 +128,7 @@
 
 | 键 | 类型 | 默认 | 合法值 | 说明 |
 |---|---|---|---|---|
-| `mode` | string | `"workspace-write"`（键缺失时） | `"read-only"`、`"workspace-write"`、`"full-access"` | `"plan"` 是内部模式，由 `/plan` 流程设置，用户不应手写。`"full-access"` 关闭所有按工具的二次确认，请审慎使用。 |
+| `mode` | string | `"workspace-write"`（键缺失时） | `"read-only"`、`"workspace-write"`、`"full-access"` | CLI 从不保存 `"plan"`；保存的 `"plan"` 回退为 `"workspace-write"`，`/permission` 会显示原因。进入计划模式请用 `/plan`。`"full-access"` 关闭所有按工具的二次确认，请审慎使用。 |
 | `agents.enable_builtin` | bool | `false` | — | 启用内置子代理集合。兼容老的顶层别名 `enable_builtin_agents`（bool）。 |
 | `goal.enabled` | bool | `true`（键缺失时） | — | `/goal` 长任务续跑的总开关。设为 `false` 即禁用该命令。 |
 | `goal.default_max_turns` | int | `25` | 正整数，或 `0` 表示不限轮次 | `/goal` 没带 `--turns`（且不是 `--unbounded`）时套用的轮次上限。一个*轮次* = 一次外层续跑的 `chat()` —— **不是** `max_iterations`（那个约束的是内层工具循环）。这是主要的失控护栏。 |

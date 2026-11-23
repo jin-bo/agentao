@@ -23,7 +23,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agentao.cli.commands import handle_permission_command
+from agentao.cli.commands import handle_permission_command, handle_plan_command
 from agentao.cli.subcommands import handle_plugins_command
 from agentao.embedding import build_from_environment
 from agentao.permissions import PermissionMode
@@ -139,25 +139,58 @@ def test_views_ignore_files_changed_after_startup_and_fire_no_hook(tmp_path, pri
         dispatcher.assert_called()
 
 
-@pytest.mark.parametrize("value", ["bogus", 3])
-def test_an_invalid_mode_value_falls_back_with_a_reason(tmp_path, printed, value):
-    files = _layout(tmp_path)
-    _write(files.settings, {"mode": value})
+@pytest.mark.parametrize(("settings", "reason"), [
+    ({"mode": "plan"}, "Plan mode in {path} was ignored. Enter it with /plan."),
+    ({"mode": "bogus"}, 'invalid config value \'bogus\' for "mode" in {path}'),
+    ({"mode": 3}, 'invalid config value 3 for "mode" in {path}'),
+    ({}, None),
+])
+def test_startup_uses_the_default_for_unusable_or_missing_modes(tmp_path, printed, settings, reason):
+    path = tmp_path / ".agentao" / "settings.json"
+    _write(path, settings)
+    before = path.read_bytes()
     cli = _start_cli(tmp_path)
 
     perm = _permission_text(cli, printed)
     assert cli.current_mode is PermissionMode.WORKSPACE_WRITE
+    assert cli.agent.permission_engine.active_mode is PermissionMode.WORKSPACE_WRITE
+    assert not cli._plan_session.is_active
+    assert path.read_bytes() == before
     assert "Mode: workspace-write" in perm
     assert "Source: default" in perm
-    assert f'Fallback reason: invalid config value {value!r} for "mode" in {files.settings}' in perm
+    if reason is None:
+        assert "Fallback reason" not in perm
+    else:
+        assert f"Fallback reason: {reason.format(path=path)}" in perm
 
 
-def test_no_mode_key_is_the_default_without_a_reason(tmp_path, printed):
-    files = _layout(tmp_path)
-    _write(files.settings, {})
-    perm = _permission_text(_start_cli(tmp_path), printed)
-    assert "Source: default" in perm
-    assert "Fallback reason" not in perm
+def test_plan_clear_restores_and_persists_workspace_write_after_startup_fallback(tmp_path):
+    path = tmp_path / ".agentao" / "settings.json"
+    replay = {"enabled": False}
+    _write(path, {"mode": "plan", "replay": replay})
+    cli = _start_cli(tmp_path)
+
+    handle_plan_command(cli, "")
+    assert cli._plan_session.is_active
+    assert cli.agent.permission_engine.active_mode is PermissionMode.PLAN
+    handle_plan_command(cli, "clear")
+
+    assert not cli._plan_session.is_active
+    assert cli.current_mode is PermissionMode.WORKSPACE_WRITE
+    assert cli.agent.permission_engine.active_mode is PermissionMode.WORKSPACE_WRITE
+    assert json.loads(path.read_text(encoding="utf-8")) == {"mode": "workspace-write", "replay": replay}
+
+
+def test_save_settings_skips_plan_mode(tmp_path):
+    path = tmp_path / ".agentao" / "settings.json"
+    _write(path, {"mode": "read-only"})
+    before = path.read_bytes()
+    cli = _start_cli(tmp_path)
+
+    cli.current_mode = PermissionMode.PLAN
+    cli._save_settings()
+
+    assert path.read_bytes() == before
 
 
 def test_in_session_switches_name_their_entry_path(tmp_path, printed):

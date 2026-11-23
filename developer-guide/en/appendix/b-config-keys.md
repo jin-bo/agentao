@@ -150,7 +150,7 @@ configured leaves Windows on `%COMSPEC% /c` exactly as before. On macOS and
 Linux, asking for `powershell` or `cmd` is an unsupported-platform error. Full
 behaviour, including the launch and the encoding: `docs/reference/configuration.md` §4.
 
-The `mode` field is **not** stored in `permissions.json` — it lives in `settings.json` (B.3.5) and is changed at runtime via `/permissions`. Modes: `read-only`, `workspace-write`, `full-access`, `plan` (lowercase-hyphen; `plan` is internal).
+The `mode` field is **not** stored in `permissions.json` — it lives in `settings.json` (B.3.5) and is changed at runtime with `/mode` (inspect it with `/permission`). Modes: `read-only`, `workspace-write`, `full-access`, `plan` (lowercase-hyphen; `plan` is internal).
 
 Evaluation order:
 
@@ -228,7 +228,7 @@ Top-level keys:
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
-| `mode` | string | `"workspace-write"` (when key absent) | Last-known permission mode used for restoration paths and `/permissions` inspection. Allowed: `"read-only"`, `"workspace-write"`, `"full-access"`. (`"plan"` is internal — set by the `/plan` flow, never written by users.) |
+| `mode` | string | `"workspace-write"` (when key absent) | Last-known permission mode used for restoration paths and `/permission` inspection. Allowed: `"read-only"`, `"workspace-write"`, `"full-access"`. (The CLI never saves `"plan"`; a saved `"plan"` falls back to `"workspace-write"` with a reason in `/permission`. Enter plan mode with `/plan`.) |
 | `agents.enable_builtin` | bool | `false` | Enables the built-in sub-agent set. Legacy top-level alias `enable_builtin_agents` (bool) is still honored. |
 | `background_agents.auto_wake` | bool | `true` (when key absent) | Interactive CLI only. When a background sub-agent's update is queued while the CLI waits at an empty prompt, run one turn automatically so the update is read without typing `continue`. Not while you are typing, with images staged, or in plan mode; pauses after 3 wakes in a row until you submit a line. `false` turns it off; any other value is reported and read as `true`. |
 

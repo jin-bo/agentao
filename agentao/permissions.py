@@ -11,7 +11,7 @@ import functools
 import re
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Mapping, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse
 
 from .permissions_hardline import hardline_check
@@ -412,6 +412,31 @@ def _parse_construction_permission_mode(value: Any) -> PermissionMode:
             "session, not by setting a permission posture."
         )
     return mode
+
+
+def _saved_permission_mode(
+    settings: Mapping[str, Any], *, path: Optional[Path] = None,
+) -> Tuple[PermissionMode, Optional[str]]:
+    """The CLI's saved ``settings.json`` mode, and why it fell back, if it did.
+
+    Returns ``(mode, fallback_reason)``. A missing key is the default with no
+    reason. ``plan`` and anything that is not a construction mode fall back to
+    ``workspace-write`` with a reason: the PLAN preset without a
+    ``PlanSession`` denies writes without the plan prompt (#675). Private: it
+    is the CLI's reading of its settings file, shared by the CLI's four
+    readers so they cannot disagree, not an engine API.
+    """
+    default = PermissionMode.WORKSPACE_WRITE
+    if "mode" not in settings:
+        return default, None
+    value = settings["mode"]
+    where = path or "settings.json"
+    if value in (PermissionMode.PLAN.value, PermissionMode.PLAN):
+        return default, f"Plan mode in {where} was ignored. Enter it with /plan."
+    try:
+        return _parse_construction_permission_mode(value), None
+    except (ValueError, TypeError):
+        return default, f'invalid config value {value!r} for "mode" in {where}'
 
 
 def _extract_domain(url: str) -> Optional[str]:

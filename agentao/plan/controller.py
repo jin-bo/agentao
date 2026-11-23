@@ -162,21 +162,20 @@ class PlanController:
         Returns the restored ``PermissionMode``.  Used by both
         ``/plan implement`` and ``/plan clear``.
         """
-        from ..permissions import PermissionMode
+        from ..permissions import PermissionMode, _saved_permission_mode
 
         restore = self._session.pre_plan_mode or PermissionMode.WORKSPACE_WRITE
+        # Plan mode is never a mode to go back to: restoring it would leave
+        # the PLAN preset with no plan session (#675).
+        if restore == PermissionMode.PLAN:
+            restore = PermissionMode.WORKSPACE_WRITE
         restore_allow_all = self._session.pre_plan_allow_all
 
         # If restoring FULL_ACCESS that came from a session-only escalation
         # (allow_all was active before plan mode), read the persisted mode
         # from disk to avoid baking a temporary grant into settings.json.
         if restore == PermissionMode.FULL_ACCESS and restore_allow_all:
-            saved = self._load_settings().get("mode", PermissionMode.WORKSPACE_WRITE.value)
-            try:
-                disk_mode = PermissionMode(saved)
-                restore = disk_mode if disk_mode != PermissionMode.PLAN else PermissionMode.WORKSPACE_WRITE
-            except ValueError:
-                restore = PermissionMode.WORKSPACE_WRITE
+            restore, _ = _saved_permission_mode(self._load_settings())
 
         # One argument, so a host's ``apply_mode_fn`` keeps working. The CLI
         # binds ``cause="cli-plan-exit"`` (``cli/app.py``): leaving plan mode

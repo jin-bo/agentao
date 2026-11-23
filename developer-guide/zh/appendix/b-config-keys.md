@@ -148,7 +148,7 @@ cmd。什么都不配置时，Windows 仍旧是 `%COMSPEC% /c`，与过去完全
 `powershell` 或 `cmd` 报不支持的平台配置错误。完整行为（含启动与编码）见
 `docs/reference/configuration.zh.md` §4。
 
-`mode` 字段**不**写在 `permissions.json` 里 — 它属于 `settings.json`（B.3.5），运行时通过 `/permissions` 切换。模式取值：`read-only`、`workspace-write`、`full-access`、`plan`（小写连字符；`plan` 为内部模式）。
+`mode` 字段**不**写在 `permissions.json` 里 — 它属于 `settings.json`（B.3.5），运行时用 `/mode` 切换（用 `/permission` 查看）。模式取值：`read-only`、`workspace-write`、`full-access`、`plan`（小写连字符；`plan` 为内部模式）。
 
 求值顺序：
 
@@ -226,7 +226,7 @@ cmd。什么都不配置时，Windows 仍旧是 `%COMSPEC% /c`，与过去完全
 
 | 键 | 类型 | 默认 | 说明 |
 |----|------|------|------|
-| `mode` | string | `"workspace-write"`（缺省时） | 持久化的最近一次权限模式，用于恢复路径和 `/permissions` 查看。允许值：`"read-only"`、`"workspace-write"`、`"full-access"`。（`"plan"` 为内部模式，由 `/plan` 流程设置，用户不应直接写入。） |
+| `mode` | string | `"workspace-write"`（缺省时） | 持久化的最近一次权限模式，用于恢复路径和 `/permission` 查看。允许值：`"read-only"`、`"workspace-write"`、`"full-access"`。（CLI 从不保存 `"plan"`；保存的 `"plan"` 回退为 `"workspace-write"`，`/permission` 会显示原因。进入计划模式请用 `/plan`。） |
 | `agents.enable_builtin` | bool | `false` | 启用内置子智能体集。历史顶层别名 `enable_builtin_agents`（bool）仍被识别。 |
 | `background_agents.auto_wake` | bool | `true`（缺省时） | 仅交互式 CLI。CLI 停在空提示符上、有后台子代理的更新排队时，自动跑一轮读取更新，不必再手动输入 `continue`。正在输入、有暂存图片、或处于 plan 模式时不触发；连续唤醒 3 次后暂停，直到你提交一行输入。设为 `false` 关闭；其他值会报告并按 `true` 处理。 |
 

@@ -50,21 +50,28 @@ def _saved(cli) -> Path:
     return Path(cli.agent.working_directory) / ".agentao" / "settings.json"
 
 
-def test_a_resume_ends_the_grant_and_restores_the_saved_mode(cli):
+@pytest.mark.parametrize(("saved", "expected"), [
+    ({"mode": "read-only"}, PermissionMode.READ_ONLY),
+    ({"mode": "plan"}, PermissionMode.WORKSPACE_WRITE),
+    ({"mode": "bogus"}, PermissionMode.WORKSPACE_WRITE),
+    ({}, PermissionMode.WORKSPACE_WRITE),
+])
+def test_a_resume_ends_the_grant_and_restores_the_saved_mode(cli, saved, expected):
     from agentao.cli.commands import resume_session
 
     settings = _saved(cli)
-    cli._apply_mode(PermissionMode.READ_ONLY)              # saved by the user
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps(saved), encoding="utf-8")
     before = settings.read_text()
     _grant_all(cli)
 
     resume_session(cli, "older")
 
     assert cli.allow_all_tools is False
-    assert cli.current_mode == PermissionMode.READ_ONLY
-    assert cli.agent.permission_engine.active_mode == PermissionMode.READ_ONLY
-    assert cli.agent.tool_runner.readonly_active() is True
-    assert cli.readonly_mode is True
+    assert cli.current_mode is expected
+    assert cli.agent.permission_engine.active_mode is expected
+    assert cli.agent.tool_runner.readonly_active() is (expected is PermissionMode.READ_ONLY)
+    assert cli.readonly_mode is (expected is PermissionMode.READ_ONLY)
     assert settings.read_text() == before                  # nothing written
 
 
