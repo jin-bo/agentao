@@ -26,6 +26,12 @@ class PlanController:
         ``cli-plan-exit`` cause with ``functools.partial``.
     load_settings_fn : callable
         ``CLI._load_settings`` — reads persisted mode from settings.json.
+    mode_before_grant_fn : callable, optional
+        Returns the mode in force before a temporary full-access grant
+        (answer "2"). Leaving plan mode during the grant restores it. The
+        CLI binds the function ``/sessions resume`` uses, so both ways of
+        ending the grant restore the same mode (#676). ``None`` reads the
+        saved mode from ``load_settings_fn``.
     """
 
     def __init__(
@@ -35,6 +41,7 @@ class PlanController:
         apply_mode_fn: Callable,
         load_settings_fn: Callable[[], Dict],
         enter_mode_fn: Optional[Callable] = None,
+        mode_before_grant_fn: Optional[Callable[[], object]] = None,
     ):
         self._session = session
         # Switches to the PLAN preset and records the switch
@@ -45,6 +52,7 @@ class PlanController:
         self._engine = permission_engine
         self._apply_mode = apply_mode_fn
         self._load_settings = load_settings_fn
+        self._mode_before_grant = mode_before_grant_fn
 
     @property
     def session(self) -> PlanSession:
@@ -162,7 +170,7 @@ class PlanController:
         Returns the restored ``PermissionMode``.  Used by both
         ``/plan implement`` and ``/plan clear``.
         """
-        from ..permissions import PermissionMode, _saved_permission_mode
+        from ..permissions import PermissionMode
 
         restore = self._session.pre_plan_mode or PermissionMode.WORKSPACE_WRITE
         # Plan mode is never a mode to go back to: restoring it would leave
@@ -171,11 +179,10 @@ class PlanController:
             restore = PermissionMode.WORKSPACE_WRITE
         restore_allow_all = self._session.pre_plan_allow_all
 
-        # If restoring FULL_ACCESS that came from a session-only escalation
-        # (allow_all was active before plan mode), read the persisted mode
-        # from disk to avoid baking a temporary grant into settings.json.
+        # FULL_ACCESS with allow_all is the session-only grant, not a mode
+        # to restore or save. Restore the mode in force before the grant.
         if restore == PermissionMode.FULL_ACCESS and restore_allow_all:
-            restore, _ = _saved_permission_mode(self._load_settings())
+            restore = self._mode_under_grant()
 
         # One argument, so a host's ``apply_mode_fn`` keeps working. The CLI
         # binds ``cause="cli-plan-exit"`` (``cli/app.py``): leaving plan mode
@@ -186,6 +193,23 @@ class PlanController:
         # We return restore_allow_all so the CLI can set it on itself.
         self._session.reset()
         return restore, restore_allow_all
+
+    def _mode_under_grant(self) -> object:
+        from ..permissions import PermissionMode, _saved_permission_mode
+
+        if self._mode_before_grant is not None:
+            try:
+                mode = self._mode_before_grant()
+            except Exception:
+                # A raise must not leave plan mode half-exited.
+                mode = None
+            # Fail closed on anything that is not a mode to go back to.
+            if isinstance(mode, PermissionMode) and mode not in (
+                PermissionMode.FULL_ACCESS, PermissionMode.PLAN,
+            ):
+                return mode
+        mode, _ = _saved_permission_mode(self._load_settings())
+        return mode
 
     # ------------------------------------------------------------------
     # Archive / Clear

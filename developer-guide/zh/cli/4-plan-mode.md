@@ -79,7 +79,7 @@ Ask the agent to implement the plan above.
 发生了什么：
 
 1. plan 模式标记清除
-2. 进入 plan 之前的权限模式被还原
+2. 进入 plan 之前的权限模式被还原。如果进入 `/plan` 前回答过 `2`（临时完全访问），这个授权继续有效，它下面的模式是回答 `2` 之前的模式，与 `/sessions resume` 结束授权时恢复的模式相同
 3. 计划内容重新打印一次，让下一条消息有视觉上下文
 4. 计划文件**保留** — agent 拿到了，你之后 `/plan show` 也能再看
 

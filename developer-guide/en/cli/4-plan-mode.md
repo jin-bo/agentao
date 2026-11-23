@@ -79,7 +79,7 @@ Ask the agent to implement the plan above.
 What happens:
 
 1. Plan mode flag clears
-2. Your prior permission mode is restored (whatever you had before `/plan`)
+2. Your prior permission mode is restored (whatever you had before `/plan`). If you had answered `2` (temporary full-access) before `/plan`, the grant goes on, over the mode you had before answering `2`: the same mode `/sessions resume` restores when it ends the grant
 3. The plan content is reprinted so the next message has visual context
 4. The plan file is **kept** — the agent has it, you can `/plan show` later
 

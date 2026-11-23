@@ -62,7 +62,7 @@ def handle_plan_command(cli: AgentaoCLI, args: str) -> None:
         was_active = cli._plan_session.is_active
         restored, restore_allow_all = cli._plan_controller.archive_and_clear()
         if was_active:
-            cli.allow_all_tools = restore_allow_all
+            cli._after_plan_exit(restored, restore_allow_all)
             console.print("\n[success]Plan archived and cleared. Plan mode OFF.[/success]\n")
         else:
             console.print("\n[success]Plan archived and cleared.[/success]\n")
@@ -73,7 +73,7 @@ def handle_plan_command(cli: AgentaoCLI, args: str) -> None:
             console.print("\n[info]Not in plan mode.[/info]\n")
             return
         restored, restore_allow_all = cli._plan_controller.exit_plan_mode()
-        cli.allow_all_tools = restore_allow_all
+        cli._after_plan_exit(restored, restore_allow_all)
         console.print(f"\n[success]Plan mode OFF. Permission mode: {restored.value}[/success]")
         if _plan_file.exists():
             content = _plan_file.read_text(encoding="utf-8")

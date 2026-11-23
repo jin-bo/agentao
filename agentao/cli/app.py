@@ -417,6 +417,7 @@ class AgentaoCLI:
             apply_mode_fn=functools.partial(self._apply_mode, cause="cli-plan-exit"),
             load_settings_fn=self._load_settings,
             enter_mode_fn=self._enter_plan_mode,
+            mode_before_grant_fn=self._mode_before_grant,
         )
         from ..tools.plan import PlanSaveTool, PlanFinalizeTool
         self.agent.tools.register(PlanSaveTool(self._plan_controller), origin="plan")
@@ -538,6 +539,26 @@ class AgentaoCLI:
         from ..runtime.permission_mode import apply_permission_mode
 
         apply_permission_mode(self.agent, mode, cause="cli-plan")
+
+    def _mode_before_grant(self):
+        """The mode in force when "2" was pressed; the saved mode if not recorded.
+
+        Shared by ``/sessions resume`` and leaving plan mode, the two ways a
+        temporary full-access grant ends, so both restore the same mode (#676).
+        """
+        from .commands.sessions import _mode_before_grant
+
+        return _mode_before_grant(self)
+
+    def _after_plan_exit(self, restored, restore_allow_all: bool) -> None:
+        """Put back a grant held across plan mode, after ``exit_plan_mode``.
+
+        ``_apply_mode`` cleared the grant and its record. The grant goes on,
+        so the mode under it is recorded again for ``/sessions resume``.
+        """
+        self.allow_all_tools = restore_allow_all
+        if restore_allow_all:
+            self._pre_grant_mode = restored
 
     # ── ACP inbox flush (delegated) ─────────────────────────────────────
 
