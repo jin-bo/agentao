@@ -1,6 +1,6 @@
 # 9. 回放与输出
 
-三个命令：捕获 agent 干了什么 + 控制你看到什么 — `/replay` `/copy` `/markdown`。
+四个命令：捕获 agent 干了什么 + 控制你看到什么 — `/replay` `/copy` `/export` `/markdown`。
 
 ## `/replay` — 录制 / 列表 / 检视 / 清理会话
 
@@ -129,6 +129,23 @@ Copied last response to clipboard.
 - 不含工具调用轨迹和推理摘要
 
 `/copy` 提示 "nothing to copy"，要么会话刚开始，要么最近的不是助理消息。
+
+## `/export` — 把对话保存为 Markdown
+
+```text
+> /export notes/chat.md
+> /export chat.md --session a1b2c3
+> /export chat.md --tools --force
+```
+
+把对话记录写成本地 Markdown 文件。它读的是对话历史，所以关闭 replay 也能用。相对路径以工作目录为基准。
+
+- **包含什么。** 默认只有你自己的消息和助理的回复，分别放在 `## User` / `## Assistant` 下，文件开头写明会话、模型和导出时间。系统指令、思考内容、运行时笔记（后台 agent 通知、hook 跟进、skill 笔记）以及工具调用和结果都不导出。加 `--tools` 会导出工具调用和结果，每条结果最多 4,000 个字符，超出部分标注截断。图片显示为 `[image]`，其他附件显示为 `[<类型> attachment]`。`UserPromptSubmit` hook 加进消息的内容会被去掉。`/goal` 的续写提示是作为一轮输入发出的，所以会出现在 `## User` 下。
+- **压缩过的历史。** 对话压缩过的话，更早的消息已经不在了。文件开头会说明这一点，并在原摘要的位置做标记，摘要正文不导出。
+- **导出哪个对话。** 默认是当前对话；用 `--session <id>` 可以导出已保存的会话，前缀必须只匹配一个会话。匹配到多个会话时拒绝导出，并列出候选。
+- **已存在的文件。** 不加 `--force` 不会覆盖已有文件。目标文件夹不存在或目标是目录时报错。文件先完整写好，再移到目标位置。
+
+标题取会话名字（`/sessions rename`），没有名字就取第一条消息。
 
 ## `/markdown` — 切换富渲染
 
