@@ -689,7 +689,7 @@ def _handle_plan_approval(cli: "AgentaoCLI") -> None:
         console.print()
         if _key in ("y", "Y"):
             restored, restore_allow_all = cli._plan_controller.exit_plan_mode()
-            cli.allow_all_tools = restore_allow_all
+            cli._after_plan_exit(restored, restore_allow_all)
             from ..permissions import PermissionMode as _PM
             if cli.current_mode == _PM.READ_ONLY:
                 from ..runtime.permission_mode import apply_permission_mode
@@ -701,6 +701,10 @@ def _handle_plan_approval(cli: "AgentaoCLI") -> None:
                     cli.agent, _PM.WORKSPACE_WRITE, cause="cli-plan-implement",
                 )
                 cli.readonly_mode = False
+                if cli.allow_all_tools:
+                    # The grant goes on over the mode just switched to, so a
+                    # later ``/sessions resume`` restores it, not read-only.
+                    cli._pre_grant_mode = _PM.WORKSPACE_WRITE
             console.rule("[bold green]Assistant[/bold green]", style="green")
             cli.current_status = console.status("[bold yellow]Thinking...", spinner="dots")
             cli.current_status.start()

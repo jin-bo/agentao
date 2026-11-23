@@ -164,3 +164,57 @@ def _press_2(cli) -> None:
 
     with patch("agentao.cli.transport.readchar.readkey", return_value="2"):
         assert confirm_tool_execution(cli, "write_file", "d", {"file_path": "x"}) is True
+
+
+@pytest.mark.parametrize("leave", ["clear", "implement"])
+def test_leaving_plan_restores_the_same_mode_as_a_resume(cli, leave):
+    """Both ways of ending the grant restore the mode before "2" (#676).
+
+    The save of ``read-only`` failed, so ``settings.json`` still says
+    ``workspace-write``. Leaving ``/plan`` used to read the file.
+    """
+    from agentao.cli.commands import handle_plan_command, resume_session
+
+    settings = _saved(cli)
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"mode": "workspace-write"}))
+    with patch.object(cli, "_save_settings"):              # every save fails
+        cli._apply_mode(PermissionMode.READ_ONLY)
+        _press_2(cli)
+        handle_plan_command(cli, "")
+        handle_plan_command(cli, leave)
+
+        assert cli.current_mode is PermissionMode.READ_ONLY
+        assert cli.agent.permission_engine.active_mode is PermissionMode.READ_ONLY
+        assert cli.allow_all_tools is True                 # the grant goes on
+        # ...and a resume that ends it later still knows the mode under it.
+        resume_session(cli, "older")
+
+    assert cli.allow_all_tools is False
+    assert cli.current_mode is PermissionMode.READ_ONLY
+    assert cli.agent.permission_engine.active_mode is PermissionMode.READ_ONLY
+    assert json.loads(settings.read_text()) == {"mode": "workspace-write"}
+
+
+def test_a_resume_after_approving_a_plan_keeps_the_approved_mode(cli):
+    """Approving a plan leaves read-only for workspace-write under the grant;
+    a resume that ends the grant later keeps workspace-write (#676 review)."""
+    from agentao.cli.commands import handle_plan_command, resume_session
+    from agentao.cli.input_loop import _handle_plan_approval
+
+    _saved(cli)
+    with patch.object(cli, "_save_settings"):
+        cli._apply_mode(PermissionMode.READ_ONLY)
+        _press_2(cli)
+        handle_plan_command(cli, "")
+        with patch("agentao.cli.input_loop.readchar.readkey", return_value="y"), \
+                patch.object(cli.agent, "chat", return_value="done"):
+            _handle_plan_approval(cli)
+        assert cli.allow_all_tools is True
+        assert cli.agent.permission_engine.active_mode is PermissionMode.WORKSPACE_WRITE
+
+        resume_session(cli, "older")
+
+    assert cli.allow_all_tools is False
+    assert cli.current_mode is PermissionMode.WORKSPACE_WRITE
+    assert cli.agent.permission_engine.active_mode is PermissionMode.WORKSPACE_WRITE

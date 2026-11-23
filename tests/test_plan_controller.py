@@ -143,6 +143,56 @@ def test_exit_full_access_with_allow_all_reads_disk(tmp_path, saved, expected):
     apply_mode.assert_called_with(expected)
 
 
+@pytest.mark.parametrize(("before_grant", "expected"), [
+    (PermissionMode.READ_ONLY, PermissionMode.READ_ONLY),
+    # Not a mode to go back to: fall back to the saved mode.
+    (PermissionMode.FULL_ACCESS, PermissionMode.WORKSPACE_WRITE),
+    (PermissionMode.PLAN, PermissionMode.WORKSPACE_WRITE),
+    ("read-only", PermissionMode.WORKSPACE_WRITE),
+    (None, PermissionMode.WORKSPACE_WRITE),
+])
+def test_exit_during_grant_asks_for_the_mode_before_it(tmp_path, before_grant, expected):
+    """The CLI binds the function ``/sessions resume`` uses (#676)."""
+    session = PlanSession()
+    session.current_plan_path = tmp_path / "plan.md"
+    session.history_dir = tmp_path / "plan-history"
+    apply_mode = Mock()
+    ctrl = PlanController(
+        session=session, permission_engine=Mock(), apply_mode_fn=apply_mode,
+        load_settings_fn=Mock(return_value={"mode": "workspace-write"}),
+        mode_before_grant_fn=lambda: before_grant,
+    )
+
+    ctrl.enter(PermissionMode.FULL_ACCESS, allow_all=True)
+    restored, restore_allow_all = ctrl.exit_plan_mode()
+
+    assert restored is expected
+    assert restore_allow_all is True
+    apply_mode.assert_called_once_with(expected)
+
+
+def test_exit_during_grant_survives_a_raising_mode_fn(tmp_path):
+    """A raise falls back to the saved mode and still leaves plan mode."""
+    session = PlanSession()
+    session.current_plan_path = tmp_path / "plan.md"
+    session.history_dir = tmp_path / "plan-history"
+    apply_mode = Mock()
+
+    def _boom():
+        raise RuntimeError("boom")
+
+    ctrl = PlanController(
+        session=session, permission_engine=Mock(), apply_mode_fn=apply_mode,
+        load_settings_fn=Mock(return_value={"mode": "read-only"}),
+        mode_before_grant_fn=_boom,
+    )
+    ctrl.enter(PermissionMode.FULL_ACCESS, allow_all=True)
+    restored, _ = ctrl.exit_plan_mode()
+
+    assert restored is PermissionMode.READ_ONLY
+    assert not session.is_active
+
+
 def test_multiple_save_overwrites_draft_id(tmp_path):
     ctrl, session, _, _, _ = _make_controller(tmp_path)
     session.phase = PlanPhase.ACTIVE
