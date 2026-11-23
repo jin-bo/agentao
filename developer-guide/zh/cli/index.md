@@ -20,7 +20,7 @@ uv run agentao
 
 - [**1. 起步**](./1-getting-started) — `/help` `/clear` `/new` `/status` `/diff` `/exit` · 最小循环
 - [**2. 模型与 Provider**](./2-models-providers) — `/model` `/provider` `/temperature` `/thinking` · 运行时切换 LLM、凭证和线路协议
-- [**3. 权限与模式**](./3-permissions-modes) — `/mode`、工具确认 UI、`/sandbox`（macOS） · agent 干危险事前怎么问你
+- [**3. 权限与模式**](./3-permissions-modes) — `/mode`、`/permission`、工具确认 UI、`/sandbox`（macOS） · agent 干危险事前怎么问你
 - [**4. Plan 模式**](./4-plan-mode) — `/plan` 工作流 · 只读的"先想清楚再动手"循环
 - [**5. Skills 与 Crystallize**](./5-skills-crystallize) — `/skills` `/crystallize` · 激活技能 / 从会话中析出新技能
 - [**6. 记忆**](./6-memory) — `/memory` · 什么被记住、存在哪里、怎么查、怎么清

@@ -95,7 +95,7 @@ First commands once the REPL is up:
 /help       Every slash command + tools the agent has
 /status     Model, mode, tokens, active skills
 /model      Switch model on the current provider
-/mode       Switch permission mode (read-only · workspace-write · full-access · plan)
+/mode       Switch permission mode (read-only · workspace-write · full-access)
 /plan       Enter plan mode (read-only thinking with .agentao/plan.md)
 /memory     Inspect persistent memory
 /mcp list   MCP server status
@@ -129,8 +129,9 @@ How this compares with the Claude Agent SDK, the OpenAI Agents SDK and Strands �
 | **Memory** | SQLite-backed persistent memory with two scopes (user / project), automatic recall, jieba 中文 segmentation | [CLI ch. 6](developer-guide/en/cli/6-memory.md) |
 | **Skills** | Auto-discovered from `skills/`, GitHub-installable (`agentao skill install owner/repo[:path][@ref]`), plus `/crystallize` workflow | [CLI ch. 5](developer-guide/en/cli/5-skills-crystallize.md) |
 | **Protocols** | MCP (stdio / Streamable HTTP / SSE) for tools · ACP (stdio JSON-RPC) for full agents · plugin lifecycle | [CLI ch. 8](developer-guide/en/cli/8-mcp-acp-plugins.md) |
+| **Sessions** | Saved after every turn · `/sessions` resume, rename and clone · `agentao --resume` | [CLI ch. 11](developer-guide/en/cli/11-sessions-agents.md) |
 | **Sub-agents** | Built-in `codebase-investigator` / `generalist` · custom `.agentao/agents/<name>.md` · foreground/background dashboard | [CLI ch. 11](developer-guide/en/cli/11-sessions-agents.md) |
-| **Replay & Output** | JSONL session recordings under `.agentao/replays/` · markdown-toggle · `/copy` last reply | [CLI ch. 9](developer-guide/en/cli/9-replay-output.md) |
+| **Replay & Output** | JSONL session recordings under `.agentao/replays/` · markdown-toggle · `/copy` last reply · `/export` a conversation to Markdown | [CLI ch. 9](developer-guide/en/cli/9-replay-output.md) |
 | **Embedding** | `Agentao(...)` constructor · `events()` stream · `active_permissions()` · capability injection · ACP Pydantic schemas | [DG Part 2](https://agentao.cn/en/part-2/) · [Part 4](https://agentao.cn/en/part-4/) |
 
 ---

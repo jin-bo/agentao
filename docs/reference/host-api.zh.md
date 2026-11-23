@@ -54,7 +54,7 @@ Harness API 是宿主应用嵌入 Agentao 时面向外部的兼容性边界。�
 | `export_host_acp_json_schema()` | 对外的 ACP 负载规范 JSON schema。 |
 | `Tool`、`AsyncToolBase` | 通过 `Agentao(extra_tools=[...])` 传入的宿主工具的基类。重新导出 `agentao.tools.base` 里的规范类型——是稳定的导入路径，不是新的抽象层。 |
 | `RegistrableTool` | `Union[Tool, AsyncToolBase]`——注册表和 `extra_tools=` 接受的类型。 |
-| `CancellationToken` | `chat()` / `arun()` 的 `cancellation_token=` 参数接受的 token。重新导出 `agentao.cancellation.CancellationToken`（同一个类）。简单的异步调用可以直接取消任务来结束本轮；独立的停止按钮、跨任务取消、多个调用共用一个信号，或从别的线程取消同步的 `chat()`，就传 token。 |
+| `CancellationToken` | `chat()` / `arun()` 的 `cancellation_token=` 参数接受的 token。重新导出 `agentao.cancellation.CancellationToken`（同一个类）。简单的异步调用可以直接取消任务来结束本轮；独立的停止按钮、跨任务取消、多个调用共用一个信号，或从别的线程取消同步的 `chat()`，就传 token。在信号处理函数里请调用 `cancel_from_signal(reason)`，不要调用 `cancel()`：信号恰好在主线程持有 token 的锁时到达，普通的 `cancel()` 会死锁。 |
 | `TextDelta` | `Agentao.astream()` 产出的一段 assistant 文本。用于显示：所有增量拼起来不是答案，见[流式文本](#流式文本agentaoastream)。 |
 | `TurnOutcome` | 一轮怎样结束：`text`、`status`、`incomplete_reason`、`tool_count`、`error`、`finish_reason_missing`，以及 `.is_answer`。是 `astream()` 的最后一项，也是 `agent.last_turn` 的返回值。与 `agentao.TurnOutcome` 是同一个类；定义在只依赖标准库的 `agentao.outcome`。 |
 | `agentao.host.replay_projection` | 把 `EventStream` 桥接到 replay JSONL 的子模块——见下文 [Replay 投影](#replay-投影agentaohostreplay_projection)。 |
