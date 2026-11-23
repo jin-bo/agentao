@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from .compact import handle_compact_command
 from .context import handle_context_command
+from .diff import handle_diff_command
 from .goal import handle_goal_command
 from .image import handle_image_command
 from .mcp import handle_mcp_command
@@ -34,6 +35,7 @@ __all__ = [
     "handle_clear_command",
     "handle_compact_command",
     "handle_context_command",
+    "handle_diff_command",
     "handle_goal_command",
     "handle_image_command",
     "handle_mcp_command",

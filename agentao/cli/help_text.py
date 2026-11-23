@@ -21,6 +21,7 @@ All commands start with `/`:
   - Preserves long-term memories and earlier session summaries (both still reach the prompt); resets permission mode to workspace-write
 - Both: background agents keep running but no longer report into the conversation — check `/agents --all` once they finish
 - `/status` - Show conversation status
+- `/diff` - Show the repo's staged changes, unstaged changes and untracked files (read-only, no model turn; long output is cut and says so)
 - `/sessions [subcommand]` - Manage saved sessions
   - `/sessions` or `/sessions list` - List saved sessions
   - `/sessions resume <id>` - Resume a saved session by id prefix

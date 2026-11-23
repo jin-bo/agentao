@@ -310,6 +310,7 @@ def _build_command_table() -> Dict[str, "CommandHandler"]:
     """
     from .commands import (
         handle_clear_command, handle_compact_command, handle_context_command,
+        handle_diff_command,
         handle_goal_command, handle_image_command, handle_mcp_command,
         handle_mode_command, handle_model_command, handle_new_command,
         handle_permission_command, handle_plan_command, handle_provider_command,
@@ -333,6 +334,7 @@ def _build_command_table() -> Dict[str, "CommandHandler"]:
         "context": handle_context_command,
         "copy": _handle_copy_command,
         "crystallize": handle_crystallize_command,
+        "diff": handle_diff_command,
         "goal": handle_goal_command,
         "help": _handle_help_command,
         "image": handle_image_command,
