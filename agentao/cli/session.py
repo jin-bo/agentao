@@ -75,6 +75,7 @@ def on_session_end(cli: AgentaoCLI, *, reason: str = "other") -> None:
             session_id=cli.current_session_id,
             project_root=cli.agent.working_directory,
             supersedes=_checkpoint_file(cli),
+            name=session_name(cli),
         )
         cli.current_session_id = sid
         _record_checkpoint(cli, session_file)
@@ -100,8 +101,31 @@ def on_session_end(cli: AgentaoCLI, *, reason: str = "other") -> None:
 
 
 def _history_marker(cli: AgentaoCLI) -> tuple:
+    # The name is part of it, so a rename alone is saved by the next checkpoint.
     messages = cli.agent.messages
-    return (id(messages), len(messages), id(messages[-1]) if messages else None)
+    return (
+        id(messages), len(messages), id(messages[-1]) if messages else None,
+        session_name(cli),
+    )
+
+
+# ── Session name (``/sessions rename``, #663) ───────────────────────────
+#
+# Stored with the session id it belongs to, so a session that begins under
+# another id (``/new``, ``/clear``, a resume) starts without the old name and
+# no reset site has to remember to drop it.
+
+
+def session_name(cli: AgentaoCLI):
+    """The name the user gave the current session, or ``None``."""
+    state = getattr(cli, "_session_name", None)
+    if state is None or state[0] != cli.current_session_id:
+        return None
+    return state[1]
+
+
+def set_session_name(cli: AgentaoCLI, name) -> None:
+    cli._session_name = (cli.current_session_id, name or None)
 
 
 def _checkpoint_file(cli: AgentaoCLI):
@@ -139,31 +163,39 @@ def _begin_session_checkpoint(cli: AgentaoCLI) -> None:
     reset_session_checkpoint(cli, keep)
 
 
-def checkpoint_session(cli: AgentaoCLI) -> None:
-    """Save the conversation if it changed since the last save. Never raises."""
+def checkpoint_session(cli: AgentaoCLI) -> bool:
+    """Save the conversation if it changed since the last save. Never raises.
+
+    Returns whether the session is on disk as it stands: ``True`` after a
+    save or when nothing changed, ``False`` when there is nothing to save
+    or the save failed.
+    """
     try:
         if not cli.agent.messages or cli.current_session_id is None:
-            return
+            return False
         state = getattr(cli, "_session_checkpoint", None)
         if (
             state is not None
             and state[0] == cli.current_session_id
             and state[2] == _history_marker(cli)
         ):
-            return
+            return True
         from ..embedding.sessions import persist_agent_session
         session_file, _sid = persist_agent_session(
             cli.agent,
             session_id=cli.current_session_id,
             project_root=cli.agent.working_directory,
             supersedes=_checkpoint_file(cli),
+            name=session_name(cli),
         )
         _record_checkpoint(cli, session_file)
+        return True
     except Exception:
         try:
             cli.agent.llm.logger.warning("Session checkpoint failed", exc_info=True)
         except Exception:
             pass
+        return False
 
 
 def dispatch_plugin_session_start(

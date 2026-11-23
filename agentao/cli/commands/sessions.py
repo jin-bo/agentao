@@ -1,6 +1,6 @@
 """``/sessions`` and ``resume_session`` — saved-session management.
 
-``handle_sessions_command`` dispatches list/resume/delete; ``resume_session``
+``handle_sessions_command`` dispatches list/resume/rename/delete; ``resume_session``
 is also exported separately because ``cli.entrypoints`` calls it directly
 when the user passes ``--resume`` on launch (no slash-command parse).
 """
@@ -10,11 +10,57 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 import readchar
+from rich.text import Text
 
+from ...security.terminal_text import sanitize_terminal_text
 from .._globals import console, split_subcommand, unknown_subcommand
 
 if TYPE_CHECKING:
     from ..app import AgentaoCLI
+
+# Same cap as a derived title (``embedding/sessions.py::_TITLE_MAX_CHARS``).
+_NAME_MAX_CHARS = 60
+
+
+def _shown(prefix: str, title: str, style: str) -> Text:
+    """``prefix`` + a session title, as ``Text``, not markup.
+
+    The title comes from a user message or a name the user typed, so it may
+    hold ``[...]`` or end in backslashes, which ``rich.markup.escape`` does
+    not round-trip.
+    """
+    return Text.assemble(prefix, sanitize_terminal_text(title), style=style)
+
+
+def _rename_session(cli: AgentaoCLI, raw: str) -> None:
+    """``/sessions rename <name>`` — name the current session (#663)."""
+    from ..session import checkpoint_session, set_session_name
+
+    # Split first: the sanitizer drops ``\r``, ``\v`` and ``\f`` outright,
+    # which would join the words they separated.
+    name = " ".join(sanitize_terminal_text(" ".join(raw.split())).split())
+    if not name:
+        console.print("\n[error]Usage: /sessions rename <name>[/error]\n")
+        return
+    cut = len(name) > _NAME_MAX_CHARS
+    name = name[:_NAME_MAX_CHARS].rstrip()
+    set_session_name(cli, name)
+    console.print()
+    if not cli.agent.messages:
+        # An empty session is never written; the name goes with the first save.
+        console.print(_shown("Session named: ", name, "success"))
+        console.print("[dim]It is saved with the first message.[/dim]")
+    elif checkpoint_session(cli):
+        console.print(_shown("Session renamed: ", name, "success"))
+    else:
+        console.print(_shown("Session renamed for now: ", name, "warning"))
+        console.print(
+            "[warning]Saving it failed (see agentao.log); "
+            "the next save retries.[/warning]"
+        )
+    if cut:
+        console.print(f"[dim](cut to {_NAME_MAX_CHARS} characters)[/dim]")
+    console.print()
 
 
 def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
@@ -41,7 +87,7 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
             short_id = sid[:8] if sid else s["id"]
             console.print(f"  • [cyan]{short_id}[/cyan]")
             if s.get("title"):
-                console.print(f"    [bold]{s['title']}[/bold]")
+                console.print(_shown("    ", s["title"], "bold"))
             console.print(f"    Model: [dim]{s['model']}[/dim]  Messages: {s['message_count']}")
             if s.get("created_at"):
                 created = format_session_time_local(s["created_at"])
@@ -52,10 +98,13 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
             if s["active_skills"]:
                 console.print(f"    Skills: {', '.join(s['active_skills'])}")
             console.print()
-        console.print("[info]Usage:[/info] /sessions resume <id>  or  /sessions delete <id>  or  /sessions delete all\n")
+        console.print("[info]Usage:[/info] /sessions resume <id>  or  /sessions rename <name>  or  /sessions delete <id>  or  /sessions delete all\n")
 
     elif sub == "resume":
         resume_session(cli, sub_arg or None)
+
+    elif sub == "rename":
+        _rename_session(cli, sub_arg)
 
     elif sub == "delete":
         if sub_arg == "all":
@@ -81,7 +130,7 @@ def handle_sessions_command(cli: AgentaoCLI, args: str) -> None:
 
     else:
         console.print(unknown_subcommand(sub))
-        console.print("[info]Available: /sessions list | /sessions resume <id> | /sessions delete <id> | /sessions delete all[/info]\n")
+        console.print("[info]Available: /sessions list | /sessions resume <id> | /sessions rename <name> | /sessions delete <id> | /sessions delete all[/info]\n")
 
 
 def _saved_mode(cli: AgentaoCLI):
@@ -291,6 +340,8 @@ def resume_session(
     cli.current_session_id = match.get("session_id") or str(_uuid_mod.uuid4())
     cli.agent._session_id = cli.current_session_id
     cli.agent.tool_runner._session_id = cli.current_session_id
+    from ..session import set_session_name
+    set_session_name(cli, match.get("name"))
     # The loaded history is already on disk, in ``match["path"]``: the next
     # save replaces that file rather than adding a second one for this
     # session. The outgoing session's checkpoint is not this session's to
@@ -334,8 +385,11 @@ def resume_session(
         _dispatch_session_start_hooks(cli, source="resume")
 
     sid_display = cli.current_session_id[:8]
-    title_display = f": {match['title']}" if match.get("title") else ""
-    console.print(f"\n[success]↩ Resuming session {sid_display}{title_display}[/success]")
+    console.print()
+    console.print(_shown(
+        f"↩ Resuming session {sid_display}" + (": " if match.get("title") else ""),
+        match.get("title") or "", "success",
+    ))
     # ``loaded_count`` is snapshotted above the hook dispatch, not measured
     # here: ``cli.agent.messages`` is this very list object (assigned, not
     # copied), so a ``SessionStart`` hook's ``additionalContext`` lands in it

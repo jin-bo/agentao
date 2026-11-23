@@ -104,6 +104,30 @@ def _find_created_at(session_dir: Path, session_id: str) -> Optional[str]:
     return None
 
 
+def _find_name(session_dir: Path, session_id: str) -> Optional[str]:
+    """The name the newest named save of ``session_id`` carries, if any.
+
+    File names are save timestamps, so sorting them orders the saves.
+    """
+    found = None
+    for path in sorted(session_dir.glob("*.json")):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json_parse.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("session_id") == session_id:
+            found = _clean_name(data.get("name")) or found
+    return found
+
+
+def _clean_name(value: Any) -> Optional[str]:
+    """A session name as one line of at most ``_TITLE_MAX_CHARS``, or ``None``."""
+    if not isinstance(value, str):
+        return None
+    return " ".join(value.split())[:_TITLE_MAX_CHARS].rstrip() or None
+
+
 def _parse_session_datetime(value: Any) -> Optional[datetime]:
     """Parse a persisted session timestamp.
 
@@ -149,6 +173,7 @@ def save_session(
     project_root: Path,
     supersedes: Optional[Path] = None,
     mcp_skill_origins: Optional[List[str]] = None,
+    name: Optional[str] = None,
 ) -> Tuple[Path, str]:
     """Serialize conversation to disk and rotate old sessions.
 
@@ -169,6 +194,12 @@ def save_session(
             conversation carried (docs/design/mcp-skills.md). Written as a
             top-level field only when non-empty; :func:`load_session_record`
             turns it back into a provenance record in the transcript.
+        name: A display name the user gave the session (``/sessions
+            rename``). Written as a top-level ``name`` only when non-empty,
+            as one line of at most 60 characters. ``None`` keeps the name
+            an earlier save of this session carried. ``title`` is still
+            derived from the first user message on every save;
+            :func:`list_sessions` shows ``name`` in its place.
 
     Returns:
         ``(path, session_id)`` — path of the saved file and the stable session UUID.
@@ -192,6 +223,12 @@ def save_session(
         or now.isoformat()
     )
     updated_at = now.isoformat()
+    # No name given keeps the one this session already has, so a save that
+    # does not know about names (ACP's, an embedder's) does not drop it.
+    name = _clean_name(name) or (
+        _clean_name((earlier or {}).get("name")) if earlier is not None
+        else _find_name(session_dir, sid)
+    )
 
     # The name is the clock, and the clock is not a guarantee of uniqueness. Windows
     # reports `datetime.now()` at a much coarser granularity than its six microsecond
@@ -214,6 +251,8 @@ def save_session(
     }
     if mcp_skill_origins:
         data["mcp_skill_origins"] = list(mcp_skill_origins)
+    if name:
+        data["name"] = name
     # A unique temp file, not ``<name>.tmp``: two writers must never share one.
     fd, partial_name = tempfile.mkstemp(
         dir=session_dir, prefix=timestamp + ".", suffix=".tmp"
@@ -264,6 +303,7 @@ def persist_agent_session(
     *,
     project_root: Path,
     supersedes: Optional[Path] = None,
+    name: Optional[str] = None,
 ) -> Tuple[Path, str]:
     """Persist ``agent``'s conversation, deriving model + active skills from it.
 
@@ -281,6 +321,7 @@ def persist_agent_session(
         project_root=project_root,
         supersedes=supersedes,
         mcp_skill_origins=_mcp_skill_origins(agent, active_skills),
+        name=name,
     )
 
 
@@ -862,12 +903,18 @@ def list_sessions(project_root: Path) -> List[Dict[str, Any]]:
             if first_user_msg and len(first_user_msg) > 80:
                 first_user_msg = first_user_msg[:77] + "..."
 
-            title = data.get("title") or (first_user_msg[:_TITLE_MAX_CHARS] if first_user_msg else "")
+            # A name the user gave (``/sessions rename``) wins over the
+            # derived title. Files saved before names existed have none.
+            # The file may be hand-edited: ``_clean_name`` makes it one line,
+            # caps it, and treats a blank or non-string name as none.
+            name = _clean_name(data.get("name"))
+            title = name or data.get("title") or (first_user_msg[:_TITLE_MAX_CHARS] if first_user_msg else "")
 
             result.append({
                 "id": path.stem,
                 "session_id": data.get("session_id"),
                 "title": title,
+                "name": name,
                 "timestamp": data.get("updated_at") or data.get("timestamp", path.stem),
                 "created_at": data.get("created_at"),
                 "updated_at": data.get("updated_at"),

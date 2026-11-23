@@ -25,6 +25,7 @@ All commands start with `/`:
 - `/sessions [subcommand]` - Manage saved sessions
   - `/sessions` or `/sessions list` - List saved sessions
   - `/sessions resume <id>` - Resume a saved session by id prefix
+  - `/sessions rename <name>` - Name the current session; the name replaces the derived title in the list and survives saves, exit and resume
   - `/sessions delete <id>` - Delete a saved session
   - `/sessions delete all` - Delete all saved sessions (requires confirmation)
 - `/temperature [value|off|on]` - Show/set LLM temperature (0.0-2.0); unset by default (not sent); `off` omits a set value for models that reject it
