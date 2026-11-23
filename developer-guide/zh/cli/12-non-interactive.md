@@ -164,6 +164,34 @@ agentao run --spec .agentao/runs/review-pr.yaml \
 
 完整设计动机 —— 包括 v1 范围、延迟落地的 `number` / `boolean` 类型，以及 goose-recipes 的对比 —— 见 [docs/design/run-spec-parameters.zh.md](https://github.com/jin-bo/agentao/blob/main/docs/design/run-spec-parameters.zh.md)。
 
+#### 示例：审查本地改动
+
+按你自己的审查标准，只读地审查你改了什么。`read-only` 会禁止 shell，所以这次运行没法自己调用 `git`。先把 diff 写进文件，`read_file` 仍然可以读它和改动的文件。spec 的 stdin 用来传 spec 本身，而把大 diff 放进 `--param` 可能超过命令行长度限制，所以写文件是可靠的做法。
+
+```yaml
+# .agentao/runs/review-changes.yaml
+parameters:
+  - name: diff_file
+    default: .agentao/review.diff
+prompt: |
+  Review the code changes in {{ diff_file }}. Read it with read_file, and
+  read the changed files where you need context. Do not change any file.
+  Report correctness bugs, ordered by severity (high, medium, low). For each
+  give `path:line`, the problem, the evidence, and the fix.
+  If nothing needs action, reply exactly: No actionable findings.
+permission_mode: read-only
+max_iterations: 30
+```
+
+```bash
+git diff HEAD > .agentao/review.diff      # staged + unstaged 改动
+agentao run --spec .agentao/runs/review-changes.yaml
+```
+
+- **审查范围**就是文件里的内容。`git diff HEAD` 只包含已跟踪文件的改动，新文件要先 `git add -N <file>`。审查整个分支用 `git diff $(git merge-base main HEAD)`：包含 `main` 之后的提交和还没提交的改动。
+- **审查标准**在 `prompt` 里，按项目需要改。这个 spec 没有设 `instructions`，所以 `AGENTAO.md` 仍然生效。
+- 交互场景里，`/diff` 不经过模型就能显示同样的改动；`/plan` 允许模型自己运行只读的 `git diff` / `git log` / `git show`，所有写入仍被禁止。
+
 ### 输出契约
 
 `--format text`：stdout 上只写最终 assistant 文本；诊断信息走 stderr。最接近老 `agentao -p` 的形态。
