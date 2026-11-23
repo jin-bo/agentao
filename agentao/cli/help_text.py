@@ -25,6 +25,7 @@ All commands start with `/`:
 - `/sessions [subcommand]` - Manage saved sessions
   - `/sessions` or `/sessions list` - List saved sessions
   - `/sessions resume <id>` - Resume a saved session by id prefix
+  - `/sessions clone [id]` - Save a resumable copy of this session (or a saved one, by unique id prefix) under a new id, and stay here; resume it with `/sessions resume <new id>`. Both share the working directory and project memory. Refused when 10 sessions are saved, so a copy never evicts one
   - `/sessions rename <name>` - Name the current session; the name replaces the derived title in the list and survives saves, exit and resume
   - `/sessions delete <id>` - Delete a saved session
   - `/sessions delete all` - Delete all saved sessions (requires confirmation)

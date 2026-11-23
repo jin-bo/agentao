@@ -10,6 +10,7 @@ The current session is saved under `.agentao/sessions/` after every turn, includ
 > /sessions
 > /sessions resume a1b2c3
 > /sessions rename Payments refactor
+> /sessions clone
 > /sessions delete a1b2c3
 > /sessions delete all
 ```
@@ -19,6 +20,7 @@ The current session is saved under `.agentao/sessions/` after every turn, includ
 | `/sessions` or `/sessions list` | List saved sessions, newest first |
 | `/sessions resume <id>` | Resume by session-id prefix; model and active skills are restored too |
 | `/sessions rename <name>` | Name the current session. The name replaces the title derived from the first message in the list, and survives later saves, exit and resume. It is saved at once, even when no new message came; a session with no messages yet saves it with the first one. Whitespace and line breaks collapse to single spaces, and a name over 60 characters is cut |
+| `/sessions clone [id]` | Save a copy of this session, or of a saved one (an id prefix that matches exactly one session), under a new id. You stay in the current session; resume the copy with `/sessions resume <new id>`. Each continues on its own. A named session's copy is named `<name> (copy)` |
 | `/sessions delete <id>` | Delete one saved session |
 | `/sessions delete all` | Delete all saved sessions, with single-key confirmation |
 
@@ -30,6 +32,8 @@ agentao --resume a1b2c3   # matching prefix
 ```
 
 A name belongs to one session: `/new`, `/clear` and resuming another session start without it. Session files saved before names existed have no `name` field and keep their derived title. Resume still matches the session-id prefix, not the name.
+
+A copy keeps the messages, compaction summaries, model, active skills and MCP skill origins. It shares the project's working directory and memory with the original, so it separates the conversation history only. Rotation keeps 10 session files. When 10 are saved, `/sessions clone` refuses rather than push the oldest one out; delete one first.
 
 ## `/agent` and `/agents` — sub-agents
 
