@@ -9,6 +9,7 @@
 ```text
 > /sessions
 > /sessions resume a1b2c3
+> /sessions rename Payments refactor
 > /sessions delete a1b2c3
 > /sessions delete all
 ```
@@ -17,6 +18,7 @@
 |---|---|
 | `/sessions` 或 `/sessions list` | 列出保存的会话，最新在前 |
 | `/sessions resume <id>` | 按 session id 前缀恢复；模型和激活 skills 会一起恢复 |
+| `/sessions rename <name>` | 给当前会话起名。列表里用这个名字代替从第一条消息生成的标题，之后的保存、退出和恢复都会保留它。改名会立即保存，即使没有新消息；会话还没有消息时，名字随第一条消息一起保存。空白和换行合并成一个空格，超过 60 个字符会被截断 |
 | `/sessions delete <id>` | 删除一个保存的会话 |
 | `/sessions delete all` | 删除全部保存会话，单键确认 |
 
@@ -26,6 +28,8 @@
 agentao --resume          # 恢复最近会话
 agentao --resume a1b2c3   # 恢复指定前缀
 ```
+
+名字只属于一个会话：`/new`、`/clear` 和恢复另一个会话后都不带这个名字。名字功能出现之前保存的会话文件没有 `name` 字段，仍显示生成的标题。恢复仍按 session id 前缀匹配，不按名字。
 
 ## `/agent` 与 `/agents` — 子 Agent
 

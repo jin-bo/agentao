@@ -9,6 +9,7 @@ The current session is saved under `.agentao/sessions/` after every turn, includ
 ```text
 > /sessions
 > /sessions resume a1b2c3
+> /sessions rename Payments refactor
 > /sessions delete a1b2c3
 > /sessions delete all
 ```
@@ -17,6 +18,7 @@ The current session is saved under `.agentao/sessions/` after every turn, includ
 |---------|--------|
 | `/sessions` or `/sessions list` | List saved sessions, newest first |
 | `/sessions resume <id>` | Resume by session-id prefix; model and active skills are restored too |
+| `/sessions rename <name>` | Name the current session. The name replaces the title derived from the first message in the list, and survives later saves, exit and resume. It is saved at once, even when no new message came; a session with no messages yet saves it with the first one. Whitespace and line breaks collapse to single spaces, and a name over 60 characters is cut |
 | `/sessions delete <id>` | Delete one saved session |
 | `/sessions delete all` | Delete all saved sessions, with single-key confirmation |
 
@@ -26,6 +28,8 @@ You can also resume at launch:
 agentao --resume          # latest session
 agentao --resume a1b2c3   # matching prefix
 ```
+
+A name belongs to one session: `/new`, `/clear` and resuming another session start without it. Session files saved before names existed have no `name` field and keep their derived title. Resume still matches the session-id prefix, not the name.
 
 ## `/agent` and `/agents` — sub-agents
 
