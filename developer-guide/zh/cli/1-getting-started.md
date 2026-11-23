@@ -57,6 +57,18 @@ Model: gpt-5.4 · Mode: workspace-write
 
 `/status` 不改任何东西 — 纯只读诊断。任何时候搞不清现在用的什么模型 / 模式 / skills，敲一下就行。
 
+## `/diff` — 仓库里改了什么
+
+```text
+> /diff
+```
+
+显示工作目录所在 Git 仓库的改动，分三部分：**Staged changes**（`git diff --cached`）、**Unstaged changes**（`git diff`）和 **Untracked files**（只列文件名，不读内容）。不发模型请求，不改 index，也不改工作树。树是干净的就打印 `Working tree clean`；不在 Git 仓库里就打印 `Not a Git repository`。
+
+- **长输出会截断，并且说明。** 每个 diff 最多显示 500 行，之后打印 `… N more lines omitted`。超过 4 MB 的 diff 整段不显示。untracked 列表最多 200 个文件名，之后打印 `… and N more`。改动的二进制文件只占一行 `Binary files … differ`。
+- **不运行仓库配置的命令。** `/diff` 关掉了 `core.fsmonitor`、外部 diff 程序和 `textconv`。`filter.<name>.clean` 仍可能在 git 重新读取已修改文件时运行。
+- 从仓库根目录运行，所以工作目录是子目录时也覆盖整个仓库。不接受参数。
+
 ## `/clear` 与 `/new` — 开一个新会话
 
 这两个命令都会先保存当前会话，然后启动一个新的空对话，但保留范围不同：

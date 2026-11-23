@@ -138,7 +138,7 @@ _SLASH_COMMANDS = [
     '/goal', '/goal budget', '/goal clear', '/goal edit',
     '/goal pause', '/goal resume', '/goal show',
     '/plan', '/plan clear', '/plan history', '/plan implement', '/plan show',
-    '/compact', '/context', '/context limit', '/exit', '/help',
+    '/compact', '/context', '/context limit', '/diff', '/exit', '/help',
     '/image', '/image clear',
     '/mcp', '/mcp add', '/mcp list', '/mcp remove', '/mcp verbose',
     '/markdown',

@@ -57,6 +57,18 @@ Shows, in this order:
 
 `/status` doesn't change anything — it's read-only diagnostics. Run it any time you've lost track of which model / mode / skills are live.
 
+## `/diff` — what has changed in the repo
+
+```text
+> /diff
+```
+
+Shows the Git changes of the repository that holds the working directory, in three parts: **Staged changes** (`git diff --cached`), **Unstaged changes** (`git diff`) and **Untracked files** (names only, not their contents). It makes no model request and changes neither the index nor the working tree. A clean tree prints `Working tree clean`. A directory outside a Git repository prints `Not a Git repository`.
+
+- **Long output is cut, and says so.** Each diff shows at most 500 lines, then `… N more lines omitted`. A diff over 4 MB is not shown at all. The untracked list shows at most 200 names, then `… and N more`. A changed binary file is one `Binary files … differ` line.
+- **Repository config does not run.** `/diff` turns off `core.fsmonitor`, external diff drivers and `textconv`. A `filter.<name>.clean` driver can still run when git re-reads a modified file.
+- It runs from the repository's top directory, so it covers the whole repository even when the working directory is a subdirectory. It takes no arguments.
+
 ## `/clear` and `/new` — start a fresh session
 
 Both commands save the current session first, then start an empty conversation. They differ in what they reset:
